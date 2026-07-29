@@ -1,0 +1,429 @@
+// 由 scripts/generate-postgres-schema.ts 从本地 SQLite schema 机械生成。
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@prisma/client-postgresql"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("POSTGRES_DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(cuid())
+  username      String         @unique
+  displayName   String
+  passwordHash  String
+  role          String         @default("OPERATOR")
+  status        String         @default("ACTIVE")
+  lastLoginAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  manualReviews ManualReview[]
+  operationLogs OperationLog[]
+  auditBatches  AuditBatch[]
+
+  @@index([role, status])
+  @@map("users")
+}
+
+model Product {
+  id               String            @id @default(cuid())
+  code             String?           @unique
+  name             String
+  brandName        String
+  seriesName       String?
+  category         String?
+  contentDirection String?
+  status           String            @default("ACTIVE")
+  deletedAt        DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  aliases          ProductAlias[]
+  campaigns        Campaign[]
+  campaignLinks    CampaignProduct[]
+  topicRules       TopicRule[]
+  auditTasks       AuditTask[]
+  auditBatches     AuditBatch[]
+  noteProducts     NoteProduct[]
+
+  @@index([name])
+  @@index([brandName, status])
+  @@map("products")
+}
+
+model ProductAlias {
+  id        String   @id @default(cuid())
+  productId String
+  alias     String
+  createdAt DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, alias])
+  @@index([alias])
+  @@map("product_aliases")
+}
+
+model Campaign {
+  id                        String            @id @default(cuid())
+  productId                 String?
+  name                      String
+  month                     String
+  year                      Int?
+  startDate                 DateTime
+  endDate                   DateTime
+  minImageCount             Int               @default(2)
+  productImageRequired      Boolean           @default(false)
+  firstImageRequirement     String?
+  prohibitedImageGuidance   String?
+  bodyRequired              Boolean           @default(true)
+  minBodyLength             Int               @default(1)
+  publicRequired            Boolean           @default(false)
+  retentionDays             Int               @default(0)
+  rewardDescription         String?
+  visualReviewGuidance      String?
+  customerRegistrationNotes String?
+  clickableTopicRequired    Boolean           @default(true)
+  ruleVersion               Int               @default(1)
+  status                    String            @default("ACTIVE")
+  deletedAt                 DateTime?
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+  product                   Product?          @relation(fields: [productId], references: [id])
+  products                  CampaignProduct[]
+  topicRules                TopicRule[]
+  auditTasks                AuditTask[]
+  auditBatches              AuditBatch[]
+
+  @@unique([name, month])
+  @@index([month, status])
+  @@index([productId, status])
+  @@map("campaigns")
+}
+
+model CampaignProduct {
+  id         String   @id @default(cuid())
+  campaignId String
+  productId  String
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, productId])
+  @@index([productId, campaignId])
+  @@map("campaign_products")
+}
+
+model TopicRule {
+  id                String    @id @default(cuid())
+  scope             String    @default("CAMPAIGN")
+  campaignId        String?
+  productId         String?
+  ruleType          String
+  topicCategory     String    @default("GENERAL")
+  applicableStage   String?
+  milkType          String?
+  topic             String
+  exactMatch        Boolean   @default(true)
+  clickableRequired Boolean   @default(false)
+  caseSensitive     Boolean   @default(false)
+  minCount          Int       @default(1)
+  sortOrder         Int       @default(0)
+  version           Int       @default(1)
+  status            String    @default("ACTIVE")
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  campaign          Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  product           Product?  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([scope, status])
+  @@index([campaignId, status, sortOrder])
+  @@index([productId, status])
+  @@index([campaignId, applicableStage, status])
+  @@map("topic_rules")
+}
+
+model AuditTask {
+  id              String             @id @default(cuid())
+  batchId         String?
+  url             String
+  normalizedUrl   String
+  productId       String
+  campaignId      String
+  productStage    String?
+  milkType        String?
+  source          String             @default("MANUAL")
+  status          String             @default("PENDING")
+  queueOrder      Int                @default(0)
+  attempts        Int                @default(0)
+  failureCode     String?
+  failureMessage  String?
+  finalUrl        String?
+  pageTitle       String?
+  pageType        String?
+  redirectChain   String             @default("[]")
+  failureEvidence String?
+  notes           String?
+  createdBy       String?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  nextRunAt       DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  batch           AuditBatch?        @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  product         Product            @relation(fields: [productId], references: [id])
+  campaign        Campaign           @relation(fields: [campaignId], references: [id])
+  extractions     ExtractionRecord[]
+  auditResults    AuditResult[]
+
+  @@index([status, createdAt])
+  @@index([batchId, status, queueOrder])
+  @@index([campaignId, status])
+  @@index([normalizedUrl])
+  @@map("audit_tasks")
+}
+
+model AuditBatch {
+  id               String      @id @default(cuid())
+  name             String?
+  productId        String?
+  campaignId       String?
+  productStage     String?
+  source           String      @default("MANUAL")
+  status           String      @default("QUEUED")
+  totalCount       Int         @default(0)
+  intervalMs       Int         @default(5000)
+  currentTaskId    String?
+  lastErrorCode    String?
+  lastErrorMessage String?
+  createdBy        String?
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  pausedAt         DateTime?
+  cancelledAt      DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  product          Product?    @relation(fields: [productId], references: [id])
+  campaign         Campaign?   @relation(fields: [campaignId], references: [id])
+  creator          User?       @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  tasks            AuditTask[]
+
+  @@index([status, createdAt])
+  @@index([createdBy, createdAt])
+  @@map("audit_batches")
+}
+
+model AutomationSession {
+  id            String    @id
+  platform      String    @unique
+  status        String    @default("UNKNOWN")
+  profilePath   String
+  lastCheckedAt DateTime?
+  lastLoginAt   DateTime?
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("automation_sessions")
+}
+
+model NoteRecord {
+  id                    String             @id @default(cuid())
+  platformNoteId        String?            @unique
+  url                   String             @unique
+  finalUrl              String?
+  title                 String?
+  body                  String?
+  authorName            String?
+  publishedAt           DateTime?
+  pageStatus            String             @default("NORMAL")
+  isPublic              Boolean?
+  noteType              String             @default("UNKNOWN")
+  imageExtractionStatus String             @default("NOT_CHECKED")
+  imageCount            Int                @default(0)
+  imageUrls             String             @default("[]")
+  firstCapturedAt       DateTime           @default(now())
+  lastCapturedAt        DateTime           @default(now())
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  topics                NoteTopic[]
+  extractions           ExtractionRecord[]
+  noteProducts          NoteProduct[]
+  auditResults          AuditResult[]
+
+  @@index([pageStatus])
+  @@map("note_records")
+}
+
+model NoteProduct {
+  id         String     @id @default(cuid())
+  noteId     String
+  productId  String
+  isPrimary  Boolean    @default(false)
+  confidence Float?
+  createdAt  DateTime   @default(now())
+  note       NoteRecord @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id])
+
+  @@unique([noteId, productId])
+  @@index([productId])
+  @@map("note_products")
+}
+
+model NoteTopic {
+  id             String     @id @default(cuid())
+  noteId         String
+  displayText    String
+  normalizedText String
+  isLinkElement  Boolean    @default(false)
+  hasHref        Boolean    @default(false)
+  href           String?
+  textColor      String?
+  styleFeature   Boolean    @default(false)
+  isClickable    Boolean    @default(false)
+  domPath        String?
+  createdAt      DateTime   @default(now())
+  note           NoteRecord @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId, normalizedText])
+  @@map("note_topics")
+}
+
+model ExtractionRecord {
+  id             String     @id @default(cuid())
+  auditTaskId    String?
+  noteId         String
+  adapterName    String
+  adapterVersion String
+  pageStatus     String
+  rawData        String
+  extractedAt    DateTime   @default(now())
+  createdAt      DateTime   @default(now())
+  task           AuditTask? @relation(fields: [auditTaskId], references: [id])
+  note           NoteRecord @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([auditTaskId, extractedAt])
+  @@index([noteId, extractedAt])
+  @@map("extraction_records")
+}
+
+model AuditResult {
+  id                    String         @id @default(cuid())
+  auditTaskId           String
+  noteId                String
+  ruleVersion           Int
+  ruleSnapshot          String
+  pageStatus            String
+  bodyStatus            String
+  effectiveBodyLength   Int            @default(0)
+  bodyCompliant         Boolean        @default(true)
+  noteType              String         @default("UNKNOWN")
+  imageExtractionStatus String         @default("NOT_CHECKED")
+  imageStatus           String         @default("NOT_REQUIRED")
+  imageCount            Int
+  imageCompliant        Boolean
+  topicsCompliant       Boolean
+  clickableCompliant    Boolean
+  missingTopics         String         @default("[]")
+  forbiddenTopics       String         @default("[]")
+  autoStatus            String
+  publicStatus          String         @default("NOT_REQUIRED")
+  retentionStatus       String         @default("NOT_REQUIRED")
+  retentionDueAt        DateTime?
+  visualReviewStatus    String         @default("NOT_REQUIRED")
+  visualReviewDetails   String         @default("{}")
+  failureReasons        String         @default("[]")
+  aiStatus              String         @default("DISABLED")
+  aiRelevance           String?
+  aiReason              String?
+  auditedAt             DateTime       @default(now())
+  createdAt             DateTime       @default(now())
+  task                  AuditTask      @relation(fields: [auditTaskId], references: [id])
+  note                  NoteRecord     @relation(fields: [noteId], references: [id])
+  ruleResults           RuleResult[]
+  manualReviews         ManualReview[]
+
+  @@index([autoStatus, auditedAt])
+  @@index([imageStatus, auditedAt])
+  @@index([auditTaskId, auditedAt])
+  @@index([noteId])
+  @@map("audit_results")
+}
+
+model RuleResult {
+  id            String      @id @default(cuid())
+  auditResultId String
+  ruleKey       String
+  ruleName      String
+  expectedValue String
+  actualValue   String
+  passed        Boolean
+  failureReason String?
+  evidence      String
+  createdAt     DateTime    @default(now())
+  auditResult   AuditResult @relation(fields: [auditResultId], references: [id], onDelete: Cascade)
+
+  @@index([auditResultId, passed])
+  @@map("rule_results")
+}
+
+model ManualReview {
+  id            String      @id @default(cuid())
+  auditResultId String
+  reviewerId    String
+  result        String
+  comment       String?
+  createdAt     DateTime    @default(now())
+  auditResult   AuditResult @relation(fields: [auditResultId], references: [id])
+  reviewer      User        @relation(fields: [reviewerId], references: [id])
+
+  @@index([auditResultId, createdAt])
+  @@index([reviewerId])
+  @@map("manual_reviews")
+}
+
+model OperationLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  summary    String
+  metadata   String?  @default("{}")
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("operation_logs")
+}
+
+model SystemSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  isSecret    Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model ImportRecord {
+  id           String   @id @default(cuid())
+  fileName     String
+  importType   String
+  totalCount   Int
+  validCount   Int
+  invalidCount Int
+  skippedCount Int      @default(0)
+  status       String
+  summary      String
+  createdBy    String?
+  createdAt    DateTime @default(now())
+
+  @@index([importType, createdAt])
+  @@map("import_records")
+}

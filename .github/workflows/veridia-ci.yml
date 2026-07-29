@@ -1,0 +1,86 @@
+name: VERIDIA 代码检查
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: veridia-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 检查与测试
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: file:./release-e2e.db
+      AUTH_SECRET: ci-only-auth-secret
+      EXTENSION_TOKEN: local-extension-demo-token
+      AI_ENABLED: "false"
+      PLAYWRIGHT_BROWSER_CHANNEL: ""
+      E2E_PORT: "3210"
+      E2E_REUSE_SERVER: "false"
+      RUST_LOG: info
+
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 安装端到端测试浏览器
+        run: npx playwright install chromium
+
+      - name: 创建隔离测试目录
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path .ci, artifacts/ci-logs | Out-Null
+
+      - name: TypeScript 检查
+        shell: pwsh
+        run: npm run typecheck *>&1 | Tee-Object artifacts/ci-logs/typecheck.log
+
+      - name: ESLint
+        shell: pwsh
+        run: npm run lint *>&1 | Tee-Object artifacts/ci-logs/eslint.log
+
+      - name: 单元测试
+        shell: pwsh
+        run: npm test *>&1 | Tee-Object artifacts/ci-logs/unit-tests.log
+
+      - name: 初始化隔离数据库
+        shell: pwsh
+        run: |
+          npm run db:init-empty *>&1 | Tee-Object artifacts/ci-logs/database.log
+          npm run db:seed *>&1 | Tee-Object -Append artifacts/ci-logs/database.log
+
+      - name: 端到端测试
+        shell: pwsh
+        run: npm run test:e2e *>&1 | Tee-Object artifacts/ci-logs/e2e.log
+
+      - name: Next.js 生产构建
+        shell: pwsh
+        run: npm run build *>&1 | Tee-Object artifacts/ci-logs/next-build.log
+
+      - name: 上传检查日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veridia-ci-${{ github.run_number }}
+          path: |
+            artifacts/ci-logs
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 14

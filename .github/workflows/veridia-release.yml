@@ -1,0 +1,175 @@
+name: VERIDIA Windows 发布
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 版本升级类型
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: veridia-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 测试、构建和发布
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      DATABASE_URL: file:./release-e2e.db
+      AUTH_SECRET: ci-only-auth-secret
+      EXTENSION_TOKEN: local-extension-demo-token
+      AI_ENABLED: "false"
+      PLAYWRIGHT_BROWSER_CHANNEL: ""
+      E2E_PORT: "3210"
+      E2E_REUSE_SERVER: "false"
+      RUST_LOG: info
+      VERIDIA_UPDATE_URL: https://github.com/${{ github.repository }}/releases/latest/download
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 安装 Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: 创建构建目录
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path .ci, artifacts/release-logs | Out-Null
+
+      - name: TypeScript 检查
+        shell: pwsh
+        run: npm run typecheck *>&1 | Tee-Object artifacts/release-logs/typecheck.log
+
+      - name: ESLint
+        shell: pwsh
+        run: npm run lint *>&1 | Tee-Object artifacts/release-logs/eslint.log
+
+      - name: 单元测试
+        shell: pwsh
+        run: npm test *>&1 | Tee-Object artifacts/release-logs/unit-tests.log
+
+      - name: 初始化隔离数据库
+        shell: pwsh
+        run: |
+          npm run db:init-empty *>&1 | Tee-Object artifacts/release-logs/database.log
+          npm run db:seed *>&1 | Tee-Object -Append artifacts/release-logs/database.log
+
+      - name: 端到端测试
+        shell: pwsh
+        run: npm run test:e2e *>&1 | Tee-Object artifacts/release-logs/e2e.log
+
+      - name: 预发布 Next.js 构建
+        shell: pwsh
+        run: npm run build *>&1 | Tee-Object artifacts/release-logs/preflight-build.log
+
+      - name: 计算发布版本
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            node scripts/ci-bump-version.mjs "${{ inputs.release_type }}"
+            $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            "version=$version" >> $env:GITHUB_OUTPUT
+            "tag=v$version" >> $env:GITHUB_OUTPUT
+          } else {
+            $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            $tag = "${{ github.ref_name }}"
+            if ($tag -ne "v$version") {
+              throw "Tag $tag 与 package.json 版本 $version 不一致"
+            }
+            "version=$version" >> $env:GITHUB_OUTPUT
+            "tag=$tag" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: 构建正式 Next.js 版本
+        shell: pwsh
+        env:
+          VERIDIA_APP_VERSION: ${{ steps.version.outputs.version }}
+          VERIDIA_BUILD_DATE: ${{ github.event.repository.updated_at }}
+        run: npm run build *>&1 | Tee-Object artifacts/release-logs/next-build.log
+
+      - name: 准备桌面运行资源
+        shell: pwsh
+        run: npm run desktop:prepare *>&1 | Tee-Object artifacts/release-logs/desktop-prepare.log
+
+      - name: 构建 NSIS 安装包和更新元数据
+        shell: pwsh
+        run: npx electron-builder --win nsis --publish never *>&1 | Tee-Object artifacts/release-logs/electron-builder.log
+
+      - name: 确认签名状态
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace("${{ secrets.WINDOWS_CSC_LINK }}")) {
+            "未配置代码签名证书；本次为内部测试安装包，Windows 可能显示“未知发布者”。" |
+              Tee-Object artifacts/release-logs/signing.log
+          } else {
+            "已提供 Windows 代码签名证书。" |
+              Tee-Object artifacts/release-logs/signing.log
+          }
+
+      - name: 将手动发布版本写回 main
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json CHANGELOG.md
+          git commit -m "chore(release): VERIDIA ${{ steps.version.outputs.version }}"
+          git push origin HEAD:main
+
+      - name: 创建 GitHub Release 并上传更新文件
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: VERIDIA ${{ steps.version.outputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+          files: |
+            dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe
+            dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe.blockmap
+            dist-installer/latest.yml
+
+      - name: 上传构建日志和安装产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veridia-release-${{ steps.version.outputs.version || github.run_number }}
+          path: |
+            artifacts/release-logs
+            dist-installer/*.exe
+            dist-installer/*.blockmap
+            dist-installer/latest.yml
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 30

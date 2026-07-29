@@ -1,0 +1,171 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const bump = process.argv[2];
+if (!["patch", "minor", "major"].includes(bump)) {
+  throw new Error("发布类型必须为 patch、minor 或 major");
+}
+
+const packagePath = path.join(root, "package.json");
+const lockPath = path.join(root, "package-lock.json");
+const changelogPath = path.join(root, "CHANGELOG.md");
+const originals = new Map(
+  [packagePath, lockPath, changelogPath].map((file) => [
+    file,
+    fs.existsSync(file) ? fs.readFileSync(file) : null,
+  ]),
+);
+const workRoot = path.join(root, ".release-work");
+const logsRoot = path.join(workRoot, "logs");
+fs.rmSync(workRoot, { recursive: true, force: true });
+fs.mkdirSync(logsRoot, { recursive: true });
+
+function run(label, command, args, extraEnv = {}) {
+  process.stdout.write(`\n[VERIDIA 发布] ${label}\n`);
+  const result = spawnSync(command, args, {
+    cwd: root,
+    env: { ...process.env, ...extraEnv },
+    encoding: "utf8",
+    windowsHide: true,
+    maxBuffer: 100 * 1024 * 1024,
+  });
+  const output = `${result.stdout || ""}${result.stderr || ""}`;
+  fs.writeFileSync(
+    path.join(logsRoot, `${label.replace(/[^\p{L}\p{N}-]+/gu, "-")}.log`),
+    output,
+    "utf8",
+  );
+  process.stdout.write(output);
+  if (result.status !== 0) {
+    throw new Error(`${label}失败，退出码 ${result.status}`);
+  }
+}
+
+function restoreVersionFiles() {
+  for (const [file, content] of originals) {
+    if (content === null) fs.rmSync(file, { force: true });
+    else fs.writeFileSync(file, content);
+  }
+}
+
+function updateChangelog(version) {
+  const date = new Date().toISOString().slice(0, 10);
+  const notes = (
+    process.env.VERIDIA_RELEASE_NOTES ||
+    "通过自动检查、单元测试、端到端测试和 Windows 桌面构建验证。"
+  )
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `- ${line.replace(/^[-*]\s*/, "")}`)
+    .join("\n");
+  const previous = originals.get(changelogPath)?.toString("utf8") || "";
+  const body = previous.startsWith("# VERIDIA 更新日志")
+    ? previous.replace(/^# VERIDIA 更新日志\s*/u, "")
+    : previous;
+  fs.writeFileSync(
+    changelogPath,
+    `# VERIDIA 更新日志\n\n## ${version} - ${date}\n\n${notes}\n\n${body}`.trimEnd() +
+      "\n",
+    "utf8",
+  );
+}
+
+function repositoryUpdateUrl() {
+  if (process.env.VERIDIA_UPDATE_URL) return process.env.VERIDIA_UPDATE_URL;
+  const result = spawnSync("git", ["remote", "get-url", "origin"], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  const match = (result.stdout || "").trim().match(
+    /github\.com[/:]([^/]+\/[^/.]+)(?:\.git)?$/i,
+  );
+  return match
+    ? `https://github.com/${match[1]}/releases/latest/download`
+    : "https://example.invalid/veridia/releases/latest/download";
+}
+
+try {
+  run("TypeScript检查", "npm.cmd", ["run", "typecheck"]);
+  run("ESLint", "npm.cmd", ["run", "lint"]);
+  run("单元测试", "npm.cmd", ["test"]);
+
+  const e2eDatabasePath = path.join(root, "prisma", "release-e2e.db");
+  fs.rmSync(e2eDatabasePath, { force: true });
+  const e2eEnv = {
+    DATABASE_URL: "file:./release-e2e.db",
+    AUTH_SECRET: "release-e2e-local-secret",
+    EXTENSION_TOKEN: "local-extension-demo-token",
+    AI_ENABLED: "false",
+    E2E_PORT: "3210",
+    E2E_REUSE_SERVER: "false",
+    PLAYWRIGHT_BROWSER_CHANNEL: "",
+    RUST_LOG: "info",
+  };
+  run("端到端数据库迁移", "npm.cmd", ["run", "db:init-empty"], e2eEnv);
+  run("端到端测试数据初始化", "npm.cmd", ["run", "db:seed"], e2eEnv);
+  run("端到端测试", "npm.cmd", ["run", "test:e2e"], e2eEnv);
+  run("预发布Next构建", "npm.cmd", ["run", "build"]);
+
+  run("升级版本号", "npm.cmd", [
+    "version",
+    bump,
+    "--no-git-tag-version",
+  ]);
+  const version = JSON.parse(fs.readFileSync(packagePath, "utf8")).version;
+  updateChangelog(version);
+
+  run("正式Next构建", "npm.cmd", ["run", "build"], {
+    VERIDIA_APP_VERSION: version,
+    VERIDIA_BUILD_DATE: new Date().toISOString(),
+  });
+  run("准备桌面资源", "npm.cmd", ["run", "desktop:prepare"]);
+  run(
+    "构建Windows安装包",
+    "node",
+    [
+      path.join(root, "node_modules", "electron-builder", "out", "cli", "cli.js"),
+      "--win",
+      "nsis",
+      "--publish",
+      "never",
+    ],
+    {
+      VERIDIA_UPDATE_URL: repositoryUpdateUrl(),
+    },
+  );
+
+  const destination = path.join(root, "release", version);
+  fs.mkdirSync(destination, { recursive: true });
+  for (const name of fs.readdirSync(path.join(root, "dist-installer"))) {
+    if (
+      /^VERIDIA-Setup-.*\.(exe|blockmap)$/i.test(name) ||
+      name === "latest.yml"
+    ) {
+      fs.copyFileSync(
+        path.join(root, "dist-installer", name),
+        path.join(destination, name),
+      );
+    }
+  }
+  fs.cpSync(logsRoot, path.join(destination, "logs"), { recursive: true });
+  fs.copyFileSync(changelogPath, path.join(destination, "CHANGELOG.md"));
+  process.stdout.write(
+    `\nVERIDIA ${version} 已完成本地发布：${destination}\n` +
+      "确认产物后可提交 package.json、package-lock.json、CHANGELOG.md，" +
+      `再运行 npm run release:tag 创建 v${version} 标签。\n`,
+  );
+} catch (error) {
+  restoreVersionFiles();
+  process.stderr.write(
+    `\n发布已停止，正式版本号未保留：${
+      error instanceof Error ? error.message : String(error)
+    }\n错误日志：${logsRoot}\n`,
+  );
+  process.exitCode = 1;
+}

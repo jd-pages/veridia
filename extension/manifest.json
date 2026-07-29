@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "小红书笔记合规提取器",
+  "version": "1.0.1",
+  "description": "读取用户当前打开且可见的小红书笔记页面，并提交到本地合规审核系统。",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "http://localhost:3100/*",
+    "http://127.0.0.1:3100/*",
+    "https://*.xiaohongshu.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_title": "提交当前笔记审核",
+    "default_popup": "src/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:3000/mock/xhs*",
+        "http://127.0.0.1:3000/mock/xhs*",
+        "http://localhost:3100/mock/xhs*",
+        "http://127.0.0.1:3100/mock/xhs*",
+        "https://*.xiaohongshu.com/*"
+      ],
+      "js": [
+        "src/adapters/base.js",
+        "src/adapters/mock.js",
+        "src/adapters/xiaohongshu.js",
+        "src/content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

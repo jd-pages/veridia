@@ -1,0 +1,37 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  width: 360px;
+  color: #182033;
+  font: 14px/1.5 system-ui, "Microsoft YaHei", sans-serif;
+  background: #f5f6f9;
+}
+main { padding: 18px; }
+header { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; }
+header strong, header small { display: block; }
+header small { color: #667085; }
+.mark {
+  width: 38px; height: 38px; border-radius: 11px;
+  display: grid; place-items: center; color: white; font-weight: 700;
+  background: linear-gradient(135deg, #d63a42, #8d171d);
+}
+label { display: block; margin: 12px 0; font-weight: 600; }
+input {
+  width: 100%; margin-top: 5px; padding: 9px 10px; border: 1px solid #d0d5dd;
+  border-radius: 8px; background: white;
+}
+button {
+  width: 100%; padding: 10px; border: 0; border-radius: 9px; cursor: pointer;
+  background: #b4232a; color: white; font-weight: 700; margin-top: 6px;
+}
+.actions { display: grid; grid-template-columns: 1fr 1.6fr; gap: 8px; }
+.actions button { height: 42px; }
+button.secondary {
+  color: #344054; background: white; border: 1px solid #d0d5dd;
+}
+button:disabled { opacity: .55; cursor: wait; }
+.status { padding: 11px; margin-top: 12px; border-radius: 8px; background: white; }
+.success { color: #027a48; background: #ecfdf3; }
+.error { color: #b42318; background: #fef3f2; }
+.muted { color: #667085; }
+details { color: #667085; margin-top: 14px; font-size: 12px; }

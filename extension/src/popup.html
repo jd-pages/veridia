@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>笔记合规提取器</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="mark">合</span>
+        <div>
+          <strong>笔记合规提取器</strong>
+          <small>仅处理当前主动打开的可见页面</small>
+        </div>
+      </header>
+      <label>本地系统地址<input id="apiBaseUrl" value="http://localhost:3100" /></label>
+      <label>插件提交令牌<input id="extensionToken" type="password" value="local-extension-demo-token" /></label>
+      <label>任务 ID（可选）<input id="taskId" placeholder="留空时按当前链接匹配待审核任务" /></label>
+      <div class="actions">
+        <button id="testConnection" type="button" class="secondary">测试连接</button>
+        <button id="extract" type="button">提取并提交审核</button>
+      </div>
+      <section id="status" class="status muted">请打开一篇待审核笔记后提交。</section>
+      <details>
+        <summary>安全说明</summary>
+        <p>本插件不会绕过登录、验证码、访问限制或平台风控，也不会后台批量抓取。</p>
+      </details>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

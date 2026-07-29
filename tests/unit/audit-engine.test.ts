@@ -1,0 +1,290 @@
+import { describe, expect, it } from "vitest";
+import {
+  countEffectiveBodyCharacters,
+  evaluateAudit,
+} from "@/lib/audit-engine";
+import { createMockNote } from "@/lib/mock-data";
+import type { AuditContext } from "@/lib/types";
+
+const context: AuditContext = {
+  productId: "p1",
+  campaignId: "c1",
+  campaignName: "测试活动",
+  ruleVersion: 3,
+  minImageCount: 2,
+  minBodyLength: 1,
+  publicRequired: false,
+  retentionDays: 0,
+  bodyRequired: true,
+  clickableTopicRequired: true,
+  rules: [
+    {
+      id: "r1",
+      scope: "CAMPAIGN",
+      ruleType: "MUST_ALL",
+      topic: "#inne多维锌",
+      exactMatch: true,
+      clickableRequired: true,
+      caseSensitive: false,
+      minCount: 1,
+      sortOrder: 1,
+      version: 1,
+    },
+    ...["#宝宝营养", "#宝宝挑食", "#儿童营养"].map((topic, index) => ({
+      id: `any-${index}`,
+      scope: "CAMPAIGN",
+      ruleType: "ANY",
+      topic,
+      exactMatch: true,
+      clickableRequired: false,
+      caseSensitive: false,
+      minCount: 1,
+      sortOrder: 10 + index,
+      version: 1,
+    })),
+    {
+      id: "forbidden",
+      scope: "CAMPAIGN",
+      ruleType: "FORBIDDEN",
+      topic: "#治疗挑食",
+      exactMatch: true,
+      clickableRequired: false,
+      caseSensitive: false,
+      minCount: 1,
+      sortOrder: 20,
+      version: 1,
+    },
+  ],
+};
+
+describe("audit engine", () => {
+  it("通过完整合规案例", () => {
+    const result = evaluateAudit(createMockNote("passed"), context);
+    expect(result.autoStatus).toBe("PASSED");
+    expect(result.failureReasons).toEqual([]);
+  });
+
+  it("图文笔记读取数量并执行最低图片规则", () => {
+    const passed = evaluateAudit(createMockNote("passed"), context);
+    expect(passed.imageStatus).toBe("COMPLIANT");
+    expect(passed.imageCount).toBe(3);
+
+    const fewImages = evaluateAudit(createMockNote("few-images"), context);
+    expect(fewImages.imageStatus).toBe("NON_COMPLIANT");
+    expect(fewImages.autoStatus).toBe("FAILED");
+    expect(fewImages.failureReasons.join()).toContain("图片数量不足");
+  });
+
+  it("图片数量读取失败进入人工复核，不生成图片不合规结论", () => {
+    const noImages = createMockNote("no-images");
+    const result = evaluateAudit(noImages, context);
+    expect(result.imageStatus).toBe("IMAGES_READ_FAILED");
+    expect(result.autoStatus).toBe("NEEDS_REVIEW");
+    expect(result.imageCompliant).toBeNull();
+    expect(result.failureReasons.join()).not.toContain("图片");
+    expect(evaluateAudit(createMockNote("empty-body"), context).bodyStatus).toBe(
+      "EMPTY",
+    );
+  });
+
+  it("视频笔记标记 VIDEO_NOTE，不误判为 0 张", () => {
+    const result = evaluateAudit(createMockNote("video-note"), context);
+    expect(result.noteType).toBe("VIDEO_NOTE");
+    expect(result.imageStatus).toBe("VIDEO_NOTE");
+    expect(result.imageCount).toBeNull();
+    expect(result.autoStatus).toBe("PASSED");
+  });
+
+  it("严格拒绝错字话题", () => {
+    const result = evaluateAudit(createMockNote("inaccurate-topic"), context);
+    expect(result.autoStatus).toBe("FAILED");
+    expect(result.missingTopics).toContain("#inne多维锌");
+  });
+
+  it("不能只根据蓝色判断可点击", () => {
+    const result = evaluateAudit(createMockNote("unclickable-topic"), context);
+    expect(result.clickableCompliant).toBe(false);
+    expect(result.failureReasons.join()).toContain("不是有效的蓝色可点击话题");
+  });
+
+  it("识别禁止话题", () => {
+    const result = evaluateAudit(createMockNote("failed"), context);
+    expect(result.forbiddenTopics).toContain("#治疗挑食");
+  });
+
+  it("正文字数排除话题、链接、空白和纯标点，并严格执行至少 41 字", () => {
+    expect(
+      countEffectiveBodyCharacters(
+        `${"好".repeat(40)} #爱他美新手爸妈日记 https://example.com ，。！？`,
+      ),
+    ).toBe(40);
+    expect(countEffectiveBodyCharacters("好".repeat(41))).toBe(41);
+  });
+
+  it("只审核当前段位话题，且同名普通文本不能代替可点击话题", () => {
+    const stageContext: AuditContext = {
+      productId: "aptamil-white",
+      campaignId: "aptamil-july",
+      campaignName: "爱他美2026年7月小红书种草审核",
+      productStage: "IFFO_2",
+      milkType: "IFFO",
+      ruleVersion: 1,
+      minImageCount: 2,
+      minBodyLength: 41,
+      publicRequired: true,
+      retentionDays: 15,
+      bodyRequired: true,
+      clickableTopicRequired: true,
+      rules: [
+        ["brand", "#爱他美新手爸妈日记", "BRAND_COMMON"],
+        ["product", "#爱他美亲熠5HMO", "PRODUCT_COMMON"],
+        ["stage", "#二段奶粉推荐", "PRODUCT_STAGE"],
+      ].map(([id, topic, topicCategory], index) => ({
+        id,
+        scope: "CAMPAIGN",
+        ruleType: "REQUIRED",
+        topic,
+        topicCategory,
+        applicableStage:
+          topicCategory === "PRODUCT_STAGE" ? "IFFO_2" : null,
+        exactMatch: true,
+        clickableRequired: true,
+        caseSensitive: false,
+        minCount: 1,
+        sortOrder: index,
+        version: 1,
+      })),
+    };
+    const note = createMockNote("aptamil-passed");
+    note.body = `宝宝目前喝2段奶粉，${"这是一段真实的产品体验内容".repeat(5)}`;
+    note.imageCount = 2;
+    note.isPublic = true;
+    note.topics = stageContext.rules.map((rule) => ({
+      displayText: rule.topic,
+      isLinkElement: true,
+      hasHref: true,
+      href: `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(rule.topic)}`,
+      textColor: "rgb(19, 92, 173)",
+      styleFeature: true,
+    }));
+
+    const compliant = evaluateAudit(note, stageContext);
+    expect(compliant.missingTopics).toEqual([]);
+    expect(compliant.autoStatus).toBe("PASSED");
+    expect(
+      compliant.ruleResults.some((rule) => /图片|视觉/u.test(rule.ruleName)),
+    ).toBe(true);
+    expect(
+      stageContext.rules.some((rule) => rule.topic === "#三段奶粉推荐"),
+    ).toBe(false);
+    expect(
+      compliant.ruleResults.find(
+        (rule) => rule.ruleKey === "PRODUCT_STAGE_BODY",
+      ),
+    ).toMatchObject({
+      passed: true,
+      actualValue: "2段",
+    });
+
+    note.topics = note.topics.map((topic) =>
+      topic.displayText === "#二段奶粉推荐"
+        ? {
+            ...topic,
+            isLinkElement: false,
+            hasHref: false,
+            href: null,
+            styleFeature: false,
+          }
+        : topic,
+    );
+    const plainTextOnly = evaluateAudit(note, stageContext);
+    expect(plainTextOnly.autoStatus).toBe("FAILED");
+    expect(plainTextOnly.missingTopics).toContain("#二段奶粉推荐");
+    expect(plainTextOnly.failureReasons).toContain(
+      "阶段话题 #二段奶粉推荐 不可点击",
+    );
+  });
+
+  it("正文未出现当前产品阶段允许段位时给出独立失败原因", () => {
+    const stageContext: AuditContext = {
+      ...context,
+      productStage: "GUM_3_4_1PLUS_2PLUS",
+      rules: [
+        {
+          id: "stage-gum",
+          scope: "CAMPAIGN",
+          ruleType: "REQUIRED",
+          topic: "#三段奶粉推荐",
+          topicCategory: "PRODUCT_STAGE",
+          applicableStage: "GUM_3_4_1PLUS_2PLUS",
+          exactMatch: true,
+          clickableRequired: true,
+          caseSensitive: false,
+          minCount: 1,
+          sortOrder: 1,
+          version: 1,
+        },
+      ],
+    };
+    const note = createMockNote("passed");
+    note.body = "宝宝目前喝2段奶粉，这是我们的真实体验记录。";
+    note.topics = [
+      {
+        displayText: "#三段奶粉推荐",
+        isLinkElement: true,
+        hasHref: true,
+        href: "https://www.xiaohongshu.com/search_result?keyword=gum",
+        textColor: "rgb(19, 92, 173)",
+        styleFeature: true,
+      },
+    ];
+    const result = evaluateAudit(note, stageContext);
+    expect(result.autoStatus).toBe("FAILED");
+    expect(result.failureReasons).toContain(
+      "正文段位不属于当前产品阶段话题：GUM：3段/4段/1+段/2+段",
+    );
+    expect(result.failureReasons.join("；")).not.toContain("缺少阶段话题");
+  });
+
+  it("近似阶段话题与缺少阶段话题使用不同失败原因", () => {
+    const stageContext: AuditContext = {
+      ...context,
+      productStage: "IFFO_P1",
+      rules: [
+        {
+          id: "stage-p1",
+          scope: "CAMPAIGN",
+          ruleType: "REQUIRED",
+          topic: "#新生儿奶粉",
+          topicCategory: "PRODUCT_STAGE",
+          applicableStage: "IFFO_P1",
+          exactMatch: true,
+          clickableRequired: true,
+          caseSensitive: false,
+          minCount: 1,
+          sortOrder: 1,
+          version: 1,
+        },
+      ],
+    };
+    const note = createMockNote("passed");
+    note.body = "宝宝正在喝PRE段奶粉，这是我们的真实体验记录。";
+    note.topics = [
+      {
+        displayText: "#新生儿奶粉推荐",
+        isLinkElement: true,
+        hasHref: true,
+        href: "https://www.xiaohongshu.com/search_result?keyword=p1",
+        textColor: "rgb(19, 92, 173)",
+        styleFeature: true,
+      },
+    ];
+    expect(evaluateAudit(note, stageContext).failureReasons.join("；")).toContain(
+      "阶段话题文字不准确",
+    );
+    note.topics = [];
+    expect(evaluateAudit(note, stageContext).failureReasons).toContain(
+      "缺少阶段话题 #新生儿奶粉",
+    );
+  });
+});
