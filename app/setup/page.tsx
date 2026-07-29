@@ -29,6 +29,7 @@ interface SetupStatus {
   initialized: boolean;
   dataDirectory: string;
   desktop: boolean;
+  dataLocationConfirmed: boolean;
   aiEnabled: boolean;
 }
 
@@ -44,6 +45,7 @@ export default function SetupPage() {
   const { message } = App.useApp();
   const [current, setCurrent] = useState(0);
   const [status, setStatus] = useState<SetupStatus | null>(null);
+  const [selectedDataDirectory, setSelectedDataDirectory] = useState("");
   const [busy, setBusy] = useState(false);
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [previewReady, setPreviewReady] = useState(false);
@@ -55,7 +57,9 @@ export default function SetupPage() {
     apiFetch<SetupStatus>("/api/setup/status")
       .then((value) => {
         setStatus(value);
+        setSelectedDataDirectory(value.dataDirectory);
         if (value.initialized) setCurrent(2);
+        else if (value.dataLocationConfirmed) setCurrent(1);
       })
       .catch((error) =>
         message.error(error instanceof Error ? error.message : "读取初始化状态失败"),
@@ -176,16 +180,54 @@ export default function SetupPage() {
           {current === 0 && (
             <>
               <FolderOpenOutlined className="setup-step-icon" />
-              <Typography.Title level={3}>确认数据保存位置</Typography.Title>
+              <Typography.Title level={3}>选择数据保存位置</Typography.Title>
+              <Typography.Paragraph type="secondary">
+                数据库、审核记录、系统设置及登录状态将保存在此目录。
+                <br />
+                软件升级不会覆盖该目录。
+              </Typography.Paragraph>
               <Alert
                 type="info"
                 showIcon
-                message={status?.dataDirectory || "正在读取数据目录"}
-                description="数据库、日志、备份和小红书登录会话会保存在此目录，软件升级不会覆盖。"
+                message={`当前数据位置：${
+                  selectedDataDirectory ||
+                  status?.dataDirectory ||
+                  "正在读取数据目录"
+                }`}
+                description="数据目录不能与软件安装目录相同，也不能位于 Program Files 等通常无写入权限的目录。"
               />
-              <Button type="primary" size="large" onClick={() => setCurrent(1)}>
-                使用此位置
-              </Button>
+              <Space>
+                <Button
+                  type="primary"
+                  size="large"
+                  onClick={() => setCurrent(1)}
+                >
+                  使用默认位置
+                </Button>
+                <Button
+                  size="large"
+                  disabled={!status?.desktop}
+                  onClick={async () => {
+                    const result =
+                      await window.veridiaDesktop?.chooseDataDirectory();
+                    if (!result) return;
+                    if (!result.success || !result.dataDirectory) {
+                      message.error(result.error || "所选目录不可用");
+                      return;
+                    }
+                    setSelectedDataDirectory(result.dataDirectory);
+                    const confirmed =
+                      await window.veridiaDesktop?.confirmDataDirectory(
+                        result.dataDirectory,
+                      );
+                    if (confirmed && !confirmed.success) {
+                      message.error(confirmed.error || "保存数据位置失败");
+                    }
+                  }}
+                >
+                  更改保存位置
+                </Button>
+              </Space>
             </>
           )}
 

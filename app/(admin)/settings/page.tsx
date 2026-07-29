@@ -12,7 +12,7 @@ import {
   Table,
   Tag,
 } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+import { FolderOpenOutlined, ReloadOutlined } from "@ant-design/icons";
 import PageHeader from "@/components/PageHeader";
 import { apiFetch } from "@/lib/client";
 import { settingLabel } from "@/lib/zh-CN";
@@ -36,13 +36,14 @@ interface VersionInfo {
 }
 
 export default function SettingsPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const desktopAvailable =
     typeof window !== "undefined" && Boolean(window.veridiaDesktop);
   const [items, setItems] = useState<Setting[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [migratingData, setMigratingData] = useState(false);
   const load = useCallback(async () => {
     try {
       const data = (await apiFetch<Setting[]>("/api/settings")).filter(
@@ -62,6 +63,42 @@ export default function SettingsPage() {
       : apiFetch<VersionInfo>("/api/system/version");
     request.then(setVersionInfo).catch(() => undefined);
   }, []);
+
+  const changeDataDirectory = async () => {
+    const desktop = window.veridiaDesktop;
+    if (!desktop) return;
+    const selected = await desktop.chooseDataDirectory();
+    if (!selected) return;
+    if (!selected.success || !selected.dataDirectory) {
+      message.error(selected.error || "所选目录不可用");
+      return;
+    }
+    const targetDirectory = selected.dataDirectory;
+    modal.confirm({
+      title: "迁移 VERIDIA 数据",
+      content: (
+        <Space direction="vertical" size={8}>
+          <span>后台服务将在迁移期间暂时停止。</span>
+          <span>系统会先备份数据库，再迁移并校验全部数据。</span>
+          <span style={{ wordBreak: "break-all" }}>
+            新数据位置：{targetDirectory}
+          </span>
+        </Space>
+      ),
+      okText: "开始迁移",
+      cancelText: "取消",
+      onOk: async () => {
+        setMigratingData(true);
+        const result = await desktop.migrateDataDirectory(targetDirectory);
+        if (!result.success) {
+          setMigratingData(false);
+          message.error(result.error || "数据迁移失败，原数据目录保持不变");
+          return Promise.reject();
+        }
+        message.success("数据迁移校验完成，VERIDIA 正在重新启动");
+      },
+    });
+  };
 
   return (
     <>
@@ -107,6 +144,14 @@ export default function SettingsPage() {
           </Descriptions.Item>
         </Descriptions>
         <Space>
+          <Button
+            icon={<FolderOpenOutlined />}
+            loading={migratingData}
+            disabled={!desktopAvailable}
+            onClick={() => void changeDataDirectory()}
+          >
+            更改数据位置
+          </Button>
           <Button
             icon={<ReloadOutlined />}
             loading={checkingUpdate}

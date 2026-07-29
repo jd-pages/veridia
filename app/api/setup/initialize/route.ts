@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { createSession } from "@/lib/auth";
 import { fail, ok } from "@/lib/api";
+import { refreshUsageWithoutBlocking } from "@/lib/central/foundation";
 import { prisma } from "@/lib/db";
 
 export async function POST(request: Request) {
@@ -84,6 +85,7 @@ export async function POST(request: Request) {
     displayName: admin.displayName,
     role: "ADMIN",
   });
+  await refreshUsageWithoutBlocking(admin.id);
   return ok({
     id: admin.id,
     username: admin.username,

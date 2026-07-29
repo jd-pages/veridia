@@ -3,6 +3,13 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("veridiaDesktop", {
   getSystemInfo: () => ipcRenderer.invoke("veridia:get-system-info"),
+  getDataLocation: () => ipcRenderer.invoke("veridia:get-data-location"),
+  chooseDataDirectory: () =>
+    ipcRenderer.invoke("veridia:choose-data-directory"),
+  confirmDataDirectory: (dataDirectory) =>
+    ipcRenderer.invoke("veridia:confirm-data-directory", dataDirectory),
+  migrateDataDirectory: (dataDirectory) =>
+    ipcRenderer.invoke("veridia:migrate-data-directory", dataDirectory),
   checkForUpdates: () => ipcRenderer.invoke("veridia:check-update"),
   downloadUpdate: () => ipcRenderer.invoke("veridia:download-update"),
   installUpdate: () => ipcRenderer.invoke("veridia:install-update"),

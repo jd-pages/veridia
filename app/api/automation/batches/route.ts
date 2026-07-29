@@ -10,6 +10,7 @@ import {
   compatibleStageRuleValues,
   normalizeProductStageTopicValue,
 } from "@/lib/product-stage";
+import { refreshUsageWithoutBlocking } from "@/lib/central/foundation";
 
 export async function GET() {
   const user = await requireApiUser();
@@ -115,6 +116,7 @@ export async function POST(request: Request) {
       summary: `创建自动审核批次，共 ${accepted.length} 条，跳过 ${skipped.length} 条`,
     },
   });
+  await refreshUsageWithoutBlocking(user.id);
   kickAutomaticAuditQueue();
   return ok({ batchId: batch.id, created: accepted.length, skipped });
 }

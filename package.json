@@ -1,7 +1,7 @@
 {
   "name": "veridia",
   "productName": "VERIDIA",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "repository": {
     "type": "git",
@@ -131,11 +131,13 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "VERIDIA",
       "uninstallDisplayName": "VERIDIA",
       "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
       "include": "desktop/installer.nsh"
     }
   }

@@ -10,21 +10,64 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  username      String         @unique
-  displayName   String
-  passwordHash  String
-  role          String         @default("OPERATOR")
-  status        String         @default("ACTIVE")
-  lastLoginAt   DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  manualReviews ManualReview[]
-  operationLogs OperationLog[]
-  auditBatches  AuditBatch[]
+  id                    String              @id @default(cuid())
+  username              String              @unique
+  displayName           String
+  passwordHash          String
+  role                  String              @default("OPERATOR")
+  status                String              @default("ACTIVE")
+  lastLoginAt           DateTime?
+  authProvider          String?
+  centralUserId         String?             @unique
+  teamId                String?
+  centralRole           String?
+  centralStatus         String?
+  lastCentralVerifiedAt DateTime?
+  offlineValidUntil     DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  manualReviews         ManualReview[]
+  operationLogs         OperationLog[]
+  auditBatches          AuditBatch[]
+  usageSummaries        LocalUsageSummary[]
 
   @@index([role, status])
+  @@index([teamId, centralStatus])
   @@map("users")
+}
+
+model LocalDevice {
+  id             String              @id
+  deviceId       String              @unique
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  usageSummaries LocalUsageSummary[]
+
+  @@map("local_devices")
+}
+
+model LocalUsageSummary {
+  id                     String      @id @default(cuid())
+  date                   String
+  localUserId            String
+  deviceId               String
+  softwareVersion        String
+  ruleVersion            String
+  taskCount              Int         @default(0)
+  auditCount             Int         @default(0)
+  passedCount            Int         @default(0)
+  failedCount            Int         @default(0)
+  reviewCount            Int         @default(0)
+  nonSensitiveErrorCount Int         @default(0)
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+  user                   User        @relation(fields: [localUserId], references: [id], onDelete: Cascade)
+  device                 LocalDevice @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+
+  @@unique([date, localUserId, deviceId])
+  @@index([localUserId, date])
+  @@index([deviceId, date])
+  @@map("local_usage_summaries")
 }
 
 model Product {

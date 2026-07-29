@@ -1,0 +1,485 @@
+openapi: 3.1.0
+info:
+  title: VERIDIA Central Control Plane API
+  version: 0.1.0-draft
+  description: |
+    第二、三阶段中央账号、设备、规则与汇总接口草案。
+    第一阶段客户端不得调用这些接口。
+x-veridia-implementation-status: draft-no-client-calls
+servers:
+  - url: https://control.example.invalid
+    description: 占位地址，不得在客户端使用
+tags:
+  - name: ClientAuth
+  - name: ClientDevice
+  - name: ClientSummary
+  - name: ClientRules
+  - name: Administration
+paths:
+  /v1/client/auth/login:
+    post:
+      tags: [ClientAuth]
+      summary: 登录中央账号并申请设备绑定
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: 账号停用、设备被禁用或超过设备限制
+  /v1/client/auth/refresh:
+    post:
+      tags: [ClientAuth]
+      summary: 轮换刷新令牌
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [deviceId, refreshToken]
+              properties:
+                deviceId:
+                  type: string
+                  format: uuid
+                refreshToken:
+                  type: string
+                  writeOnly: true
+      responses:
+        "200":
+          description: 刷新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenSet"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/client/auth/logout:
+    post:
+      tags: [ClientAuth]
+      summary: 撤销当前刷新会话
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: 已退出
+  /v1/client/devices/register:
+    post:
+      tags: [ClientDevice]
+      summary: 注册随机设备ID，不接收硬件序列号
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceRegistration"
+      responses:
+        "200":
+          description: 设备绑定结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceState"
+  /v1/client/devices/heartbeat:
+    post:
+      tags: [ClientDevice]
+      summary: 上报在线、版本和同步状态
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceHeartbeat"
+      responses:
+        "200":
+          description: 返回账号和设备当前状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceState"
+        "403":
+          description: 账号停用、强制退出或设备解绑
+  /v1/client/usage/daily:
+    post:
+      tags: [ClientSummary]
+      summary: 幂等提交按日使用汇总
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsageDailySummary"
+      responses:
+        "202":
+          description: 已接受
+  /v1/client/errors/daily:
+    post:
+      tags: [ClientSummary]
+      summary: 提交非敏感错误代码计数
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ErrorDailySummary"
+      responses:
+        "202":
+          description: 已接受
+  /v1/client/rules/manifest:
+    get:
+      tags: [ClientRules]
+      summary: 查询可用规则版本及校验信息
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 规则清单
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuleManifest"
+  /v1/client/rules/bundles/{version}:
+    get:
+      tags: [ClientRules]
+      summary: 下载签名规则包
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 不可变规则包
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuleBundle"
+  /v1/admin/accounts:
+    get:
+      tags: [Administration]
+      summary: 查询账号列表
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 账号摘要列表
+    post:
+      tags: [Administration]
+      summary: 创建中央账号
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: 已创建
+  /v1/admin/accounts/{userId}/status:
+    put:
+      tags: [Administration]
+      summary: 启用或停用账号
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: 状态已更新并记录管理审计日志
+  /v1/admin/devices/{deviceId}/unbind:
+    post:
+      tags: [Administration]
+      summary: 解绑设备并撤销刷新会话
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: 已解绑
+  /v1/admin/devices/{deviceId}/force-logout:
+    post:
+      tags: [Administration]
+      summary: 强制设备退出
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: 会话已撤销
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    Unauthorized:
+      description: 凭据无效或已过期
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password, device]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 128
+        password:
+          type: string
+          minLength: 8
+          maxLength: 256
+          writeOnly: true
+        device:
+          $ref: "#/components/schemas/DeviceRegistration"
+        privacyNoticeVersion:
+          type: string
+          maxLength: 32
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required: [user, device, tokens]
+      properties:
+        user:
+          $ref: "#/components/schemas/AccountProjection"
+        device:
+          $ref: "#/components/schemas/DeviceState"
+        tokens:
+          $ref: "#/components/schemas/TokenSet"
+    TokenSet:
+      type: object
+      additionalProperties: false
+      required: [accessToken, accessExpiresAt, refreshToken, offlineGrant]
+      properties:
+        accessToken:
+          type: string
+          writeOnly: true
+        accessExpiresAt:
+          type: string
+          format: date-time
+        refreshToken:
+          type: string
+          writeOnly: true
+        offlineGrant:
+          type: string
+          writeOnly: true
+        offlineValidUntil:
+          type: string
+          format: date-time
+    AccountProjection:
+      type: object
+      additionalProperties: false
+      required: [userId, username, displayName, teamId, role, status]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        displayName:
+          type: string
+        teamId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [SUPER_ADMIN, ADMIN, AUDITOR, VIEWER]
+        status:
+          type: string
+          enum: [ACTIVE, DISABLED, LOCKED]
+    DeviceRegistration:
+      type: object
+      additionalProperties: false
+      required: [deviceId, softwareVersion, platform]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          description: 客户端随机生成，不是硬件指纹
+        softwareVersion:
+          type: string
+        platform:
+          type: string
+          const: WINDOWS
+        deviceLabel:
+          type: string
+          maxLength: 120
+    DeviceHeartbeat:
+      type: object
+      additionalProperties: false
+      required:
+        [localUserId, deviceId, softwareVersion, ruleVersion, lastSeenAt, syncStatus]
+      properties:
+        localUserId:
+          type: string
+        deviceId:
+          type: string
+          format: uuid
+        softwareVersion:
+          type: string
+        ruleVersion:
+          type: string
+        lastSeenAt:
+          type: string
+          format: date-time
+        syncStatus:
+          type: string
+          enum: [IDLE, SYNCED, PENDING, ERROR]
+    DeviceState:
+      type: object
+      additionalProperties: false
+      required: [deviceId, status, accountStatus]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [BOUND, REVOKED, BLOCKED]
+        accountStatus:
+          type: string
+          enum: [ACTIVE, DISABLED, LOCKED]
+        forceLogout:
+          type: boolean
+    UsageDailySummary:
+      type: object
+      additionalProperties: false
+      required:
+        - date
+        - localUserId
+        - deviceId
+        - softwareVersion
+        - ruleVersion
+        - taskCount
+        - auditCount
+        - passedCount
+        - failedCount
+        - reviewCount
+        - nonSensitiveErrorCount
+      properties:
+        date:
+          type: string
+          format: date
+        localUserId:
+          type: string
+        deviceId:
+          type: string
+          format: uuid
+        softwareVersion:
+          type: string
+        ruleVersion:
+          type: string
+        taskCount:
+          type: integer
+          minimum: 0
+        auditCount:
+          type: integer
+          minimum: 0
+        passedCount:
+          type: integer
+          minimum: 0
+        failedCount:
+          type: integer
+          minimum: 0
+        reviewCount:
+          type: integer
+          minimum: 0
+        nonSensitiveErrorCount:
+          type: integer
+          minimum: 0
+    ErrorDailySummary:
+      type: object
+      additionalProperties: false
+      required: [date, localUserId, deviceId, softwareVersion, errorCode, count]
+      properties:
+        date:
+          type: string
+          format: date
+        localUserId:
+          type: string
+        deviceId:
+          type: string
+          format: uuid
+        softwareVersion:
+          type: string
+        errorCode:
+          type: string
+          pattern: "^[A-Z0-9_]{2,64}$"
+        count:
+          type: integer
+          minimum: 0
+    RuleManifest:
+      type: object
+      additionalProperties: false
+      required: [latestVersion, minimumClientVersion, sha256, signature]
+      properties:
+        latestVersion:
+          type: string
+        minimumClientVersion:
+          type: string
+        sha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        signature:
+          type: string
+        publishedAt:
+          type: string
+          format: date-time
+    RuleBundle:
+      type: object
+      additionalProperties: false
+      required: [version, schemaVersion, sha256, signature, payload]
+      properties:
+        version:
+          type: string
+        schemaVersion:
+          type: integer
+        sha256:
+          type: string
+        signature:
+          type: string
+        payload:
+          type: object
+          description: 第二阶段再定义产品、活动、阶段和规则的完整Schema

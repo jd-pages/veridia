@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { createSession } from "@/lib/auth";
 import { fail, ok } from "@/lib/api";
+import { refreshUsageWithoutBlocking } from "@/lib/central/foundation";
 
 export async function POST(request: Request) {
   const body = (await request.json()) as { username?: string; password?: string };
@@ -24,6 +25,7 @@ export async function POST(request: Request) {
     where: { id: user.id },
     data: { lastLoginAt: new Date() },
   });
+  await refreshUsageWithoutBlocking(user.id);
   return ok({
     id: user.id,
     username: user.username,

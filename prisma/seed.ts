@@ -225,6 +225,11 @@ async function main() {
   await prisma.systemSetting.createMany({
     data: [
       {
+        key: "AUTH_MODE",
+        value: "LOCAL",
+        description: "认证模式：LOCAL / DUAL / CENTRAL；第一阶段固定使用 LOCAL",
+      },
+      {
         key: "AI_ENABLED",
         value: "false",
         description: "AI 语义辅助开关；Key 只从服务端环境变量读取",

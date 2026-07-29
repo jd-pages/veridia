@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1"
+    />
+    <title>VERIDIA - 选择数据保存位置</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: #182131;
+        background: #f4f6f9;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 36px;
+        background:
+          radial-gradient(circle at 10% 10%, rgba(229, 72, 77, 0.06), transparent 32%),
+          #f4f6f9;
+      }
+      main {
+        width: min(720px, 100%);
+        background: #fff;
+        border: 1px solid #e8ebf0;
+        border-radius: 18px;
+        box-shadow: 0 20px 60px rgba(17, 24, 39, 0.1);
+        overflow: hidden;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 24px 30px;
+        color: #f8fafc;
+        background: #111827;
+      }
+      .mark {
+        width: 38px;
+        height: 38px;
+        flex: none;
+      }
+      .brand {
+        font-family: Manrope, Inter, sans-serif;
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+      }
+      .tagline {
+        margin-top: 3px;
+        color: #8d99aa;
+        font-family: Manrope, Inter, sans-serif;
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.22em;
+      }
+      section {
+        padding: 42px 46px 46px;
+      }
+      .step {
+        color: #8f1d27;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+      }
+      h1 {
+        margin: 10px 0 12px;
+        font-size: 28px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+      .description {
+        margin: 0;
+        color: #687386;
+        font-size: 15px;
+        line-height: 1.8;
+      }
+      .path-card {
+        margin: 26px 0 20px;
+        padding: 18px 20px;
+        border: 1px solid #e2e6ec;
+        border-radius: 12px;
+        background: #f8fafc;
+      }
+      .path-label {
+        margin-bottom: 8px;
+        color: #7b8494;
+        font-size: 12px;
+      }
+      #path {
+        overflow-wrap: anywhere;
+        color: #263244;
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      button {
+        min-height: 42px;
+        padding: 0 20px;
+        border: 1px solid #d8dde5;
+        border-radius: 10px;
+        color: #303b4c;
+        background: #fff;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          border-color 0.18s ease,
+          background 0.18s ease,
+          transform 0.18s ease;
+      }
+      button:hover {
+        border-color: #9da7b5;
+        background: #fafbfc;
+      }
+      button:active {
+        transform: translateY(1px);
+      }
+      button.primary {
+        border-color: #e5484d;
+        color: #fff;
+        background: #e5484d;
+      }
+      button.primary:hover {
+        border-color: #c9353c;
+        background: #c9353c;
+      }
+      button:disabled {
+        cursor: wait;
+        opacity: 0.65;
+      }
+      #confirm {
+        display: none;
+      }
+      #error {
+        display: none;
+        margin-top: 16px;
+        padding: 11px 14px;
+        border: 1px solid #ffd1d2;
+        border-radius: 9px;
+        color: #9f2730;
+        background: #fff5f5;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .hint {
+        margin-top: 20px;
+        color: #939cab;
+        font-size: 12px;
+        line-height: 1.7;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <svg class="mark" viewBox="0 0 48 48" aria-hidden="true">
+          <path
+            d="M15 4h18l9 9v19l-9 10H15L6 33V14z"
+            fill="none"
+            stroke="#E5484D"
+            stroke-width="3"
+            stroke-linejoin="bevel"
+          />
+          <path
+            d="M14 13l9 24 11-24h-6l-5 14-5-14z"
+            fill="#F8FAFC"
+          />
+          <path d="M33 4l6 6" stroke="#C9A86A" stroke-width="2" />
+        </svg>
+        <div>
+          <div class="brand">VERIDIA</div>
+          <div class="tagline">CONTENT GOVERNANCE</div>
+        </div>
+      </header>
+      <section>
+        <div class="step">首次启动 · 第 1 步</div>
+        <h1>选择数据保存位置</h1>
+        <p class="description">
+          数据库、审核记录、系统设置及登录状态将保存在此目录。<br />
+          软件升级不会覆盖该目录。
+        </p>
+        <div class="path-card">
+          <div class="path-label" id="path-label">默认数据位置</div>
+          <div id="path">正在读取…</div>
+        </div>
+        <div class="actions">
+          <button class="primary" id="default">使用默认位置</button>
+          <button id="choose">更改保存位置</button>
+          <button class="primary" id="confirm">确认并继续</button>
+        </div>
+        <div id="error" role="alert"></div>
+        <div class="hint">
+          请选择有写入权限的独立文件夹。数据目录不能位于软件安装目录或
+          Program Files 中。
+        </div>
+      </section>
+    </main>
+    <script>
+      const api = window.veridiaDesktop;
+      const pathNode = document.getElementById("path");
+      const pathLabel = document.getElementById("path-label");
+      const errorNode = document.getElementById("error");
+      const defaultButton = document.getElementById("default");
+      const chooseButton = document.getElementById("choose");
+      const confirmButton = document.getElementById("confirm");
+      let state;
+      let selectedDirectory;
+
+      function showError(message) {
+        errorNode.textContent = message || "目录不可用，请重新选择。";
+        errorNode.style.display = "block";
+      }
+
+      function clearError() {
+        errorNode.textContent = "";
+        errorNode.style.display = "none";
+      }
+
+      function setBusy(busy) {
+        defaultButton.disabled = busy;
+        chooseButton.disabled = busy;
+        confirmButton.disabled = busy;
+      }
+
+      async function confirmDirectory(directory) {
+        clearError();
+        setBusy(true);
+        const result = await api.confirmDataDirectory(directory);
+        if (!result.success) {
+          showError(result.error);
+          setBusy(false);
+          return;
+        }
+        pathLabel.textContent = "数据位置已保存，正在启动 VERIDIA";
+        pathNode.textContent = result.dataDirectory;
+      }
+
+      async function initialize() {
+        state = await api.getDataLocation();
+        selectedDirectory = state.defaultDirectory;
+        pathNode.textContent = state.defaultDirectory;
+        defaultButton.addEventListener("click", () =>
+          confirmDirectory(state.defaultDirectory),
+        );
+        chooseButton.addEventListener("click", async () => {
+          clearError();
+          const result = await api.chooseDataDirectory();
+          if (!result) return;
+          if (!result.success) {
+            showError(result.error);
+            return;
+          }
+          selectedDirectory = result.dataDirectory;
+          pathLabel.textContent = "当前数据位置";
+          pathNode.textContent = selectedDirectory;
+          confirmButton.style.display = "inline-flex";
+          defaultButton.classList.remove("primary");
+        });
+        confirmButton.addEventListener("click", () =>
+          confirmDirectory(selectedDirectory),
+        );
+      }
+
+      initialize().catch((error) =>
+        showError(error?.message || "无法读取数据目录设置。"),
+      );
+    </script>
+  </body>
+</html>

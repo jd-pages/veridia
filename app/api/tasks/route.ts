@@ -5,6 +5,7 @@ import {
   compatibleStageRuleValues,
   normalizeProductStageTopicValue,
 } from "@/lib/product-stage";
+import { refreshUsageWithoutBlocking } from "@/lib/central/foundation";
 
 export async function GET(request: Request) {
   const user = await requireApiUser();
@@ -115,5 +116,6 @@ export async function POST(request: Request) {
       summary: `手工创建 ${created.length} 条任务，异常 ${errors.length} 条`,
     },
   });
+  await refreshUsageWithoutBlocking(user.id);
   return ok({ created, errors });
 }

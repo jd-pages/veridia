@@ -27,6 +27,13 @@ declare global {
     manual?: boolean;
   }
 
+  interface VeridiaDataLocationResult {
+    success: boolean;
+    dataDirectory?: string;
+    fileCount?: number;
+    error?: string;
+  }
+
   interface Window {
     veridiaDesktop?: {
       getSystemInfo(): Promise<{
@@ -38,6 +45,19 @@ declare global {
         packaged: boolean;
         updateStatus: VeridiaUpdateStatus;
       }>;
+      getDataLocation(): Promise<{
+        confirmed: boolean;
+        defaultDirectory: string;
+        currentDirectory: string;
+        installDirectory: string;
+      }>;
+      chooseDataDirectory(): Promise<VeridiaDataLocationResult | null>;
+      confirmDataDirectory(
+        dataDirectory: string,
+      ): Promise<VeridiaDataLocationResult>;
+      migrateDataDirectory(
+        dataDirectory: string,
+      ): Promise<VeridiaDataLocationResult>;
       checkForUpdates(): Promise<void>;
       downloadUpdate(): Promise<boolean>;
       installUpdate(): Promise<boolean>;

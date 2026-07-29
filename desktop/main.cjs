@@ -14,6 +14,16 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
+const {
+  copyManagedData,
+  createDirectoryLayout,
+  ensureManagedDirectories,
+  hasExistingVeridiaData,
+  managedManifest,
+  readDataLocation,
+  validateDataDirectory,
+  writeDataLocation,
+} = require("./data-location.cjs");
 
 const APP_NAME = "VERIDIA";
 const PORT = 3100;
@@ -24,20 +34,21 @@ app.setAppUserModelId("com.veridia.contentgovernance");
 
 const localAppData =
   process.env.LOCALAPPDATA || path.join(app.getPath("appData"), "..", "Local");
-const dataRoot = path.join(localAppData, APP_NAME);
-app.setPath("userData", dataRoot);
+const defaultDataRoot = path.join(localAppData, APP_NAME);
+const storedDataRoot = readDataLocation(defaultDataRoot);
+let dataLocationConfirmed = Boolean(storedDataRoot);
+let dataRoot = storedDataRoot || defaultDataRoot;
+if (!dataLocationConfirmed && hasExistingVeridiaData(defaultDataRoot)) {
+  dataLocationConfirmed = true;
+  dataRoot = defaultDataRoot;
+  writeDataLocation(defaultDataRoot, defaultDataRoot);
+}
 
-const directories = {
-  root: dataRoot,
-  data: path.join(dataRoot, "data"),
-  sessions: path.join(dataRoot, "sessions", "xiaohongshu-profile"),
-  config: path.join(dataRoot, "config"),
-  backups: path.join(dataRoot, "backups"),
-  logs: path.join(dataRoot, "logs"),
-};
-const databasePath = path.join(directories.data, "veridia.db");
-const configPath = path.join(directories.config, "settings.json");
-const desktopLogPath = path.join(directories.logs, "desktop.log");
+let directories = createDirectoryLayout(dataRoot);
+let databasePath = path.join(directories.data, "veridia.db");
+let configPath = path.join(directories.config, "settings.json");
+let desktopLogPath = path.join(directories.logs, "desktop.log");
+app.setPath("userData", dataRoot);
 
 let mainWindow;
 let tray;
@@ -49,11 +60,12 @@ let lastUpdateStatus = { state: "idle" };
 let manualUpdateCheck = false;
 let updateCheckPromise;
 let updateDownloadPromise;
+let applicationStarted = false;
+let updaterConfigured = false;
+let migrationInProgress = false;
 
 function ensureDirectories() {
-  for (const value of Object.values(directories)) {
-    fs.mkdirSync(value, { recursive: true });
-  }
+  ensureManagedDirectories(dataRoot);
 }
 
 function writeLog(message, error) {
@@ -147,11 +159,36 @@ function buildInfo() {
   }
 }
 
-function migrationEnvironment() {
+function migrationEnvironment(targetDatabasePath = databasePath) {
   return nodeEnvironment({
-    DATABASE_URL: toDatabaseUrl(databasePath),
+    DATABASE_URL: toDatabaseUrl(targetDatabasePath),
     RUST_LOG: process.env.RUST_LOG || "info",
   });
+}
+
+function verifyDatabaseMigrations(targetDatabasePath) {
+  const prismaCli = path.join(
+    applicationRoot(),
+    "node_modules",
+    "prisma",
+    "build",
+    "index.js",
+  );
+  const schemaPath = path.join(applicationRoot(), "prisma", "schema.prisma");
+  const result = spawnSync(
+    nodeRuntimeExecutable(),
+    [prismaCli, "migrate", "status", "--schema", schemaPath],
+    {
+      cwd: applicationRoot(),
+      env: migrationEnvironment(targetDatabasePath),
+      encoding: "utf8",
+      windowsHide: true,
+      maxBuffer: 20 * 1024 * 1024,
+    },
+  );
+  if (result.status !== 0) {
+    throw new Error("迁移后的数据库校验失败，仍将继续使用原数据目录。");
+  }
 }
 
 function runDatabaseMigrations() {
@@ -271,6 +308,7 @@ function serverEnvironment() {
     AUTH_COOKIE_SECURE: "false",
     EXTENSION_TOKEN: config.extensionToken,
     VERIDIA_DESKTOP: "true",
+    VERIDIA_DATA_LOCATION_CONFIRMED: "true",
     VERIDIA_DATA_DIR: dataRoot,
     VERIDIA_APP_VERSION: app.getVersion(),
     VERIDIA_BUILD_DATE:
@@ -327,6 +365,34 @@ function stopServer() {
   serverProcess = undefined;
   serverLogStream?.end();
   serverLogStream = undefined;
+}
+
+function stopServerAndWait() {
+  const processToStop = serverProcess;
+  if (!processToStop) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (serverProcess === processToStop) serverProcess = undefined;
+      serverLogStream?.end();
+      serverLogStream = undefined;
+      resolve();
+    };
+    processToStop.once("exit", finish);
+    processToStop.kill();
+    setTimeout(() => {
+      if (settled) return;
+      if (process.platform === "win32" && processToStop.pid) {
+        spawnSync("taskkill.exe", ["/PID", String(processToStop.pid), "/T", "/F"], {
+          windowsHide: true,
+          stdio: "ignore",
+        });
+      }
+      finish();
+    }, 5_000);
+  });
 }
 
 function waitForServer(timeoutMs = 60_000) {
@@ -387,6 +453,8 @@ function normalizedReleaseNotes(value) {
 }
 
 function setupUpdater() {
+  if (updaterConfigured) return;
+  updaterConfigured = true;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowDowngrade = false;
@@ -470,16 +538,171 @@ async function checkForUpdates(manual = false) {
   return updateCheckPromise;
 }
 
+function installDirectory() {
+  return app.isPackaged
+    ? path.dirname(process.execPath)
+    : path.dirname(applicationRoot());
+}
+
+function validateSelectedDataDirectory(candidate) {
+  return validateDataDirectory(candidate, {
+    installDirectory: installDirectory(),
+    applicationDirectory: applicationRoot(),
+  });
+}
+
+async function chooseDataDirectory() {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "选择数据保存位置",
+    defaultPath: dataRoot || defaultDataRoot,
+    buttonLabel: "选择此文件夹",
+    properties: ["openDirectory", "createDirectory", "promptToCreate"],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  try {
+    return {
+      success: true,
+      dataDirectory: validateSelectedDataDirectory(result.filePaths[0]),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "所选目录不可用。",
+    };
+  }
+}
+
+function relaunchWithSelectedDataDirectory() {
+  setTimeout(() => {
+    quitting = true;
+    app.relaunch();
+    app.exit(0);
+  }, 700);
+}
+
+async function confirmInitialDataDirectory(candidate) {
+  try {
+    const target = validateSelectedDataDirectory(candidate);
+    writeDataLocation(defaultDataRoot, target);
+    dataLocationConfirmed = true;
+    relaunchWithSelectedDataDirectory();
+    return { success: true, dataDirectory: target };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "无法保存数据目录设置。",
+    };
+  }
+}
+
+async function migrateDataDirectory(candidate) {
+  if (migrationInProgress) {
+    return { success: false, error: "数据迁移正在进行，请勿重复操作。" };
+  }
+  migrationInProgress = true;
+  const sourceRoot = dataRoot;
+  let targetRoot;
+  let targetCreated = false;
+  let serverWasRunning = Boolean(serverProcess);
+  try {
+    targetRoot = validateSelectedDataDirectory(candidate);
+    if (path.resolve(targetRoot).toLowerCase() === path.resolve(sourceRoot).toLowerCase()) {
+      throw new Error("所选目录与当前数据目录相同。");
+    }
+    const existingEntries = fs.readdirSync(targetRoot);
+    if (existingEntries.length > 0) {
+      throw new Error("目标目录不是空目录，请选择新的空文件夹。");
+    }
+
+    ensureDirectories();
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    if (fs.existsSync(databasePath)) {
+      fs.copyFileSync(
+        databasePath,
+        path.join(directories.backups, `before-data-move-${stamp}.db`),
+      );
+    }
+
+    await stopServerAndWait();
+    const beforeManifest = managedManifest(sourceRoot);
+    const copied = copyManagedData(sourceRoot, targetRoot);
+    targetCreated = true;
+    if (
+      JSON.stringify(beforeManifest) !== JSON.stringify(copied.targetManifest)
+    ) {
+      throw new Error("迁移文件校验失败，原数据目录保持不变。");
+    }
+    const migratedDatabase = path.join(targetRoot, "data", "veridia.db");
+    if (!fs.existsSync(migratedDatabase)) {
+      throw new Error("迁移后的数据库不存在，原数据目录保持不变。");
+    }
+    verifyDatabaseMigrations(migratedDatabase);
+
+    writeDataLocation(defaultDataRoot, targetRoot);
+    writeLog(`数据目录迁移校验完成：${sourceRoot} -> ${targetRoot}`);
+    relaunchWithSelectedDataDirectory();
+    return {
+      success: true,
+      dataDirectory: targetRoot,
+      fileCount: copied.targetManifest.length,
+    };
+  } catch (error) {
+    try {
+      writeDataLocation(defaultDataRoot, sourceRoot);
+    } catch (pointerError) {
+      writeLog("恢复原数据目录定位配置失败", pointerError);
+    }
+    if (targetCreated && targetRoot && fs.existsSync(targetRoot)) {
+      try {
+        fs.rmSync(targetRoot, { recursive: true, force: true });
+      } catch (cleanupError) {
+        writeLog("清理迁移失败目录时出错", cleanupError);
+      }
+    }
+    if (serverWasRunning && !serverProcess) {
+      try {
+        startServer();
+        await waitForServer();
+      } catch (restartError) {
+        writeLog("数据迁移失败后重启后台服务失败", restartError);
+      }
+    }
+    writeLog("数据目录迁移失败", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "数据迁移失败，原数据目录保持不变。",
+    };
+  } finally {
+    migrationInProgress = false;
+  }
+}
+
 function registerIpc() {
   ipcMain.handle("veridia:get-system-info", () => ({
     version: app.getVersion(),
     buildDate: process.env.VERIDIA_BUILD_DATE || buildInfo().buildDate || null,
     databaseVersion: latestMigrationName(),
     dataDirectory: dataRoot,
-    autoUpdate: readConfig().autoUpdate,
+    autoUpdate: dataLocationConfirmed ? readConfig().autoUpdate : true,
     packaged: app.isPackaged,
     updateStatus: lastUpdateStatus,
   }));
+  ipcMain.handle("veridia:get-data-location", () => ({
+    confirmed: dataLocationConfirmed,
+    defaultDirectory: defaultDataRoot,
+    currentDirectory: dataRoot,
+    installDirectory: installDirectory(),
+  }));
+  ipcMain.handle("veridia:choose-data-directory", chooseDataDirectory);
+  ipcMain.handle("veridia:confirm-data-directory", (_event, candidate) =>
+    confirmInitialDataDirectory(candidate),
+  );
+  ipcMain.handle("veridia:migrate-data-directory", (_event, candidate) =>
+    migrateDataDirectory(candidate),
+  );
   ipcMain.handle("veridia:check-update", () => checkForUpdates(true));
   ipcMain.handle("veridia:download-update", async () => {
     updateDownloadPromise ??= autoUpdater.downloadUpdate().finally(() => {
@@ -558,10 +781,14 @@ function createMainWindow() {
       sandbox: true,
     },
   });
-  mainWindow.loadURL(`http://${HOST}:${PORT}`);
   mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.on("close", async (event) => {
     if (quitting) return;
+    if (!applicationStarted) {
+      quitting = true;
+      app.quit();
+      return;
+    }
     event.preventDefault();
     const answer = await dialog.showMessageBox(mainWindow, {
       type: "question",
@@ -582,19 +809,31 @@ function createMainWindow() {
   });
 }
 
-async function boot() {
+async function startApplication() {
   ensureDirectories();
   readConfig();
   runDatabaseMigrations();
   startServer();
   await waitForServer();
-  registerIpc();
   setupUpdater();
-  createMainWindow();
+  applicationStarted = true;
+  await mainWindow.loadURL(`http://${HOST}:${PORT}`);
   createTray();
   if (readConfig().autoUpdate) {
     setTimeout(() => void checkForUpdates(false), 12_000);
   }
+}
+
+async function boot() {
+  registerIpc();
+  createMainWindow();
+  if (!dataLocationConfirmed) {
+    await mainWindow.loadFile(
+      path.join(applicationRoot(), "desktop", "data-location.html"),
+    );
+    return;
+  }
+  await startApplication();
 }
 
 const hasLock = app.requestSingleInstanceLock();
