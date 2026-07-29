@@ -3,6 +3,8 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { assertPackagedPrismaClient } from "./prisma-runtime.mjs";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const updateUrl =
   process.env.VERIDIA_UPDATE_URL ||
@@ -25,4 +27,17 @@ const result = spawnSync(
 );
 
 if (result.error) throw result.error;
-process.exitCode = result.status ?? 1;
+if (result.status !== 0) {
+  process.exitCode = result.status ?? 1;
+} else {
+  assertPackagedPrismaClient(
+    path.join(
+      root,
+      "dist-installer",
+      "win-unpacked",
+      "resources",
+      "app",
+    ),
+    "win-unpacked/resources/app",
+  );
+}

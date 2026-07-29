@@ -4,6 +4,11 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import {
+  assertGeneratedPrismaClient,
+  copyGeneratedPrismaClient,
+} from "./prisma-runtime.mjs";
+
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const standaloneRoot = path.join(projectRoot, ".next", "standalone");
 const runtimeRoot = path.join(projectRoot, "desktop-runtime");
@@ -56,6 +61,16 @@ copyDirectory(
   path.join(standaloneRoot, ".next", "static"),
 );
 copyDirectory(path.join(projectRoot, "public"), path.join(standaloneRoot, "public"));
+
+assertGeneratedPrismaClient(
+  projectRoot,
+  "项目 node_modules/.prisma/client",
+);
+copyDirectory(
+  path.join(projectRoot, "node_modules", "@prisma", "client"),
+  path.join(standaloneRoot, "node_modules", "@prisma", "client"),
+);
+copyGeneratedPrismaClient(projectRoot, standaloneRoot);
 
 // Next 16 Turbopack may externalize Prisma Client under a content-hashed
 // package name while standalone tracing only copies the canonical package.

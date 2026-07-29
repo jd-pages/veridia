@@ -1,7 +1,7 @@
 {
   "name": "veridia",
   "productName": "VERIDIA",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "repository": {
     "type": "git",
@@ -13,8 +13,8 @@
   },
   "scripts": {
     "dev": "next dev -p 3100",
-    "build": "next build",
-    "desktop:prepare": "node scripts/prepare-desktop.mjs",
+    "build": "prisma generate && node scripts/assert-prisma-generated.mjs && next build",
+    "desktop:prepare": "prisma generate && node scripts/assert-prisma-generated.mjs && node scripts/prepare-desktop.mjs",
     "desktop:build": "npm run build && npm run desktop:prepare && node scripts/build-desktop.mjs",
     "desktop:dir": "npm run build && npm run desktop:prepare && node scripts/build-desktop.mjs --dir",
     "desktop:dev": "npm run build && npm run desktop:prepare && electron .",
@@ -29,6 +29,8 @@
     "release:major": "node scripts/release.mjs major",
     "release:tag": "node scripts/create-release-tag.mjs",
     "db:generate": "prisma generate",
+    "prisma:assert": "node scripts/assert-prisma-generated.mjs",
+    "prisma:assert-packaged": "node scripts/assert-packaged-prisma.mjs",
     "db:ensure": "tsx scripts/ensure-sqlite-db.ts",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
@@ -86,6 +88,7 @@
       "output": "dist-installer"
     },
     "electronDist": "node_modules/electron/dist",
+    "afterPack": "scripts/after-pack.mjs",
     "asar": false,
     "files": [
       "desktop/**/*",

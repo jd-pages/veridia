@@ -65,6 +65,12 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path .ci, artifacts/release-logs | Out-Null
 
+      - name: 生成并检查 Prisma Client
+        shell: pwsh
+        run: |
+          npm run db:generate *>&1 | Tee-Object artifacts/release-logs/prisma-generate.log
+          npm run prisma:assert *>&1 | Tee-Object -Append artifacts/release-logs/prisma-generate.log
+
       - name: TypeScript 检查
         shell: pwsh
         run: npm run typecheck *>&1 | Tee-Object artifacts/release-logs/typecheck.log
@@ -124,6 +130,10 @@ jobs:
       - name: 构建 NSIS 安装包和更新元数据
         shell: pwsh
         run: npx electron-builder --win nsis --publish never *>&1 | Tee-Object artifacts/release-logs/electron-builder.log
+
+      - name: 检查安装包 Prisma 运行文件
+        shell: pwsh
+        run: npm run prisma:assert-packaged *>&1 | Tee-Object artifacts/release-logs/prisma-packaged.log
 
       - name: 确认签名状态
         shell: pwsh
