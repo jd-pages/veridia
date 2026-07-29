@@ -23,7 +23,7 @@ jobs:
       EXTENSION_TOKEN: local-extension-demo-token
       AI_ENABLED: "false"
       PLAYWRIGHT_BROWSER_CHANNEL: ""
-      E2E_PORT: "3210"
+      E2E_PORT: "3100"
       E2E_REUSE_SERVER: "false"
       RUST_LOG: info
 
@@ -46,6 +46,12 @@ jobs:
       - name: 创建隔离测试目录
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path .ci, artifacts/ci-logs | Out-Null
+
+      - name: 生成并检查 Prisma Client
+        shell: pwsh
+        run: |
+          npm run db:generate *>&1 | Tee-Object artifacts/ci-logs/prisma-generate.log
+          npm run prisma:assert *>&1 | Tee-Object -Append artifacts/ci-logs/prisma-generate.log
 
       - name: TypeScript 检查
         shell: pwsh

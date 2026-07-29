@@ -34,7 +34,7 @@ jobs:
       EXTENSION_TOKEN: local-extension-demo-token
       AI_ENABLED: "false"
       PLAYWRIGHT_BROWSER_CHANNEL: ""
-      E2E_PORT: "3210"
+      E2E_PORT: "3100"
       E2E_REUSE_SERVER: "false"
       RUST_LOG: info
       VERIDIA_UPDATE_URL: https://github.com/${{ github.repository }}/releases/latest/download
