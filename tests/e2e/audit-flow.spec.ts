@@ -330,7 +330,7 @@ test("本地免登录、创建任务、审核、详情、Excel 与插件提交�
       urls: Array.from(
         { length: 3 },
         (_item, index) =>
-          `http://localhost:3100/mock/xhs?case=passed&autoDelay=900&e2e=${pauseSuffix}-${index}`,
+          `http://localhost:3100/mock/xhs?case=passed&autoDelay=2000&e2e=${pauseSuffix}-${index}`,
       ),
     },
   });

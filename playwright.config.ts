@@ -4,6 +4,14 @@ import path from "node:path";
 
 const port = Number(process.env.E2E_PORT || 3100);
 const baseURL = `http://127.0.0.1:${port}`;
+const defaultE2eDatabasePath = path.resolve(
+  process.cwd(),
+  "prisma",
+  "e2e.db",
+);
+const e2eDatabaseUrl =
+  process.env.E2E_DATABASE_URL?.trim() ||
+  `file:${defaultE2eDatabasePath}`;
 const bundledBrowserRoot = path.join(
   process.cwd(),
   "desktop-runtime",
@@ -57,10 +65,13 @@ export default defineConfig({
   webServer: {
     command: `node node_modules/next/dist/bin/next dev -p ${port}`,
     url: `${baseURL}/login`,
-    reuseExistingServer: process.env.E2E_REUSE_SERVER !== "false",
+    reuseExistingServer: process.env.E2E_REUSE_SERVER === "true",
     timeout: 240_000,
     env: {
       ...process.env,
+      DATABASE_URL: e2eDatabaseUrl,
+      EXTENSION_TOKEN:
+        process.env.EXTENSION_TOKEN || "local-extension-demo-token",
       ...(executablePath ? { PLAYWRIGHT_EXECUTABLE_PATH: executablePath } : {}),
     },
   },

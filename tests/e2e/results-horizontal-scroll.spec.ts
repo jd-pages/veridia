@@ -118,7 +118,19 @@ test("审核结果表格悬浮横向滚动、固定列和重算", async ({ page 
   await tableBody.evaluate((element) =>
     element.scrollIntoView({ block: "center" }),
   );
-  await expect(stickyScroll).toBeVisible();
+  const pageTwoLayout = await tableBody.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      overflows: element.scrollWidth - element.clientWidth > 1,
+      nativeScrollbarInView: rect.bottom <= window.innerHeight + 12,
+    };
+  });
+  expect(pageTwoLayout.overflows).toBe(true);
+  if (pageTwoLayout.nativeScrollbarInView) {
+    await expect(stickyScroll).toHaveCount(0);
+  } else {
+    await expect(stickyScroll).toBeVisible();
+  }
 
   await page.setViewportSize({ width: 1920, height: 1080 });
   const wideLayout = await page.evaluate(() => ({

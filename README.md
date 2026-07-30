@@ -70,7 +70,7 @@ npm.cmd run build
 
 桌面版首次启动不会运行 Seed，也不包含默认账号或密码。初始化向导会依次确认数据位置、
 同步审核规则、登录小红书并进入系统。无法访问 GitHub 时直接使用安装包内置规则，不阻塞启动。
-`npm run db:seed` 只供隔离开发测试库使用。
+`npm run db:seed` 仅执行可重复的本地运行环境和内置规则初始化，不创建审核测试数据。
 
 ## 软件更新与规则更新
 
@@ -99,7 +99,7 @@ npm.cmd run build
 笔记链接模板生成到 `templates/笔记导入模板.xlsx`；活动规则长期维护模板为
 `templates/活动规则标准导入模板.xlsx`。
 
-> `npm.cmd run db:seed` 会重建演示数据，只用于全新测试库。已有正式活动数据时不要执行。
+> `npm.cmd run db:seed` 不会删除已有数据，也不会创建审核任务、审核结果、人工复核、演示账号或 Mock 数据。
 
 ## 活动规则 Excel 导入
 
@@ -263,7 +263,7 @@ lib/automation/         自动队列、持久化浏览器和 Playwright Adapter
 lib/ai.ts               桌面版禁用状态兼容层
 prisma/schema.prisma    SQLite 数据模型
 prisma/migrations/      Prisma 初始迁移
-prisma/seed.ts          测试账号、产品、活动、规则和模拟结果
+prisma/seed.ts          可重复的本地运行环境与内置规则初始化（不写入测试审核数据）
 extension/              Chrome/Edge Manifest V3 插件
 templates/              Excel 导入模板
 tests/unit/             Vitest 单元测试
