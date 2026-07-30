@@ -433,7 +433,9 @@ async function publishRelease() {
   }
   lookup = await lookupRelease(local.version);
   if (lookup.status !== 200) {
-    throw new Error("Published release could not be read anonymously");
+    throw new Error(
+      `Published release could not be read anonymously: HTTP ${lookup.status}`,
+    );
   }
   await verifyRemoteRelease(local, lookup.data);
   git(["fetch", "origin", "tag", `v${local.version}`]);
