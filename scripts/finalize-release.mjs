@@ -311,7 +311,7 @@ async function lookupRelease(version, token) {
   });
 }
 
-async function verifyRemoteRelease(local, remote) {
+async function verifyRemoteRelease(local, remote, token) {
   const assets = new Map(remote.assets.map((asset) => [asset.name, asset]));
   for (const file of local.files) {
     const asset = assets.get(file.name);
@@ -325,6 +325,7 @@ async function verifyRemoteRelease(local, remote) {
     }
   }
   const latest = await requestJsonWithRetry({
+    token,
     requestPath: `/repos/${owner}/${repository}/releases/latest`,
   });
   if (latest.status !== 200 || latest.data.tag_name !== `v${local.version}`) {
@@ -354,7 +355,7 @@ async function verifyRemoteRelease(local, remote) {
 
 async function pendingRelease() {
   const local = validateLocalRelease();
-  const response = await lookupRelease(local.version);
+  const response = await lookupRelease(local.version, githubToken());
   if (response.status === 404) {
     printSummary(local);
     process.exitCode = 0;
@@ -431,13 +432,13 @@ async function publishRelease() {
       `Setting GitHub Latest Release failed with HTTP ${latestUpdate.status}`,
     );
   }
-  lookup = await lookupRelease(local.version);
+  lookup = await lookupRelease(local.version, token);
   if (lookup.status !== 200) {
     throw new Error(
       `Published release could not be read anonymously: HTTP ${lookup.status}`,
     );
   }
-  await verifyRemoteRelease(local, lookup.data);
+  await verifyRemoteRelease(local, lookup.data, token);
   git(["fetch", "origin", "tag", `v${local.version}`]);
 }
 
