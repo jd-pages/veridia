@@ -1,4 +1,5 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeUrl } from "@/lib/topic";
 import packageJson from "@/package.json";
@@ -13,7 +14,7 @@ export interface AutomaticTaskInput {
   source?: string;
 }
 
-export async function createAutomaticBatch(input: {
+export interface CreateAutomaticBatchInput {
   name?: string;
   source: string;
   createdBy?: string;
@@ -22,52 +23,67 @@ export async function createAutomaticBatch(input: {
   productStage?: string;
   intervalMs?: number;
   tasks: AutomaticTaskInput[];
-}) {
+}
+
+export async function createAutomaticBatchInTransaction(
+  tx: Prisma.TransactionClient,
+  input: CreateAutomaticBatchInput,
+  rulePackageVersion: string | null,
+) {
+  if (!input.tasks.length) throw new Error("没有可加入自动审核的链接");
+  const batch = await tx.auditBatch.create({
+    data: {
+      name: input.name?.trim() || null,
+      productId: input.productId || null,
+      campaignId: input.campaignId || null,
+      productStage: input.productStage || null,
+      source: input.source,
+      status: "QUEUED",
+      totalCount: input.tasks.length,
+      intervalMs: Math.max(
+        1000,
+        input.intervalMs ||
+          Number(process.env.AUTOMATION_INTERVAL_MS || 5000),
+      ),
+      createdBy: input.createdBy || null,
+    },
+  });
+  for (let index = 0; index < input.tasks.length; index += 1) {
+    const task = input.tasks[index];
+    await tx.auditTask.create({
+      data: {
+        batchId: batch.id,
+        url: task.url,
+        normalizedUrl: normalizeUrl(task.url),
+        productId: task.productId,
+        campaignId: task.campaignId,
+        productStage: task.productStage || null,
+        milkType: task.milkType || null,
+        source: task.source || input.source,
+        status: "PENDING",
+        queueOrder: index,
+        notes: task.notes?.trim() || null,
+        createdBy: input.createdBy || null,
+        softwareVersion: packageJson.version,
+        rulePackageVersion,
+      },
+    });
+  }
+  return batch;
+}
+
+export async function createAutomaticBatch(input: CreateAutomaticBatchInput) {
   if (!input.tasks.length) throw new Error("没有可加入自动审核的链接");
   const syncState = await prisma.ruleSyncState.findUnique({
     where: { id: "active" },
     select: { currentVersion: true },
   });
   return prisma.$transaction(async (tx) => {
-    const batch = await tx.auditBatch.create({
-      data: {
-        name: input.name?.trim() || null,
-        productId: input.productId || null,
-        campaignId: input.campaignId || null,
-        productStage: input.productStage || null,
-        source: input.source,
-        status: "QUEUED",
-        totalCount: input.tasks.length,
-        intervalMs: Math.max(
-          1000,
-          input.intervalMs ||
-            Number(process.env.AUTOMATION_INTERVAL_MS || 5000),
-        ),
-        createdBy: input.createdBy || null,
-      },
-    });
-    for (let index = 0; index < input.tasks.length; index += 1) {
-      const task = input.tasks[index];
-      await tx.auditTask.create({
-        data: {
-          batchId: batch.id,
-          url: task.url,
-          normalizedUrl: normalizeUrl(task.url),
-          productId: task.productId,
-          campaignId: task.campaignId,
-          productStage: task.productStage || null,
-          milkType: task.milkType || null,
-          source: task.source || input.source,
-          status: "PENDING",
-          queueOrder: index,
-          notes: task.notes?.trim() || null,
-          createdBy: input.createdBy || null,
-          softwareVersion: packageJson.version,
-          rulePackageVersion: syncState?.currentVersion || null,
-        },
-      });
-    }
-    return batch;
+    return createAutomaticBatchInTransaction(
+      tx,
+      input,
+      syncState?.currentVersion || null,
+    );
   });
 }
 

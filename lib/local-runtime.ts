@@ -1,10 +1,9 @@
-import { createSession, type SessionUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
 export const LOCAL_SYSTEM_USER_ID = "veridia-local-system-user";
 export const LOCAL_SYSTEM_USERNAME = "__veridia_local_system__";
 
-const LOCAL_SYSTEM_USER: SessionUser = {
+const LOCAL_SYSTEM_USER = {
   id: LOCAL_SYSTEM_USER_ID,
   username: LOCAL_SYSTEM_USERNAME,
   displayName: "本地工作台",
@@ -12,21 +11,28 @@ const LOCAL_SYSTEM_USER: SessionUser = {
 };
 
 export async function ensureLocalRuntime() {
-  const user = await prisma.user.upsert({
+  const existingUser = await prisma.user.findUnique({
     where: { id: LOCAL_SYSTEM_USER_ID },
-    create: {
-      ...LOCAL_SYSTEM_USER,
-      passwordHash: "!LOCAL_SYSTEM_USER_HAS_NO_PASSWORD!",
-      status: "ACTIVE",
-      authProvider: "LOCAL_SYSTEM",
-    },
-    update: {
-      displayName: LOCAL_SYSTEM_USER.displayName,
-      role: "ADMIN",
-      status: "ACTIVE",
-      authProvider: "LOCAL_SYSTEM",
-    },
   });
+  const user =
+    existingUser?.authProvider === "LOCAL_ACTIVATION" &&
+    existingUser.accountId
+      ? existingUser
+      : await prisma.user.upsert({
+          where: { id: LOCAL_SYSTEM_USER_ID },
+          create: {
+            ...LOCAL_SYSTEM_USER,
+            passwordHash: "!LOCAL_SYSTEM_USER_HAS_NO_PASSWORD!",
+            status: "ACTIVE",
+            authProvider: "LOCAL_SYSTEM",
+          },
+          update: {
+            displayName: LOCAL_SYSTEM_USER.displayName,
+            role: "ADMIN",
+            status: "ACTIVE",
+            authProvider: "LOCAL_SYSTEM",
+          },
+        });
 
   await prisma.$transaction([
     prisma.systemSetting.upsert({
@@ -71,23 +77,18 @@ export async function ensureLocalRuntime() {
   };
 }
 
-export async function establishLocalSession() {
-  const user = await ensureLocalRuntime();
-  await createSession(user);
-  return user;
-}
-
 export async function isSetupComplete() {
   const explicit = await prisma.systemSetting.findUnique({
     where: { key: "SETUP_COMPLETED" },
     select: { value: true },
   });
-  if (explicit?.value === "true") return true;
-
-  // 旧版本已有人工创建账号时视为已完成初始化，升级后不重复展示向导。
+  if (explicit?.value !== "true") return false;
   return (
     (await prisma.user.count({
-      where: { id: { not: LOCAL_SYSTEM_USER_ID } },
+      where: {
+        accountId: { not: null },
+        authProvider: "LOCAL_ACTIVATION",
+      },
     })) > 0
   );
 }

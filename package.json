@@ -13,7 +13,7 @@
   },
   "scripts": {
     "dev": "next dev -p 3100",
-    "build": "prisma generate && node scripts/assert-prisma-generated.mjs && next build",
+    "build": "prisma generate && node scripts/assert-prisma-generated.mjs && next build --webpack",
     "desktop:prepare": "prisma generate && node scripts/assert-prisma-generated.mjs && node scripts/prepare-desktop.mjs",
     "desktop:build": "npm run build && npm run desktop:prepare && node scripts/build-desktop.mjs",
     "desktop:dir": "npm run build && npm run desktop:prepare && node scripts/build-desktop.mjs --dir",
@@ -50,7 +50,8 @@
     "@ant-design/icons": "^6.1.0",
     "@ant-design/nextjs-registry": "^1.0.2",
     "@ant-design/v5-patch-for-react-19": "^1.0.3",
-    "@prisma/client": "6.13.0",
+    "@e965/xlsx": "^0.20.3",
+    "@prisma/client": "6.19.3",
     "antd": "^5.26.7",
     "bcryptjs": "^3.0.2",
     "dayjs": "^1.11.13",
@@ -62,7 +63,7 @@
     "next": "^16.2.12",
     "playwright": "^1.62.0",
     "pm2": "7.0.3",
-    "prisma": "6.13.0",
+    "prisma": "6.19.3",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "zod": "^3.25.76"
@@ -82,6 +83,13 @@
     "typescript": "5.9.3",
     "vitest": "^3.2.4"
   },
+  "overrides": {
+    "brace-expansion": "5.0.8",
+    "effect": "3.22.0",
+    "minimatch": "10.2.6",
+    "postcss": "8.5.25",
+    "sharp": "0.35.3"
+  },
   "type": "module",
   "build": {
     "appId": "com.veridia.contentgovernance",
@@ -97,12 +105,18 @@
       "desktop/**/*",
       ".next/standalone/**/*",
       "assets/veridia.ico",
+      "config/account-signing-ed25519-public.pem",
       "prisma/schema.prisma",
       "prisma/migrations/**/*",
       "node_modules/prisma/**/*",
       "node_modules/@prisma/**/*",
       "node_modules/.prisma/**/*",
-      "package.json"
+      "package.json",
+      "!创建VERIDIA账号.bat",
+      "!创建VERIDIA密码重置码.bat",
+      "!创建VERIDIA账号更新码.bat",
+      "!scripts/account-developer-tool.ts",
+      "!**/*private*.pem"
     ],
     "extraResources": [
       {

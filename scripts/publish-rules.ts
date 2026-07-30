@@ -101,6 +101,12 @@ const manifest: RulePackageManifest = {
   activityCount: payload.campaigns.length,
   stageGroupCount: payload.stageGroups.length,
   topicRuleCount: payload.topicRules.length,
+  templateVersion: payload.importExportTemplates?.templateVersion,
+  templateConfigSha256: payload.importExportTemplates
+    ? createHash("sha256")
+        .update(JSON.stringify(payload.importExportTemplates))
+        .digest("hex")
+    : undefined,
 };
 const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
 const signature = sign(

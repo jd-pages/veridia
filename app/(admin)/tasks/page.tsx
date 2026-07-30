@@ -7,6 +7,8 @@ import {
   Button,
   Card,
   Col,
+  Descriptions,
+  Dropdown,
   Form,
   Input,
   Progress,
@@ -56,6 +58,7 @@ import {
   type StatusLabelDomain,
 } from "@/lib/zh-CN";
 import styles from "./tasks.module.css";
+import type { SessionUser } from "@/lib/auth";
 
 interface Product {
   id: string;
@@ -160,6 +163,17 @@ interface ImportPreview {
   invalidCount: number;
   imported: number;
   batchId?: string | null;
+  templateVersion: string;
+  sourceType: string;
+  recognizedFields: Array<{ header: string; field: string }>;
+  unknownHeaders: string[];
+  missingRequiredFields: string[];
+  duplicateHeaders: string[];
+  previewRows: Array<{
+    rowNumber: number;
+    values: Record<string, string>;
+    errors: string[];
+  }>;
   rows: Array<{
     rowNumber: number;
     url: string;
@@ -242,6 +256,10 @@ export default function TasksPage() {
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [importing, setImporting] = useState(false);
+  const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
+    null,
+  );
+  const canOperate = currentRole === "ADMIN" || currentRole === "OPERATOR";
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -271,6 +289,9 @@ export default function TasksPage() {
 
   useEffect(() => {
     void load();
+    void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
+      setCurrentRole(user?.role || null),
+    );
   }, [load]);
 
   useEffect(() => {
@@ -347,7 +368,7 @@ export default function TasksPage() {
   const submitExcel = async (commit: boolean) => {
     const file = fileList[0]?.originFileObj;
     if (!file) {
-      message.warning("请先选择 Excel 文件");
+      message.warning("请先选择 Excel、CSV 或腾讯文档导出的表格");
       return;
     }
     setImporting(true);
@@ -369,7 +390,7 @@ export default function TasksPage() {
         message.success("预检查完成");
       }
     } catch (error) {
-      message.error(error instanceof Error ? error.message : "Excel 处理失败");
+      message.error(error instanceof Error ? error.message : "表格处理失败");
     } finally {
       setImporting(false);
     }
@@ -424,12 +445,39 @@ export default function TasksPage() {
         description="配置自动审核策略、监控执行进度并处理异常任务"
         actions={
           <Space>
-            <Button
-              icon={<DownloadOutlined />}
-              onClick={() => window.open("/api/results/export", "_blank")}
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: "xlsx",
+                    label: "导出审核结果 Excel",
+                    onClick: () =>
+                      window.open("/api/results/export?format=xlsx", "_blank"),
+                  },
+                  {
+                    key: "csv",
+                    label: "导出审核结果 CSV",
+                    onClick: () =>
+                      window.open("/api/results/export?format=csv", "_blank"),
+                  },
+                  {
+                    key: "tasks-xlsx",
+                    label: "导出任务列表 Excel",
+                    onClick: () =>
+                      window.open("/api/tasks/export?format=xlsx", "_blank"),
+                  },
+                  {
+                    key: "tasks-csv",
+                    label: "导出任务列表 CSV",
+                    onClick: () =>
+                      window.open("/api/tasks/export?format=csv", "_blank"),
+                  },
+                ],
+              }}
+              disabled={!canOperate}
             >
-              导出审核结果
-            </Button>
+              <Button icon={<DownloadOutlined />}>导出</Button>
+            </Dropdown>
             <Button icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新数据
             </Button>
@@ -466,7 +514,7 @@ export default function TasksPage() {
             ) : null}
           </div>
         </div>
-        <Space wrap>
+        {canOperate && <Space wrap>
           <Button
             icon={<LoginOutlined />}
             onClick={() => void loginAction("START_LOGIN")}
@@ -479,10 +527,10 @@ export default function TasksPage() {
           >
             我已完成登录
           </Button>
-        </Space>
+        </Space>}
       </Card>
 
-      <Tabs
+      {canOperate && <Tabs
         className={styles.modeTabs}
         defaultActiveKey="automatic"
         items={[
@@ -697,22 +745,42 @@ export default function TasksPage() {
                     <span className={styles.eyebrow}>
                       {businessUiText.bulkIngestion}
                     </span>
-                    <h2>Excel 批量导入</h2>
-                    <p>预检查通过后创建自动审核批次，异常行保留人工确认。</p>
+                    <h2>表格批量导入</h2>
+                    <p>
+                      支持 Excel / CSV，也支持从腾讯文档导出的表格文件；字段别名会自动识别，表头顺序可不同。
+                    </p>
                   </div>
-                  <Button
-                    icon={<DownloadOutlined />}
-                    onClick={() =>
-                      window.open("/api/import/template", "_blank")
-                    }
+                  <Dropdown
+                    menu={{
+                      items: [
+                        {
+                          key: "xlsx",
+                          label: "下载 Excel 模板",
+                          onClick: () =>
+                            window.open(
+                              "/api/import/template?format=xlsx",
+                              "_blank",
+                            ),
+                        },
+                        {
+                          key: "csv",
+                          label: "下载 CSV 模板",
+                          onClick: () =>
+                            window.open(
+                              "/api/import/template?format=csv",
+                              "_blank",
+                            ),
+                        },
+                      ],
+                    }}
                   >
-                    下载导入模板
-                  </Button>
+                    <Button icon={<DownloadOutlined />}>下载导入模板</Button>
+                  </Dropdown>
                 </div>
                 <Space direction="vertical" size={18} style={{ width: "100%" }}>
                   <Upload.Dragger
                     className={styles.uploadArea}
-                    accept=".xlsx"
+                    accept=".xlsx,.xls,.csv"
                     maxCount={1}
                     fileList={fileList}
                     beforeUpload={() => false}
@@ -724,9 +792,11 @@ export default function TasksPage() {
                     <p className="ant-upload-drag-icon">
                       <InboxOutlined />
                     </p>
-                    <p className="ant-upload-text">点击或拖入填写后的 Excel 模板</p>
+                    <p className="ant-upload-text">
+                      点击或拖入 Excel / CSV 表格
+                    </p>
                     <p className="ant-upload-hint">
-                      导入前执行产品、段位、活动及重复链接预检查
+                      支持腾讯文档导出文件；模板版本随审核规则同步更新
                     </p>
                   </Upload.Dragger>
                   <Space wrap>
@@ -751,8 +821,34 @@ export default function TasksPage() {
                         type={preview.invalidCount ? "warning" : "success"}
                         showIcon
                         message={`可导入 ${preview.validCount} 条，异常 ${preview.invalidCount} 条`}
-                        description="默认跳过重复和已审核链接。"
+                        description="预览阶段不会写入数据库；确认导入后使用事务创建任务。"
                       />
+                      <Descriptions
+                        size="small"
+                        bordered
+                        column={{ xs: 1, md: 2, xl: 4 }}
+                      >
+                        <Descriptions.Item label="模板版本">
+                          {preview.templateVersion}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="数据源类型">
+                          {preview.sourceType}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="识别字段">
+                          {preview.recognizedFields
+                            .map((item) => item.header)
+                            .join("、") || "无"}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="未识别字段">
+                          {preview.unknownHeaders.join("、") || "无"}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="缺少必填字段">
+                          {preview.missingRequiredFields.join("、") || "无"}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="重复表头">
+                          {preview.duplicateHeaders.join("、") || "无"}
+                        </Descriptions.Item>
+                      </Descriptions>
                       <Table
                         className={styles.enterpriseTable}
                         rowKey="rowNumber"
@@ -836,7 +932,7 @@ export default function TasksPage() {
             ),
           },
         ]}
-      />
+      />}
 
       <Card
         bordered={false}
@@ -969,6 +1065,7 @@ export default function TasksPage() {
                 <Button
                   icon={<PauseCircleOutlined />}
                   disabled={
+                    !canOperate ||
                     !["QUEUED", "RUNNING"].includes(selectedBatch.status)
                   }
                   onClick={() => void controlBatch("PAUSE")}
@@ -979,6 +1076,7 @@ export default function TasksPage() {
                   type="primary"
                   icon={<PlayCircleOutlined />}
                   disabled={
+                    !canOperate ||
                     !["PAUSED", "LOGIN_EXPIRED"].includes(selectedBatch.status)
                   }
                   onClick={() => void controlBatch("CONTINUE")}
@@ -992,7 +1090,7 @@ export default function TasksPage() {
                     "COMPLETED",
                     "COMPLETED_WITH_ERRORS",
                     "CANCELLED",
-                  ].includes(selectedBatch.status)}
+                  ].includes(selectedBatch.status) || !canOperate}
                   onClick={() => void controlBatch("CANCEL")}
                 >
                   取消
@@ -1000,6 +1098,7 @@ export default function TasksPage() {
                 <Button
                   icon={<RetweetOutlined />}
                   disabled={
+                    !canOperate ||
                     selectedBatch.stats.failed +
                       selectedBatch.stats.loginExpired ===
                     0
@@ -1135,7 +1234,7 @@ export default function TasksPage() {
                       target="_blank"
                       className={styles.tableAction}
                     >
-                      人工补审
+                      {canOperate ? "人工补审" : "查看笔记"}
                     </Button>
                   ),
                 },

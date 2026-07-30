@@ -26,20 +26,6 @@ const ALLOWED_DOWNLOAD_HOSTS = new Set([
   "release-assets.githubusercontent.com",
 ]);
 
-interface GitHubAsset {
-  url: string;
-  name: string;
-  browser_download_url: string;
-  size: number;
-}
-
-interface GitHubRelease {
-  tag_name: string;
-  draft: boolean;
-  prerelease: boolean;
-  assets: GitHubAsset[];
-}
-
 let builtinInitializationPromise: Promise<RuleSyncState> | null = null;
 
 function countsFromState(value: string | null | undefined): RuleCounts {
@@ -81,6 +67,51 @@ async function fetchWithTimeout(
   return response;
 }
 
+interface PublicReleaseAsset {
+  name: string;
+  url: string;
+}
+
+async function fetchPublicReleaseAsset(
+  repository: string,
+  assetName: string,
+  timeoutMs: number,
+) {
+  const releaseResponse = await fetchWithTimeout(
+    `https://api.github.com/repos/${repository}/releases/latest`,
+    timeoutMs,
+  );
+  const release = (await releaseResponse.json()) as {
+    assets?: PublicReleaseAsset[];
+  };
+  const asset = release.assets?.find((item) => item.name === assetName);
+  if (!asset) {
+    throw new Error(`GitHub Release 缺少 ${assetName}`);
+  }
+  return fetchWithTimeout(asset.url, timeoutMs, "application/octet-stream");
+}
+
+async function fetchReleaseDownload(
+  repository: string,
+  directUrl: string,
+  assetName: string,
+  timeoutMs: number,
+) {
+  try {
+    return await fetchWithTimeout(
+      directUrl,
+      timeoutMs,
+      "application/octet-stream",
+    );
+  } catch {
+    // Some Windows networks allow api.github.com and release-assets but block
+    // github.com download redirects. The public asset API remains anonymous,
+    // carries no token, and the downloaded bytes still undergo all signature,
+    // size and hash verification below.
+    return fetchPublicReleaseAsset(repository, assetName, timeoutMs);
+  }
+}
+
 function compareSemver(left: string, right: string) {
   const parse = (value: string) =>
     value
@@ -117,6 +148,12 @@ export function validateRuleManifest(input: unknown): RulePackageManifest {
     activityCount: Number(value.activityCount),
     stageGroupCount: Number(value.stageGroupCount),
     topicRuleCount: Number(value.topicRuleCount),
+    templateVersion: value.templateVersion
+      ? String(value.templateVersion)
+      : undefined,
+    templateConfigSha256: value.templateConfigSha256
+      ? String(value.templateConfigSha256).toLowerCase()
+      : undefined,
   };
   if (!/^rules-\d{4}\.\d{2}\.\d{2}\.\d+$/u.test(manifest.ruleVersion)) {
     throw new Error("规则版本格式无效");
@@ -133,6 +170,12 @@ export function validateRuleManifest(input: unknown): RulePackageManifest {
   }
   if (!/^[a-f0-9]{64}$/u.test(manifest.sha256)) {
     throw new Error("规则包 SHA-256 无效");
+  }
+  if (
+    manifest.templateConfigSha256 &&
+    !/^[a-f0-9]{64}$/u.test(manifest.templateConfigSha256)
+  ) {
+    throw new Error("表格模板配置 SHA-256 无效");
   }
   assertAllowedUrl(manifest.downloadUrl);
   return manifest;
@@ -158,30 +201,23 @@ async function readLatestRelease() {
       code: "RULE_REPOSITORY_NOT_CONFIGURED",
     });
   }
-  const response = await fetchWithTimeout(
-    `https://api.github.com/repos/${config.repository}/releases/latest`,
-    15_000,
-  );
-  const release = (await response.json()) as GitHubRelease;
-  if (
-    release.draft ||
-    release.prerelease ||
-    !release.tag_name.startsWith("rules-")
-  ) {
-    throw new Error("GitHub 最新 Release 不是正式规则版本");
-  }
-  const manifestAsset = release.assets.find(
-    (asset) => asset.name === "manifest.json",
-  );
-  const signatureAsset = release.assets.find(
-    (asset) => asset.name === "manifest.sig",
-  );
-  if (!manifestAsset || !signatureAsset) {
-    throw new Error("规则 Release 缺少 manifest.json 或 manifest.sig");
-  }
+  // Use public latest-download URLs rather than the GitHub REST API so normal
+  // clients remain anonymous and are not affected by the low unauthenticated
+  // API rate limit. Redirect targets are still restricted to GitHub hosts.
+  const releaseBase = `https://github.com/${config.repository}/releases/latest/download`;
   const [manifestResponse, signatureResponse] = await Promise.all([
-    fetchWithTimeout(manifestAsset.url, 20_000, "application/octet-stream"),
-    fetchWithTimeout(signatureAsset.url, 20_000, "application/octet-stream"),
+    fetchReleaseDownload(
+      config.repository,
+      `${releaseBase}/manifest.json`,
+      "manifest.json",
+      20_000,
+    ),
+    fetchReleaseDownload(
+      config.repository,
+      `${releaseBase}/manifest.sig`,
+      "manifest.sig",
+      20_000,
+    ),
   ]);
   const manifestBytes = Buffer.from(await manifestResponse.arrayBuffer());
   const signature = (await signatureResponse.text()).trim();
@@ -197,19 +233,14 @@ async function readLatestRelease() {
   const manifest = validateRuleManifest(
     JSON.parse(manifestBytes.toString("utf8")),
   );
-  if (manifest.ruleVersion !== release.tag_name) {
-    throw new Error("Release Tag 与规则清单版本不一致");
-  }
-  const packageAsset = release.assets.find(
-    (asset) => asset.browser_download_url === manifest.downloadUrl,
-  );
-  if (!packageAsset) {
-    throw new Error("规则 Release 中不存在清单指定的规则包");
+  const expectedPrefix = `https://github.com/${config.repository}/releases/download/${manifest.ruleVersion}/`;
+  if (!manifest.downloadUrl.startsWith(expectedPrefix)) {
+    throw new Error("规则包下载地址与规则仓库或规则版本不一致");
   }
   return {
     manifest,
     manifestBytes,
-    packageAssetUrl: packageAsset.url,
+    packageAssetUrl: manifest.downloadUrl,
   };
 }
 
@@ -288,6 +319,8 @@ export async function getRuleSyncStatus() {
     currentVersion: state.currentVersion,
     latestVersion: state.latestVersion,
     schemaVersion: state.schemaVersion,
+    templateVersion: state.templateVersion,
+    templateSchemaVersion: state.templateSchemaVersion,
     source: state.source,
     status: state.status,
     counts: countsFromState(state.countsJson),
@@ -395,10 +428,11 @@ export async function synchronizeLatestRules() {
         lastCheckedAt: new Date(),
       },
     });
-    const packageResponse = await fetchWithTimeout(
+    const packageResponse = await fetchReleaseDownload(
+      ruleSyncConfiguration().repository,
       packageAssetUrl,
+      path.posix.basename(new URL(packageAssetUrl).pathname),
       60_000,
-      "application/octet-stream",
     );
     const downloadedBytes = Buffer.from(await packageResponse.arrayBuffer());
     temporaryDirectory = await fs.mkdtemp(
@@ -428,6 +462,21 @@ export async function synchronizeLatestRules() {
     const payload = validateRulePayload(
       JSON.parse(await rulesFile.async("string")),
     );
+    if (manifest.templateVersion && !payload.importExportTemplates) {
+      throw new Error("规则清单声明了表格模板，但规则包中缺少模板配置");
+    }
+    if (payload.importExportTemplates && manifest.templateConfigSha256) {
+      const templateHash = createHash("sha256")
+        .update(JSON.stringify(payload.importExportTemplates))
+        .digest("hex");
+      if (
+        templateHash !== manifest.templateConfigSha256 ||
+        payload.importExportTemplates.templateVersion !==
+          manifest.templateVersion
+      ) {
+        throw new Error("表格模板版本或 SHA-256 校验失败");
+      }
+    }
     if (
       payload.ruleVersion !== manifest.ruleVersion ||
       payload.schemaVersion !== manifest.schemaVersion
@@ -481,6 +530,8 @@ export async function synchronizeLatestRules() {
       error && typeof error === "object" && "code" in error
         ? String(error.code)
         : "RULE_SYNC_FAILED";
+    const technicalMessage =
+      error instanceof Error ? error.message : "未知规则同步错误";
     await prisma.$transaction([
       prisma.ruleSyncState.update({
         where: { id: "active" },
@@ -492,6 +543,7 @@ export async function synchronizeLatestRules() {
           status: "FAILED",
           errorCode: code,
           message: "暂时无法获取最新规则，已继续使用本地规则。",
+          detailsJson: JSON.stringify({ technicalMessage }),
           completedAt: new Date(),
         },
       }),

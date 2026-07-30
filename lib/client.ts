@@ -17,6 +17,14 @@ export async function apiFetch<T>(
   });
   const payload = (await response.json()) as ApiEnvelope<T>;
   if (!response.ok || !payload.success) {
+    if (
+      response.status === 401 &&
+      typeof window !== "undefined" &&
+      window.location.pathname !== "/login"
+    ) {
+      void window.veridiaDesktop?.clearPersistentSession().catch(() => false);
+      window.location.assign("/login");
+    }
     throw new Error(payload.error || "请求失败");
   }
   return payload.data;

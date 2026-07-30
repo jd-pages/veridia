@@ -48,6 +48,7 @@ import type {
 } from "@/components/results/types";
 import { apiFetch } from "@/lib/client";
 import { productStageTopicLabel } from "@/lib/product-stage";
+import type { SessionUser } from "@/lib/auth";
 import styles from "@/components/results/results-workbench.module.css";
 
 const emptyFilters: ResultFilters = {
@@ -233,6 +234,10 @@ export default function ResultsPage() {
   const [drawerRow, setDrawerRow] = useState<ResultRow | null>(null);
   const [drawerDetail, setDrawerDetail] = useState<ResultDetail | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
+    null,
+  );
+  const canOperate = currentRole === "ADMIN" || currentRole === "OPERATOR";
 
   const loadSummary = useCallback(async (targetFilters: ResultFilters) => {
     const summaryBase = { ...targetFilters, status: "" };
@@ -285,6 +290,9 @@ export default function ResultsPage() {
   );
 
   useEffect(() => {
+    void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
+      setCurrentRole(user?.role || null),
+    );
     void Promise.all([
       apiFetch<ProductOption[]>("/api/products"),
       apiFetch<CampaignOption[]>("/api/campaigns"),
@@ -424,7 +432,26 @@ export default function ResultsPage() {
     }
   };
 
-  const rowMenu = (row: ResultRow): MenuProps["items"] => [
+  const rowMenu = (row: ResultRow): MenuProps["items"] => {
+    const readOnlyItems: MenuProps["items"] = [
+      {
+        key: "open",
+        icon: <ExportOutlined />,
+        label: (
+          <a href={row.note.url} target="_blank" rel="noreferrer">
+            打开原笔记
+          </a>
+        ),
+      },
+      {
+        key: "raw",
+        icon: <FileTextOutlined />,
+        label: "查看原始提取数据",
+        onClick: () => void openDrawer(row),
+      },
+    ];
+    if (!canOperate) return readOnlyItems;
+    return [
     {
       key: "reaudit",
       icon: <ReloadOutlined />,
@@ -471,7 +498,8 @@ export default function ResultsPage() {
       label: "查看原始提取数据",
       onClick: () => void openDrawer(row),
     },
-  ];
+    ];
+  };
 
   const columns: TableColumnsType<ResultRow> = [
     {
@@ -580,15 +608,39 @@ export default function ResultsPage() {
               >
                 刷新数据
               </Button>
-              <Button
-                className={styles.secondaryButton}
-                icon={<DownloadOutlined />}
-                onClick={() =>
-                  window.open(`/api/results/export?${exportQuery}`, "_blank")
-                }
-              >
-                导出当前结果
-              </Button>
+              {canOperate && (
+                <Dropdown
+                  menu={{
+                    items: [
+                      {
+                        key: "xlsx",
+                        label: "导出 Excel",
+                        onClick: () =>
+                          window.open(
+                            `/api/results/export?${exportQuery}&format=xlsx`,
+                            "_blank",
+                          ),
+                      },
+                      {
+                        key: "csv",
+                        label: "导出 CSV",
+                        onClick: () =>
+                          window.open(
+                            `/api/results/export?${exportQuery}&format=csv`,
+                            "_blank",
+                          ),
+                      },
+                    ],
+                  }}
+                >
+                  <Button
+                    className={styles.secondaryButton}
+                    icon={<DownloadOutlined />}
+                  >
+                    导出当前结果
+                  </Button>
+                </Dropdown>
+              )}
             </div>
           }
         />
@@ -613,12 +665,12 @@ export default function ResultsPage() {
         onReset={resetFilters}
       />
 
-      <BatchActionBar
+      {canOperate && <BatchActionBar
         selectedCount={selected.length}
         onAction={(action) => void bulk(action)}
         onExport={exportSelected}
         onClear={() => setSelected([])}
-      />
+      />}
 
       <section className={styles.tableCard} aria-label="审核结果列表">
         <div className={styles.tableHeader}>
@@ -639,12 +691,12 @@ export default function ResultsPage() {
             rowKey="id"
             loading={loading}
             dataSource={visibleItems}
-            rowSelection={{
+            rowSelection={canOperate ? {
               fixed: true,
               selectedRowKeys: selected,
               onChange: setSelected,
               columnWidth: 48,
-            }}
+            } : undefined}
             columns={columns}
             scroll={{ x: 1740 }}
             sticky={{ offsetHeader: 64, offsetScroll: 10 }}
@@ -673,6 +725,7 @@ export default function ResultsPage() {
         }}
         onOpenFullDetail={(row) => router.push(`/results/${row.id}`)}
         onAction={(row, action) => void bulk(action, [row.id])}
+        canOperate={canOperate}
       />
     </div>
   );

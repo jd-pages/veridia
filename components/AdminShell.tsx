@@ -20,6 +20,7 @@ import {
   MenuUnfoldOutlined,
   ProductOutlined,
   SettingOutlined,
+  LogoutOutlined,
   TagsOutlined,
 } from "@ant-design/icons";
 import { usePathname, useRouter } from "next/navigation";
@@ -38,11 +39,12 @@ interface RuleUpdateStatus {
   latestVersion: string | null;
 }
 
-function RuleUpdateChecker() {
+function RuleUpdateChecker({ enabled }: { enabled: boolean }) {
   const router = useRouter();
   const { notification } = App.useApp();
 
   useEffect(() => {
+    if (!enabled) return;
     // 每次启动后触发一次；服务端保证同一天自动检查最多一次。
     void apiFetch<RuleUpdateStatus>("/api/rule-sync/check", {
       method: "POST",
@@ -71,20 +73,20 @@ function RuleUpdateChecker() {
         }
       })
       .catch(() => undefined);
-  }, [notification, router]);
+  }, [enabled, notification, router]);
 
   return null;
 }
 
 const items = [
   { key: "/dashboard", icon: <BarChartOutlined />, label: "仪表盘", roles: ["ADMIN", "OPERATOR", "VIEWER"] },
-  { key: "/tasks", icon: <AuditOutlined />, label: "审核任务", roles: ["ADMIN", "OPERATOR"] },
+  { key: "/tasks", icon: <AuditOutlined />, label: "审核任务", roles: ["ADMIN", "OPERATOR", "VIEWER"] },
   { key: "/results", icon: <FileSearchOutlined />, label: "审核结果", roles: ["ADMIN", "OPERATOR", "VIEWER"] },
   { key: "/products", icon: <ProductOutlined />, label: "产品管理", roles: ["ADMIN"] },
   { key: "/campaigns", icon: <AppstoreOutlined />, label: "活动管理", roles: ["ADMIN"] },
   { key: "/rules", icon: <TagsOutlined />, label: "话题规则", roles: ["ADMIN"] },
   { key: "/imports", icon: <ImportOutlined />, label: "导入记录", roles: ["ADMIN", "OPERATOR"] },
-  { key: "/settings", icon: <SettingOutlined />, label: "系统设置", roles: ["ADMIN"] },
+  { key: "/settings", icon: <SettingOutlined />, label: "系统设置", roles: ["ADMIN", "OPERATOR", "VIEWER"] },
 ];
 
 export default function AdminShell({
@@ -155,7 +157,7 @@ export default function AdminShell({
       }}
     >
       <App>
-        <RuleUpdateChecker />
+        <RuleUpdateChecker enabled={user.role === "ADMIN"} />
         <Layout
           className={`admin-shell${collapsed ? " admin-shell-collapsed" : ""}`}
         >
@@ -210,6 +212,24 @@ export default function AdminShell({
                   onClick={() => setCollapsed((value) => !value)}
                 />
                 <span className="header-title">VERIDIA 工作台</span>
+              </Space>
+              <Space size={10}>
+                <span style={{ color: "#66748a", fontSize: 13 }}>
+                  {user.displayName} · {user.role === "ADMIN" ? "管理员" : user.role === "OPERATOR" ? "审核员" : "只读人员"}
+                </span>
+                <Button
+                  type="text"
+                  icon={<LogoutOutlined />}
+                  onClick={async () => {
+                    await apiFetch("/api/auth/logout", { method: "POST" });
+                    await window.veridiaDesktop
+                      ?.clearPersistentSession()
+                      .catch(() => false);
+                    window.location.assign("/login");
+                  }}
+                >
+                  退出登录
+                </Button>
               </Space>
             </Header>
             <Content className="admin-content">{children}</Content>

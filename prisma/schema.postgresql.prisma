@@ -10,30 +10,82 @@ datasource db {
 }
 
 model User {
-  id                    String              @id @default(cuid())
-  username              String              @unique
-  displayName           String
-  passwordHash          String
-  role                  String              @default("OPERATOR")
-  status                String              @default("ACTIVE")
-  lastLoginAt           DateTime?
-  authProvider          String?
-  centralUserId         String?             @unique
-  teamId                String?
-  centralRole           String?
-  centralStatus         String?
-  lastCentralVerifiedAt DateTime?
-  offlineValidUntil     DateTime?
-  createdAt             DateTime            @default(now())
-  updatedAt             DateTime            @updatedAt
-  manualReviews         ManualReview[]
-  operationLogs         OperationLog[]
-  auditBatches          AuditBatch[]
-  usageSummaries        LocalUsageSummary[]
+  id                      String              @id @default(cuid())
+  username                String              @unique
+  normalizedUsername      String?             @unique
+  accountId               String?             @unique
+  displayName             String
+  passwordHash            String
+  role                    String              @default("OPERATOR")
+  status                  String              @default("ACTIVE")
+  lastLoginAt             DateTime?
+  lastLocalLoginAt        DateTime?
+  issuedAt                DateTime?
+  expiresAt               DateTime?
+  activatedAt             DateTime?
+  activationIssuer        String?
+  activationSignature     String?
+  activationSchemaVersion Int?
+  authorizationVersion    Int                 @default(1)
+  sessionVersion          Int                 @default(1)
+  lastSeenClockAt         DateTime?
+  authProvider            String?
+  centralUserId           String?             @unique
+  teamId                  String?
+  centralRole             String?
+  centralStatus           String?
+  lastCentralVerifiedAt   DateTime?
+  offlineValidUntil       DateTime?
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+  manualReviews           ManualReview[]
+  operationLogs           OperationLog[]
+  auditBatches            AuditBatch[]
+  usageSummaries          LocalUsageSummary[]
+  localSessions           LocalAuthSession[]
 
   @@index([role, status])
   @@index([teamId, centralStatus])
+  @@index([accountId, status])
   @@map("users")
+}
+
+model LocalAuthSession {
+  id             String    @id @default(cuid())
+  userId         String
+  tokenHash      String    @unique
+  sessionVersion Int
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  lastUsedAt     DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt, expiresAt])
+  @@map("local_auth_sessions")
+}
+
+model LocalLoginThrottle {
+  id                 String    @id @default(cuid())
+  normalizedUsername String    @unique
+  failureCount       Int       @default(0)
+  blockedUntil       DateTime?
+  lastFailureAt      DateTime?
+  updatedAt          DateTime  @updatedAt
+
+  @@index([blockedUntil])
+  @@map("local_login_throttles")
+}
+
+model AccountCodeUse {
+  id         String   @id @default(cuid())
+  codeDigest String   @unique
+  codeKind   String
+  accountId  String
+  usedAt     DateTime @default(now())
+
+  @@index([accountId, codeKind, usedAt])
+  @@map("account_code_uses")
 }
 
 model LocalDevice {
@@ -491,6 +543,9 @@ model RuleSyncState {
   countsJson      String    @default("{}")
   manifestJson    String?
   previousVersion String?
+  templateVersion String?
+  templateSchemaVersion Int?
+  templateConfigJson String?
   lastCheckedAt   DateTime?
   lastSyncedAt    DateTime?
   createdAt       DateTime  @default(now())

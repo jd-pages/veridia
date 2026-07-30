@@ -7,6 +7,10 @@ import {
   DEFAULT_RULE_STAGE_GROUPS,
 } from "./defaults";
 import {
+  BUILTIN_IMPORT_EXPORT_TEMPLATES,
+} from "@/lib/import-export-templates/config";
+import { validateImportExportTemplates } from "@/lib/import-export-templates/validation";
+import {
   RULE_PACKAGE_SCHEMA_VERSION,
   type RulePackagePayload,
   type RulePackageStageGroup,
@@ -89,6 +93,7 @@ const payloadSchema = z.object({
     normalStatuses: z.array(nonEmpty).min(1),
     technicalFailureStatuses: z.array(nonEmpty),
   }),
+  importExportTemplates: z.unknown().optional(),
 });
 
 function stableKey(prefix: string, parts: Array<string | null | undefined>) {
@@ -109,6 +114,11 @@ function uniqueValues(values: string[], label: string) {
 
 export function validateRulePayload(input: unknown): RulePackagePayload {
   const payload = payloadSchema.parse(input) as RulePackagePayload;
+  if (payload.importExportTemplates) {
+    payload.importExportTemplates = validateImportExportTemplates(
+      payload.importExportTemplates,
+    );
+  }
   uniqueValues(payload.products.map((item) => item.key), "产品键");
   uniqueValues(payload.campaigns.map((item) => item.key), "活动键");
   uniqueValues(payload.stageGroups.map((item) => item.key), "阶段组键");
@@ -274,6 +284,11 @@ export async function exportCurrentRulePayload(options?: {
       status: rule.status,
     })),
     pageStatusRules: DEFAULT_PAGE_STATUS_RULES,
+    importExportTemplates: syncState?.templateConfigJson
+      ? validateImportExportTemplates(
+          JSON.parse(syncState.templateConfigJson),
+        )
+      : BUILTIN_IMPORT_EXPORT_TEMPLATES,
   });
 }
 
@@ -500,6 +515,8 @@ export async function applyRulePayload(
       stageGroups: payload.stageGroups.length,
       topicRules: payload.topicRules.length,
     };
+    const templates =
+      payload.importExportTemplates || BUILTIN_IMPORT_EXPORT_TEMPLATES;
     await tx.ruleSyncState.upsert({
       where: { id: "active" },
       create: {
@@ -509,6 +526,9 @@ export async function applyRulePayload(
         source,
         status: source === "BUILTIN" ? "USING_BUILTIN" : "COMPLETED",
         countsJson: JSON.stringify(counts),
+        templateVersion: templates.templateVersion,
+        templateSchemaVersion: templates.schemaVersion,
+        templateConfigJson: JSON.stringify(templates),
         previousVersion: previousState?.currentVersion || null,
         lastSyncedAt: new Date(),
       },
@@ -518,6 +538,9 @@ export async function applyRulePayload(
         source,
         status: source === "BUILTIN" ? "USING_BUILTIN" : "COMPLETED",
         countsJson: JSON.stringify(counts),
+        templateVersion: templates.templateVersion,
+        templateSchemaVersion: templates.schemaVersion,
+        templateConfigJson: JSON.stringify(templates),
         previousVersion: previousState?.currentVersion || null,
         lastSyncedAt: new Date(),
       },

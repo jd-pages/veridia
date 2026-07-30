@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import builtinRules from "@/rules/default-rules.json";
-import { validateRulePayload } from "@/lib/rules/package";
+import { payloadSha256, validateRulePayload } from "@/lib/rules/package";
+import defaultTemplates from "@/rules/default-import-export-templates.json";
 import {
   isRulePackageCompatible,
   validateRuleManifest,
@@ -21,6 +22,30 @@ describe("GitHub 规则同步", () => {
       "GUM_3_4_1PLUS_2PLUS",
     ]);
     expect(payload.topicRules.length).toBe(9);
+  });
+
+  it("规则包模板配置可选，存在时会严格校验", () => {
+    const legacy = validateRulePayload(builtinRules);
+    expect(legacy.importExportTemplates).toBeUndefined();
+    const extended = validateRulePayload({
+      ...structuredClone(builtinRules),
+      minimumAppVersion: "1.0.2",
+      importExportTemplates: defaultTemplates,
+    });
+    expect(extended.importExportTemplates?.templateVersion).toBe(
+      "template-2026.07.30.1",
+    );
+    const tampered = structuredClone(extended);
+    tampered.importExportTemplates!.templateVersion = "template-tampered";
+    expect(payloadSha256(tampered)).not.toBe(payloadSha256(extended));
+    const invalid = structuredClone(defaultTemplates);
+    invalid.fieldAliases.productName.push("链接");
+    expect(() =>
+      validateRulePayload({
+        ...structuredClone(builtinRules),
+        importExportTemplates: invalid,
+      }),
+    ).toThrow(/字段别名冲突/u);
   });
 
   it("拒绝无效关联和不规范话题", () => {

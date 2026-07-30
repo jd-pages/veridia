@@ -1,3 +1,5 @@
+import type { ImportExportTemplates } from "@/lib/import-export-templates/types";
+
 export const RULE_PACKAGE_SCHEMA_VERSION = 1;
 
 export interface RulePackageProduct {
@@ -74,6 +76,7 @@ export interface RulePackagePayload {
     normalStatuses: string[];
     technicalFailureStatuses: string[];
   };
+  importExportTemplates?: ImportExportTemplates;
 }
 
 export interface RulePackageManifest {
@@ -88,6 +91,8 @@ export interface RulePackageManifest {
   activityCount: number;
   stageGroupCount: number;
   topicRuleCount: number;
+  templateVersion?: string;
+  templateConfigSha256?: string;
 }
 
 export type RuleSyncStatus =

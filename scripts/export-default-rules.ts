@@ -4,7 +4,7 @@ import { exportCurrentRulePayload } from "@/lib/rules/package";
 
 const payload = await exportCurrentRulePayload({
   ruleVersion: "builtin-2026.07.29.1",
-  minimumAppVersion: "1.0.0",
+  minimumAppVersion: "1.0.2",
   publishedAt: new Date("2026-07-29T00:00:00.000Z"),
 });
 const target = path.join(process.cwd(), "rules", "default-rules.json");

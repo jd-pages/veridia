@@ -249,6 +249,12 @@ fs.writeFileSync(
 );
 
 const forbiddenArtifacts = [];
+const forbiddenDeveloperFiles = new Set([
+  "创建veridia账号.bat",
+  "创建veridia密码重置码.bat",
+  "创建veridia账号更新码.bat",
+  "account-developer-tool.ts",
+]);
 function scanForbidden(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const fullPath = path.join(directory, entry.name);
@@ -258,11 +264,20 @@ function scanForbidden(directory) {
     } else if (
       /(^|[\\/])\.env(?:\.|$)/i.test(relativePath) ||
       /\.db(?:-journal)?$/i.test(entry.name) ||
-      /(^|[\\/])(Cookies|Cookies-journal)$/i.test(relativePath)
+      /(^|[\\/])(Cookies|Cookies-journal)$/i.test(relativePath) ||
+      forbiddenDeveloperFiles.has(entry.name.toLocaleLowerCase("zh-CN")) ||
+      /(?:account|rules?).*signing.*private.*\.pem$/i.test(entry.name)
     ) {
       forbiddenArtifacts.push(relativePath);
     }
   }
+}
+if (
+  !fs.existsSync(
+    path.join(projectRoot, "config", "account-signing-ed25519-public.pem"),
+  )
+) {
+  throw new Error("缺少客户端账号签名公钥");
 }
 scanForbidden(standaloneRoot);
 if (forbiddenArtifacts.length) {

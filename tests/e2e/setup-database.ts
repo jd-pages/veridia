@@ -1,11 +1,68 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, rm } from "node:fs/promises";
+import {
+  generateKeyPairSync,
+  randomUUID,
+  sign,
+} from "node:crypto";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import bcrypt from "bcryptjs";
 
 const defaultDatabasePath = path.resolve(process.cwd(), "prisma", "e2e.db");
 const defaultDatabaseUrl = `file:${defaultDatabasePath}`;
 const databaseUrl =
   process.env.E2E_DATABASE_URL?.trim() || defaultDatabaseUrl;
+const accountKeyRoot = path.join(
+  os.tmpdir(),
+  "veridia-e2e-account-signing",
+);
+const accountPublicKeyPath = path.join(accountKeyRoot, "public.pem");
+const accountPrivateKeyPath = path.join(accountKeyRoot, "private.pem");
+
+async function prepareEphemeralAccountKey() {
+  const pair = generateKeyPairSync("ed25519");
+  await mkdir(accountKeyRoot, { recursive: true });
+  await writeFile(
+    accountPrivateKeyPath,
+    pair.privateKey.export({ type: "pkcs8", format: "pem" }),
+    { mode: 0o600 },
+  );
+  await writeFile(
+    accountPublicKeyPath,
+    pair.publicKey.export({ type: "spki", format: "pem" }),
+    "utf8",
+  );
+  process.env.VERIDIA_ACCOUNT_SIGNING_PUBLIC_KEY_PATH =
+    accountPublicKeyPath;
+  return pair.privateKey;
+}
+
+function signActivationCode(
+  privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"],
+) {
+  return bcrypt.hash("Admin123!", 12).then((passwordHash) => {
+    const payload = {
+      schemaVersion: 1,
+      kind: "ACCOUNT_ACTIVATION",
+      authorizationVersion: 1,
+      accountId: randomUUID(),
+      username: "admin",
+      displayName: "验收管理员",
+      role: "ADMIN",
+      passwordHash,
+      issuedAt: new Date().toISOString(),
+      expiresAt: null,
+      issuer: "VERIDIA E2E",
+    };
+    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
+      "base64url",
+    );
+    const input = Buffer.from(`VRD1.${encodedPayload}`, "utf8");
+    const signature = sign(null, input, privateKey).toString("base64url");
+    return `VRD1.${encodedPayload}.${signature}`;
+  });
+}
 
 async function resetDefaultDatabase() {
   if (databaseUrl !== defaultDatabaseUrl) return;
@@ -21,6 +78,7 @@ async function resetDefaultDatabase() {
 
 async function main() {
   await resetDefaultDatabase();
+  const accountPrivateKey = await prepareEphemeralAccountKey();
   process.env.DATABASE_URL = databaseUrl;
 
   const commandEnvironment = {
@@ -50,11 +108,17 @@ async function main() {
     },
   );
 
-  const [{ prisma }, { ensureLocalRuntime }, { ensureBuiltinRules }] =
+  const [
+    { prisma },
+    { ensureLocalRuntime },
+    { ensureBuiltinRules },
+    { activateLocalAccount },
+  ] =
     await Promise.all([
       import("../../lib/db"),
       import("../../lib/local-runtime"),
       import("../../lib/rules/sync"),
+      import("../../lib/accounts/service"),
     ]);
   const [{ createMockNote }, { normalizeUrl }, { runAuditTask }] =
     await Promise.all([
@@ -64,6 +128,16 @@ async function main() {
     ]);
 
   await ensureLocalRuntime();
+  if (
+    (await prisma.user.count({
+      where: {
+        authProvider: "LOCAL_ACTIVATION",
+        accountId: { not: null },
+      },
+    })) === 0
+  ) {
+    await activateLocalAccount(await signActivationCode(accountPrivateKey));
+  }
   await ensureBuiltinRules();
   if ((await prisma.auditResult.count()) === 0) {
     const product = await prisma.product.findFirstOrThrow({

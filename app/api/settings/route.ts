@@ -2,8 +2,9 @@ import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
 
 export async function GET() {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser();
   if (user instanceof Response) return user;
+  if (user.role !== "ADMIN") return ok([]);
   const settings = await prisma.systemSetting.findMany({
     where: {
       key: {

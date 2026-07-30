@@ -55,6 +55,7 @@ export default function AuditDetailDrawer({
   onClose,
   onOpenFullDetail,
   onAction,
+  canOperate = true,
 }: {
   open: boolean;
   row: ResultRow | null;
@@ -63,6 +64,7 @@ export default function AuditDetailDrawer({
   onClose: () => void;
   onOpenFullDetail: (row: ResultRow) => void;
   onAction: (row: ResultRow, action: BulkAction) => void;
+  canOperate?: boolean;
 }) {
   return (
     <Drawer
@@ -86,26 +88,30 @@ export default function AuditDetailDrawer({
             >
               打开原笔记
             </Button>
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={() => onAction(row, "RE_AUDIT")}
-            >
-              重新审核
-            </Button>
-            <Button
-              className={styles.successOutline}
-              icon={<CheckOutlined />}
-              onClick={() => onAction(row, "MANUAL_PASS")}
-            >
-              人工通过
-            </Button>
-            <Button
-              className={styles.dangerOutline}
-              icon={<StopOutlined />}
-              onClick={() => onAction(row, "MANUAL_FAIL")}
-            >
-              人工不通过
-            </Button>
+            {canOperate && (
+              <>
+                <Button
+                  icon={<ReloadOutlined />}
+                  onClick={() => onAction(row, "RE_AUDIT")}
+                >
+                  重新审核
+                </Button>
+                <Button
+                  className={styles.successOutline}
+                  icon={<CheckOutlined />}
+                  onClick={() => onAction(row, "MANUAL_PASS")}
+                >
+                  人工通过
+                </Button>
+                <Button
+                  className={styles.dangerOutline}
+                  icon={<StopOutlined />}
+                  onClick={() => onAction(row, "MANUAL_FAIL")}
+                >
+                  人工不通过
+                </Button>
+              </>
+            )}
             <Button type="primary" onClick={() => onOpenFullDetail(row)}>
               打开完整详情
             </Button>

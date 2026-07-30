@@ -15,9 +15,11 @@ import {
 } from "antd";
 import { FolderOpenOutlined, ReloadOutlined } from "@ant-design/icons";
 import PageHeader from "@/components/PageHeader";
+import AccountSecurityPanel from "@/components/AccountSecurityPanel";
 import { apiFetch } from "@/lib/client";
 import { ruleSyncStatusLabel } from "@/lib/rules/labels";
 import { settingLabel } from "@/lib/zh-CN";
+import type { SessionUser } from "@/lib/auth";
 
 interface Setting {
   id: string;
@@ -43,6 +45,8 @@ interface RuleSyncStatus {
   currentVersion: string;
   latestVersion: string | null;
   schemaVersion: number;
+  templateVersion: string | null;
+  templateSchemaVersion: number | null;
   source: string;
   status: string;
   counts: {
@@ -66,6 +70,10 @@ export default function SettingsPage() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [syncingRules, setSyncingRules] = useState(false);
   const [migratingData, setMigratingData] = useState(false);
+  const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
+    null,
+  );
+  const isAdmin = currentRole === "ADMIN";
   const load = useCallback(async () => {
     try {
       const data = (await apiFetch<Setting[]>("/api/settings")).filter(
@@ -78,6 +86,11 @@ export default function SettingsPage() {
     }
   }, [message]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
+      setCurrentRole(user?.role || null),
+    );
+  }, []);
   useEffect(() => {
     const desktop = window.veridiaDesktop;
     const request = desktop
@@ -133,6 +146,7 @@ export default function SettingsPage() {
   return (
     <>
       <PageHeader title="系统设置" description="本地固定规则审核参数" />
+      <AccountSecurityPanel />
       <Card className="surface-card" title="软件与更新" style={{ marginBottom: 16 }}>
         <Descriptions column={{ xs: 1, md: 2 }}>
           <Descriptions.Item label="当前版本">
@@ -152,7 +166,7 @@ export default function SettingsPage() {
           <Descriptions.Item label="自动检查更新">
             <Switch
               checked={versionInfo?.autoUpdate || false}
-              disabled={!desktopAvailable}
+              disabled={!desktopAvailable || !isAdmin}
               checkedChildren="开启"
               unCheckedChildren="关闭"
               onChange={async (checked) => {
@@ -177,7 +191,7 @@ export default function SettingsPage() {
           <Button
             icon={<FolderOpenOutlined />}
             loading={migratingData}
-            disabled={!desktopAvailable}
+            disabled={!desktopAvailable || !isAdmin}
             onClick={() => void changeDataDirectory()}
           >
             更改数据位置
@@ -217,6 +231,12 @@ export default function SettingsPage() {
           <Descriptions.Item label="Schema 版本">
             {ruleSync?.schemaVersion || "—"}
           </Descriptions.Item>
+          <Descriptions.Item label="表格模板版本">
+            {ruleSync?.templateVersion || "内置默认模板"}
+          </Descriptions.Item>
+          <Descriptions.Item label="模板 Schema">
+            {ruleSync?.templateSchemaVersion || 1}
+          </Descriptions.Item>
           <Descriptions.Item label="同步来源">
             {ruleSync?.source === "GITHUB"
               ? "GitHub规则仓库"
@@ -253,7 +273,7 @@ export default function SettingsPage() {
           />
         )}
         <Space wrap>
-          <Button
+          {isAdmin && <Button
             disabled={!ruleSync?.configured}
             onClick={async () => {
               setSyncingRules(true);
@@ -274,8 +294,8 @@ export default function SettingsPage() {
             }}
           >
             检查更新
-          </Button>
-          <Button
+          </Button>}
+          {isAdmin && <Button
             type="primary"
             loading={syncingRules}
             disabled={!ruleSync?.configured}
@@ -301,8 +321,8 @@ export default function SettingsPage() {
             }}
           >
             立即同步
-          </Button>
-          <Button
+          </Button>}
+          {isAdmin && <Button
             onClick={async () => {
               const history = await apiFetch<
                 Array<{
@@ -331,8 +351,8 @@ export default function SettingsPage() {
             }}
           >
             查看同步记录
-          </Button>
-          <Button
+          </Button>}
+          {isAdmin && <Button
             onClick={async () => {
               setRuleSync(
                 await apiFetch<RuleSyncStatus>("/api/rule-sync/restore", {
@@ -343,11 +363,11 @@ export default function SettingsPage() {
             }}
           >
             恢复上一版规则
-          </Button>
-          <Button href="/api/rule-sync/export">导出当前规则</Button>
+          </Button>}
+          {isAdmin && <Button href="/api/rule-sync/export">导出当前规则</Button>}
         </Space>
       </Card>
-      <Card className="surface-card">
+      {isAdmin && <Card className="surface-card">
         <Table<Setting>
           rowKey="id"
           dataSource={items}
@@ -392,7 +412,7 @@ export default function SettingsPage() {
             },
           ]}
         />
-      </Card>
+      </Card>}
     </>
   );
 }

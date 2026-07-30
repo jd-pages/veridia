@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld("veridiaDesktop", {
     ipcRenderer.invoke("veridia:set-auto-update", Boolean(enabled)),
   openReleaseNotes: () => ipcRenderer.invoke("veridia:open-release-notes"),
   getUpdateStatus: () => ipcRenderer.invoke("veridia:get-update-status"),
+  storePersistentSession: (token) =>
+    ipcRenderer.invoke("veridia:store-persistent-session", token),
+  clearPersistentSession: () =>
+    ipcRenderer.invoke("veridia:clear-persistent-session"),
   onUpdateStatus: (listener) => {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on("veridia:update-status", handler);

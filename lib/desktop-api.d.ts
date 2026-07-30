@@ -64,6 +64,8 @@ declare global {
       setAutoUpdate(enabled: boolean): Promise<boolean>;
       openReleaseNotes(): Promise<boolean>;
       getUpdateStatus(): Promise<VeridiaUpdateStatus>;
+      storePersistentSession(token: string): Promise<boolean>;
+      clearPersistentSession(): Promise<boolean>;
       onUpdateStatus(
         listener: (status: VeridiaUpdateStatus) => void,
       ): () => void;

@@ -2,10 +2,12 @@ import { ok } from "@/lib/api";
 import {
   getConfiguredAuthMode,
   getEffectiveAuthMode,
-  getOrCreateLocalDevice,
 } from "@/lib/central/foundation";
+import { activatedAccountCount } from "@/lib/accounts/service";
+import { accountSigningPublicKeyPath } from "@/lib/accounts/codes";
+import { getSession } from "@/lib/auth";
 import {
-  establishLocalSession,
+  ensureLocalRuntime,
   isSetupComplete,
 } from "@/lib/local-runtime";
 import { ensureBuiltinRules, getRuleSyncStatus } from "@/lib/rules/sync";
@@ -13,14 +15,16 @@ import { ensureBuiltinRules, getRuleSyncStatus } from "@/lib/rules/sync";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  await establishLocalSession();
+  await ensureLocalRuntime();
   await ensureBuiltinRules();
-  const [initialized, configuredAuthMode, , rules] = await Promise.all([
-    isSetupComplete(),
-    getConfiguredAuthMode(),
-    getOrCreateLocalDevice(),
-    getRuleSyncStatus(),
-  ]);
+  const [initialized, configuredAuthMode, rules, accountCount, session] =
+    await Promise.all([
+      isSetupComplete(),
+      getConfiguredAuthMode(),
+      getRuleSyncStatus(),
+      activatedAccountCount(),
+      getSession(),
+    ]);
   return ok({
     initialized,
     dataDirectory: process.env.VERIDIA_DATA_DIR || "本地数据目录",
@@ -30,6 +34,10 @@ export async function GET() {
     configuredAuthMode,
     effectiveAuthMode: getEffectiveAuthMode(),
     rules,
+    activatedAccountCount: accountCount,
+    canVerifyActivation: Boolean(accountSigningPublicKeyPath()),
+    authenticated: Boolean(session),
+    user: session,
     aiEnabled: false,
   });
 }

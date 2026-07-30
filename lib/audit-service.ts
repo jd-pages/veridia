@@ -1,6 +1,5 @@
 import { prisma } from "@/lib/db";
 import packageJson from "@/package.json";
-import { refreshUsageWithoutBlocking } from "@/lib/central/foundation";
 import { evaluateAudit } from "@/lib/audit-engine";
 import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
@@ -280,7 +279,6 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
   });
 
   if (task.createdBy) {
-    await refreshUsageWithoutBlocking(task.createdBy);
   }
   return result;
 }

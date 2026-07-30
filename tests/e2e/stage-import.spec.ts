@@ -33,6 +33,9 @@ test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突
   expect(campaign).toBeTruthy();
 
   const suffix = Date.now();
+  const tasksBeforePreview = (
+    await (await page.request.get("/api/tasks")).json()
+  ).data.length as number;
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("段位识别");
   sheet.addRow([
@@ -128,6 +131,40 @@ test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突
   });
   expect(preview.rows[3].productStage).toBe("");
   expect(preview.rows[3].errors.join("；")).toContain("段位信息冲突");
+  const tasksAfterPreview = (
+    await (await page.request.get("/api/tasks")).json()
+  ).data.length as number;
+  expect(tasksAfterPreview).toBe(tasksBeforePreview);
+
+  const csv = [
+    "\uFEFF活动名称,段位,小红书链接,商品,额外登记列",
+    `${campaign.name},2段,http://localhost:3100/mock/xhs?case=passed&csv=${suffix},${product.name},忽略`,
+  ].join("\r\n");
+  const csvResponse = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: "腾讯文档导出.csv",
+        mimeType: "text/csv",
+        buffer: Buffer.from(csv, "utf8"),
+      },
+      commit: "false",
+      skipDuplicates: "true",
+      tencentExport: "true",
+    },
+  });
+  expect(csvResponse.ok()).toBeTruthy();
+  const csvPreview = (await csvResponse.json()).data as {
+    sourceType: string;
+    templateVersion: string;
+    validCount: number;
+    unknownHeaders: string[];
+  };
+  expect(csvPreview).toMatchObject({
+    sourceType: "TENCENT_DOCS_EXPORTED_CSV",
+    templateVersion: "template-2026.07.30.1",
+    validCount: 1,
+    unknownHeaders: ["额外登记列"],
+  });
 
   const expectedStageTopics = new Map([
     ["IFFO_P1", "#新生儿奶粉"],

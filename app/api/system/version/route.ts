@@ -2,7 +2,7 @@ import packageJson from "@/package.json";
 import { ok, requireApiUser } from "@/lib/api";
 
 export async function GET() {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser();
   if (user instanceof Response) return user;
   return ok({
     version: process.env.VERIDIA_APP_VERSION || packageJson.version,

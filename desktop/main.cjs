@@ -5,6 +5,7 @@ const {
   dialog,
   ipcMain,
   Menu,
+  safeStorage,
   shell,
   Tray,
 } = require("electron");
@@ -66,6 +67,49 @@ let migrationInProgress = false;
 
 function ensureDirectories() {
   ensureManagedDirectories(dataRoot);
+}
+
+function persistentSessionPath() {
+  return path.join(directories.config, "local-session.bin");
+}
+
+function readPersistentSession() {
+  const credentialPath = persistentSessionPath();
+  if (!fs.existsSync(credentialPath) || !safeStorage.isEncryptionAvailable()) {
+    return "";
+  }
+  try {
+    const encrypted = fs.readFileSync(credentialPath);
+    const token = safeStorage.decryptString(encrypted).trim();
+    return /^[A-Za-z0-9_-]{40,200}$/.test(token) ? token : "";
+  } catch (error) {
+    writeLog("本地登录凭证已失效，已安全清除", error);
+    try {
+      fs.rmSync(credentialPath, { force: true });
+    } catch {
+      // A failed cleanup must not prevent the normal login screen from opening.
+    }
+    return "";
+  }
+}
+
+function storePersistentSession(token) {
+  const normalized = String(token || "").trim();
+  if (!/^[A-Za-z0-9_-]{40,200}$/.test(normalized)) {
+    throw new Error("登录凭证格式无效。");
+  }
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("Windows 安全凭证存储当前不可用，请重新登录后重试。");
+  }
+  ensureDirectories();
+  const encrypted = safeStorage.encryptString(normalized);
+  fs.writeFileSync(persistentSessionPath(), encrypted, { mode: 0o600 });
+  return true;
+}
+
+function clearPersistentSession() {
+  fs.rmSync(persistentSessionPath(), { force: true });
+  return true;
 }
 
 function writeLog(message, error) {
@@ -306,6 +350,7 @@ function serverEnvironment() {
     DATABASE_URL: toDatabaseUrl(databasePath),
     AUTH_SECRET: config.authSecret,
     AUTH_COOKIE_SECURE: "false",
+    VERIDIA_PERSISTENT_SESSION_TOKEN: readPersistentSession(),
     EXTENSION_TOKEN: config.extensionToken,
     VERIDIA_DESKTOP: "true",
     VERIDIA_DATA_LOCATION_CONFIRMED: "true",
@@ -728,6 +773,12 @@ function registerIpc() {
     return true;
   });
   ipcMain.handle("veridia:get-update-status", () => lastUpdateStatus);
+  ipcMain.handle("veridia:store-persistent-session", (_event, token) =>
+    storePersistentSession(token),
+  );
+  ipcMain.handle("veridia:clear-persistent-session", () =>
+    clearPersistentSession(),
+  );
 }
 
 function createTray() {

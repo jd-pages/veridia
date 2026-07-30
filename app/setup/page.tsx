@@ -2,15 +2,30 @@
 
 import "@ant-design/v5-patch-for-react-19";
 import { useEffect, useState } from "react";
-import { Alert, App, Button, Card, Descriptions, Space, Steps, Typography } from "antd";
+import {
+  Alert,
+  App,
+  Button,
+  Card,
+  ConfigProvider,
+  Descriptions,
+  Form,
+  Input,
+  Space,
+  Steps,
+  Typography,
+} from "antd";
+import zhCN from "antd/locale/zh_CN";
 import {
   CheckCircleOutlined,
   CloudSyncOutlined,
   FolderOpenOutlined,
   LoginOutlined,
+  SafetyCertificateOutlined,
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/client";
+import AccountActivationForm from "@/components/AccountActivationForm";
 import VeridiaLogo from "@/components/VeridiaLogo";
 import { ruleSyncStatusLabel } from "@/lib/rules/labels";
 
@@ -18,8 +33,6 @@ interface RuleSyncStatus {
   configured: boolean;
   currentVersion: string;
   latestVersion: string | null;
-  schemaVersion: number;
-  source: string;
   status: string;
   counts: {
     products: number;
@@ -27,7 +40,6 @@ interface RuleSyncStatus {
     stageGroups: number;
     topicRules: number;
   };
-  lastSyncedAt: string | null;
 }
 
 interface SetupStatus {
@@ -35,10 +47,13 @@ interface SetupStatus {
   dataDirectory: string;
   desktop: boolean;
   dataLocationConfirmed: boolean;
+  activatedAccountCount: number;
+  authenticated: boolean;
+  canVerifyActivation: boolean;
   rules: RuleSyncStatus;
 }
 
-export default function SetupPage() {
+function SetupContent() {
   const router = useRouter();
   const { message } = App.useApp();
   const [current, setCurrent] = useState(0);
@@ -54,11 +69,22 @@ export default function SetupPage() {
         setStatus(value);
         setRules(value.rules);
         setSelectedDataDirectory(value.dataDirectory);
-        if (value.initialized) router.replace("/dashboard");
-        else if (value.dataLocationConfirmed) setCurrent(1);
+        if (value.initialized) {
+          router.replace("/dashboard");
+        } else if (!value.dataLocationConfirmed && value.desktop) {
+          setCurrent(0);
+        } else if (!value.activatedAccountCount) {
+          setCurrent(1);
+        } else if (!value.authenticated) {
+          setCurrent(2);
+        } else {
+          setCurrent(3);
+        }
       })
       .catch((error) =>
-        message.error(error instanceof Error ? error.message : "读取初始化状态失败"),
+        message.error(
+          error instanceof Error ? error.message : "读取初始化状态失败",
+        ),
       );
   }, [message, router]);
 
@@ -76,42 +102,6 @@ export default function SetupPage() {
           ? error.message
           : "暂时无法获取最新规则，已继续使用本地规则。",
       );
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const startLogin = async () => {
-    setBusy(true);
-    try {
-      await apiFetch("/api/automation/session", {
-        method: "POST",
-        body: JSON.stringify({ action: "START_LOGIN" }),
-      });
-      setLoginStarted(true);
-      message.info("请在已打开的专用浏览器中完成小红书登录");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const confirmLogin = async () => {
-    setBusy(true);
-    try {
-      const session = await apiFetch<{ status: string; lastError?: string | null }>(
-        "/api/automation/session",
-        {
-          method: "POST",
-          body: JSON.stringify({ action: "COMPLETE_LOGIN" }),
-        },
-      );
-      if (session.status !== "READY") {
-        throw new Error(session.lastError || "尚未确认小红书登录状态");
-      }
-      setCurrent(3);
-      message.success("小红书登录状态已保存在本机");
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "确认登录失败");
     } finally {
       setBusy(false);
     }
@@ -135,12 +125,14 @@ export default function SetupPage() {
         </div>
         <Typography.Title level={2}>首次启动设置</Typography.Title>
         <Typography.Paragraph type="secondary">
-          审核数据、规则缓存和小红书登录状态仅保存在本机，无需创建账号或登录。
+          账号、数据库、审核记录及登录状态只保存在本机，不会上传到账号服务器。
         </Typography.Paragraph>
         <Steps
           current={current}
           items={[
             { title: "数据位置" },
+            { title: "激活账号" },
+            { title: "登录 VERIDIA" },
             { title: "同步规则" },
             { title: "登录小红书" },
             { title: "完成" },
@@ -174,9 +166,8 @@ export default function SetupPage() {
                   onClick={async () => {
                     const result =
                       await window.veridiaDesktop?.chooseDataDirectory();
-                    if (!result) return;
-                    if (!result.success || !result.dataDirectory) {
-                      message.error(result.error || "所选目录不可用");
+                    if (!result?.success || !result.dataDirectory) {
+                      if (result) message.error(result.error || "所选目录不可用");
                       return;
                     }
                     const confirmed =
@@ -199,13 +190,74 @@ export default function SetupPage() {
 
           {current === 1 && (
             <>
+              <SafetyCertificateOutlined className="setup-step-icon" />
+              {!status?.canVerifyActivation && (
+                <Alert
+                  type="error"
+                  showIcon
+                  message="当前软件无法验证账号签名，请联系开发者检查账号公钥。"
+                />
+              )}
+              <AccountActivationForm onActivated={() => setCurrent(2)} />
+            </>
+          )}
+
+          {current === 2 && (
+            <>
+              <LoginOutlined className="setup-step-icon" />
+              <Typography.Title level={3}>登录 VERIDIA</Typography.Title>
+              <Form
+                layout="vertical"
+                className="setup-form"
+                onFinish={async (values) => {
+                  setBusy(true);
+                  try {
+                    const result = await apiFetch<{
+                      persistentToken: string;
+                    }>("/api/auth/login", {
+                      method: "POST",
+                      body: JSON.stringify(values),
+                    });
+                    await window.veridiaDesktop?.storePersistentSession(
+                      result.persistentToken,
+                    );
+                    setCurrent(3);
+                  } catch (error) {
+                    message.error(
+                      error instanceof Error
+                        ? error.message
+                        : "用户名或密码错误。",
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                <Form.Item
+                  name="username"
+                  label="用户名"
+                  rules={[{ required: true, message: "请输入用户名" }]}
+                >
+                  <Input autoCapitalize="none" />
+                </Form.Item>
+                <Form.Item
+                  name="password"
+                  label="密码"
+                  rules={[{ required: true, message: "请输入密码" }]}
+                >
+                  <Input.Password autoComplete="current-password" />
+                </Form.Item>
+                <Button type="primary" htmlType="submit" loading={busy}>
+                  登录
+                </Button>
+              </Form>
+            </>
+          )}
+
+          {current === 3 && (
+            <>
               <CloudSyncOutlined className="setup-step-icon" />
               <Typography.Title level={3}>同步审核规则</Typography.Title>
-              <Typography.Paragraph type="secondary">
-                VERIDIA 将检查最新的产品、活动和审核规则。
-                <br />
-                规则同步失败时，仍可使用内置规则继续工作。
-              </Typography.Paragraph>
               <Descriptions bordered size="small" column={2}>
                 <Descriptions.Item label="当前规则版本">
                   {rules?.currentVersion || "—"}
@@ -222,25 +274,10 @@ export default function SetupPage() {
                 <Descriptions.Item label="阶段组数量">
                   {rules?.counts.stageGroups ?? 0}
                 </Descriptions.Item>
-                <Descriptions.Item label="话题规则数量">
-                  {rules?.counts.topicRules ?? 0}
-                </Descriptions.Item>
-                <Descriptions.Item label="最近同步时间">
-                  {rules?.lastSyncedAt
-                    ? new Date(rules.lastSyncedAt).toLocaleString("zh-CN")
-                    : "使用内置规则"}
-                </Descriptions.Item>
-                <Descriptions.Item label="当前同步状态">
+                <Descriptions.Item label="同步状态">
                   {ruleSyncStatusLabel(rules?.status)}
                 </Descriptions.Item>
               </Descriptions>
-              {!rules?.configured && (
-                <Alert
-                  showIcon
-                  type="info"
-                  message="尚未配置独立 GitHub 规则仓库，当前使用内置规则。"
-                />
-              )}
               <Space>
                 <Button
                   type="primary"
@@ -250,12 +287,14 @@ export default function SetupPage() {
                 >
                   立即同步
                 </Button>
-                <Button onClick={() => setCurrent(2)}>使用内置规则继续</Button>
+                <Button onClick={() => setCurrent(4)}>
+                  使用当前规则继续
+                </Button>
               </Space>
             </>
           )}
 
-          {current === 2 && (
+          {current === 4 && (
             <>
               <LoginOutlined className="setup-step-icon" />
               <Typography.Title level={3}>登录小红书</Typography.Title>
@@ -264,35 +303,63 @@ export default function SetupPage() {
                 和浏览器会话只保存在本机。
               </Typography.Paragraph>
               <Space>
-                <Button type="primary" loading={busy} onClick={() => void startLogin()}>
+                <Button
+                  type="primary"
+                  loading={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await apiFetch("/api/automation/session", {
+                        method: "POST",
+                        body: JSON.stringify({ action: "START_LOGIN" }),
+                      });
+                      setLoginStarted(true);
+                      message.info("请在已打开的专用浏览器中完成登录");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
                   登录小红书
                 </Button>
                 <Button
                   disabled={!loginStarted}
-                  loading={busy}
-                  onClick={() => void confirmLogin()}
+                  onClick={async () => {
+                    await apiFetch("/api/automation/session", {
+                      method: "POST",
+                      body: JSON.stringify({ action: "COMPLETE_LOGIN" }),
+                    });
+                    setCurrent(5);
+                  }}
                 >
                   我已完成登录
                 </Button>
-                <Button onClick={() => setCurrent(3)}>稍后登录</Button>
+                <Button onClick={() => setCurrent(5)}>稍后登录</Button>
               </Space>
             </>
           )}
 
-          {current === 3 && (
+          {current === 5 && (
             <>
               <CheckCircleOutlined className="setup-step-icon setup-success" />
               <Typography.Title level={3}>VERIDIA 已准备就绪</Typography.Title>
-              <Typography.Paragraph type="secondary">
-                本地审核、Excel 导入导出与历史结果查看均不依赖网络或第三方服务。
-              </Typography.Paragraph>
               <Button type="primary" size="large" onClick={() => void finishSetup()}>
-                进入系统
+                进入工作台
               </Button>
             </>
           )}
         </section>
       </Card>
     </main>
+  );
+}
+
+export default function SetupPage() {
+  return (
+    <ConfigProvider locale={zhCN}>
+      <App>
+        <SetupContent />
+      </App>
+    </ConfigProvider>
   );
 }

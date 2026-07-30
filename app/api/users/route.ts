@@ -1,58 +1,42 @@
-import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
-import { LOCAL_SYSTEM_USER_ID } from "@/lib/local-runtime";
+import { effectiveAccountStatus } from "@/lib/accounts/validation";
 
 export async function GET() {
-  const user = await requireApiUser(["ADMIN"]);
-  if (user instanceof Response) return user;
+  const currentUser = await requireApiUser(["ADMIN"]);
+  if (currentUser instanceof Response) return currentUser;
+  const users = await prisma.user.findMany({
+    where: {
+      accountId: { not: null },
+      authProvider: "LOCAL_ACTIVATION",
+    },
+    select: {
+      id: true,
+      accountId: true,
+      username: true,
+      displayName: true,
+      role: true,
+      status: true,
+      issuedAt: true,
+      expiresAt: true,
+      activatedAt: true,
+      lastLocalLoginAt: true,
+    },
+    orderBy: [{ role: "asc" }, { activatedAt: "asc" }],
+  });
   return ok(
-    await prisma.user.findMany({
-      where: { id: { not: LOCAL_SYSTEM_USER_ID } },
-      select: {
-        id: true,
-        username: true,
-        displayName: true,
-        role: true,
-        status: true,
-        lastLoginAt: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: "asc" },
-    }),
+    users.map((user) => ({
+      ...user,
+      status: effectiveAccountStatus(user),
+    })),
   );
 }
 
-export async function POST(request: Request) {
-  const user = await requireApiUser(["ADMIN"]);
-  if (user instanceof Response) return user;
-  const body = (await request.json()) as {
-    username?: string;
-    displayName?: string;
-    password?: string;
-    role?: string;
-  };
-  if (!body.username || !body.displayName || !body.password || !body.role) {
-    return fail("账号、姓名、密码和角色为必填项");
-  }
-  try {
-    const created = await prisma.user.create({
-      data: {
-        username: body.username.trim(),
-        displayName: body.displayName.trim(),
-        passwordHash: await bcrypt.hash(body.password, 10),
-        role: body.role,
-      },
-      select: {
-        id: true,
-        username: true,
-        displayName: true,
-        role: true,
-        status: true,
-      },
-    });
-    return ok(created, { status: 201 });
-  } catch {
-    return fail("用户名已存在或数据无效");
-  }
+export async function POST() {
+  const currentUser = await requireApiUser(["ADMIN"]);
+  if (currentUser instanceof Response) return currentUser;
+  return fail(
+    "客户端不允许直接创建账号，请使用开发者签发的账号激活码。",
+    403,
+  );
 }

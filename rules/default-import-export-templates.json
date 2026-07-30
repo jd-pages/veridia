@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "templateVersion": "template-2026.07.30.1",
+  "importTemplates": {
+    "default": {
+      "sheetName": "笔记导入",
+      "headerRowSearchLimit": 20,
+      "previewRowLimit": 10,
+      "unknownFieldPolicy": "IGNORE"
+    }
+  },
+  "exportTemplates": {
+    "auditResults": {
+      "sheetName": "审核结果",
+      "multiValueSeparator": "、"
+    },
+    "auditTasks": {
+      "sheetName": "审核任务",
+      "multiValueSeparator": "、"
+    }
+  },
+  "fieldDefinitions": {
+    "noteUrl": { "displayName": "笔记链接", "type": "url", "description": "小红书笔记完整链接或短链接" },
+    "noteId": { "displayName": "笔记ID", "type": "string", "description": "小红书笔记ID" },
+    "productName": { "displayName": "产品", "type": "string", "description": "系统中已有的产品名称或别名" },
+    "activityName": { "displayName": "活动", "type": "string", "description": "系统中已有的活动名称" },
+    "influencerName": { "displayName": "达人昵称", "type": "string", "description": "达人或博主昵称" },
+    "publishTime": { "displayName": "发布时间", "type": "datetime", "description": "笔记发布时间" },
+    "title": { "displayName": "标题", "type": "string", "description": "笔记标题" },
+    "content": { "displayName": "正文内容", "type": "string", "description": "笔记正文" },
+    "imageCount": { "displayName": "图片数量", "type": "integer", "description": "图文笔记图片数量" },
+    "topicTags": { "displayName": "话题标签", "type": "stringList", "description": "笔记话题标签" },
+    "screenshotStatus": { "displayName": "截图状态", "type": "string", "description": "客服登记截图状态" },
+    "noteStatus": { "displayName": "笔记状态", "type": "string", "description": "笔记当前状态" },
+    "auditStatus": { "displayName": "处理状态", "type": "string", "description": "任务提取和处理状态" },
+    "auditResult": { "displayName": "审核结果", "type": "string", "description": "规则审核结果" },
+    "failedReasons": { "displayName": "不合规原因", "type": "stringList", "description": "未通过或待复核原因" },
+    "matchedRules": { "displayName": "命中规则", "type": "stringList", "description": "本次审核命中的规则证据" },
+    "ruleVersion": { "displayName": "规则版本", "type": "string", "description": "审核时使用的规则版本" },
+    "reviewedBy": { "displayName": "复核人员", "type": "string", "description": "最近一次人工复核人员" },
+    "reviewedAt": { "displayName": "审核时间", "type": "datetime", "description": "自动审核或人工复核时间" },
+    "remark": { "displayName": "备注", "type": "string", "description": "内部备注" }
+    ,
+    "productCode": { "displayName": "产品编码", "type": "string", "description": "可选的内部产品编码" },
+    "activityMonth": { "displayName": "活动月份", "type": "string", "description": "活动月份，例如2026-07" },
+    "specification": { "displayName": "规格", "type": "string", "description": "用于识别产品段位的规格信息" },
+    "productStage": { "displayName": "产品阶段话题", "type": "string", "description": "产品具体段位或阶段组选项" },
+    "source": { "displayName": "任务来源", "type": "string", "description": "任务创建来源" },
+    "productStageTopic": { "displayName": "产品阶段话题", "type": "string", "description": "审核选择的产品阶段话题组" },
+    "allowedBodyStages": { "displayName": "正文允许段位", "type": "stringList", "description": "当前阶段组允许的正文段位词" },
+    "detectedBodyStages": { "displayName": "正文实际识别段位", "type": "stringList", "description": "正文实际识别出的段位词" },
+    "requiredStageTopic": { "displayName": "要求阶段话题", "type": "string", "description": "当前阶段要求的可点击话题" },
+    "imageExtractionStatus": { "displayName": "图片提取状态", "type": "string", "description": "图片数量读取状态" },
+    "imageStatus": { "displayName": "图片数量合规", "type": "string", "description": "图片数量规则结果" }
+  },
+  "fieldAliases": {
+    "noteUrl": ["笔记链接", "小红书链接", "链接", "文章链接", "笔记地址", "小红书笔记链接", "noteUrl", "url", "link"],
+    "noteId": ["笔记ID", "笔记id", "noteId", "note_id", "文章ID", "内容ID"],
+    "productName": ["产品", "商品", "商品名称", "产品名称", "审核产品", "product", "productName"],
+    "activityName": ["活动", "活动名称", "审核活动", "campaign", "activity", "activityName"],
+    "influencerName": ["达人昵称", "博主昵称", "账号昵称", "小红书昵称", "昵称", "author", "influencer", "influencerName"],
+    "publishTime": ["发布时间", "发布日期", "笔记时间", "publishTime", "createdAt"],
+    "title": ["标题", "笔记标题", "title"],
+    "content": ["正文", "正文内容", "笔记正文", "文案", "内容", "content"],
+    "imageCount": ["图片数量", "图片数", "图片张数", "imageCount", "images"],
+    "topicTags": ["话题标签", "话题", "标签", "关键词", "topics", "tags", "topicTags"],
+    "screenshotStatus": ["截图状态", "截图", "是否截图", "screenshotStatus"],
+    "noteStatus": ["笔记状态", "文章状态", "内容状态", "noteStatus"],
+    "remark": ["备注", "说明", "备注信息", "remark", "memo"],
+    "productCode": ["产品编码", "商品编码", "productCode", "sku"],
+    "activityMonth": ["活动月份", "月份", "campaignMonth", "activityMonth"],
+    "specification": ["规格", "产品规格", "商品规格", "specification"],
+    "productStage": ["产品阶段话题", "产品段位", "奶粉段位", "段位", "productStage"]
+  },
+  "requiredFields": ["noteUrl", "productName", "activityName"],
+  "optionalFields": ["noteId", "influencerName", "publishTime", "title", "content", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark", "productCode", "activityMonth", "specification", "productStage"],
+  "columnOrder": {
+    "import": ["noteUrl", "productCode", "productName", "specification", "activityName", "activityMonth", "productStage", "influencerName", "publishTime", "title", "content", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark"],
+    "auditResults": ["noteUrl", "noteId", "productName", "activityName", "source", "productStageTopic", "allowedBodyStages", "detectedBodyStages", "requiredStageTopic", "influencerName", "publishTime", "title", "content", "imageExtractionStatus", "imageCount", "imageStatus", "topicTags", "auditStatus", "auditResult", "failedReasons", "matchedRules", "ruleVersion", "reviewedBy", "reviewedAt", "remark"],
+    "auditTasks": ["noteUrl", "noteId", "productName", "activityName", "auditStatus", "auditResult", "ruleVersion", "reviewedAt", "remark"]
+  },
+  "dataValidation": {
+    "maxFileBytes": 10485760,
+    "maxRows": 5000,
+    "skipBlankRows": true,
+    "trimWhitespace": true,
+    "caseInsensitiveHeaders": true
+  },
+  "examples": {
+    "noteUrl": "https://www.xiaohongshu.com/explore/示例笔记ID",
+    "productName": "爱他美澳洲白金版",
+    "activityName": "爱他美2026年7月小红书种草审核",
+    "influencerName": "示例达人",
+    "publishTime": "2026-07-15 10:30:00",
+    "productStage": "3段",
+    "remark": "仅为格式示例，不会随软件上传"
+  },
+  "compatibility": {
+    "minimumAppVersion": "1.0.2",
+    "supportedTemplateSchemaVersions": [1]
+  },
+  "sourcePresets": {
+    "EXCEL_XLSX": { "extensions": [".xlsx"], "localOnly": true },
+    "EXCEL_XLS": { "extensions": [".xls"], "localOnly": true },
+    "CSV": { "extensions": [".csv"], "localOnly": true },
+    "TENCENT_DOCS_EXPORTED_XLSX": { "extensions": [".xlsx"], "localOnly": true },
+    "TENCENT_DOCS_EXPORTED_CSV": { "extensions": [".csv"], "localOnly": true }
+  }
+}

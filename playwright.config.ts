@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const port = Number(process.env.E2E_PORT || 3100);
@@ -35,6 +36,9 @@ const bundledExecutable = fs.existsSync(bundledBrowserRoot)
   : undefined;
 const executablePath =
   process.env.PLAYWRIGHT_EXECUTABLE_PATH?.trim() || bundledExecutable;
+const e2eAccountPublicKeyPath =
+  process.env.VERIDIA_ACCOUNT_SIGNING_PUBLIC_KEY_PATH?.trim() ||
+  path.join(os.tmpdir(), "veridia-e2e-account-signing", "public.pem");
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -72,6 +76,7 @@ export default defineConfig({
       DATABASE_URL: e2eDatabaseUrl,
       EXTENSION_TOKEN:
         process.env.EXTENSION_TOKEN || "local-extension-demo-token",
+      VERIDIA_ACCOUNT_SIGNING_PUBLIC_KEY_PATH: e2eAccountPublicKeyPath,
       ...(executablePath ? { PLAYWRIGHT_EXECUTABLE_PATH: executablePath } : {}),
     },
   },

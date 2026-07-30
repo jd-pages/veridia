@@ -15,6 +15,39 @@ export async function afterPack(context) {
     "resources",
     "app",
   );
+  const accountPublicKey = path.join(
+    applicationRoot,
+    "config",
+    "account-signing-ed25519-public.pem",
+  );
+  if (!fs.existsSync(accountPublicKey)) {
+    throw new Error("Electron 产物缺少账号签名公钥");
+  }
+  const forbiddenNames = new Set([
+    "创建veridia账号.bat",
+    "创建veridia密码重置码.bat",
+    "创建veridia账号更新码.bat",
+    "account-developer-tool.ts",
+  ]);
+  const forbiddenAccountArtifacts = [];
+  function scanAccountArtifacts(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) scanAccountArtifacts(fullPath);
+      else if (
+        forbiddenNames.has(entry.name.toLocaleLowerCase("zh-CN")) ||
+        /(?:account|rules?).*signing.*private.*\.pem$/i.test(entry.name)
+      ) {
+        forbiddenAccountArtifacts.push(path.relative(applicationRoot, fullPath));
+      }
+    }
+  }
+  scanAccountArtifacts(applicationRoot);
+  if (forbiddenAccountArtifacts.length) {
+    throw new Error(
+      `Electron 产物包含开发者账号文件：${forbiddenAccountArtifacts.join("、")}`,
+    );
+  }
 
   copyGeneratedPrismaClient(projectRoot, applicationRoot);
   const result = assertPackagedPrismaClient(
