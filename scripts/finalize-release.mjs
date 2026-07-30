@@ -146,6 +146,25 @@ function requestJson({
   });
 }
 
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function requestJsonWithRetry(options) {
+  let lastError;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      const response = await requestJson(options);
+      if (response.status < 500 && response.status !== 429) return response;
+      lastError = new Error(`GitHub HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < 5) await wait(attempt * 1_000);
+  }
+  throw lastError;
+}
+
 function githubToken() {
   const result = git(["credential", "fill"], {
     input: "protocol=https\nhost=github.com\n\n",
@@ -254,6 +273,7 @@ async function headStatusWithRetry(url) {
     } catch (error) {
       lastError = error;
     }
+    if (attempt < 4) await wait(attempt * 1_000);
   }
   throw lastError;
 }
@@ -285,7 +305,7 @@ function scanReleaseSources() {
 }
 
 async function lookupRelease(version, token) {
-  return requestJson({
+  return requestJsonWithRetry({
     token,
     requestPath: `/repos/${owner}/${repository}/releases/tags/v${version}`,
   });
@@ -304,7 +324,7 @@ async function verifyRemoteRelease(local, remote) {
       throw new Error(`Remote asset verification failed: ${file.name}`);
     }
   }
-  const latest = await requestJson({
+  const latest = await requestJsonWithRetry({
     requestPath: `/repos/${owner}/${repository}/releases/latest`,
   });
   if (latest.status !== 200 || latest.data.tag_name !== `v${local.version}`) {
