@@ -63,14 +63,40 @@ export async function activatedAccountCount() {
   });
 }
 
-export async function activateLocalAccount(code: string) {
-  const { payload, digest, signature } =
+export function inspectLocalAccountActivation(code: string) {
+  const { payload, format } =
+    verifyAccountCode<AccountActivationPayload>(code, "ACCOUNT_ACTIVATION");
+  const expiresAt = parseAccountDate(payload.expiresAt, "到期时间");
+  assertNotExpired(expiresAt);
+  return {
+    accountId: payload.accountId,
+    username: validateUsername(payload.username),
+    displayName: payload.displayName.trim(),
+    role: payload.role,
+    expiresAt: expiresAt?.toISOString() || null,
+    requiresPassword: !payload.passwordHash,
+    codeFormat: format,
+  };
+}
+
+export async function activateLocalAccount(code: string, password?: string) {
+  const { payload, digest, signature, format } =
     verifyAccountCode<AccountActivationPayload>(code, "ACCOUNT_ACTIVATION");
   const username = validateUsername(payload.username);
   const normalizedUsername = normalizeUsername(username);
   const issuedAt = parseAccountDate(payload.issuedAt, "签发时间")!;
   const expiresAt = parseAccountDate(payload.expiresAt, "到期时间");
   assertNotExpired(expiresAt);
+  let passwordHash = payload.passwordHash;
+  if (!passwordHash) {
+    if (!password) {
+      throw new AccountCodeError(
+        "PASSWORD_REQUIRED",
+        "请设置该账号的本地登录密码。",
+      );
+    }
+    passwordHash = await bcrypt.hash(validatePassword(password), 12);
+  }
 
   return prisma.$transaction(async (tx) => {
     if (await tx.accountCodeUse.findUnique({ where: { codeDigest: digest } })) {
@@ -107,14 +133,14 @@ export async function activateLocalAccount(code: string) {
       normalizedUsername,
       accountId: payload.accountId,
       displayName: payload.displayName.trim(),
-      passwordHash: payload.passwordHash,
+      passwordHash,
       role: payload.role,
       status: "ACTIVE",
       authProvider: "LOCAL_ACTIVATION",
       issuedAt,
       expiresAt,
       activatedAt: new Date(),
-      activationIssuer: payload.issuer,
+      activationIssuer: payload.issuer || "vd",
       activationSignature: signature,
       activationSchemaVersion: payload.schemaVersion,
       authorizationVersion: payload.authorizationVersion,
@@ -137,7 +163,7 @@ export async function activateLocalAccount(code: string) {
         entityType: "ACCOUNT",
         entityId: user.id,
         summary: `本地账号激活成功：${payload.accountId.slice(0, 8)}…`,
-        metadata: JSON.stringify({ success: true }),
+        metadata: JSON.stringify({ success: true, codeFormat: format }),
       },
     });
     return publicAccount(user);

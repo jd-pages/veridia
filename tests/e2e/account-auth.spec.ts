@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import bcrypt from "bcryptjs";
-import { randomUUID, sign } from "node:crypto";
+import { randomBytes, randomUUID, sign } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,27 +21,61 @@ function signedCode(payload: Record<string, unknown>) {
   return `VRD1.${encoded}.${signature}`;
 }
 
-async function activationCode(options?: {
+function signedCompactCode(payload: Record<string, unknown>) {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = sign(
+    null,
+    Buffer.from(`VRD2.${encoded}`),
+    fs.readFileSync(privateKeyPath),
+  ).toString("base64url");
+  return `VRD2.${encoded}.${signature}`;
+}
+
+function activationCode(options?: {
   username?: string;
   role?: "ADMIN" | "OPERATOR" | "VIEWER";
   expiresAt?: string | null;
 }) {
+  const role = options?.role || "VIEWER";
+  const payload = {
+    v: 2,
+    k: "a",
+    av: 1,
+    i: randomBytes(16).toString("base64url"),
+    u: options?.username || `viewer_${Date.now()}`,
+    n: "E2E只读人员",
+    r: role === "ADMIN" ? "A" : role === "OPERATOR" ? "O" : "V",
+    ia: Math.floor(Date.now() / 1000),
+    ...(options?.expiresAt
+      ? { ea: Math.floor(new Date(options.expiresAt).getTime() / 1000) }
+      : {}),
+  };
+  return {
+    accountId: payload.i,
+    username: payload.u,
+    password: "Viewer123!",
+    code: signedCompactCode(payload),
+  };
+}
+
+async function legacyActivationCode() {
+  const password = "Legacy123!";
   const payload = {
     schemaVersion: 1,
     kind: "ACCOUNT_ACTIVATION",
     authorizationVersion: 1,
     accountId: randomUUID(),
-    username: options?.username || `viewer_${Date.now()}`,
-    displayName: "E2E只读人员",
-    role: options?.role || "VIEWER",
-    passwordHash: await bcrypt.hash("Viewer123!", 12),
+    username: `legacy_${Date.now()}`,
+    displayName: "旧版兼容账号",
+    role: "VIEWER",
+    passwordHash: await bcrypt.hash(password, 12),
     issuedAt: new Date().toISOString(),
-    expiresAt: options?.expiresAt ?? null,
+    expiresAt: null,
     issuer: "VERIDIA E2E",
   };
   return {
-    accountId: payload.accountId,
     username: payload.username,
+    password,
     code: signedCode(payload),
   };
 }
@@ -49,16 +83,34 @@ async function activationCode(options?: {
 test("激活码签名、重复和过期校验不会产生残缺账号", async ({ page }) => {
   const before = await page.request.get("/api/auth/status");
   const beforeCount = (await before.json()).data.activatedAccountCount as number;
-  const account = await activationCode();
+  const account = activationCode();
+
+  const preview = await page.request.post("/api/auth/activate", {
+    data: { activationCode: account.code, preview: true },
+  });
+  expect(preview.ok()).toBeTruthy();
+  expect((await preview.json()).data).toMatchObject({
+    username: account.username,
+    requiresPassword: true,
+    codeFormat: "VRD2",
+  });
 
   const activated = await page.request.post("/api/auth/activate", {
-    data: { activationCode: account.code },
+    data: {
+      activationCode: account.code,
+      password: account.password,
+      confirmPassword: account.password,
+    },
   });
   expect(activated.ok()).toBeTruthy();
   expect((await activated.json()).data.username).toBe(account.username);
 
   const duplicate = await page.request.post("/api/auth/activate", {
-    data: { activationCode: account.code },
+    data: {
+      activationCode: account.code,
+      password: account.password,
+      confirmPassword: account.password,
+    },
   });
   expect(duplicate.status()).toBe(400);
   expect((await duplicate.json()).error).toContain("已经在当前电脑激活");
@@ -67,7 +119,7 @@ test("激活码签名、重复和过期校验不会产生残缺账号", async ({
   const tamperedPayload = JSON.parse(
     Buffer.from(encodedPayload!, "base64url").toString("utf8"),
   );
-  tamperedPayload.displayName = "被修改的名称";
+  tamperedPayload.n = "被修改的名称";
   const tampered = `${prefix}.${Buffer.from(
     JSON.stringify(tamperedPayload),
   ).toString("base64url")}.${signature}`;
@@ -77,18 +129,75 @@ test("激活码签名、重复和过期校验不会产生残缺账号", async ({
   expect(invalid.status()).toBe(400);
   expect((await invalid.json()).error).toContain("签名校验失败");
 
-  const expired = await activationCode({
+  const expired = activationCode({
     username: `expired_${Date.now()}`,
     expiresAt: new Date(Date.now() - 60_000).toISOString(),
   });
   const expiredResponse = await page.request.post("/api/auth/activate", {
-    data: { activationCode: expired.code },
+    data: {
+      activationCode: expired.code,
+      password: expired.password,
+      confirmPassword: expired.password,
+    },
   });
   expect(expiredResponse.status()).toBe(400);
   expect((await expiredResponse.json()).error).toContain("已经过期");
 
   const after = await page.request.get("/api/auth/status");
   expect((await after.json()).data.activatedAccountCount).toBe(beforeCount + 1);
+});
+
+test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => {
+  const account = activationCode({
+    username: `compact_ui_${Date.now()}`,
+    role: "OPERATOR",
+  });
+
+  await page.goto("/activate");
+  await page
+    .getByPlaceholder("粘贴开发者提供的账号激活码")
+    .fill(account.code);
+  await page.getByRole("button", { name: "验证激活码" }).click();
+
+  await expect(page.getByText("激活码签名验证通过", { exact: true })).toBeVisible();
+  await expect(page.getByText(account.username, { exact: true })).toBeVisible();
+  await expect(page.getByText("OPERATOR", { exact: true })).toBeVisible();
+
+  await page.getByPlaceholder("请输入登录密码").fill(account.password);
+  await page.getByPlaceholder("请再次输入登录密码").fill(account.password);
+  await page.getByRole("button", { name: "确认激活" }).click();
+  await expect(page.getByText("账号激活成功", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "返回登录" }).click();
+  await page.getByLabel("用户名").fill(account.username);
+  await page.getByLabel("密码").fill(account.password);
+  await page.locator('button[type="submit"]').click();
+  await expect(page).toHaveURL(/\/dashboard$/u);
+
+  await page.reload();
+  await expect(page).toHaveURL(/\/dashboard$/u);
+});
+
+test("旧版 VRD1 激活码仍可使用原初始密码登录", async ({ page }) => {
+  const account = await legacyActivationCode();
+  const preview = await page.request.post("/api/auth/activate", {
+    data: { activationCode: account.code, preview: true },
+  });
+  expect(preview.ok()).toBeTruthy();
+  expect((await preview.json()).data).toMatchObject({
+    username: account.username,
+    requiresPassword: false,
+    codeFormat: "VRD1",
+  });
+
+  const activated = await page.request.post("/api/auth/activate", {
+    data: { activationCode: account.code },
+  });
+  expect(activated.ok()).toBeTruthy();
+  const login = await page.request.post("/api/auth/login", {
+    data: { username: account.username, password: account.password },
+  });
+  expect(login.ok()).toBeTruthy();
 });
 
 test("登录错误提示一致、本地限流且正确密码可以登录", async ({ page }) => {
@@ -127,11 +236,15 @@ test("登录错误提示一致、本地限流且正确密码可以登录", async
 });
 
 test("VIEWER 后端不能创建任务或修改产品", async ({ page }) => {
-  const account = await activationCode();
+  const account = activationCode();
   expect(
     (
       await page.request.post("/api/auth/activate", {
-        data: { activationCode: account.code },
+        data: {
+          activationCode: account.code,
+          password: account.password,
+          confirmPassword: account.password,
+        },
       })
     ).ok(),
   ).toBeTruthy();
@@ -154,14 +267,18 @@ test("VIEWER 后端不能创建任务或修改产品", async ({ page }) => {
 });
 
 test("改密、开发者重置码和账号更新码会使旧会话失效", async ({ page }) => {
-  const account = await activationCode({
+  const account = activationCode({
     username: `operator_${Date.now()}`,
     role: "OPERATOR",
   });
   expect(
     (
       await page.request.post("/api/auth/activate", {
-        data: { activationCode: account.code },
+        data: {
+          activationCode: account.code,
+          password: account.password,
+          confirmPassword: account.password,
+        },
       })
     ).ok(),
   ).toBeTruthy();

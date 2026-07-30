@@ -1,35 +1,70 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
-setlocal
 cd /d "%~dp0"
-title VERIDIA 发布新版
+setlocal EnableExtensions DisableDelayedExpansion
+title VERIDIA Release
+
+set "RELEASE_CHOICE="
+set "VERIDIA_RELEASE_TYPE="
+
+if /i "%~1"=="--dry-run" set "VERIDIA_RELEASE_DRY_RUN=1"
+if "%VERIDIA_RELEASE_DRY_RUN%"=="1" set "RELEASE_CHOICE=%~2"
 
 echo.
-echo 请选择发布类型：
-echo   1. 补丁版本（patch，例如 1.0.0 -^> 1.0.1）
-echo   2. 功能版本（minor，例如 1.0.0 -^> 1.1.0）
-echo   3. 重大版本（major，例如 1.0.0 -^> 2.0.0）
+echo ========================================
+echo VERIDIA Local Release
+echo ========================================
+echo Select release type:
+echo   1. Patch release, for example 1.0.2 to 1.0.3
+echo   2. Minor release, for example 1.0.0 to 1.1.0
+echo   3. Major release, for example 1.0.0 to 2.0.0
 echo.
-set /p VERIDIA_RELEASE_CHOICE=请输入 1、2 或 3：
+if not defined RELEASE_CHOICE set /p "RELEASE_CHOICE=Enter 1, 2 or 3: "
 
-if "%VERIDIA_RELEASE_CHOICE%"=="1" set VERIDIA_RELEASE_TYPE=patch
-if "%VERIDIA_RELEASE_CHOICE%"=="2" set VERIDIA_RELEASE_TYPE=minor
-if "%VERIDIA_RELEASE_CHOICE%"=="3" set VERIDIA_RELEASE_TYPE=major
+if "%RELEASE_CHOICE%"=="1" set "VERIDIA_RELEASE_TYPE=patch"
+if "%RELEASE_CHOICE%"=="2" set "VERIDIA_RELEASE_TYPE=minor"
+if "%RELEASE_CHOICE%"=="3" set "VERIDIA_RELEASE_TYPE=major"
 
-if not defined VERIDIA_RELEASE_TYPE (
-  echo 无效选择，发布已取消。
-  pause
-  exit /b 1
-)
+if not defined VERIDIA_RELEASE_TYPE goto :invalid_choice
+if "%VERIDIA_RELEASE_DRY_RUN%"=="1" goto :dry_run
+
+echo.
+echo Selected release type: %VERIDIA_RELEASE_TYPE%
+echo Starting local checks, version update and installer build.
+echo This script does not create Git tags or GitHub releases.
+echo This script does not publish rule packages.
+echo.
 
 call npm.cmd run release:%VERIDIA_RELEASE_TYPE%
-if errorlevel 1 (
-  echo.
-  echo 发布失败。正式版本号未升级，请查看 .release-work\logs。
-  pause
-  exit /b 1
-)
+if errorlevel 1 goto :release_failed
 
 echo.
-echo 本地发布完成。请检查 release 目录中的安装包和更新文件。
+echo Local build completed.
+echo Check the release directory for installers, update files and logs.
 pause
+exit /b 0
+
+:dry_run
+echo.
+echo ========================================
+echo Dry-run passed
+echo ========================================
+echo Menu choice: %RELEASE_CHOICE%
+echo Release type: %VERIDIA_RELEASE_TYPE%
+echo npm was not started and the version was not changed.
+echo No installer, tag, release or upload was created.
+exit /b 0
+
+:invalid_choice
+echo.
+echo Invalid choice. Release cancelled.
+echo Enter 1, 2 or 3.
+pause
+exit /b 1
+
+:release_failed
+echo.
+echo Release failed.
+echo The version change is rolled back. Check .release-work\logs.
+pause
+exit /b 1

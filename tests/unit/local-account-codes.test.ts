@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import {
   generateKeyPairSync,
+  randomBytes,
   randomUUID,
   sign,
 } from "node:crypto";
@@ -10,10 +11,15 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   AccountCodeError,
+  COMPACT_CODE_PREFIX,
+  compactActivationSigningInput,
   normalizeAccountCode,
   verifyAccountCode,
 } from "@/lib/accounts/codes";
-import type { AccountActivationPayload } from "@/lib/accounts/types";
+import type {
+  AccountActivationPayload,
+  CompactAccountActivationPayload,
+} from "@/lib/accounts/types";
 
 const fixtureRoot = fs.mkdtempSync(
   path.join(os.tmpdir(), "veridia-account-code-"),
@@ -21,14 +27,21 @@ const fixtureRoot = fs.mkdtempSync(
 const publicKeyPath = path.join(fixtureRoot, "public.pem");
 let privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"];
 
-function signPayload(payload: AccountActivationPayload) {
+function signLegacyPayload(payload: AccountActivationPayload) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const input = Buffer.from(`VRD1.${encoded}`, "utf8");
   const signature = sign(null, input, privateKey).toString("base64url");
   return `VRD1.${encoded}.${signature}`;
 }
 
-async function validPayload(
+function signCompactPayload(payload: CompactAccountActivationPayload) {
+  const { encodedPayload, signingInput } =
+    compactActivationSigningInput(payload);
+  const signature = sign(null, signingInput, privateKey).toString("base64url");
+  return `${COMPACT_CODE_PREFIX}.${encodedPayload}.${signature}`;
+}
+
+async function validLegacyPayload(
   patch: Partial<AccountActivationPayload> = {},
 ): Promise<AccountActivationPayload> {
   return {
@@ -36,13 +49,29 @@ async function validPayload(
     kind: "ACCOUNT_ACTIVATION",
     authorizationVersion: 1,
     accountId: randomUUID(),
-    username: "operator_01",
-    displayName: "测试审核员",
+    username: "legacy_operator",
+    displayName: "旧版审核员",
     role: "OPERATOR",
     passwordHash: await bcrypt.hash("Example123!", 12),
     issuedAt: new Date().toISOString(),
     expiresAt: null,
     issuer: "VERIDIA Unit Test",
+    ...patch,
+  };
+}
+
+function validCompactPayload(
+  patch: Partial<CompactAccountActivationPayload> = {},
+): CompactAccountActivationPayload {
+  return {
+    v: 2,
+    k: "a",
+    av: 1,
+    i: randomBytes(16).toString("base64url"),
+    u: "compact_operator",
+    n: "紧凑码审核员",
+    r: "O",
+    ia: Math.floor(Date.now() / 1000),
     ...patch,
   };
 }
@@ -63,23 +92,35 @@ afterAll(() => {
 });
 
 describe("本地账号激活码", () => {
-  it("使用 Ed25519 验证有效账号且不包含明文密码", async () => {
-    const payload = await validPayload();
-    const code = signPayload(payload);
-    expect(code).not.toContain("Example123!");
+  it("验证 VRD2 紧凑激活码且载荷不包含密码或密码哈希", () => {
+    const payload = validCompactPayload();
+    const code = signCompactPayload(payload);
     const verified = verifyAccountCode<AccountActivationPayload>(
       code,
       "ACCOUNT_ACTIVATION",
     );
-    expect(verified.payload.accountId).toBe(payload.accountId);
-    expect(verified.payload.role).toBe("OPERATOR");
-    expect(await bcrypt.compare("Example123!", verified.payload.passwordHash)).toBe(
-      true,
+    const decoded = JSON.parse(
+      Buffer.from(code.split(".")[1]!, "base64url").toString("utf8"),
     );
+
+    expect(code.startsWith("VRD2.")).toBe(true);
+    expect(code.length).toBeLessThan(320);
+    expect(verified.format).toBe("VRD2");
+    expect(verified.payload.username).toBe(payload.u);
+    expect(verified.payload.role).toBe("OPERATOR");
+    expect(verified.payload.passwordHash).toBeUndefined();
+    expect(decoded).not.toHaveProperty("passwordHash");
+    expect(JSON.stringify(decoded).toLowerCase()).not.toContain("password");
   });
 
-  it("允许复制时插入空格和换行", async () => {
-    const code = signPayload(await validPayload());
+  it("紧凑码长度明显短于包含 bcrypt 哈希的旧码", async () => {
+    const compact = signCompactPayload(validCompactPayload());
+    const legacy = signLegacyPayload(await validLegacyPayload());
+    expect(compact.length).toBeLessThan(legacy.length * 0.6);
+  });
+
+  it("允许复制紧凑码时插入空格和换行", () => {
+    const code = signCompactPayload(validCompactPayload());
     const wrapped = code.replace(/\./gu, ".\n  ");
     expect(normalizeAccountCode(wrapped)).toBe(code);
     expect(
@@ -87,18 +128,17 @@ describe("本地账号激活码", () => {
         wrapped,
         "ACCOUNT_ACTIVATION",
       ).payload.username,
-    ).toBe("operator_01");
+    ).toBe("compact_operator");
   });
 
   it.each([
-    ["用户名", { username: "other_user" }],
-    ["角色", { role: "ADMIN" as const }],
-    ["有效期", { expiresAt: "2030-01-01T00:00:00.000Z" }],
-    ["accountId", { accountId: randomUUID() }],
-  ])("拒绝签名后被修改的%s", async (_label, patch) => {
-    const original = await validPayload();
-    const code = signPayload(original);
-    const [, payloadPart, signature] = code.split(".");
+    ["用户名", { u: "other_user" }],
+    ["角色", { r: "A" as const }],
+    ["有效期", { ea: Math.floor(Date.now() / 1000) + 86_400 }],
+    ["accountId", { i: randomBytes(16).toString("base64url") }],
+  ])("拒绝签名后被修改的%s", (_label, patch) => {
+    const code = signCompactPayload(validCompactPayload());
+    const [prefix, payloadPart, signature] = code.split(".");
     const parsed = JSON.parse(
       Buffer.from(payloadPart!, "base64url").toString("utf8"),
     );
@@ -107,37 +147,59 @@ describe("本地账号激活码", () => {
     ).toString("base64url");
     expect(() =>
       verifyAccountCode<AccountActivationPayload>(
-        `VRD1.${modified}.${signature}`,
+        `${prefix}.${modified}.${signature}`,
         "ACCOUNT_ACTIVATION",
       ),
     ).toThrow(AccountCodeError);
   });
 
-  it("拒绝密码哈希被修改和被截断的激活码", async () => {
-    const code = signPayload(await validPayload());
-    const parts = code.split(".");
-    const parsed = JSON.parse(
-      Buffer.from(parts[1]!, "base64url").toString("utf8"),
-    );
-    parsed.passwordHash = `${parsed.passwordHash}x`;
-    const modified = Buffer.from(JSON.stringify(parsed)).toString("base64url");
-    expect(() =>
-      verifyAccountCode(
-        `VRD1.${modified}.${parts[2]}`,
-        "ACCOUNT_ACTIVATION",
-      ),
-    ).toThrow("签名校验失败");
+  it("拒绝被截断的紧凑激活码", () => {
+    const code = signCompactPayload(validCompactPayload());
     expect(() =>
       verifyAccountCode(code.slice(0, -12), "ACCOUNT_ACTIVATION"),
     ).toThrow();
   });
 
-  it("拒绝低成本或明文密码字段", async () => {
-    const payload = await validPayload({
+  it("拒绝紧凑载荷重新加入 passwordHash 等无效字段", () => {
+    const payload = {
+      ...validCompactPayload(),
+      passwordHash: "$2b$12$not-allowed",
+    };
+    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
+      "base64url",
+    );
+    const signature = sign(
+      null,
+      Buffer.from(`VRD2.${encodedPayload}`),
+      privateKey,
+    ).toString("base64url");
+    expect(() =>
+      verifyAccountCode(
+        `VRD2.${encodedPayload}.${signature}`,
+        "ACCOUNT_ACTIVATION",
+      ),
+    ).toThrow("无效字段");
+  });
+
+  it("继续兼容带 bcrypt 密码哈希的 VRD1 旧激活码", async () => {
+    const code = signLegacyPayload(await validLegacyPayload());
+    const verified = verifyAccountCode<AccountActivationPayload>(
+      code,
+      "ACCOUNT_ACTIVATION",
+    );
+    expect(verified.format).toBe("VRD1");
+    expect(verified.payload.passwordHash).toMatch(/^\$2/u);
+    expect(
+      await bcrypt.compare("Example123!", verified.payload.passwordHash!),
+    ).toBe(true);
+  });
+
+  it("旧格式仍拒绝低成本密码哈希", async () => {
+    const payload = await validLegacyPayload({
       passwordHash: await bcrypt.hash("Example123!", 8),
     });
     expect(() =>
-      verifyAccountCode(signPayload(payload), "ACCOUNT_ACTIVATION"),
+      verifyAccountCode(signLegacyPayload(payload), "ACCOUNT_ACTIVATION"),
     ).toThrow("安全参数不足");
   });
 });

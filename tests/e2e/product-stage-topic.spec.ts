@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { E2E_ORIGIN } from "./e2e-origin";
 
 test("产品阶段话题只显示三组，并联合审核正文段位与可点击话题", async ({
   page,
@@ -47,7 +48,7 @@ test("产品阶段话题只显示三组，并联合审核正文段位与可点�
   expect(campaign).toBeTruthy();
 
   const suffix = Date.now();
-  const url = `http://localhost:3100/mock/xhs?case=aptamil-stage2-passed&stage-topic=${suffix}`;
+  const url = `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-passed&stage-topic=${suffix}`;
   const createResponse = await page.request.post("/api/tasks", {
     data: {
       urls: url,

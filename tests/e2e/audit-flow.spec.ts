@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import ExcelJS from "exceljs";
 import { readFile } from "node:fs/promises";
 import { createMockNote } from "../../lib/mock-data";
+import { E2E_ORIGIN } from "./e2e-origin";
 
 function worksheetHeaders(sheet: ExcelJS.Worksheet) {
   const headers: string[] = [];
@@ -120,7 +121,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(rulePreview.campaign.minImageCount).toBe(2);
 
   const suffix = Date.now();
-  const taskUrl = `http://localhost:3100/mock/xhs?case=passed&e2e=${suffix}`;
+  const taskUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&e2e=${suffix}`;
   const createTaskResponse = await page.request.post("/api/tasks", {
     data: {
       urls: taskUrl,
@@ -231,7 +232,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "备注",
   ]);
   sheet.addRow([
-    `http://localhost:3100/mock/xhs?case=no-images&e2e-import=${suffix}`,
+    `${E2E_ORIGIN}/mock/xhs?case=no-images&e2e-import=${suffix}`,
     product.code,
     product.name,
     campaign.name,
@@ -240,7 +241,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "E2E Excel 无图片但继续审核",
   ]);
   sheet.addRow([
-    `http://localhost:3100/mock/xhs?case=read-failed&e2e-import=${suffix}-failure`,
+    `${E2E_ORIGIN}/mock/xhs?case=read-failed&e2e-import=${suffix}-failure`,
     product.code,
     product.name,
     campaign.name,
@@ -249,7 +250,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "E2E Excel 单条失败",
   ]);
   sheet.addRow([
-    `http://localhost:3100/mock/xhs?case=passed&e2e-import=${suffix}-after-failure`,
+    `${E2E_ORIGIN}/mock/xhs?case=passed&e2e-import=${suffix}-after-failure`,
     product.code,
     product.name,
     campaign.name,
@@ -307,9 +308,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
         campaignId: campaign.id,
         productStage: "IFFO_2",
         urls: [
-          `http://localhost:3100/mock/xhs?case=few-images&image-state=${suffix}`,
-          `http://localhost:3100/mock/xhs?case=no-images&image-state=${suffix}`,
-          `http://localhost:3100/mock/xhs?case=video-note&image-state=${suffix}`,
+          `${E2E_ORIGIN}/mock/xhs?case=few-images&image-state=${suffix}`,
+          `${E2E_ORIGIN}/mock/xhs?case=no-images&image-state=${suffix}`,
+          `${E2E_ORIGIN}/mock/xhs?case=video-note&image-state=${suffix}`,
         ],
       },
     },
@@ -355,7 +356,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       urls: Array.from(
         { length: 3 },
         (_item, index) =>
-          `http://localhost:3100/mock/xhs?case=passed&autoDelay=2000&e2e=${pauseSuffix}-${index}`,
+          `${E2E_ORIGIN}/mock/xhs?case=passed&autoDelay=2000&e2e=${pauseSuffix}-${index}`,
       ),
     },
   });
@@ -391,7 +392,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       productId: product.id,
       campaignId: campaign.id,
       productStage: "IFFO_2",
-      urls: `http://localhost:3100/mock/xhs?case=read-failed&retryCase=passed&e2e-retry=${suffix}`,
+      urls: `${E2E_ORIGIN}/mock/xhs?case=read-failed&retryCase=passed&e2e-retry=${suffix}`,
     },
   });
   const retryBatchId = (await retryBatchResponse.json()).data.batchId as string;
@@ -406,7 +407,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(retriedBatch.tasks[0].attempts).toBe(2);
   expect(retriedBatch.tasks[0].auditResults.length).toBe(1);
 
-  const extensionUrl = `http://localhost:3100/mock/xhs?case=unclickable-topic&extension=${suffix}`;
+  const extensionUrl = `${E2E_ORIGIN}/mock/xhs?case=unclickable-topic&extension=${suffix}`;
   const extensionTaskResponse = await page.request.post("/api/tasks", {
     data: {
       urls: extensionUrl,

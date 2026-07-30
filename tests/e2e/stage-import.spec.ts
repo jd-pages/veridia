@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import ExcelJS from "exceljs";
+import { E2E_ORIGIN } from "./e2e-origin";
 
 test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突", async ({
   page,
@@ -49,7 +50,7 @@ test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突
     "备注",
   ]);
   sheet.addRow([
-    `http://localhost:3100/mock/xhs?case=passed&stage=${suffix}-pre`,
+    `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-pre`,
     product.code,
     product.name,
     "PRE 800g",
@@ -59,7 +60,7 @@ test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突
     "从规格识别PRE",
   ]);
   sheet.addRow([
-    `http://localhost:3100/mock/xhs?case=passed&stage=${suffix}-gum`,
+    `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-gum`,
     product.code,
     product.name,
     "1+段 800g",
@@ -69,7 +70,7 @@ test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突
     "优先识别1+段",
   ]);
   sheet.addRow([
-    `http://localhost:3100/mock/xhs?case=passed&stage=${suffix}-stage-2`,
+    `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-stage-2`,
     product.code,
     product.name,
     "800g",
@@ -79,7 +80,7 @@ test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突
     "从段位字段识别2段",
   ]);
   sheet.addRow([
-    `http://localhost:3100/mock/xhs?case=passed&stage=${suffix}-conflict`,
+    `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-conflict`,
     product.code,
     product.name,
     "1段 800g",
@@ -138,7 +139,7 @@ test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突
 
   const csv = [
     "\uFEFF活动名称,段位,小红书链接,商品,额外登记列",
-    `${campaign.name},2段,http://localhost:3100/mock/xhs?case=passed&csv=${suffix},${product.name},忽略`,
+    `${campaign.name},2段,${E2E_ORIGIN}/mock/xhs?case=passed&csv=${suffix},${product.name},忽略`,
   ].join("\r\n");
   const csvResponse = await page.request.post("/api/import/notes", {
     multipart: {

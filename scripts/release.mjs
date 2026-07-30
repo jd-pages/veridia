@@ -24,24 +24,61 @@ const logsRoot = path.join(workRoot, "logs");
 fs.rmSync(workRoot, { recursive: true, force: true });
 fs.mkdirSync(logsRoot, { recursive: true });
 
+function quoteWindowsCommandArgument(value) {
+  const text = String(value);
+  if (!text) return '""';
+  return /[\s"&|<>^]/u.test(text)
+    ? `"${text.replaceAll('"', '""')}"`
+    : text;
+}
+
 function run(label, command, args, extraEnv = {}) {
   process.stdout.write(`\n[VERIDIA 发布] ${label}\n`);
-  const result = spawnSync(command, args, {
+  const usesWindowsCommandProcessor =
+    process.platform === "win32" && /\.(?:cmd|bat)$/iu.test(command);
+  const executable = usesWindowsCommandProcessor
+    ? process.env.ComSpec || "cmd.exe"
+    : command;
+  const executableArgs = usesWindowsCommandProcessor
+    ? [
+        "/d",
+        "/s",
+        "/c",
+        ["call", command, ...args]
+          .map(quoteWindowsCommandArgument)
+          .join(" "),
+      ]
+    : args;
+  const result = spawnSync(executable, executableArgs, {
     cwd: root,
     env: { ...process.env, ...extraEnv },
     encoding: "utf8",
     windowsHide: true,
     maxBuffer: 100 * 1024 * 1024,
   });
-  const output = `${result.stdout || ""}${result.stderr || ""}`;
+  const launchError = result.error
+    ? `\n[进程启动失败] ${result.error.code || result.error.name}: ${
+        result.error.message
+      }\n`
+    : "";
+  const output = `${result.stdout || ""}${result.stderr || ""}${launchError}`;
   fs.writeFileSync(
     path.join(logsRoot, `${label.replace(/[^\p{L}\p{N}-]+/gu, "-")}.log`),
     output,
     "utf8",
   );
   process.stdout.write(output);
+  if (result.error) {
+    throw new Error(
+      `${label}无法启动：${result.error.code || result.error.message}`,
+    );
+  }
   if (result.status !== 0) {
-    throw new Error(`${label}失败，退出码 ${result.status}`);
+    throw new Error(
+      `${label}失败，退出码 ${
+        result.status === null ? "不可用" : result.status
+      }${result.signal ? `，信号 ${result.signal}` : ""}`,
+    );
   }
 }
 
@@ -99,6 +136,7 @@ try {
   fs.rmSync(e2eDatabasePath, { force: true });
   const e2eEnv = {
     DATABASE_URL: "file:./release-e2e.db",
+    E2E_DATABASE_URL: `file:${e2eDatabasePath}`,
     AUTH_SECRET: "release-e2e-local-secret",
     EXTENSION_TOKEN: "local-extension-demo-token",
     AI_ENABLED: "false",
