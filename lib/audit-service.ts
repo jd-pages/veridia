@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import packageJson from "@/package.json";
 import { refreshUsageWithoutBlocking } from "@/lib/central/foundation";
 import { evaluateAudit } from "@/lib/audit-engine";
 import { evaluateSemanticRelevance } from "@/lib/ai";
@@ -70,13 +71,22 @@ export async function getAuditContext(
       rule.topicCategory === "PRODUCT_STAGE" &&
       compatibleStages.includes(rule.applicableStage || ""),
   );
+  const stageGroup = normalizedProductStage
+    ? await prisma.ruleStageGroup.findUnique({
+        where: { key: normalizedProductStage },
+      })
+    : null;
+  const syncState = await prisma.ruleSyncState.findUnique({
+    where: { id: "active" },
+    select: { currentVersion: true },
+  });
   const uniqueRules = rules.filter((rule, index, allRules) => {
     if (rule.topicCategory !== "PRODUCT_STAGE") return true;
     return (
       allRules.findIndex(
         (candidate) =>
           candidate.topicCategory === rule.topicCategory &&
-          candidate.productId === rule.productId &&
+          candidate.applicableStage === rule.applicableStage &&
           normalizeTopic(candidate.topic) === normalizeTopic(rule.topic),
       ) === index
     );
@@ -87,8 +97,16 @@ export async function getAuditContext(
     campaignId,
     campaignName: campaign.name,
     productStage: normalizedProductStage || null,
+    productStageLabel: stageGroup?.label || null,
+    allowedBodyStageTerms: stageGroup
+      ? (JSON.parse(stageGroup.bodyTerms) as string[])
+      : undefined,
+    canonicalBodyStages: stageGroup
+      ? (JSON.parse(stageGroup.canonicalStages) as string[])
+      : undefined,
     milkType: selectedStageRule?.milkType || null,
     ruleVersion: campaign.ruleVersion,
+    rulePackageVersion: syncState?.currentVersion || null,
     bodyRequired: campaign.bodyRequired,
     minBodyLength: campaign.minBodyLength,
     minImageCount: campaign.minImageCount,
@@ -208,6 +226,8 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
         auditTaskId: task.id,
         noteId: note.id,
         ruleVersion: context.ruleVersion,
+        softwareVersion: packageJson.version,
+        rulePackageVersion: context.rulePackageVersion,
         ruleSnapshot: JSON.stringify(context),
         pageStatus: evaluation.pageStatus,
         bodyStatus: evaluation.bodyStatus,

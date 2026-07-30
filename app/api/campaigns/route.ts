@@ -61,6 +61,7 @@ export async function POST(request: Request) {
   try {
     const campaign = await prisma.campaign.create({
       data: {
+        ruleSource: "LOCAL_DRAFT",
         productId: productIds.length === 1 ? productIds[0] : null,
         name: body.name.trim(),
         month: body.month,

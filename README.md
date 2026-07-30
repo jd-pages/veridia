@@ -6,7 +6,7 @@
 
 ## 已实现功能
 
-- 简单账号登录与管理员、运营、只读三种角色菜单。
+- Electron 桌面版固定为 LOCAL 免登录，本地系统用户维持历史关联与权限检查。
 - 仪表盘：本月总量、通过/不通过、待复核、读取失败、通过率和原因排行。
 - 产品管理：新增、编辑、停用、搜索、Excel 导入与导出、产品别名。
 - 活动管理：按产品/月度配置，新增、编辑、停用、复制下月活动及全部规则。
@@ -22,12 +22,13 @@
 - Manifest V3 Chrome/Edge 插件用于人工补审、单条重提取和异常页面证据。
 - 模拟页面覆盖通过、规则失败、登录失效、删除、无权限、安全验证和结构异常。
 - Electron + NSIS Windows 桌面应用、单实例后台服务、托盘与自动更新。
+- 独立 GitHub 规则仓库同步，支持签名校验、事务导入、备份和失败回滚。
 
 ## 技术架构
 
 - Next.js App Router、TypeScript、Ant Design
 - Prisma、SQLite（本地）
-- PostgreSQL 兼容 schema：`prisma/schema.postgresql.prisma`
+- PostgreSQL schema 仅作为历史兼容产物；当前产品不部署中央数据库或中央服务
 - ExcelJS、Vitest、Playwright
 - Chrome Extension Manifest V3
 
@@ -68,7 +69,16 @@ npm.cmd run build
 ```
 
 桌面版首次启动不会运行 Seed，也不包含默认账号或密码。初始化向导会依次确认数据位置、
-创建管理员、导入规则 Excel、登录小红书并进入系统。`npm run db:seed` 只供隔离开发测试库使用。
+同步审核规则、登录小红书并进入系统。无法访问 GitHub 时直接使用安装包内置规则，不阻塞启动。
+`npm run db:seed` 只供隔离开发测试库使用。
+
+## 软件更新与规则更新
+
+- 软件安装包继续从 `jd-pages/veridia` 的软件 Release 更新。
+- 审核规则从另行创建的独立公开 GitHub 仓库匿名读取。
+- 规则仓库地址保存在 `rules/config.json`，签名公钥保存在 `rules/public-key.pem`。
+- 普通客户端不包含 GitHub Token、发布私钥或上传逻辑。
+- 规则发布、签名、同步与回滚流程见 [`docs/GITHUB-RULES.md`](docs/GITHUB-RULES.md)。
 
 ## 常用验证命令
 

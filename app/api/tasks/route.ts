@@ -6,6 +6,7 @@ import {
   normalizeProductStageTopicValue,
 } from "@/lib/product-stage";
 import { refreshUsageWithoutBlocking } from "@/lib/central/foundation";
+import packageJson from "@/package.json";
 
 export async function GET(request: Request) {
   const user = await requireApiUser();
@@ -78,6 +79,10 @@ export async function POST(request: Request) {
     : String(body.urls || "").split(/\r?\n/);
   const uniqueUrls = [...new Set(rawUrls.map((item) => item.trim()).filter(Boolean))];
   const created = [];
+  const syncState = await prisma.ruleSyncState.findUnique({
+    where: { id: "active" },
+    select: { currentVersion: true },
+  });
   const errors: Array<{ url: string; reason: string }> = [];
   for (const url of uniqueUrls) {
     if (!isSupportedNoteUrl(url)) {
@@ -104,6 +109,8 @@ export async function POST(request: Request) {
           notes: body.notes?.trim() || null,
           createdBy: user.id,
           source: "MANUAL",
+          softwareVersion: packageJson.version,
+          rulePackageVersion: syncState?.currentVersion || null,
         },
       }),
     );

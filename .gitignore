@@ -52,6 +52,7 @@ next-env.d.ts
 /test-results/
 /.release-work/
 /release/
+/rules-release/
 /dist-installer/
 /desktop-runtime/
 /.openai/
@@ -80,3 +81,4 @@ Cookies-journal
 *.exe
 *.blockmap
 latest.yml
+!rules/public-key.pem

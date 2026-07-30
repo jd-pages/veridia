@@ -257,6 +257,11 @@ export function detectProductStage(
 export function detectBodyProductStages(
   body: string | null | undefined,
   configuredGroup: string | null | undefined,
+  override?: {
+    label?: string | null;
+    canonicalStages?: string[];
+    bodyTerms?: string[];
+  },
 ): BodyProductStageEvaluation | null {
   const group = normalizeProductStageTopicValue(configuredGroup);
   if (!group) return null;
@@ -264,7 +269,11 @@ export function detectBodyProductStages(
     .replace(/https?:\/\/\S+|www\.\S+/giu, " ")
     .replace(/#[^\s#]+/gu, " ");
   const detection = detectProductStage([bodyWithoutTopics]);
-  const allowedCanonical = new Set(GROUP_STAGES[group]);
+  const allowedCanonical = new Set(
+    (override?.canonicalStages || GROUP_STAGES[group])
+      .map(normalizeProductStage)
+      .filter((value): value is CanonicalProductStage => Boolean(value)),
+  );
   const matchedAllowedStages = detection.matchedTokens.filter((token) => {
     const stage = tokenToCanonicalStage(token);
     return Boolean(stage && allowedCanonical.has(stage));
@@ -277,8 +286,10 @@ export function detectBodyProductStages(
         ? "OUTSIDE_GROUP"
         : "MISSING",
     group,
-    groupLabel: GROUP_LABELS[group],
-    allowedStages: [...GROUP_ALLOWED_LABELS[group]],
+    groupLabel: override?.label || GROUP_LABELS[group],
+    allowedStages: override?.bodyTerms?.length
+      ? [...override.bodyTerms]
+      : [...GROUP_ALLOWED_LABELS[group]],
     detectedStages: detection.matchedTokens,
     matchedAllowedStages,
     passed,

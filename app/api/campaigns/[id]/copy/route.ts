@@ -25,6 +25,7 @@ export async function POST(
   try {
     const copied = await prisma.campaign.create({
       data: {
+        ruleSource: "LOCAL_DRAFT",
         productId: source.productId,
         name: body.name?.trim() || `${source.name}（${targetMonth}复制）`,
         month: targetMonth,
@@ -51,6 +52,7 @@ export async function POST(
         },
         topicRules: {
           create: source.topicRules.map((rule) => ({
+            ruleSource: "LOCAL_DRAFT",
             productId: rule.productId,
             scope: "CAMPAIGN",
             ruleType: rule.ruleType,

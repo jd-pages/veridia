@@ -55,31 +55,45 @@ interface Rule {
   product: Product | null;
 }
 
+interface StageGroup {
+  key: string;
+  label: string;
+  canonicalStages: string[];
+  bodyTerms: string[];
+  requiredTopic: string;
+  ruleSource: string;
+}
+
 export default function RulesPage() {
   const { message } = App.useApp();
   const [rules, setRules] = useState<Rule[]>([]);
+  const [stageGroups, setStageGroups] = useState<StageGroup[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [campaignId, setCampaignId] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Rule | null>(null);
+  const [editingStage, setEditingStage] = useState<StageGroup | null>(null);
   const [form] = Form.useForm();
+  const [stageForm] = Form.useForm();
   const scope = Form.useWatch("scope", form);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ruleData, campaignData, productData] = await Promise.all([
+      const [ruleData, campaignData, productData, stageData] = await Promise.all([
         apiFetch<Rule[]>(
           `/api/rules${campaignId ? `?campaignId=${campaignId}` : ""}`,
         ),
         apiFetch<Campaign[]>("/api/campaigns"),
         apiFetch<Product[]>("/api/products"),
+        apiFetch<StageGroup[]>("/api/rule-stage-groups"),
       ]);
       setRules(ruleData);
       setCampaigns(campaignData);
       setProducts(productData);
+      setStageGroups(stageData);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "加载规则失败");
     } finally {
@@ -121,6 +135,55 @@ export default function RulesPage() {
           </Button>
         }
       />
+      <Card
+        className="surface-card"
+        title="产品阶段话题与正文段位词"
+        style={{ marginBottom: 16 }}
+      >
+        <Table<StageGroup>
+          rowKey="key"
+          dataSource={stageGroups}
+          pagination={false}
+          columns={[
+            { title: "产品阶段话题", dataIndex: "label", width: 260 },
+            {
+              title: "正文允许段位",
+              render: (_value, row) => row.bodyTerms.join("、"),
+            },
+            {
+              title: "要求阶段话题",
+              dataIndex: "requiredTopic",
+              render: (value: string) => <Tag color="blue">{value}</Tag>,
+            },
+            {
+              title: "规则来源",
+              dataIndex: "ruleSource",
+              width: 120,
+              render: (value: string) =>
+                value === "LOCAL_DRAFT" ? "本地草稿" : "已发布规则",
+            },
+            {
+              title: "操作",
+              width: 100,
+              render: (_value, row) => (
+                <Button
+                  type="link"
+                  icon={<EditOutlined />}
+                  onClick={() => {
+                    setEditingStage(row);
+                    stageForm.setFieldsValue({
+                      bodyTerms: row.bodyTerms.join("、"),
+                      requiredTopic: row.requiredTopic,
+                    });
+                  }}
+                >
+                  编辑
+                </Button>
+              ),
+            },
+          ]}
+        />
+      </Card>
       <Card className="surface-card">
         <div className="filter-bar">
           <Select
@@ -364,6 +427,49 @@ export default function RulesPage() {
           </Space>
           <Form.Item name="notes" label="备注">
             <Input.TextArea rows={2} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        open={Boolean(editingStage)}
+        title={`编辑 ${editingStage?.label || "产品阶段话题"}`}
+        okText="保存为本地草稿"
+        onCancel={() => setEditingStage(null)}
+        onOk={() => stageForm.submit()}
+      >
+        <Form
+          form={stageForm}
+          layout="vertical"
+          onFinish={async (values) => {
+            if (!editingStage) return;
+            await apiFetch(`/api/rule-stage-groups/${editingStage.key}`, {
+              method: "PUT",
+              body: JSON.stringify({
+                bodyTerms: String(values.bodyTerms || "")
+                  .split(/[、,，\s]+/u)
+                  .filter(Boolean),
+                requiredTopic: values.requiredTopic,
+              }),
+            });
+            message.success("产品阶段话题已保存为本地草稿");
+            setEditingStage(null);
+            void load();
+          }}
+        >
+          <Form.Item
+            name="bodyTerms"
+            label="正文允许段位"
+            rules={[{ required: true }]}
+            extra="多个段位使用顿号或逗号分隔，组内为任选命中一个。"
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="requiredTopic"
+            label="要求阶段话题"
+            rules={[{ required: true }]}
+          >
+            <Input />
           </Form.Item>
         </Form>
       </Modal>

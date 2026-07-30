@@ -1,0 +1,335 @@
+{
+  "ruleVersion": "builtin-2026.07.29.1",
+  "schemaVersion": 1,
+  "publishedAt": "2026-07-29T00:00:00.000Z",
+  "minimumAppVersion": "1.0.0",
+  "products": [
+    {
+      "key": "product_9585d8c15b88f4b20d14",
+      "code": null,
+      "name": "爱他美澳洲白金版",
+      "brand": "爱他美",
+      "series": "爱他美澳洲白金版",
+      "category": null,
+      "aliases": [
+        "澳洲白金",
+        "澳洲白金版",
+        "澳白"
+      ],
+      "contentDirection": "澳白：请分享宝宝使用爱他美澳洲白金后的真实感受，“安心”/“放心”+“营养全面”/“超高益生菌”/“提升自护力”/“新生儿奶粉首选”等",
+      "status": "ACTIVE"
+    },
+    {
+      "key": "product_36c5d818b2a904e2efac",
+      "code": null,
+      "name": "爱他美德国白金版",
+      "brand": "爱他美",
+      "series": "爱他美德国白金版",
+      "category": null,
+      "aliases": [
+        "德国白金",
+        "德国白金版",
+        "德白"
+      ],
+      "contentDirection": "德白：请分享宝宝使用爱他美德国白金后的真实感受，“安心”/“放心”+“混合喂养奶粉首选”/“好吸收”/“自护力强”等",
+      "status": "ACTIVE"
+    },
+    {
+      "key": "product_fecb35f46a60e43258f9",
+      "code": null,
+      "name": "爱他美至熠",
+      "brand": "爱他美",
+      "series": "爱他美至熠",
+      "category": null,
+      "aliases": [
+        "至熠"
+      ],
+      "contentDirection": "至熠：请分享宝宝使用爱他美至熠后的真实感受，“顶尖配方”/“旗舰配方”+“突破性专利”/“还原母乳结构”/“断层领先”等",
+      "status": "ACTIVE"
+    },
+    {
+      "key": "product_90c618af52dbe265bbc1",
+      "code": null,
+      "name": "爱他美亲熠5HMO",
+      "brand": "爱他美",
+      "series": "爱他美亲熠5HMO",
+      "category": null,
+      "aliases": [
+        "亲熠",
+        "亲熠5HMO",
+        "白罐"
+      ],
+      "contentDirection": "亲熠：请分享宝宝使用爱他美亲熠后的真实感受，“超40年专研水解技术”/“水解技术领先”+“高含量HMO”/“有效缓解敏敏”/“新品升级”/“5HMO”",
+      "status": "ACTIVE"
+    },
+    {
+      "key": "product_7b0465db66b172ee22cf",
+      "code": null,
+      "name": "爱他美奇迹绿罐",
+      "brand": "爱他美",
+      "series": "爱他美奇迹绿罐",
+      "category": null,
+      "aliases": [
+        "奇迹绿罐",
+        "绿罐"
+      ],
+      "contentDirection": "绿罐：请分享宝宝使用爱他美奇迹绿罐后的真实感受，产品卖点：“新西兰有机A2奶源”/“消化吸收好”",
+      "status": "ACTIVE"
+    }
+  ],
+  "campaigns": [
+    {
+      "key": "activity_bd673ea91f342c12a819",
+      "name": "爱他美2026年7月小红书种草审核",
+      "month": "2026-07",
+      "year": 2026,
+      "startDate": "2026-07-01T00:00:00.000Z",
+      "endDate": "2026-07-31T00:00:00.000Z",
+      "productKeys": [
+        "product_9585d8c15b88f4b20d14",
+        "product_36c5d818b2a904e2efac",
+        "product_fecb35f46a60e43258f9",
+        "product_90c618af52dbe265bbc1",
+        "product_7b0465db66b172ee22cf"
+      ],
+      "minImageCount": 2,
+      "bodyRequired": true,
+      "minBodyLength": 41,
+      "publicRequired": true,
+      "retentionDays": 15,
+      "rewardDescription": "50元/篇；*帖子需符合要求通过审核并保留15天，才可发放奖励",
+      "customerRegistrationNotes": "历史图片要求（仅供客服登记参考，不参与自动审核）：至少 2 张；要求包含产品图片；首图要求：首图不可怼罐拍摄，产品罐体实拍图或宝宝和产品的合照；图片注意事项：请勿发布带有明显平台指向的图；原视觉说明：复核是否包含产品实拍、首图是否存在罐体堆叠、是否为宝宝与产品合照、是否带有明显平台导向。",
+      "clickableTopicRequired": true,
+      "ruleRevision": 1,
+      "status": "ACTIVE"
+    }
+  ],
+  "stageGroups": [
+    {
+      "key": "IFFO_P1",
+      "label": "IFFO：P段/1段",
+      "canonicalStages": [
+        "P段",
+        "1段"
+      ],
+      "bodyTerms": [
+        "P段",
+        "PRE",
+        "PRE段",
+        "1段"
+      ],
+      "requiredTopic": "#新生儿奶粉",
+      "sortOrder": 10,
+      "status": "ACTIVE"
+    },
+    {
+      "key": "IFFO_2",
+      "label": "IFFO：2段",
+      "canonicalStages": [
+        "2段"
+      ],
+      "bodyTerms": [
+        "2段"
+      ],
+      "requiredTopic": "#二段奶粉推荐",
+      "sortOrder": 20,
+      "status": "ACTIVE"
+    },
+    {
+      "key": "GUM_3_4_1PLUS_2PLUS",
+      "label": "GUM：3段/4段/1+段/2+段",
+      "canonicalStages": [
+        "3段",
+        "4段",
+        "1+段",
+        "2+段"
+      ],
+      "bodyTerms": [
+        "3段",
+        "4段",
+        "1+段",
+        "2+段"
+      ],
+      "requiredTopic": "#三段奶粉推荐",
+      "sortOrder": 30,
+      "status": "ACTIVE"
+    }
+  ],
+  "topicRules": [
+    {
+      "key": "topic_68bf4fb0f818d4c63575",
+      "campaignKey": "activity_bd673ea91f342c12a819",
+      "productKey": null,
+      "scope": "CAMPAIGN",
+      "ruleType": "REQUIRED",
+      "topicCategory": "BRAND_COMMON",
+      "applicableStage": null,
+      "milkType": null,
+      "topic": "#爱他美新手爸妈日记",
+      "exactMatch": true,
+      "clickableRequired": true,
+      "caseSensitive": false,
+      "minCount": 1,
+      "sortOrder": 10,
+      "revision": 1,
+      "status": "ACTIVE"
+    },
+    {
+      "key": "topic_a8ffb3ebe1803a16f620",
+      "campaignKey": "activity_bd673ea91f342c12a819",
+      "productKey": "product_9585d8c15b88f4b20d14",
+      "scope": "CAMPAIGN",
+      "ruleType": "REQUIRED",
+      "topicCategory": "PRODUCT_COMMON",
+      "applicableStage": null,
+      "milkType": null,
+      "topic": "#爱他美澳洲白金版",
+      "exactMatch": true,
+      "clickableRequired": true,
+      "caseSensitive": false,
+      "minCount": 1,
+      "sortOrder": 20,
+      "revision": 1,
+      "status": "ACTIVE"
+    },
+    {
+      "key": "topic_ed9a224647e90c6b73ce",
+      "campaignKey": "activity_bd673ea91f342c12a819",
+      "productKey": "product_36c5d818b2a904e2efac",
+      "scope": "CAMPAIGN",
+      "ruleType": "REQUIRED",
+      "topicCategory": "PRODUCT_COMMON",
+      "applicableStage": null,
+      "milkType": null,
+      "topic": "#爱他美德国白金版",
+      "exactMatch": true,
+      "clickableRequired": true,
+      "caseSensitive": false,
+      "minCount": 1,
+      "sortOrder": 30,
+      "revision": 1,
+      "status": "ACTIVE"
+    },
+    {
+      "key": "topic_e8b46695f853d8c76327",
+      "campaignKey": "activity_bd673ea91f342c12a819",
+      "productKey": "product_fecb35f46a60e43258f9",
+      "scope": "CAMPAIGN",
+      "ruleType": "REQUIRED",
+      "topicCategory": "PRODUCT_COMMON",
+      "applicableStage": null,
+      "milkType": null,
+      "topic": "#爱他美至熠",
+      "exactMatch": true,
+      "clickableRequired": true,
+      "caseSensitive": false,
+      "minCount": 1,
+      "sortOrder": 40,
+      "revision": 1,
+      "status": "ACTIVE"
+    },
+    {
+      "key": "topic_ae52012170dcee50bdce",
+      "campaignKey": "activity_bd673ea91f342c12a819",
+      "productKey": "product_90c618af52dbe265bbc1",
+      "scope": "CAMPAIGN",
+      "ruleType": "REQUIRED",
+      "topicCategory": "PRODUCT_COMMON",
+      "applicableStage": null,
+      "milkType": null,
+      "topic": "#爱他美亲熠5HMO",
+      "exactMatch": true,
+      "clickableRequired": true,
+      "caseSensitive": false,
+      "minCount": 1,
+      "sortOrder": 50,
+      "revision": 1,
+      "status": "ACTIVE"
+    },
+    {
+      "key": "topic_b675e11ca4bd1de67ab0",
+      "campaignKey": "activity_bd673ea91f342c12a819",
+      "productKey": "product_7b0465db66b172ee22cf",
+      "scope": "CAMPAIGN",
+      "ruleType": "REQUIRED",
+      "topicCategory": "PRODUCT_COMMON",
+      "applicableStage": null,
+      "milkType": null,
+      "topic": "#爱他美奇迹绿罐",
+      "exactMatch": true,
+      "clickableRequired": true,
+      "caseSensitive": false,
+      "minCount": 1,
+      "sortOrder": 60,
+      "revision": 1,
+      "status": "ACTIVE"
+    },
+    {
+      "key": "topic_2ab331404159505c04e1",
+      "campaignKey": "activity_bd673ea91f342c12a819",
+      "productKey": null,
+      "scope": "CAMPAIGN",
+      "ruleType": "REQUIRED",
+      "topicCategory": "PRODUCT_STAGE",
+      "applicableStage": "IFFO_P1",
+      "milkType": "IFFO",
+      "topic": "#新生儿奶粉",
+      "exactMatch": true,
+      "clickableRequired": true,
+      "caseSensitive": false,
+      "minCount": 1,
+      "sortOrder": 70,
+      "revision": 1,
+      "status": "ACTIVE"
+    },
+    {
+      "key": "topic_6691a4d4d31c7582d73c",
+      "campaignKey": "activity_bd673ea91f342c12a819",
+      "productKey": null,
+      "scope": "CAMPAIGN",
+      "ruleType": "REQUIRED",
+      "topicCategory": "PRODUCT_STAGE",
+      "applicableStage": "IFFO_2",
+      "milkType": "IFFO",
+      "topic": "#二段奶粉推荐",
+      "exactMatch": true,
+      "clickableRequired": true,
+      "caseSensitive": false,
+      "minCount": 1,
+      "sortOrder": 90,
+      "revision": 1,
+      "status": "ACTIVE"
+    },
+    {
+      "key": "topic_ee487e2bd6f51cf5714b",
+      "campaignKey": "activity_bd673ea91f342c12a819",
+      "productKey": null,
+      "scope": "CAMPAIGN",
+      "ruleType": "REQUIRED",
+      "topicCategory": "PRODUCT_STAGE",
+      "applicableStage": "GUM_3_4_1PLUS_2PLUS",
+      "milkType": "GUM",
+      "topic": "#三段奶粉推荐",
+      "exactMatch": true,
+      "clickableRequired": true,
+      "caseSensitive": false,
+      "minCount": 1,
+      "sortOrder": 100,
+      "revision": 1,
+      "status": "ACTIVE"
+    }
+  ],
+  "pageStatusRules": {
+    "normalStatuses": [
+      "NORMAL"
+    ],
+    "technicalFailureStatuses": [
+      "READ_FAILED",
+      "LOGIN_EXPIRED",
+      "SECURITY_VERIFICATION",
+      "NOT_FOUND",
+      "DELETED",
+      "NO_PERMISSION"
+    ]
+  }
+}

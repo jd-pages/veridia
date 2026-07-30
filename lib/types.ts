@@ -77,8 +77,12 @@ export interface AuditContext {
   campaignId: string;
   campaignName: string;
   productStage?: string | null;
+  productStageLabel?: string | null;
+  allowedBodyStageTerms?: string[];
+  canonicalBodyStages?: string[];
   milkType?: string | null;
   ruleVersion: number;
+  rulePackageVersion?: string | null;
   bodyRequired: boolean;
   minBodyLength: number;
   minImageCount: number;

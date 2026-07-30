@@ -44,6 +44,7 @@ export async function POST(request: Request) {
   try {
     const product = await prisma.product.create({
       data: {
+        ruleSource: "LOCAL_DRAFT",
         code: body.code?.trim() || null,
         name: body.name.trim(),
         brandName: body.brandName.trim(),

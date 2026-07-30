@@ -171,7 +171,11 @@ export function evaluateAudit(
       (rule) =>
         rule.topicCategory === "PRODUCT_STAGE" && Boolean(rule.topic),
     )?.topic || null;
-  const bodyStage = detectBodyProductStages(note.body, context.productStage);
+  const bodyStage = detectBodyProductStages(note.body, context.productStage, {
+    label: context.productStageLabel,
+    canonicalStages: context.canonicalBodyStages,
+    bodyTerms: context.allowedBodyStageTerms,
+  });
   if (bodyStage) {
     const bodyStageFailure = bodyStage.passed
       ? undefined

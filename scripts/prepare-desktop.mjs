@@ -61,6 +61,7 @@ copyDirectory(
   path.join(standaloneRoot, ".next", "static"),
 );
 copyDirectory(path.join(projectRoot, "public"), path.join(standaloneRoot, "public"));
+copyDirectory(path.join(projectRoot, "rules"), path.join(standaloneRoot, "rules"));
 
 assertGeneratedPrismaClient(
   projectRoot,
@@ -78,17 +79,27 @@ copyGeneratedPrismaClient(projectRoot, standaloneRoot);
 // relocatable inside the desktop application.
 const serverChunksRoot = path.join(standaloneRoot, ".next", "server", "chunks");
 const prismaClientAliases = new Set();
+const playwrightAliases = new Set();
 for (const entry of fs.readdirSync(serverChunksRoot, { withFileTypes: true })) {
   if (!entry.isFile() || !entry.name.endsWith(".js")) continue;
   const source = fs.readFileSync(path.join(serverChunksRoot, entry.name), "utf8");
   for (const match of source.matchAll(/@prisma\/(client-[a-f0-9]{16})/g)) {
     prismaClientAliases.add(match[1]);
   }
+  for (const match of source.matchAll(/\b(playwright-[a-f0-9]{16})\b/g)) {
+    playwrightAliases.add(match[1]);
+  }
 }
 for (const alias of prismaClientAliases) {
   copyDirectory(
     path.join(standaloneRoot, "node_modules", "@prisma", "client"),
     path.join(standaloneRoot, "node_modules", "@prisma", alias),
+  );
+}
+for (const alias of playwrightAliases) {
+  copyDirectory(
+    path.join(projectRoot, "node_modules", "playwright"),
+    path.join(standaloneRoot, "node_modules", alias),
   );
 }
 

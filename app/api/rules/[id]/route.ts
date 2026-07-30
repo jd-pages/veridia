@@ -25,6 +25,7 @@ export async function PUT(
       return tx.topicRule.update({
         where: { id },
         data: {
+          ruleSource: "LOCAL_DRAFT",
           ...(typeof body.ruleType === "string" ? { ruleType: body.ruleType } : {}),
           ...(typeof body.topic === "string"
             ? { topic: normalizeTopic(body.topic) }
@@ -71,7 +72,10 @@ export async function DELETE(
         data: { ruleVersion: { increment: 1 } },
       });
     }
-    return tx.topicRule.update({ where: { id }, data: { status: "INACTIVE" } });
+    return tx.topicRule.update({
+      where: { id },
+      data: { status: "INACTIVE", ruleSource: "LOCAL_DRAFT" },
+    });
   });
   return ok(rule);
 }

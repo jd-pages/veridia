@@ -53,6 +53,7 @@ export async function POST(request: Request) {
       }
       return tx.topicRule.create({
         data: {
+          ruleSource: "LOCAL_DRAFT",
           campaignId: body.campaignId || null,
           productId: body.productId || null,
           scope: body.scope || "CAMPAIGN",

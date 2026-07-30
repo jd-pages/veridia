@@ -24,6 +24,7 @@ export async function PUT(
       return tx.product.update({
         where: { id },
         data: {
+          ruleSource: "LOCAL_DRAFT",
           ...(body.code !== undefined
             ? { code: body.code.trim() || null }
             : {}),
@@ -76,7 +77,7 @@ export async function DELETE(
   try {
     const product = await prisma.product.update({
       where: { id },
-      data: { status: "INACTIVE" },
+      data: { status: "INACTIVE", ruleSource: "LOCAL_DRAFT" },
     });
     await prisma.operationLog.create({
       data: {

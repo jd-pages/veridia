@@ -44,16 +44,30 @@ async function waitForBatch(
     });
 }
 
-test("登录、创建任务、审核、详情、Excel 与插件提交链路", async ({ page }) => {
+test("本地免登录、创建任务、审核、详情、Excel 与插件提交链路", async ({ page }) => {
   await page.goto("/login");
-  await expect(page.getByRole("button", { name: "登入", exact: true })).toBeEnabled();
-  const loginResponse = await page.request.post("/api/auth/login", {
-    data: { username: "admin", password: "Admin123!" },
-  });
-  expect(loginResponse.ok()).toBeTruthy();
-  await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/dashboard/);
+  await expect(page.getByLabel("用户名")).toHaveCount(0);
+  await expect(page.getByLabel("密码")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "审核工作台" })).toBeVisible();
+
+  const ruleStatusBefore = await page.request.get("/api/rule-sync/status");
+  expect(ruleStatusBefore.ok()).toBeTruthy();
+  const beforeRules = (await ruleStatusBefore.json()).data;
+  expect(beforeRules.currentVersion).toBeTruthy();
+  expect(beforeRules.counts.products).toBeGreaterThan(0);
+  const appliedRuleSync = await page.request.post("/api/rule-sync/apply");
+  expect(appliedRuleSync.ok()).toBeTruthy();
+  const ruleStatusAfter = await page.request.get("/api/rule-sync/status");
+  const afterRules = (await ruleStatusAfter.json()).data;
+  expect(afterRules.currentVersion).toBe("rules-2026.07.29.1");
+  expect(afterRules.source).toBe("GITHUB");
+  expect(afterRules.counts).toEqual({
+    products: 5,
+    activities: 1,
+    stageGroups: 3,
+    topicRules: 9,
+  });
 
   const productsResponse = await page.request.get("/api/products");
   expect(productsResponse.ok()).toBeTruthy();

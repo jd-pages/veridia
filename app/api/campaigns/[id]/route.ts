@@ -38,6 +38,7 @@ export async function PUT(
     const campaign = await prisma.campaign.update({
       where: { id },
       data: {
+        ruleSource: "LOCAL_DRAFT",
         ...(typeof body.name === "string" ? { name: body.name.trim() } : {}),
         ...(typeof body.month === "string" ? { month: body.month } : {}),
         ...(typeof body.startDate === "string"
@@ -106,7 +107,7 @@ export async function DELETE(
   try {
     const campaign = await prisma.campaign.update({
       where: { id },
-      data: { status: "INACTIVE" },
+      data: { status: "INACTIVE", ruleSource: "LOCAL_DRAFT" },
     });
     return ok(campaign);
   } catch {

@@ -1,7 +1,7 @@
 import { getSession } from "@/lib/auth";
-import { fail, ok } from "@/lib/api";
+import { ok } from "@/lib/api";
+import { ensureLocalRuntime } from "@/lib/local-runtime";
 
 export async function GET() {
-  const user = await getSession();
-  return user ? ok(user) : fail("未登录", 401);
+  return ok((await getSession()) || (await ensureLocalRuntime()));
 }

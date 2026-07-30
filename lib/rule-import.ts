@@ -680,6 +680,7 @@ export async function commitCampaignRuleImport(
         ? await tx.product.update({
             where: { id: existing.id },
             data: {
+              ruleSource: "LOCAL_DRAFT",
               code: input.code || existing.code,
               name: input.name,
               brandName: inferredBrandName || existing.brandName,
@@ -691,6 +692,7 @@ export async function commitCampaignRuleImport(
           })
         : await tx.product.create({
             data: {
+              ruleSource: "LOCAL_DRAFT",
               code: input.code,
               name: input.name,
               brandName: inferredBrandName || input.seriesName,
@@ -712,6 +714,7 @@ export async function commitCampaignRuleImport(
       where: { name: data.campaign.name, month: data.campaign.month },
     });
     const campaignData = {
+      ruleSource: "LOCAL_DRAFT",
       productId: null,
       name: data.campaign.name,
       month: data.campaign.month,
@@ -754,6 +757,7 @@ export async function commitCampaignRuleImport(
     );
     await tx.topicRule.createMany({
       data: data.topicRules.map((rule) => ({
+        ruleSource: "LOCAL_DRAFT",
         campaignId: campaign.id,
         productId: rule.productName
           ? productByName.get(rule.productName) || null

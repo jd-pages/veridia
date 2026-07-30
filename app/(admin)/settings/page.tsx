@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  Alert,
   App,
   Button,
   Card,
@@ -15,6 +16,7 @@ import {
 import { FolderOpenOutlined, ReloadOutlined } from "@ant-design/icons";
 import PageHeader from "@/components/PageHeader";
 import { apiFetch } from "@/lib/client";
+import { ruleSyncStatusLabel } from "@/lib/rules/labels";
 import { settingLabel } from "@/lib/zh-CN";
 
 interface Setting {
@@ -35,6 +37,24 @@ interface VersionInfo {
   packaged: boolean;
 }
 
+interface RuleSyncStatus {
+  configured: boolean;
+  repository: string | null;
+  currentVersion: string;
+  latestVersion: string | null;
+  schemaVersion: number;
+  source: string;
+  status: string;
+  counts: {
+    products: number;
+    activities: number;
+    stageGroups: number;
+    topicRules: number;
+  };
+  lastCheckedAt: string | null;
+  lastSyncedAt: string | null;
+}
+
 export default function SettingsPage() {
   const { message, modal } = App.useApp();
   const desktopAvailable =
@@ -42,7 +62,9 @@ export default function SettingsPage() {
   const [items, setItems] = useState<Setting[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
+  const [ruleSync, setRuleSync] = useState<RuleSyncStatus | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [syncingRules, setSyncingRules] = useState(false);
   const [migratingData, setMigratingData] = useState(false);
   const load = useCallback(async () => {
     try {
@@ -63,6 +85,14 @@ export default function SettingsPage() {
       : apiFetch<VersionInfo>("/api/system/version");
     request.then(setVersionInfo).catch(() => undefined);
   }, []);
+  const loadRuleSync = useCallback(async () => {
+    try {
+      setRuleSync(await apiFetch<RuleSyncStatus>("/api/rule-sync/status"));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "读取规则同步状态失败");
+    }
+  }, [message]);
+  useEffect(() => { void loadRuleSync(); }, [loadRuleSync]);
 
   const changeDataDirectory = async () => {
     const desktop = window.veridiaDesktop;
@@ -170,6 +200,151 @@ export default function SettingsPage() {
           {!versionInfo?.packaged && (
             <Tag>浏览器开发模式不执行在线更新</Tag>
           )}
+        </Space>
+      </Card>
+      <Card
+        className="surface-card"
+        title="规则同步"
+        style={{ marginBottom: 16 }}
+      >
+        <Descriptions column={{ xs: 1, md: 2, xl: 4 }}>
+          <Descriptions.Item label="当前规则版本">
+            {ruleSync?.currentVersion || "—"}
+          </Descriptions.Item>
+          <Descriptions.Item label="最新远程版本">
+            {ruleSync?.latestVersion || "尚未检查"}
+          </Descriptions.Item>
+          <Descriptions.Item label="Schema 版本">
+            {ruleSync?.schemaVersion || "—"}
+          </Descriptions.Item>
+          <Descriptions.Item label="同步来源">
+            {ruleSync?.source === "GITHUB"
+              ? "GitHub规则仓库"
+              : ruleSync?.source === "RESTORE"
+                ? "上一版备份"
+                : "内置规则"}
+          </Descriptions.Item>
+          <Descriptions.Item label="同步状态">
+            <Tag>{ruleSyncStatusLabel(ruleSync?.status)}</Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="最近检查">
+            {ruleSync?.lastCheckedAt
+              ? new Date(ruleSync.lastCheckedAt).toLocaleString("zh-CN")
+              : "尚未检查"}
+          </Descriptions.Item>
+          <Descriptions.Item label="最近同步">
+            {ruleSync?.lastSyncedAt
+              ? new Date(ruleSync.lastSyncedAt).toLocaleString("zh-CN")
+              : "使用内置规则"}
+          </Descriptions.Item>
+          <Descriptions.Item label="当前规则数量">
+            产品 {ruleSync?.counts.products ?? 0} · 活动{" "}
+            {ruleSync?.counts.activities ?? 0} · 阶段组{" "}
+            {ruleSync?.counts.stageGroups ?? 0} · 话题{" "}
+            {ruleSync?.counts.topicRules ?? 0}
+          </Descriptions.Item>
+        </Descriptions>
+        {!ruleSync?.configured && (
+          <Alert
+            showIcon
+            type="info"
+            style={{ marginBottom: 12 }}
+            message="独立 GitHub 规则仓库尚未配置，当前继续使用本地规则。"
+          />
+        )}
+        <Space wrap>
+          <Button
+            disabled={!ruleSync?.configured}
+            onClick={async () => {
+              setSyncingRules(true);
+              try {
+                const next = await apiFetch<RuleSyncStatus>(
+                  "/api/rule-sync/check?force=true",
+                  { method: "POST" },
+                );
+                setRuleSync(next);
+                message.success(
+                  next.status === "UPDATE_AVAILABLE"
+                    ? "发现新的规则版本"
+                    : "当前规则已是最新",
+                );
+              } finally {
+                setSyncingRules(false);
+              }
+            }}
+          >
+            检查更新
+          </Button>
+          <Button
+            type="primary"
+            loading={syncingRules}
+            disabled={!ruleSync?.configured}
+            onClick={async () => {
+              setSyncingRules(true);
+              try {
+                setRuleSync(
+                  await apiFetch<RuleSyncStatus>("/api/rule-sync/apply", {
+                    method: "POST",
+                  }),
+                );
+                message.success("规则同步完成");
+              } catch (error) {
+                message.warning(
+                  error instanceof Error
+                    ? error.message
+                    : "暂时无法获取最新规则，已继续使用本地规则。",
+                );
+                await loadRuleSync();
+              } finally {
+                setSyncingRules(false);
+              }
+            }}
+          >
+            立即同步
+          </Button>
+          <Button
+            onClick={async () => {
+              const history = await apiFetch<
+                Array<{
+                  ruleVersion: string | null;
+                  status: string;
+                  message: string | null;
+                  createdAt: string;
+                }>
+              >("/api/rule-sync/history");
+              modal.info({
+                title: "规则同步记录",
+                width: 680,
+                content: (
+                  <Space direction="vertical" style={{ width: "100%" }}>
+                    {history.length ? history.map((item, index) => (
+                      <div key={`${item.createdAt}-${index}`}>
+                        {new Date(item.createdAt).toLocaleString("zh-CN")} ·{" "}
+                        {item.ruleVersion || "本地规则"} ·{" "}
+                        {ruleSyncStatusLabel(item.status)}
+                        {item.message ? ` · ${item.message}` : ""}
+                      </div>
+                    )) : <span>暂无同步记录</span>}
+                  </Space>
+                ),
+              });
+            }}
+          >
+            查看同步记录
+          </Button>
+          <Button
+            onClick={async () => {
+              setRuleSync(
+                await apiFetch<RuleSyncStatus>("/api/rule-sync/restore", {
+                  method: "POST",
+                }),
+              );
+              message.success("已恢复上一版规则");
+            }}
+          >
+            恢复上一版规则
+          </Button>
+          <Button href="/api/rule-sync/export">导出当前规则</Button>
         </Space>
       </Card>
       <Card className="surface-card">

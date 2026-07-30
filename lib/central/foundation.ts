@@ -37,15 +37,12 @@ export async function getOrCreateLocalDevice() {
 }
 
 export async function getConfiguredAuthMode(): Promise<AuthMode> {
-  const setting = await prisma.systemSetting.findUnique({
-    where: { key: "AUTH_MODE" },
-    select: { value: true },
-  });
-  return normalizeAuthMode(setting?.value);
+  // 中央账号体系已取消；保留兼容枚举，但配置和运行态都固定为 LOCAL。
+  return normalizeAuthMode("LOCAL");
 }
 
 export function getEffectiveAuthMode(): AuthMode {
-  // 第一阶段有意固定为 LOCAL。DUAL/CENTRAL 仅完成配置契约，不触发中央请求。
+  // DUAL/CENTRAL 仅保留数据库兼容字段，不进入实际运行。
   return CENTRAL_FOUNDATION_EFFECTIVE_AUTH_MODE;
 }
 

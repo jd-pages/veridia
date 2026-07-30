@@ -6,6 +6,10 @@ import { normalizeUrl } from "../lib/topic";
 import { runAuditTask } from "../lib/audit-service";
 
 async function main() {
+  await prisma.rulePackageBackup.deleteMany();
+  await prisma.ruleSyncHistory.deleteMany();
+  await prisma.ruleSyncState.deleteMany();
+  await prisma.ruleStageGroup.deleteMany();
   await prisma.manualReview.deleteMany();
   await prisma.ruleResult.deleteMany();
   await prisma.auditResult.deleteMany();

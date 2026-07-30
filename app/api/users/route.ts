@@ -1,12 +1,14 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
+import { LOCAL_SYSTEM_USER_ID } from "@/lib/local-runtime";
 
 export async function GET() {
   const user = await requireApiUser(["ADMIN"]);
   if (user instanceof Response) return user;
   return ok(
     await prisma.user.findMany({
+      where: { id: { not: LOCAL_SYSTEM_USER_ID } },
       select: {
         id: true,
         username: true,

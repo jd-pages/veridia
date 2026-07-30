@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/db";
+import { isSetupComplete } from "@/lib/local-runtime";
 
 export default async function HomePage() {
-  const initialized = (await prisma.user.count()) > 0;
+  const initialized = await isSetupComplete();
   redirect(initialized ? "/dashboard" : "/setup");
 }

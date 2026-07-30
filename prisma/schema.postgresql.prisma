@@ -72,6 +72,8 @@ model LocalUsageSummary {
 
 model Product {
   id               String            @id @default(cuid())
+  publishedKey     String?           @unique
+  ruleSource       String            @default("LOCAL_DRAFT")
   code             String?           @unique
   name             String
   brandName        String
@@ -109,6 +111,8 @@ model ProductAlias {
 
 model Campaign {
   id                        String            @id @default(cuid())
+  publishedKey              String?           @unique
+  ruleSource                String            @default("LOCAL_DRAFT")
   productId                 String?
   name                      String
   month                     String
@@ -160,6 +164,8 @@ model CampaignProduct {
 
 model TopicRule {
   id                String    @id @default(cuid())
+  publishedKey      String?   @unique
+  ruleSource        String    @default("LOCAL_DRAFT")
   scope             String    @default("CAMPAIGN")
   campaignId        String?
   productId         String?
@@ -189,37 +195,39 @@ model TopicRule {
 }
 
 model AuditTask {
-  id              String             @id @default(cuid())
-  batchId         String?
-  url             String
-  normalizedUrl   String
-  productId       String
-  campaignId      String
-  productStage    String?
-  milkType        String?
-  source          String             @default("MANUAL")
-  status          String             @default("PENDING")
-  queueOrder      Int                @default(0)
-  attempts        Int                @default(0)
-  failureCode     String?
-  failureMessage  String?
-  finalUrl        String?
-  pageTitle       String?
-  pageType        String?
-  redirectChain   String             @default("[]")
-  failureEvidence String?
-  notes           String?
-  createdBy       String?
-  startedAt       DateTime?
-  finishedAt      DateTime?
-  nextRunAt       DateTime?
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
-  batch           AuditBatch?        @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  product         Product            @relation(fields: [productId], references: [id])
-  campaign        Campaign           @relation(fields: [campaignId], references: [id])
-  extractions     ExtractionRecord[]
-  auditResults    AuditResult[]
+  id                 String             @id @default(cuid())
+  batchId            String?
+  url                String
+  normalizedUrl      String
+  productId          String
+  campaignId         String
+  productStage       String?
+  milkType           String?
+  source             String             @default("MANUAL")
+  status             String             @default("PENDING")
+  queueOrder         Int                @default(0)
+  attempts           Int                @default(0)
+  failureCode        String?
+  failureMessage     String?
+  finalUrl           String?
+  pageTitle          String?
+  pageType           String?
+  redirectChain      String             @default("[]")
+  failureEvidence    String?
+  notes              String?
+  softwareVersion    String?
+  rulePackageVersion String?
+  createdBy          String?
+  startedAt          DateTime?
+  finishedAt         DateTime?
+  nextRunAt          DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  batch              AuditBatch?        @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  product            Product            @relation(fields: [productId], references: [id])
+  campaign           Campaign           @relation(fields: [campaignId], references: [id])
+  extractions        ExtractionRecord[]
+  auditResults       AuditResult[]
 
   @@index([status, createdAt])
   @@index([batchId, status, queueOrder])
@@ -357,6 +365,8 @@ model AuditResult {
   auditTaskId           String
   noteId                String
   ruleVersion           Int
+  softwareVersion       String         @default("unknown")
+  rulePackageVersion    String?
   ruleSnapshot          String
   pageStatus            String
   bodyStatus            String
@@ -452,6 +462,73 @@ model SystemSetting {
   updatedAt   DateTime @updatedAt
 
   @@map("system_settings")
+}
+
+model RuleStageGroup {
+  key             String   @id
+  label           String
+  canonicalStages String
+  bodyTerms       String
+  requiredTopic   String
+  sortOrder       Int      @default(0)
+  status          String   @default("ACTIVE")
+  ruleVersion     String
+  ruleSource      String   @default("LOCAL_DRAFT")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status, sortOrder])
+  @@map("rule_stage_groups")
+}
+
+model RuleSyncState {
+  id              String    @id @default("active")
+  currentVersion  String
+  latestVersion   String?
+  schemaVersion   Int       @default(1)
+  source          String    @default("BUILTIN")
+  status          String    @default("USING_BUILTIN")
+  countsJson      String    @default("{}")
+  manifestJson    String?
+  previousVersion String?
+  lastCheckedAt   DateTime?
+  lastSyncedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("rule_sync_states")
+}
+
+model RuleSyncHistory {
+  id            String    @id @default(cuid())
+  ruleVersion   String?
+  schemaVersion Int?
+  source        String
+  status        String
+  errorCode     String?
+  message       String?
+  detailsJson   String    @default("{}")
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@map("rule_sync_history")
+}
+
+model RulePackageBackup {
+  id            String    @id @default(cuid())
+  ruleVersion   String
+  schemaVersion Int
+  source        String
+  sha256        String
+  payloadJson   String
+  createdAt     DateTime  @default(now())
+  restoredAt    DateTime?
+
+  @@index([createdAt])
+  @@map("rule_package_backups")
 }
 
 model ImportRecord {

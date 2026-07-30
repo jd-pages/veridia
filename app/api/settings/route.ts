@@ -6,7 +6,9 @@ export async function GET() {
   if (user instanceof Response) return user;
   const settings = await prisma.systemSetting.findMany({
     where: {
-      key: { notIn: ["AI_ENABLED", "OPENAI_API_KEY", "OPENAI_MODEL"] },
+      key: {
+        notIn: ["AI_ENABLED", "OPENAI_API_KEY", "OPENAI_MODEL", "AUTH_MODE"],
+      },
     },
     orderBy: { key: "asc" },
   });
@@ -25,6 +27,9 @@ export async function PUT(request: Request) {
   if (!body.key || body.value === undefined) return fail("设置项无效");
   if (body.key === "AI_ENABLED" || body.key.startsWith("OPENAI_")) {
     return fail("桌面版不提供 AI 配置");
+  }
+  if (body.key === "AUTH_MODE") {
+    return fail("当前桌面版认证模式固定为 LOCAL");
   }
   const setting = await prisma.systemSetting.findUnique({ where: { key: body.key } });
   if (!setting) return fail("设置项不存在", 404);

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { SessionUser } from "@/lib/auth";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { ensureLocalRuntime } from "@/lib/local-runtime";
 
 export function ok<T>(data: T, init?: ResponseInit) {
   return NextResponse.json({ success: true, data }, init);
@@ -14,8 +15,7 @@ export function fail(error: string, status = 400) {
 export async function requireApiUser(
   roles?: SessionUser["role"][],
 ): Promise<SessionUser | NextResponse> {
-  const session = await getSession();
-  if (!session) return fail("请先登录", 401);
+  const session = (await getSession()) || (await ensureLocalRuntime());
   const currentUser = await prisma.user.findUnique({
     where: { id: session.id },
     select: {
@@ -27,7 +27,7 @@ export async function requireApiUser(
     },
   });
   if (!currentUser || currentUser.status !== "ACTIVE") {
-    return fail("登录状态已失效，请重新登录", 401);
+    return ensureLocalRuntime();
   }
   const user: SessionUser = {
     id: currentUser.id,

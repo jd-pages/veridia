@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/db";
 import { normalizeUrl } from "@/lib/topic";
+import packageJson from "@/package.json";
 
 export interface AutomaticTaskInput {
   url: string;
@@ -23,6 +24,10 @@ export async function createAutomaticBatch(input: {
   tasks: AutomaticTaskInput[];
 }) {
   if (!input.tasks.length) throw new Error("没有可加入自动审核的链接");
+  const syncState = await prisma.ruleSyncState.findUnique({
+    where: { id: "active" },
+    select: { currentVersion: true },
+  });
   return prisma.$transaction(async (tx) => {
     const batch = await tx.auditBatch.create({
       data: {
@@ -57,6 +62,8 @@ export async function createAutomaticBatch(input: {
           queueOrder: index,
           notes: task.notes?.trim() || null,
           createdBy: input.createdBy || null,
+          softwareVersion: packageJson.version,
+          rulePackageVersion: syncState?.currentVersion || null,
         },
       });
     }
