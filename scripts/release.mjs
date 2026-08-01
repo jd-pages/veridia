@@ -171,7 +171,7 @@ try {
     VERIDIA_BUILD_DATE: new Date().toISOString(),
   });
   run("准备桌面资源", "npm.cmd", ["run", "desktop:prepare"]);
-  run("检查 Electron 运行文件", "npm.cmd", ["run", "electron:assert"]);
+  run("准备并检查 Electron 运行文件", "npm.cmd", ["run", "electron:ensure"]);
   run(
     "构建Windows安装包",
     "node",

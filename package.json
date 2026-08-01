@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:desktop-health": "vitest run tests/unit/desktop-health.test.ts",
+    "electron:ensure": "node node_modules/electron/install.js && node scripts/assert-electron-runtime.mjs",
     "electron:assert": "node scripts/assert-electron-runtime.mjs",
     "test:watch": "vitest",
     "test:e2e": "tsx tests/e2e/setup-database.ts && playwright test",

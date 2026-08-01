@@ -61,11 +61,7 @@ jobs:
           Remove-Item Env:ELECTRON_SKIP_BINARY_DOWNLOAD -ErrorAction SilentlyContinue
           Remove-Item Env:npm_config_ignore_scripts -ErrorAction SilentlyContinue
           npm ci --include=dev
-          if (-not (Test-Path "node_modules/electron/dist/electron.exe")) {
-            Write-Host "Electron 运行目录缺失，正在重新下载 Electron。"
-            npm rebuild electron
-          }
-          npm run electron:assert
+          npm run electron:ensure
 
       - name: 安装 Playwright Chromium
         run: npx playwright install chromium

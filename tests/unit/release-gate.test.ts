@@ -16,7 +16,7 @@ describe("本地打包发布门禁", () => {
       'run("ESLint"',
       'run("单元测试"',
       'run("桌面健康检查"',
-      'run("检查 Electron 运行文件"',
+      'run("准备并检查 Electron 运行文件"',
       '"构建Windows安装包"',
     ];
     const positions = steps.map((step) => source.indexOf(step));
@@ -48,12 +48,18 @@ describe("本地打包发布门禁", () => {
     );
     const packageJson = JSON.parse(
       fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"),
-    ) as { build: Record<string, unknown> };
+    ) as {
+      build: Record<string, unknown>;
+      scripts: Record<string, string>;
+    };
 
     expect(workflow).toContain("npm ci --include=dev");
-    expect(workflow).toContain("npm rebuild electron");
+    expect(workflow).toContain("npm run electron:ensure");
     const assertions = [...workflow.matchAll(/npm run electron:assert/gu)];
-    expect(assertions).toHaveLength(2);
+    expect(assertions).toHaveLength(1);
+    expect(packageJson.scripts["electron:ensure"]).toContain(
+      "node_modules/electron/install.js",
+    );
     expect(packageJson.build).not.toHaveProperty("electronDist");
   });
 
