@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 import { effectiveAccountStatus } from "@/lib/accounts/validation";
 import type { LocalAccountRole } from "@/lib/accounts/types";
+import { ensureLocalPreviewRuntime } from "@/lib/local-runtime";
 
 const COOKIE_NAME = "veridia_local_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 365 * 10;
@@ -120,6 +121,9 @@ export async function revokeAllUserSessions(userId: string) {
 }
 
 export async function getSession(): Promise<SessionUser | null> {
+  const previewUser = await ensureLocalPreviewRuntime();
+  if (previewUser) return previewUser;
+
   const cookieStore = await cookies();
   const cookieToken = cookieStore.get(COOKIE_NAME)?.value;
   if (cookieToken) {

@@ -18,6 +18,7 @@ export async function PUT(
   if (!ALLOWED_KEYS.has(key)) return fail("产品阶段话题无效");
   const body = (await request.json()) as {
     bodyTerms?: string[];
+    requireBodyStage?: boolean;
     requiredTopic?: string;
   };
   const bodyTerms = [
@@ -44,6 +45,7 @@ export async function PUT(
       where: { key },
       data: {
         bodyTerms: JSON.stringify(bodyTerms),
+        requireBodyStage: body.requireBodyStage === true,
         requiredTopic,
         ruleSource: "LOCAL_DRAFT",
         ruleVersion: `${currentVersion?.currentVersion || "local"}-draft`,

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { E2E_ORIGIN } from "./e2e-origin";
 
-test("产品阶段话题只显示三组，并联合审核正文段位与可点击话题", async ({
+test("产品阶段话题只显示三组，仅匹配对应的可点击话题", async ({
   page,
 }) => {
   const loginResponse = await page.request.post("/api/auth/login", {
@@ -13,7 +13,7 @@ test("产品阶段话题只显示三组，并联合审核正文段位与可点�
   await expect(page.getByText("产品阶段话题", { exact: true })).toBeVisible();
   await expect(
     page.getByText(
-      "请选择对应的产品阶段话题，系统将同时核验笔记正文中的段位信息及对应的蓝色可点击话题。",
+      "请选择对应的产品阶段话题。产品阶段仅用于匹配对应话题，不要求正文出现段位词。",
       { exact: true },
     ),
   ).toBeVisible();
@@ -46,6 +46,18 @@ test("产品阶段话题只显示三组，并联合审核正文段位与可点�
     item.name.includes("爱他美2026年7月"),
   );
   expect(campaign).toBeTruthy();
+
+  const disableBodyStageResponse = await page.request.put(
+    "/api/rule-stage-groups/IFFO_2",
+    {
+      data: {
+        bodyTerms: ["2段"],
+        requireBodyStage: false,
+        requiredTopic: "#二段奶粉推荐",
+      },
+    },
+  );
+  expect(disableBodyStageResponse.ok()).toBeTruthy();
 
   const suffix = Date.now();
   const url = `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-passed&stage-topic=${suffix}`;
@@ -90,10 +102,7 @@ test("产品阶段话题只显示三组，并联合审核正文段位与可点�
   expect(detail.task.productStage).toBe("IFFO_2");
   expect(
     detail.ruleResults.find((item) => item.ruleKey === "PRODUCT_STAGE_BODY"),
-  ).toMatchObject({
-    actualValue: "2段",
-    passed: true,
-  });
+  ).toBeUndefined();
   expect(
     detail.ruleResults.find((item) =>
       item.ruleName.includes("产品阶段话题 IFFO：2段"),
@@ -103,12 +112,20 @@ test("产品阶段话题只显示三组，并联合审核正文段位与可点�
   await page.goto(`/results/${result.id}`);
   await expect(page.getByText("产品阶段话题", { exact: true })).toBeVisible();
   await expect(page.getByText("IFFO：2段", { exact: true })).toBeVisible();
-  await expect(page.getByText("正文允许段位", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("正文实际识别段位", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("2段", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("正文段位校验", { exact: true })).toBeVisible();
+  await expect(page.getByText("不参与审核", { exact: true })).toBeVisible();
+  await expect(page.getByText("正文允许段位", { exact: true })).toHaveCount(0);
   await expect(
     page.getByText("#二段奶粉推荐", { exact: true }).first(),
   ).toBeVisible();
+
+  await page.goto("/rules");
+  await expect(
+    page.getByText(
+      "产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.getByText("正文允许段位", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("不校验，仅匹配话题").first()).toBeVisible();
 });

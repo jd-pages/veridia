@@ -1,5 +1,10 @@
 import { prisma } from "@/lib/db";
-import { ok, requireApiUser } from "@/lib/api";
+import { fail, ok, requireApiUser } from "@/lib/api";
+import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
+import {
+  buildAuditResultWhere,
+  readResultQueryFilters,
+} from "@/lib/result-query";
 
 export async function GET(request: Request) {
   const user = await requireApiUser();
@@ -7,33 +12,18 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const page = Math.max(Number(searchParams.get("page") || 1), 1);
   const pageSize = Math.min(Math.max(Number(searchParams.get("pageSize") || 20), 1), 100);
-  const productId = searchParams.get("productId") || undefined;
-  const campaignId = searchParams.get("campaignId") || undefined;
-  const month = searchParams.get("month") || undefined;
-  const status = searchParams.get("status") || undefined;
-  const imageStatus = searchParams.get("imageStatus") || undefined;
-  const keyword = searchParams.get("keyword")?.trim() || undefined;
-  const reason = searchParams.get("reason")?.trim() || undefined;
-  const where = {
-    ...(status ? { autoStatus: status } : {}),
-    ...(imageStatus ? { imageStatus } : {}),
-    ...(reason ? { failureReasons: { contains: reason } } : {}),
-    task: {
-      ...(productId ? { productId } : {}),
-      ...(campaignId ? { campaignId } : {}),
-      ...(month ? { campaign: { month } } : {}),
-    },
-    ...(keyword
-      ? {
-          OR: [
-            { note: { title: { contains: keyword } } },
-            { note: { body: { contains: keyword } } },
-            { note: { url: { contains: keyword } } },
-            { note: { platformNoteId: { contains: keyword } } },
-          ],
-        }
-      : {}),
-  };
+  await backfillMissingProcessingFailureResults();
+  let where;
+  try {
+    where = buildAuditResultWhere(
+      readResultQueryFilters(searchParams),
+    );
+  } catch (error) {
+    return fail(
+      error instanceof Error ? error.message : "筛选条件不正确",
+      400,
+    );
+  }
   const [total, items] = await prisma.$transaction([
     prisma.auditResult.count({ where }),
     prisma.auditResult.findMany({

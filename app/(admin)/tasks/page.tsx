@@ -45,7 +45,6 @@ import PageHeader from "@/components/PageHeader";
 import { apiFetch } from "@/lib/client";
 import {
   PRODUCT_STAGE_TOPIC_OPTIONS,
-  allowedBodyStageLabels,
   productStageTopicLabel,
 } from "@/lib/product-stage";
 import {
@@ -81,6 +80,7 @@ interface AuditRequirements {
     publicRequired: boolean;
     retentionDays: number;
     productStage: string | null;
+    bodyStageRequired?: boolean;
     milkType: string | null;
     rules: Array<{
       id: string;
@@ -623,7 +623,7 @@ export default function TasksPage() {
                         name="productStage"
                         label="产品阶段话题"
                         rules={[{ required: true }]}
-                        extra="请选择对应的产品阶段话题，系统将同时核验笔记正文中的段位信息及对应的蓝色可点击话题。"
+                        extra="请选择对应的产品阶段话题。产品阶段仅用于匹配对应话题，不要求正文出现段位词。"
                       >
                         <Select
                           placeholder="选择产品阶段话题"
@@ -649,10 +649,10 @@ export default function TasksPage() {
                                   : "不要求公开"}
                               </span>
                               <span>
-                                正文允许段位：
-                                {allowedBodyStageLabels(
-                                  requirements.context.productStage,
-                                ).join("、")}
+                                正文段位校验：
+                                {requirements.context.bodyStageRequired
+                                  ? "按当前规则核验"
+                                  : "不参与审核，仅用于匹配阶段话题"}
                               </span>
                               <span>
                                 要求阶段话题：
@@ -684,9 +684,7 @@ export default function TasksPage() {
                       >
                         <Input.TextArea
                           rows={7}
-                          placeholder={
-                            "http://localhost:3100/mock/xhs?case=passed\nhttp://localhost:3100/mock/xhs?case=read-failed\nhttp://localhost:3100/mock/xhs?case=few-images"
-                          }
+                          placeholder="每行粘贴一个小红书笔记链接"
                         />
                       </Form.Item>
                       <Form.Item name="notes" label="内部备注">
@@ -1226,17 +1224,27 @@ export default function TasksPage() {
                   title: "操作",
                   width: 120,
                   fixed: "right",
-                  render: (_value, row) => (
-                    <Button
-                      type="text"
-                      icon={<AuditOutlined />}
-                      href={row.url}
-                      target="_blank"
-                      className={styles.tableAction}
-                    >
-                      {canOperate ? "人工补审" : "查看笔记"}
-                    </Button>
-                  ),
+                  render: (_value, row) => {
+                    const result = row.auditResults[0];
+                    return (
+                      <Button
+                        type="text"
+                        icon={<AuditOutlined />}
+                        href={result ? `/results/${result.id}` : row.url}
+                        target={result ? undefined : "_blank"}
+                        className={styles.tableAction}
+                      >
+                        {result
+                          ? canOperate &&
+                            ["FAILED", "READ_FAILED", "LOGIN_EXPIRED"].includes(
+                              row.status,
+                            )
+                            ? "人工补审"
+                            : "查看结果"
+                          : "查看笔记"}
+                      </Button>
+                    );
+                  },
                 },
               ]}
               pagination={{ pageSize: 8 }}
@@ -1313,6 +1321,32 @@ export default function TasksPage() {
               render: (value: string) => (
                 <GovernanceStatus value={value} domain="process" />
               ),
+            },
+            {
+              title: "操作",
+              width: 120,
+              fixed: "right",
+              render: (_value, row) => {
+                const result = row.auditResults[0];
+                return (
+                  <Button
+                    type="text"
+                    icon={<AuditOutlined />}
+                    href={result ? `/results/${result.id}` : row.url}
+                    target={result ? undefined : "_blank"}
+                    className={styles.tableAction}
+                  >
+                    {result
+                      ? canOperate &&
+                        ["FAILED", "READ_FAILED", "LOGIN_EXPIRED"].includes(
+                          row.status,
+                        )
+                        ? "人工补审"
+                        : "查看结果"
+                      : "查看笔记"}
+                  </Button>
+                );
+              },
             },
           ]}
           pagination={{ pageSize: 8 }}

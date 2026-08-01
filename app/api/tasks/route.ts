@@ -6,12 +6,14 @@ import {
   normalizeProductStageTopicValue,
 } from "@/lib/product-stage";
 import packageJson from "@/package.json";
+import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
 
 export async function GET(request: Request) {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status") || undefined;
+  await backfillMissingProcessingFailureResults();
   const tasks = await prisma.auditTask.findMany({
     where: { status },
     include: {

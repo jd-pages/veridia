@@ -82,7 +82,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const productsResponse = await page.request.get("/api/products");
   expect(productsResponse.ok()).toBeTruthy();
   const products = (await productsResponse.json()).data as Array<{ id: string; code: string; name: string }>;
-  const product = products[0];
+  const product =
+    products.find((item) => item.name.includes("澳洲白金版")) ||
+    products[0];
   expect(product).toBeTruthy();
   const campaignsResponse = await page.request.get(`/api/campaigns?productId=${product.id}`);
   const campaign = ((await campaignsResponse.json()).data as Array<{ id: string; name: string; month: string }>)[0];
@@ -299,6 +301,228 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(excelBatch.stats.failed).toBe(1);
   expect(excelBatch.stats.progress).toBe(100);
 
+  const resultCoverageSuffix = `${suffix}-result-coverage`;
+  const resultCoverageBatchResponse = await page.request.post(
+    "/api/automation/batches",
+    {
+      data: {
+        name: "E2E 失败结果完整落库",
+        productId: product.id,
+        campaignId: campaign.id,
+        productStage: "IFFO_2",
+        urls: [
+          `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-passed&result-coverage=${resultCoverageSuffix}-passed`,
+          `${E2E_ORIGIN}/mock/xhs?case=read-failed&result-coverage=${resultCoverageSuffix}-failed-1`,
+          `${E2E_ORIGIN}/mock/xhs?case=read-failed&result-coverage=${resultCoverageSuffix}-failed-2`,
+        ],
+      },
+    },
+  );
+  expect(resultCoverageBatchResponse.ok()).toBeTruthy();
+  const resultCoverageBatchId = (
+    await resultCoverageBatchResponse.json()
+  ).data.batchId as string;
+  const resultCoverageBatch = await waitForBatch(
+    page,
+    resultCoverageBatchId,
+    ["COMPLETED_WITH_ERRORS"],
+  );
+  expect(resultCoverageBatch.stats.succeeded).toBe(1);
+  expect(resultCoverageBatch.stats.failed).toBe(2);
+  const resultCoverageQuery = new URLSearchParams({
+    batchId: resultCoverageBatchId,
+  });
+  const resultCoverageResponse = await page.request.get(
+    `/api/results?${resultCoverageQuery}`,
+  );
+  expect(resultCoverageResponse.ok()).toBeTruthy();
+  const resultCoverage = (await resultCoverageResponse.json()).data as {
+    total: number;
+    items: Array<{
+      id: string;
+      autoStatus: string;
+      auditedAt: string;
+      pageStatus: string;
+      bodyStatus: string;
+      topicsCompliant: boolean;
+      clickableCompliant: boolean;
+      imageStatus: string;
+      noteType: string;
+      ruleVersion: number;
+      publicStatus: string;
+      retentionStatus: string;
+      task: {
+        status: string;
+        failureCode: string | null;
+        product: { id: string };
+        campaign: { id: string };
+      };
+    }>;
+  };
+  expect(resultCoverage.total).toBe(3);
+  expect(
+    resultCoverage.items.filter((item) => item.autoStatus === "PASSED"),
+  ).toHaveLength(1);
+  expect(
+    resultCoverage.items.filter(
+      (item) =>
+        item.autoStatus === "NEEDS_REVIEW" &&
+        item.task.status === "READ_FAILED",
+    ),
+  ).toHaveLength(2);
+  expect(
+    resultCoverage.items
+      .filter((item) => item.task.status === "READ_FAILED")
+      .every((item) => item.task.failureCode === "PAGE_READ_FAILED"),
+  ).toBe(true);
+
+  const auditedDate = new Date(resultCoverage.items[0].auditedAt);
+  const auditDay = [
+    auditedDate.getFullYear(),
+    String(auditedDate.getMonth() + 1).padStart(2, "0"),
+    String(auditedDate.getDate()).padStart(2, "0"),
+  ].join("-");
+  const dateRangeQuery = new URLSearchParams({
+    batchId: resultCoverageBatchId,
+    startDate: auditDay,
+    endDate: auditDay,
+    dateType: "AUDITED_AT",
+  });
+  const dateRangeResults = (
+    await (
+      await page.request.get(`/api/results?${dateRangeQuery}`)
+    ).json()
+  ).data;
+  expect(dateRangeResults.total).toBe(3);
+
+  const startOnlyResults = (
+    await (
+      await page.request.get(
+        `/api/results?${new URLSearchParams({
+          batchId: resultCoverageBatchId,
+          startDate: auditDay,
+        })}`,
+      )
+    ).json()
+  ).data;
+  expect(startOnlyResults.total).toBe(3);
+
+  const endOnlyResults = (
+    await (
+      await page.request.get(
+        `/api/results?${new URLSearchParams({
+          batchId: resultCoverageBatchId,
+          endDate: auditDay,
+        })}`,
+      )
+    ).json()
+  ).data;
+  expect(endOnlyResults.total).toBe(3);
+
+  const clearedDateResults = (
+    await (
+      await page.request.get(
+        `/api/results?${new URLSearchParams({
+          batchId: resultCoverageBatchId,
+        })}`,
+      )
+    ).json()
+  ).data;
+  expect(clearedDateResults.total).toBe(3);
+
+  const productAndPassedResults = (
+    await (
+      await page.request.get(
+        `/api/results?${new URLSearchParams({
+          batchId: resultCoverageBatchId,
+          startDate: auditDay,
+          endDate: auditDay,
+          productId: product.id,
+          status: "PASSED",
+        })}`,
+      )
+    ).json()
+  ).data;
+  expect(productAndPassedResults.total).toBe(1);
+
+  const processFailedQuery = new URLSearchParams({
+    batchId: resultCoverageBatchId,
+    status: "PROCESS_FAILED",
+  });
+  const processFailedResults = (
+    await (
+      await page.request.get(`/api/results?${processFailedQuery}`)
+    ).json()
+  ).data;
+  expect(processFailedResults.total).toBe(2);
+
+  const pendingReviewQuery = new URLSearchParams({
+    batchId: resultCoverageBatchId,
+    manualStatus: "PENDING",
+  });
+  const pendingReviewResults = (
+    await (
+      await page.request.get(`/api/results?${pendingReviewQuery}`)
+    ).json()
+  ).data;
+  expect(pendingReviewResults.total).toBe(2);
+
+  const failedSample = resultCoverage.items.find(
+    (item) => item.task.status === "READ_FAILED",
+  )!;
+  const fullFilterExportQuery = new URLSearchParams({
+    startDate: auditDay,
+    endDate: auditDay,
+    dateType: "AUDITED_AT",
+    productId: failedSample.task.product.id,
+    campaignId: failedSample.task.campaign.id,
+    status: "PROCESS_FAILED",
+    manualStatus: "PENDING",
+    pageStatus: failedSample.pageStatus,
+    bodyStatus: failedSample.bodyStatus,
+    topicsStatus: failedSample.topicsCompliant
+      ? "COMPLIANT"
+      : "NON_COMPLIANT",
+    clickableStatus: failedSample.clickableCompliant
+      ? "COMPLIANT"
+      : "NON_COMPLIANT",
+    imageStatus: failedSample.imageStatus,
+    noteType: failedSample.noteType,
+    reason: "人工确认",
+    ruleVersion: String(failedSample.ruleVersion),
+    publicStatus: failedSample.publicStatus,
+    retentionStatus: failedSample.retentionStatus,
+    keyword: `result-coverage=${resultCoverageSuffix}`,
+    format: "csv",
+  });
+  const failureExportResponse = await page.request.get(
+    `/api/results/export?${fullFilterExportQuery}`,
+  );
+  expect(failureExportResponse.ok()).toBeTruthy();
+  const failureExportCsv = await failureExportResponse.text();
+  expect(failureExportCsv).toContain("处理状态");
+  expect(failureExportCsv).toContain("审核结果");
+  expect(failureExportCsv).toContain("异常分类");
+  expect(failureExportCsv).toContain("失败原因");
+  expect(failureExportCsv).toContain("是否需要人工复核");
+  expect(failureExportCsv).toContain("人工复核状态");
+  expect(failureExportCsv).toContain("审核创建时间");
+  expect(failureExportCsv).toContain("审核完成时间");
+  expect(failureExportCsv).toContain("任务创建时间");
+  expect(failureExportCsv).toContain("发布时间");
+  expect(failureExportCsv).toContain("日期筛选口径");
+  expect(failureExportCsv).toContain(`${resultCoverageSuffix}-failed-1`);
+  expect(failureExportCsv).toContain(`${resultCoverageSuffix}-failed-2`);
+  expect(failureExportCsv).toContain("待人工复核");
+
+  await page.goto("/tasks");
+  const failedResult = resultCoverage.items.find(
+    (item) => item.task.status === "READ_FAILED",
+  );
+  await expect(
+    page.locator(`a[href="/results/${failedResult?.id}"]`).first(),
+  ).toBeVisible();
+
   const imageStateBatchResponse = await page.request.post(
     "/api/automation/batches",
     {
@@ -406,6 +630,14 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const retriedBatch = await waitForBatch(page, retryBatchId, ["COMPLETED"]);
   expect(retriedBatch.tasks[0].attempts).toBe(2);
   expect(retriedBatch.tasks[0].auditResults.length).toBe(1);
+  const retryHistory = (
+    await (
+      await page.request.get(
+        `/api/results?${new URLSearchParams({ batchId: retryBatchId })}`,
+      )
+    ).json()
+  ).data;
+  expect(retryHistory.total).toBe(2);
 
   const extensionUrl = `${E2E_ORIGIN}/mock/xhs?case=unclickable-topic&extension=${suffix}`;
   const extensionTaskResponse = await page.request.post("/api/tasks", {

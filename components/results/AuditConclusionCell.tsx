@@ -6,6 +6,7 @@ import {
   auditResultLabels,
   businessFailureReasonLabel,
 } from "@/lib/zh-CN";
+import AuditStatusTag from "./AuditStatusTag";
 import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
 
@@ -33,6 +34,11 @@ export default function AuditConclusionCell({ row }: { row: ResultRow }) {
     label: auditResultLabels[row.autoStatus] || "暂无结论",
   };
   const mainValue = manual?.result || row.autoStatus;
+  const processingFailed = [
+    "FAILED",
+    "READ_FAILED",
+    "LOGIN_EXPIRED",
+  ].includes(row.task.status);
   const mainMeta = manual
     ? {
         className:
@@ -43,6 +49,11 @@ export default function AuditConclusionCell({ row }: { row: ResultRow }) {
 
   return (
     <div className={styles.stack}>
+      {processingFailed ? (
+        <div>
+          <AuditStatusTag value={row.task.status} domain="process" />
+        </div>
+      ) : null}
       <div className={styles.conclusionLine}>
         <span
           className={`${styles.conclusionDot} ${mainMeta.className}`}

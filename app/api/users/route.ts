@@ -36,7 +36,7 @@ export async function POST() {
   const currentUser = await requireApiUser(["ADMIN"]);
   if (currentUser instanceof Response) return currentUser;
   return fail(
-    "客户端不允许直接创建账号，请使用开发者签发的账号激活码。",
+    "客户端不允许直接创建账号，请使用账号管理员提供的激活码。",
     403,
   );
 }

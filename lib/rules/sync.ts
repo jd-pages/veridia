@@ -261,6 +261,7 @@ async function initializeBuiltinRules() {
             label: group.label,
             canonicalStages: JSON.stringify(group.canonicalStages),
             bodyTerms: JSON.stringify(group.bodyTerms),
+            requireBodyStage: group.requireBodyStage,
             requiredTopic: group.requiredTopic,
             sortOrder: group.sortOrder,
             status: group.status,

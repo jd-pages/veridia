@@ -246,6 +246,52 @@ describe("audit engine", () => {
     expect(result.failureReasons.join("；")).not.toContain("缺少阶段话题");
   });
 
+  it("规则关闭正文段位校验后，正文没有段位词也不影响阶段话题审核", () => {
+    const stageContext: AuditContext = {
+      ...context,
+      productStage: "IFFO_2",
+      bodyStageRequired: false,
+      rules: [
+        {
+          id: "stage-2",
+          scope: "CAMPAIGN",
+          ruleType: "REQUIRED",
+          topic: "#二段奶粉推荐",
+          topicCategory: "PRODUCT_STAGE",
+          applicableStage: "IFFO_2",
+          exactMatch: true,
+          clickableRequired: true,
+          caseSensitive: false,
+          minCount: 1,
+          sortOrder: 1,
+          version: 1,
+        },
+      ],
+    };
+    const note = createMockNote("passed");
+    note.body = "这是一次真实的喂养体验记录，正文不包含任何产品段位描述。";
+    note.topics = [
+      {
+        displayText: "#二段奶粉推荐",
+        isLinkElement: true,
+        hasHref: true,
+        href: "https://www.xiaohongshu.com/search_result?keyword=stage2",
+        textColor: "rgb(19, 92, 173)",
+        styleFeature: true,
+      },
+    ];
+    const result = evaluateAudit(note, stageContext);
+    expect(result.autoStatus).toBe("PASSED");
+    expect(
+      result.ruleResults.find(
+        (rule) => rule.ruleKey === "PRODUCT_STAGE_BODY",
+      ),
+    ).toBeUndefined();
+    expect(result.failureReasons.join("；")).not.toMatch(
+      /正文未出现对应段位|正文段位不属于/u,
+    );
+  });
+
   it("近似阶段话题与缺少阶段话题使用不同失败原因", () => {
     const stageContext: AuditContext = {
       ...context,

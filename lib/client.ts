@@ -15,7 +15,19 @@ export async function apiFetch<T>(
       ...init?.headers,
     },
   });
-  const payload = (await response.json()) as ApiEnvelope<T>;
+  const rawBody = await response.text();
+  if (!rawBody.trim()) {
+    throw new Error(`服务返回了空响应（HTTP ${response.status}）`);
+  }
+  let payload: ApiEnvelope<T>;
+  try {
+    payload = JSON.parse(rawBody) as ApiEnvelope<T>;
+  } catch {
+    const contentType = response.headers.get("content-type") || "未知类型";
+    throw new Error(
+      `服务返回了无法识别的响应（HTTP ${response.status}，${contentType}）`,
+    );
+  }
   if (!response.ok || !payload.success) {
     if (
       response.status === 401 &&

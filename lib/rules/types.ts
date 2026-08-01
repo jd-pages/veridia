@@ -39,6 +39,7 @@ export interface RulePackageStageGroup {
   label: string;
   canonicalStages: string[];
   bodyTerms: string[];
+  requireBodyStage: boolean;
   requiredTopic: string;
   sortOrder: number;
   status: string;

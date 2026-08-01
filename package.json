@@ -1,7 +1,7 @@
 {
   "name": "veridia",
   "productName": "VERIDIA",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "repository": {
     "type": "git",
@@ -24,6 +24,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "tsx tests/e2e/setup-database.ts && playwright test",
+    "scan:sensitive": "node scripts/sensitive-scan.mjs",
+    "workflow:preview": "node scripts/fixed-workflow.mjs preview",
+    "workflow:package": "node scripts/fixed-workflow.mjs package",
+    "workflow:publish": "node scripts/fixed-workflow.mjs publish",
     "release:patch": "node scripts/release.mjs patch",
     "release:minor": "node scripts/release.mjs minor",
     "release:major": "node scripts/release.mjs major",

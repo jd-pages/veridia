@@ -186,6 +186,20 @@ export function stageTopicFromRuleSnapshot(
   }
 }
 
+export function bodyStageRequiredFromRuleSnapshot(
+  ruleSnapshot: string | null | undefined,
+): boolean {
+  if (!ruleSnapshot) return true;
+  try {
+    const snapshot = JSON.parse(ruleSnapshot) as {
+      bodyStageRequired?: boolean;
+    };
+    return snapshot.bodyStageRequired !== false;
+  } catch {
+    return true;
+  }
+}
+
 export function compatibleStageRuleValues(
   value: string | null | undefined,
 ): string[] {

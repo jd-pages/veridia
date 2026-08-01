@@ -24,6 +24,7 @@ import {
   StopOutlined,
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
+import dayjs from "dayjs";
 import PageHeader from "@/components/PageHeader";
 import AuditConclusionCell from "@/components/results/AuditConclusionCell";
 import AuditDetailDrawer from "@/components/results/AuditDetailDrawer";
@@ -51,10 +52,12 @@ import { productStageTopicLabel } from "@/lib/product-stage";
 import type { SessionUser } from "@/lib/auth";
 import styles from "@/components/results/results-workbench.module.css";
 
-const emptyFilters: ResultFilters = {
+const defaultFilters: ResultFilters = {
   productId: "",
   campaignId: "",
-  month: "",
+  startDate: dayjs().startOf("month").format("YYYY-MM-DD"),
+  endDate: dayjs().endOf("month").format("YYYY-MM-DD"),
+  dateType: "AUDITED_AT",
   status: "",
   imageStatus: "",
   keyword: "",
@@ -75,6 +78,7 @@ const emptyAdvancedFilters: AdvancedResultFilters = {
 
 function buildQuery(
   filters: ResultFilters,
+  advanced: AdvancedResultFilters,
   page: number,
   pageSize: number,
   statusOverride?: string,
@@ -86,90 +90,27 @@ function buildQuery(
   const supported = {
     productId: filters.productId,
     campaignId: filters.campaignId,
-    month: filters.month,
+    startDate: filters.startDate,
+    endDate: filters.endDate,
+    dateType: filters.dateType,
     status: statusOverride === undefined ? filters.status : statusOverride,
+    manualStatus: filters.manualStatus,
     imageStatus: filters.imageStatus,
     keyword: filters.keyword,
     reason: filters.reason,
+    pageStatus: advanced.pageStatus,
+    bodyStatus: advanced.bodyStatus,
+    topicsStatus: advanced.topicsStatus,
+    clickableStatus: advanced.clickableStatus,
+    noteType: advanced.noteType,
+    ruleVersion: advanced.ruleVersion,
+    publicStatus: advanced.publicStatus,
+    retentionStatus: advanced.retentionStatus,
   };
   Object.entries(supported).forEach(([key, value]) => {
     if (value) query.set(key, value);
   });
   return query;
-}
-
-function isClientFilterActive(
-  filters: ResultFilters,
-  advanced: AdvancedResultFilters,
-) {
-  return Boolean(
-    filters.manualStatus ||
-      Object.values(advanced).some((value) => Boolean(value)),
-  );
-}
-
-function applyClientFilters(
-  rows: ResultRow[],
-  filters: ResultFilters,
-  advanced: AdvancedResultFilters,
-) {
-  return rows.filter((row) => {
-    const manualResult = row.manualReviews[0]?.result;
-    if (
-      filters.manualStatus === "UNREVIEWED" &&
-      row.manualReviews.length > 0
-    ) {
-      return false;
-    }
-    if (
-      filters.manualStatus &&
-      filters.manualStatus !== "UNREVIEWED" &&
-      manualResult !== filters.manualStatus
-    ) {
-      return false;
-    }
-    if (advanced.pageStatus && row.pageStatus !== advanced.pageStatus) {
-      return false;
-    }
-    if (advanced.bodyStatus && row.bodyStatus !== advanced.bodyStatus) {
-      return false;
-    }
-    if (
-      advanced.topicsStatus &&
-      row.topicsCompliant !== (advanced.topicsStatus === "COMPLIANT")
-    ) {
-      return false;
-    }
-    if (
-      advanced.clickableStatus &&
-      row.clickableCompliant !==
-        (advanced.clickableStatus === "COMPLIANT")
-    ) {
-      return false;
-    }
-    if (advanced.noteType && row.noteType !== advanced.noteType) {
-      return false;
-    }
-    if (
-      advanced.ruleVersion &&
-      String(row.ruleVersion) !== advanced.ruleVersion.trim().replace(/^v/iu, "")
-    ) {
-      return false;
-    }
-    if (
-      advanced.publicStatus &&
-      row.publicStatus !== advanced.publicStatus
-    ) {
-      return false;
-    }
-    if (
-      advanced.retentionStatus &&
-      row.retentionStatus !== advanced.retentionStatus
-    ) {
-      return false;
-    }
-    return true;
-  });
 }
 
 function ContentStatusCell({ row }: { row: ResultRow }) {
@@ -214,9 +155,9 @@ export default function ResultsPage() {
   });
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
-  const [filters, setFilters] = useState<ResultFilters>(emptyFilters);
+  const [filters, setFilters] = useState<ResultFilters>(defaultFilters);
   const [appliedFilters, setAppliedFilters] =
-    useState<ResultFilters>(emptyFilters);
+    useState<ResultFilters>(defaultFilters);
   const [advancedFilters, setAdvancedFilters] =
     useState<AdvancedResultFilters>(emptyAdvancedFilters);
   const [appliedAdvancedFilters, setAppliedAdvancedFilters] =
@@ -239,20 +180,23 @@ export default function ResultsPage() {
   );
   const canOperate = currentRole === "ADMIN" || currentRole === "OPERATOR";
 
-  const loadSummary = useCallback(async (targetFilters: ResultFilters) => {
+  const loadSummary = useCallback(async (
+    targetFilters: ResultFilters,
+    targetAdvancedFilters: AdvancedResultFilters,
+  ) => {
     const summaryBase = { ...targetFilters, status: "" };
     const [all, passed, failed, review] = await Promise.all([
       apiFetch<ResultPageData>(
-        `/api/results?${buildQuery(summaryBase, 1, 1, "")}`,
+        `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "")}`,
       ),
       apiFetch<ResultPageData>(
-        `/api/results?${buildQuery(summaryBase, 1, 1, "PASSED")}`,
+        `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "PASSED")}`,
       ),
       apiFetch<ResultPageData>(
-        `/api/results?${buildQuery(summaryBase, 1, 1, "FAILED")}`,
+        `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "FAILED")}`,
       ),
       apiFetch<ResultPageData>(
-        `/api/results?${buildQuery(summaryBase, 1, 1, "NEEDS_REVIEW")}`,
+        `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "NEEDS_REVIEW")}`,
       ),
     ]);
     setSummary({
@@ -268,16 +212,18 @@ export default function ResultsPage() {
       page = 1,
       pageSize = 20,
       targetFilters: ResultFilters = appliedFilters,
+      targetAdvancedFilters: AdvancedResultFilters =
+        appliedAdvancedFilters,
     ) => {
       setLoading(true);
       try {
         const resultData = await apiFetch<ResultPageData>(
-          `/api/results?${buildQuery(targetFilters, page, pageSize)}`,
+          `/api/results?${buildQuery(targetFilters, targetAdvancedFilters, page, pageSize)}`,
         );
         setData(resultData);
         setSelected([]);
         setUpdatedAt(new Date());
-        await loadSummary(targetFilters);
+        await loadSummary(targetFilters, targetAdvancedFilters);
       } catch (error) {
         message.error(
           error instanceof Error ? error.message : "加载审核结果失败",
@@ -286,7 +232,7 @@ export default function ResultsPage() {
         setLoading(false);
       }
     },
-    [appliedFilters, loadSummary, message],
+    [appliedAdvancedFilters, appliedFilters, loadSummary, message],
   );
 
   useEffect(() => {
@@ -306,48 +252,31 @@ export default function ResultsPage() {
           error instanceof Error ? error.message : "加载筛选项失败",
         ),
       );
-    void load(1, 20, emptyFilters);
+    void load(1, 20, defaultFilters, emptyAdvancedFilters);
     // 页面首次加载一次；后续查询由用户操作显式触发。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const visibleItems = useMemo(
-    () =>
-      applyClientFilters(
-        data.items,
-        appliedFilters,
-        appliedAdvancedFilters,
-      ),
-    [appliedAdvancedFilters, appliedFilters, data.items],
-  );
-  const clientFiltersActive = isClientFilterActive(
-    appliedFilters,
-    appliedAdvancedFilters,
-  );
-  const visibleSummary = useMemo<ResultSummary>(() => {
-    if (!clientFiltersActive) return summary;
-    return {
-      total: visibleItems.length,
-      passed: visibleItems.filter((row) => row.autoStatus === "PASSED").length,
-      failed: visibleItems.filter((row) => row.autoStatus === "FAILED").length,
-      review: visibleItems.filter((row) => row.autoStatus === "NEEDS_REVIEW")
-        .length,
-    };
-  }, [clientFiltersActive, summary, visibleItems]);
+  const visibleItems = data.items;
 
   const submitSearch = () => {
     setAppliedFilters(filters);
     setAppliedAdvancedFilters(advancedFilters);
-    void load(1, data.pageSize, filters);
+    void load(1, data.pageSize, filters, advancedFilters);
   };
 
   const resetFilters = () => {
-    setFilters(emptyFilters);
-    setAppliedFilters(emptyFilters);
+    setFilters(defaultFilters);
+    setAppliedFilters(defaultFilters);
     setAdvancedFilters(emptyAdvancedFilters);
     setAppliedAdvancedFilters(emptyAdvancedFilters);
     setAdvancedOpen(false);
-    void load(1, data.pageSize, emptyFilters);
+    void load(
+      1,
+      data.pageSize,
+      defaultFilters,
+      emptyAdvancedFilters,
+    );
   };
 
   const selectSummary = (status: string) => {
@@ -355,7 +284,7 @@ export default function ResultsPage() {
     setFilters(next);
     setAppliedFilters(next);
     setAppliedAdvancedFilters(advancedFilters);
-    void load(1, data.pageSize, next);
+    void load(1, data.pageSize, next, advancedFilters);
   };
 
   const bulk = async (action: BulkAction, ids = selected) => {
@@ -384,8 +313,14 @@ export default function ResultsPage() {
   };
 
   const exportQuery = useMemo(
-    () => buildQuery(appliedFilters, 1, data.pageSize),
-    [appliedFilters, data.pageSize],
+    () =>
+      buildQuery(
+        appliedFilters,
+        appliedAdvancedFilters,
+        1,
+        data.pageSize,
+      ),
+    [appliedAdvancedFilters, appliedFilters, data.pageSize],
   );
   exportQuery.delete("page");
   exportQuery.delete("pageSize");
@@ -647,7 +582,7 @@ export default function ResultsPage() {
       </div>
 
       <ResultSummaryCards
-        summary={visibleSummary}
+        summary={summary}
         activeStatus={filters.status}
         onSelect={selectSummary}
       />
@@ -681,9 +616,7 @@ export default function ResultsPage() {
             </div>
           </div>
           <div className={styles.tableMeta}>
-            {clientFiltersActive
-              ? `当前页筛选 ${visibleItems.length} 条`
-              : `当前筛选共 ${data.total} 条`}
+            当前筛选共 {data.total} 条
           </div>
         </div>
         <StickyHorizontalScrollbar>
@@ -701,9 +634,9 @@ export default function ResultsPage() {
             scroll={{ x: 1740 }}
             sticky={{ offsetHeader: 64, offsetScroll: 10 }}
             pagination={{
-              current: clientFiltersActive ? 1 : data.page,
+              current: data.page,
               pageSize: data.pageSize,
-              total: clientFiltersActive ? visibleItems.length : data.total,
+              total: data.total,
               showSizeChanger: true,
               showTotal: (total) => `共 ${total} 条`,
               pageSizeOptions: [10, 20, 50, 100],

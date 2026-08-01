@@ -51,7 +51,18 @@
     "detectedBodyStages": { "displayName": "正文实际识别段位", "type": "stringList", "description": "正文实际识别出的段位词" },
     "requiredStageTopic": { "displayName": "要求阶段话题", "type": "string", "description": "当前阶段要求的可点击话题" },
     "imageExtractionStatus": { "displayName": "图片提取状态", "type": "string", "description": "图片数量读取状态" },
-    "imageStatus": { "displayName": "图片数量合规", "type": "string", "description": "图片数量规则结果" }
+    "imageStatus": { "displayName": "图片数量合规", "type": "string", "description": "图片数量规则结果" },
+    "originalUrl": { "displayName": "原始链接", "type": "url", "description": "任务提交时保存的原始笔记链接" },
+    "finalUrl": { "displayName": "最终链接", "type": "url", "description": "短链接完成跳转后的最终页面链接" },
+    "exceptionCategory": { "displayName": "异常分类", "type": "string", "description": "页面访问或自动提取的异常分类" },
+    "failureReason": { "displayName": "失败原因", "type": "string", "description": "处理失败或待人工复核的具体原因" },
+    "needsManualReview": { "displayName": "是否需要人工复核", "type": "string", "description": "当前结果是否需要人工确认" },
+    "manualReviewStatus": { "displayName": "人工复核状态", "type": "string", "description": "待人工复核、已人工通过、已人工不通过或无需复核" },
+    "attemptCount": { "displayName": "尝试次数", "type": "integer", "description": "自动处理该笔记的累计尝试次数" },
+    "auditCreatedAt": { "displayName": "审核创建时间", "type": "datetime", "description": "审核结果记录创建时间" },
+    "auditCompletedAt": { "displayName": "审核完成时间", "type": "datetime", "description": "自动审核执行完成时间" },
+    "taskCreatedAt": { "displayName": "任务创建时间", "type": "datetime", "description": "审核任务进入系统的时间" },
+    "dateFilterBasis": { "displayName": "日期筛选口径", "type": "string", "description": "本次导出使用的日期范围筛选字段" }
   },
   "fieldAliases": {
     "noteUrl": ["笔记链接", "小红书链接", "链接", "文章链接", "笔记地址", "小红书笔记链接", "noteUrl", "url", "link"],
@@ -76,7 +87,7 @@
   "optionalFields": ["noteId", "influencerName", "publishTime", "title", "content", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark", "productCode", "activityMonth", "specification", "productStage"],
   "columnOrder": {
     "import": ["noteUrl", "productCode", "productName", "specification", "activityName", "activityMonth", "productStage", "influencerName", "publishTime", "title", "content", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark"],
-    "auditResults": ["noteUrl", "noteId", "productName", "activityName", "source", "productStageTopic", "allowedBodyStages", "detectedBodyStages", "requiredStageTopic", "influencerName", "publishTime", "title", "content", "imageExtractionStatus", "imageCount", "imageStatus", "topicTags", "auditStatus", "auditResult", "failedReasons", "matchedRules", "ruleVersion", "reviewedBy", "reviewedAt", "remark"],
+    "auditResults": ["noteUrl", "originalUrl", "finalUrl", "noteId", "productName", "activityName", "source", "productStageTopic", "allowedBodyStages", "detectedBodyStages", "requiredStageTopic", "influencerName", "publishTime", "title", "content", "imageExtractionStatus", "imageCount", "imageStatus", "topicTags", "auditStatus", "auditResult", "exceptionCategory", "failureReason", "needsManualReview", "manualReviewStatus", "attemptCount", "auditCreatedAt", "auditCompletedAt", "taskCreatedAt", "dateFilterBasis", "failedReasons", "matchedRules", "ruleVersion", "reviewedBy", "reviewedAt", "remark"],
     "auditTasks": ["noteUrl", "noteId", "productName", "activityName", "auditStatus", "auditResult", "ruleVersion", "reviewedAt", "remark"]
   },
   "dataValidation": {

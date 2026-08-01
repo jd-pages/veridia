@@ -193,7 +193,7 @@ export default function LocalLoginScreen() {
             setResetOpen(false);
             Modal.success({
               title: "密码已重置",
-              content: "请使用开发者提供的新初始密码登录。",
+              content: "请使用账号管理员提供的新初始密码登录。",
             });
           }}
         >

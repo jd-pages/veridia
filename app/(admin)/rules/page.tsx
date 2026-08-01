@@ -60,6 +60,7 @@ interface StageGroup {
   label: string;
   canonicalStages: string[];
   bodyTerms: string[];
+  requireBodyStage: boolean;
   requiredTopic: string;
   ruleSource: string;
 }
@@ -109,7 +110,7 @@ export default function RulesPage() {
     <>
       <PageHeader
         title="话题规则"
-        description="三层规则合并执行，标准话题会自动去空格并统一补充 #"
+        description="产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #"
         actions={
           <Button
             type="primary"
@@ -137,7 +138,7 @@ export default function RulesPage() {
       />
       <Card
         className="surface-card"
-        title="产品阶段话题与正文段位词"
+        title="产品阶段与要求话题"
         style={{ marginBottom: 16 }}
       >
         <Table<StageGroup>
@@ -147,8 +148,14 @@ export default function RulesPage() {
           columns={[
             { title: "产品阶段话题", dataIndex: "label", width: 260 },
             {
-              title: "正文允许段位",
-              render: (_value, row) => row.bodyTerms.join("、"),
+              title: "正文段位校验",
+              width: 220,
+              render: (_value, row) =>
+                row.requireBodyStage ? (
+                  <Tag color="warning">需要校验正文段位</Tag>
+                ) : (
+                  <Tag>不校验，仅匹配话题</Tag>
+                ),
             },
             {
               title: "要求阶段话题",
@@ -173,6 +180,7 @@ export default function RulesPage() {
                     setEditingStage(row);
                     stageForm.setFieldsValue({
                       bodyTerms: row.bodyTerms.join("、"),
+                      requireBodyStage: row.requireBodyStage,
                       requiredTopic: row.requiredTopic,
                     });
                   }}
@@ -448,6 +456,7 @@ export default function RulesPage() {
                 bodyTerms: String(values.bodyTerms || "")
                   .split(/[、,，\s]+/u)
                   .filter(Boolean),
+                requireBodyStage: Boolean(values.requireBodyStage),
                 requiredTopic: values.requiredTopic,
               }),
             });
@@ -457,10 +466,18 @@ export default function RulesPage() {
           }}
         >
           <Form.Item
+            name="requireBodyStage"
+            label="是否校验正文段位"
+            valuePropName="checked"
+            extra="当前业务规则关闭此项；产品阶段仅用于匹配对应的蓝色可点击话题。"
+          >
+            <Switch checkedChildren="校验" unCheckedChildren="不校验" />
+          </Form.Item>
+          <Form.Item
             name="bodyTerms"
-            label="正文允许段位"
+            label="可识别段位词"
             rules={[{ required: true }]}
-            extra="多个段位使用顿号或逗号分隔，组内为任选命中一个。"
+            extra="仅在启用正文段位校验时使用；多个词使用顿号或逗号分隔。"
           >
             <Input />
           </Form.Item>

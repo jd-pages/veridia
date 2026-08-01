@@ -152,7 +152,7 @@ export default function AccountActivationForm({
           setPreview(null);
         }}
         autoSize={{ minRows: 4, maxRows: 8 }}
-        placeholder="粘贴开发者提供的账号激活码"
+        placeholder="粘贴账号管理员提供的激活码"
         spellCheck={false}
         autoComplete="off"
       />

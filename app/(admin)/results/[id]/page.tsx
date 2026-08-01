@@ -35,6 +35,7 @@ import StatusTag from "@/components/StatusTag";
 import { apiFetch, parseJsonArray } from "@/lib/client";
 import {
   allowedBodyStageLabels,
+  bodyStageRequiredFromRuleSnapshot,
   detectBodyProductStages,
   productStageTopicLabel,
   stageTopicFromRuleSnapshot,
@@ -79,6 +80,12 @@ interface Detail {
   auditedAt: string;
   task: {
     id: string;
+    status: string;
+    url: string;
+    finalUrl: string | null;
+    failureCode: string | null;
+    failureMessage: string | null;
+    attempts: number;
     productStage: string | null;
     product: Product;
     campaign: Campaign;
@@ -167,15 +174,25 @@ export default function ResultDetailPage() {
     (reason) =>
       !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(reason),
   );
+  const processingFailed = [
+    "FAILED",
+    "READ_FAILED",
+    "LOGIN_EXPIRED",
+  ].includes(detail.task.status);
   const displayedRuleResults = detail.ruleResults.filter(
     (rule) =>
       !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(rule.ruleName),
   );
   const productStageLabel = productStageTopicLabel(detail.task.productStage);
-  const bodyStage = detectBodyProductStages(
-    detail.note.body,
-    detail.task.productStage,
+  const bodyStageRequired = bodyStageRequiredFromRuleSnapshot(
+    detail.ruleSnapshot,
   );
+  const bodyStage = bodyStageRequired
+    ? detectBodyProductStages(
+        detail.note.body,
+        detail.task.productStage,
+      )
+    : null;
   const stageTopic = stageTopicFromRuleSnapshot(detail.ruleSnapshot);
   const stageTopicMatch = stageTopic
     ? detail.note.topics.find(
@@ -240,7 +257,15 @@ export default function ResultDetailPage() {
           </Space>
         }
       />
-      {reasons.length ? (
+      {reasons.length && processingFailed ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="处理失败，待人工复核"
+          description={reasons.map(businessFailureReasonLabel).join("；")}
+          style={{ marginBottom: 16 }}
+        />
+      ) : reasons.length ? (
         <Alert
           type="error"
           showIcon
@@ -300,24 +325,54 @@ export default function ResultDetailPage() {
         <Col xs={24} xl={9}>
           <Card className="surface-card" title="综合判断">
             <Descriptions column={1} size="small">
+              <Descriptions.Item label="处理状态">
+                <StatusTag value={detail.task.status} domain="process" />
+              </Descriptions.Item>
+              <Descriptions.Item label="审核结论">
+                <StatusTag value={detail.autoStatus} domain="audit" />
+              </Descriptions.Item>
+              <Descriptions.Item label="异常分类">
+                {detail.task.failureCode
+                  ? businessFailureReasonLabel(detail.task.failureCode)
+                  : "无异常"}
+              </Descriptions.Item>
+              <Descriptions.Item label="失败原因">
+                {detail.task.failureMessage ||
+                  reasons.map(businessFailureReasonLabel).join("；") ||
+                  "无异常"}
+              </Descriptions.Item>
+              <Descriptions.Item label="尝试次数">
+                {detail.task.attempts}
+              </Descriptions.Item>
               <Descriptions.Item label="正文">
                 <Tag color={detail.bodyCompliant ? "green" : "red"}>
                   {detail.effectiveBodyLength} 个有效字符 ·{" "}
                   {detail.bodyCompliant ? "合规" : "不合规"}
                 </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="正文允许段位">
-                {allowedBodyStageLabels(detail.task.productStage).join("、") ||
-                  "段位未识别"}
-              </Descriptions.Item>
-              <Descriptions.Item label="正文实际识别段位">
-                {bodyStage?.detectedStages.join("、") || "段位未识别"}
-              </Descriptions.Item>
-              <Descriptions.Item label="正文段位结果">
-                <Tag color={bodyStage?.passed ? "green" : "red"}>
-                  {bodyStage?.passed ? "合规" : "不合规"}
-                </Tag>
-              </Descriptions.Item>
+              {bodyStageRequired ? (
+                <>
+                  <Descriptions.Item label="正文允许段位">
+                    {allowedBodyStageLabels(detail.task.productStage).join("、") ||
+                      "段位未识别"}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="正文实际识别段位">
+                    {bodyStage?.detectedStages.join("、") || "段位未识别"}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="正文段位结果">
+                    <Tag color={bodyStage?.passed ? "green" : "red"}>
+                      {bodyStage?.passed ? "合规" : "不合规"}
+                    </Tag>
+                  </Descriptions.Item>
+                </>
+              ) : (
+                <Descriptions.Item label="正文段位校验">
+                  <Tag>不参与审核</Tag>
+                  <span style={{ marginLeft: 8 }}>
+                    产品阶段仅用于匹配对应话题
+                  </span>
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label="要求阶段话题">
                 {stageTopic || "未配置"}
               </Descriptions.Item>

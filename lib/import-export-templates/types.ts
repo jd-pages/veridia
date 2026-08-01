@@ -45,7 +45,18 @@ export type StandardField =
   | "detectedBodyStages"
   | "requiredStageTopic"
   | "imageExtractionStatus"
-  | "imageStatus";
+  | "imageStatus"
+  | "originalUrl"
+  | "finalUrl"
+  | "exceptionCategory"
+  | "failureReason"
+  | "needsManualReview"
+  | "manualReviewStatus"
+  | "attemptCount"
+  | "auditCreatedAt"
+  | "auditCompletedAt"
+  | "taskCreatedAt"
+  | "dateFilterBasis";
 
 export interface ImportExportTemplates {
   schemaVersion: number;

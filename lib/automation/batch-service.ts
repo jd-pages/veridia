@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeUrl } from "@/lib/topic";
 import packageJson from "@/package.json";
+import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
 
 export interface AutomaticTaskInput {
   url: string;
@@ -88,6 +89,7 @@ export async function createAutomaticBatch(input: CreateAutomaticBatchInput) {
 }
 
 export async function getAutomaticBatches(limit = 20) {
+  await backfillMissingProcessingFailureResults();
   const batches = await prisma.auditBatch.findMany({
     include: {
       product: { select: { id: true, code: true, name: true } },

@@ -26,6 +26,20 @@ describe("远程表格模板配置", () => {
     expect(templates.sourcePresets.TENCENT_DOCS_EXPORTED_XLSX?.localOnly).toBe(
       true,
     );
+    expect(templates.columnOrder.auditResults).toEqual(
+      expect.arrayContaining([
+        "auditStatus",
+        "auditResult",
+        "exceptionCategory",
+        "failureReason",
+        "needsManualReview",
+        "manualReviewStatus",
+        "auditCreatedAt",
+        "auditCompletedAt",
+        "taskCreatedAt",
+        "dateFilterBasis",
+      ]),
+    );
   });
 
   it("拒绝必填字段缺失、列字段未定义和跨字段别名冲突", () => {

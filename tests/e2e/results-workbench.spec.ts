@@ -13,6 +13,13 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await login(page);
   await page.setViewportSize({ width: 1366, height: 768 });
   await page.goto("/results");
+  await expect(page.getByText("日期范围", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("开始日期")).toHaveValue(
+    /^\d{4}-\d{2}-01$/u,
+  );
+  await expect(page.getByLabel("结束日期")).toHaveValue(
+    /^\d{4}-\d{2}-\d{2}$/u,
+  );
 
   await expect(
     page.getByText("查看自动审核结论、异常原因及人工复核记录"),
@@ -49,6 +56,47 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await page.getByRole("button", { name: /高级筛选/ }).click();
   await expect(page.getByLabel("不通过原因")).toBeVisible();
   await expect(page.getByText("留存验证状态", { exact: true })).toBeVisible();
+
+  await page.getByRole("combobox", { name: "页面状态" }).click();
+  await page.getByText("页面正常", { exact: true }).last().click();
+  await page.getByRole("button", { name: "查询" }).click();
+
+  await page.evaluate(() => {
+    (window as Window & { __veridiaExportUrl?: string }).__veridiaExportUrl =
+      undefined;
+    window.open = ((url?: string | URL) => {
+      (window as Window & { __veridiaExportUrl?: string }).__veridiaExportUrl =
+        String(url ?? "");
+      return null;
+    }) as typeof window.open;
+  });
+  await page.getByRole("button", { name: /导出当前结果/u }).click();
+  await page.getByText("导出 Excel", { exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as Window & { __veridiaExportUrl?: string })
+            .__veridiaExportUrl ?? "",
+      ),
+    )
+    .toContain("/api/results/export");
+  const exportedUrl = new URL(
+    await page.evaluate(
+      () =>
+        (window as Window & { __veridiaExportUrl?: string })
+          .__veridiaExportUrl ?? "",
+    ),
+    "http://localhost",
+  );
+  expect(exportedUrl.searchParams.get("startDate")).toMatch(
+    /^\d{4}-\d{2}-01$/u,
+  );
+  expect(exportedUrl.searchParams.get("endDate")).toMatch(
+    /^\d{4}-\d{2}-\d{2}$/u,
+  );
+  expect(exportedUrl.searchParams.get("dateType")).toBe("AUDITED_AT");
+  expect(exportedUrl.searchParams.get("pageStatus")).toBe("NORMAL");
 
   const firstRowCheckbox = page
     .locator(".ant-table-row")

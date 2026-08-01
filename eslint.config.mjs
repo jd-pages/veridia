@@ -12,6 +12,7 @@ export default defineConfig([
   },
   globalIgnores([
     ".next/**",
+    ".next-preview-*/**",
     "node_modules/**",
     "coverage/**",
     "playwright-report/**",

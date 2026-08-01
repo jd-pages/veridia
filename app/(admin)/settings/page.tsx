@@ -77,7 +77,13 @@ export default function SettingsPage() {
   const load = useCallback(async () => {
     try {
       const data = (await apiFetch<Setting[]>("/api/settings")).filter(
-        (item) => item.key !== "AI_ENABLED" && !item.key.startsWith("OPENAI_"),
+        (item) =>
+          ![
+            "AI_ENABLED",
+            "AUTH_MODE",
+            "DEFAULT_MIN_IMAGES",
+            "SETUP_COMPLETED",
+          ].includes(item.key) && !item.key.startsWith("OPENAI_"),
       );
       setItems(data);
       setDrafts(Object.fromEntries(data.map((item) => [item.key, item.value])));
@@ -239,7 +245,7 @@ export default function SettingsPage() {
           </Descriptions.Item>
           <Descriptions.Item label="同步来源">
             {ruleSync?.source === "GITHUB"
-              ? "GitHub规则仓库"
+              ? "远程规则服务"
               : ruleSync?.source === "RESTORE"
                 ? "上一版备份"
                 : "内置规则"}
@@ -269,7 +275,7 @@ export default function SettingsPage() {
             showIcon
             type="info"
             style={{ marginBottom: 12 }}
-            message="独立 GitHub 规则仓库尚未配置，当前继续使用本地规则。"
+            message="远程规则服务尚未配置，当前继续使用本地规则。"
           />
         )}
         <Space wrap>

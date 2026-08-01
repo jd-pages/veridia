@@ -8,6 +8,7 @@ import {
   Layout,
   Menu,
   Space,
+  Tag,
 } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import {
@@ -91,9 +92,11 @@ const items = [
 
 export default function AdminShell({
   user,
+  previewMode = false,
   children,
 }: {
   user: SessionUser;
+  previewMode?: boolean;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -157,7 +160,7 @@ export default function AdminShell({
       }}
     >
       <App>
-        <RuleUpdateChecker enabled={user.role === "ADMIN"} />
+        <RuleUpdateChecker enabled={user.role === "ADMIN" && !previewMode} />
         <Layout
           className={`admin-shell${collapsed ? " admin-shell-collapsed" : ""}`}
         >
@@ -212,6 +215,7 @@ export default function AdminShell({
                   onClick={() => setCollapsed((value) => !value)}
                 />
                 <span className="header-title">VERIDIA 工作台</span>
+                {previewMode && <Tag color="blue">本地预览模式</Tag>}
               </Space>
               <Space size={10}>
                 <span style={{ color: "#66748a", fontSize: 13 }}>

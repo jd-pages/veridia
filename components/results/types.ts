@@ -55,6 +55,13 @@ export interface ResultRow {
   };
   task: {
     productStage: string | null;
+    url: string;
+    finalUrl: string | null;
+    source: string;
+    status: string;
+    attempts: number;
+    failureCode: string | null;
+    failureMessage: string | null;
     product: ProductOption;
     campaign: CampaignOption;
   };
@@ -75,7 +82,9 @@ export interface ResultPageData {
 export interface ResultFilters {
   productId: string;
   campaignId: string;
-  month: string;
+  startDate: string;
+  endDate: string;
+  dateType: "AUDITED_AT" | "CREATED_AT";
   status: string;
   imageStatus: string;
   keyword: string;

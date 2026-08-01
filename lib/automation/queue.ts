@@ -7,6 +7,7 @@ import {
   toAutomaticExtractionError,
 } from "./failure";
 import { markXiaohongshuLoginRequired } from "./browser";
+import { recordProcessingFailureResult } from "@/lib/processing-failure-result";
 
 type QueueState = {
   runner?: Promise<void>;
@@ -146,18 +147,15 @@ async function processBatch(batchId: string) {
         "BODY_NOT_RECOGNIZED",
         "TOPICS_NOT_RECOGNIZED",
       ].includes(extractionError.code);
-      await prisma.auditTask.update({
-        where: { id: processingTask.id },
-        data: {
-          status: mustPauseForLogin
-            ? "LOGIN_EXPIRED"
-            : technicalReadFailure
-              ? "READ_FAILED"
-              : "FAILED",
-          failureCode: extractionError.code,
-          failureMessage: extractionError.message,
-          finishedAt: new Date(),
-        },
+      await recordProcessingFailureResult({
+        taskId: processingTask.id,
+        status: mustPauseForLogin
+          ? "LOGIN_EXPIRED"
+          : technicalReadFailure
+            ? "READ_FAILED"
+            : "FAILED",
+        failureCode: extractionError.code,
+        failureMessage: extractionError.message,
       });
       await prisma.auditBatch.update({
         where: { id: batchId },

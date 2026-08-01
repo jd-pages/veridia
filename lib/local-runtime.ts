@@ -1,4 +1,12 @@
 import { prisma } from "@/lib/db";
+import {
+  isIsolatedLocalPreview,
+  isLocalPreviewMode,
+  LOCAL_PREVIEW_DISPLAY_NAME,
+  LOCAL_PREVIEW_USER_ID,
+  LOCAL_PREVIEW_USERNAME,
+} from "@/lib/local-preview-mode";
+import type { SessionUser } from "@/lib/auth";
 
 export const LOCAL_SYSTEM_USER_ID = "veridia-local-system-user";
 export const LOCAL_SYSTEM_USERNAME = "__veridia_local_system__";
@@ -77,7 +85,67 @@ export async function ensureLocalRuntime() {
   };
 }
 
+export async function ensureLocalPreviewRuntime(): Promise<SessionUser | null> {
+  if (!isLocalPreviewMode()) return null;
+
+  const systemUser = await ensureLocalRuntime();
+  if (!isIsolatedLocalPreview()) {
+    return {
+      ...systemUser,
+      accountId: "local-preview",
+      username: LOCAL_PREVIEW_USERNAME,
+      displayName: LOCAL_PREVIEW_DISPLAY_NAME,
+      expiresAt: null,
+    };
+  }
+
+  const user = await prisma.user.upsert({
+    where: { id: LOCAL_PREVIEW_USER_ID },
+    create: {
+      id: LOCAL_PREVIEW_USER_ID,
+      username: LOCAL_PREVIEW_USERNAME,
+      normalizedUsername: LOCAL_PREVIEW_USERNAME,
+      accountId: "local-preview-isolated",
+      displayName: LOCAL_PREVIEW_DISPLAY_NAME,
+      passwordHash: "!LOCAL_PREVIEW_USER_HAS_NO_PASSWORD!",
+      role: "ADMIN",
+      status: "ACTIVE",
+      authProvider: "LOCAL_PREVIEW",
+      issuedAt: new Date(),
+      activatedAt: new Date(),
+    },
+    update: {
+      username: LOCAL_PREVIEW_USERNAME,
+      normalizedUsername: LOCAL_PREVIEW_USERNAME,
+      displayName: LOCAL_PREVIEW_DISPLAY_NAME,
+      role: "ADMIN",
+      status: "ACTIVE",
+      authProvider: "LOCAL_PREVIEW",
+    },
+  });
+
+  await prisma.systemSetting.upsert({
+    where: { key: "SETUP_COMPLETED" },
+    create: {
+      key: "SETUP_COMPLETED",
+      value: "true",
+      description: "本地预览数据目录已初始化",
+    },
+    update: { value: "true" },
+  });
+
+  return {
+    id: user.id,
+    accountId: user.accountId || "local-preview-isolated",
+    username: user.username,
+    displayName: user.displayName,
+    role: "ADMIN",
+    expiresAt: null,
+  };
+}
+
 export async function isSetupComplete() {
+  if (isLocalPreviewMode()) return true;
   const explicit = await prisma.systemSetting.findUnique({
     where: { key: "SETUP_COMPLETED" },
     select: { value: true },

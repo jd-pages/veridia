@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  distDir: process.env.VERIDIA_NEXT_DIST_DIR || ".next",
   output: "standalone",
   outputFileTracingIncludes: {
     "/*": [

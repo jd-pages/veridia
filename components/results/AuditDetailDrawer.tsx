@@ -195,11 +195,40 @@ export default function AuditDetailDrawer({
               column={1}
               items={[
                 {
+                  key: "process",
+                  label: "处理状态",
+                  children: (
+                    <AuditStatusTag value={row.task.status} domain="process" />
+                  ),
+                },
+                {
                   key: "auto",
                   label: "自动审核结果",
                   children: (
                     <AuditStatusTag value={row.autoStatus} domain="audit" />
                   ),
+                },
+                {
+                  key: "exception",
+                  label: "异常分类",
+                  children: row.task.failureCode
+                    ? businessFailureReasonLabel(row.task.failureCode)
+                    : "无异常",
+                },
+                {
+                  key: "failureMessage",
+                  label: "失败原因",
+                  children:
+                    row.task.failureMessage ||
+                    parseJsonArray(row.failureReasons)
+                      .map(businessFailureReasonLabel)
+                      .join("；") ||
+                    "无异常",
+                },
+                {
+                  key: "attempts",
+                  label: "尝试次数",
+                  children: row.task.attempts,
                 },
                 {
                   key: "manual",
@@ -220,7 +249,7 @@ export default function AuditDetailDrawer({
                 },
                 {
                   key: "reasons",
-                  label: "原始不通过原因",
+                  label: "异常或失败原因",
                   children:
                     parseJsonArray(row.failureReasons)
                       .map(businessFailureReasonLabel)

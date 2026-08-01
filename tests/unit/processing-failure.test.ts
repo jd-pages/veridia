@@ -1,0 +1,132 @@
+import { describe, expect, it } from "vitest";
+import {
+  pageStatusForProcessingFailure,
+  processingFailureReason,
+  processingFailureTaskStatuses,
+} from "@/lib/processing-failure";
+import {
+  buildAuditResultWhere,
+  buildLocalDateRange,
+} from "@/lib/result-query";
+
+describe("处理失败结果口径", () => {
+  it("将页面异常映射为明确的页面状态和人工复核原因", () => {
+    expect(pageStatusForProcessingFailure("PAGE_NOT_FOUND")).toBe(
+      "NOT_FOUND",
+    );
+    expect(pageStatusForProcessingFailure("LOGIN_REQUIRED")).toBe(
+      "LOGIN_EXPIRED",
+    );
+    expect(pageStatusForProcessingFailure("SECURITY_CHECK")).toBe(
+      "SECURITY_VERIFICATION",
+    );
+    expect(processingFailureReason("NOTE_DELETED", null)).toContain(
+      "笔记已删除",
+    );
+    expect(processingFailureReason("BODY_NOT_RECOGNIZED", null)).toContain(
+      "人工复核",
+    );
+  });
+
+  it("处理失败筛选只按任务处理状态筛选", () => {
+    expect(
+      buildAuditResultWhere({ status: "PROCESS_FAILED" }),
+    ).toEqual({
+      AND: [
+        {
+          task: {
+            status: { in: [...processingFailureTaskStatuses] },
+          },
+        },
+      ],
+    });
+  });
+
+  it("人工复核筛选区分待复核和无需复核", () => {
+    expect(
+      buildAuditResultWhere({ manualStatus: "PENDING" }),
+    ).toMatchObject({
+      AND: [
+        {
+          autoStatus: "NEEDS_REVIEW",
+          manualReviews: { none: {} },
+        },
+      ],
+    });
+    expect(
+      buildAuditResultWhere({ manualStatus: "NOT_REQUIRED" }),
+    ).toMatchObject({
+      AND: [
+        {
+          autoStatus: { not: "NEEDS_REVIEW" },
+          manualReviews: { none: {} },
+        },
+      ],
+    });
+  });
+
+  it("日期范围使用本地时区闭区间并支持单日", () => {
+    const range = buildLocalDateRange("2026-07-10", "2026-07-10");
+    expect(range.gte).toBeInstanceOf(Date);
+    expect(range.lte).toBeInstanceOf(Date);
+    expect((range.gte as Date).getHours()).toBe(0);
+    expect((range.gte as Date).getMinutes()).toBe(0);
+    expect((range.lte as Date).getHours()).toBe(23);
+    expect((range.lte as Date).getMinutes()).toBe(59);
+    expect((range.lte as Date).getSeconds()).toBe(59);
+    expect((range.lte as Date).getMilliseconds()).toBe(999);
+  });
+
+  it("日期范围支持只传开始、只传结束和清空", () => {
+    expect(buildLocalDateRange("2026-07-01")).toMatchObject({
+      gte: expect.any(Date),
+    });
+    expect(buildLocalDateRange(undefined, "2026-07-31")).toMatchObject({
+      lte: expect.any(Date),
+    });
+    expect(buildLocalDateRange()).toEqual({});
+  });
+
+  it("日期与产品、结果和全部高级筛选叠加", () => {
+    const where = buildAuditResultWhere({
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      productId: "product-1",
+      status: "FAILED",
+      pageStatus: "NORMAL",
+      bodyStatus: "PRESENT",
+      topicsStatus: "NON_COMPLIANT",
+      clickableStatus: "COMPLIANT",
+      imageStatus: "NON_COMPLIANT",
+      noteType: "IMAGE_TEXT",
+      reason: "缺少话题",
+      ruleVersion: "v2",
+      publicStatus: "PUBLIC",
+      retentionStatus: "PENDING",
+    });
+    expect(where).toMatchObject({
+      AND: expect.arrayContaining([
+        { autoStatus: "FAILED" },
+        { pageStatus: "NORMAL" },
+        { bodyStatus: "PRESENT" },
+        { topicsCompliant: false },
+        { clickableCompliant: true },
+        { imageStatus: "NON_COMPLIANT" },
+        { noteType: "IMAGE_TEXT" },
+        { ruleVersion: 2 },
+        { publicStatus: "PUBLIC" },
+        { retentionStatus: "PENDING" },
+        { task: { productId: "product-1" } },
+      ]),
+    });
+  });
+
+  it("拒绝无效日期和反向范围", () => {
+    expect(() =>
+      buildLocalDateRange("2026-02-30", "2026-03-01"),
+    ).toThrow("无效日期");
+    expect(() =>
+      buildLocalDateRange("2026-07-31", "2026-07-01"),
+    ).toThrow("开始日期");
+  });
+});

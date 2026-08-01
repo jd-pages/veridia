@@ -62,10 +62,14 @@ function SetupContent() {
   const [selectedDataDirectory, setSelectedDataDirectory] = useState("");
   const [busy, setBusy] = useState(false);
   const [loginStarted, setLoginStarted] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [desktopBridgeAvailable, setDesktopBridgeAvailable] = useState(false);
 
   useEffect(() => {
+    setDesktopBridgeAvailable(Boolean(window.veridiaDesktop));
     apiFetch<SetupStatus>("/api/setup/status")
       .then((value) => {
+        setLoadError("");
         setStatus(value);
         setRules(value.rules);
         setSelectedDataDirectory(value.dataDirectory);
@@ -81,11 +85,12 @@ function SetupContent() {
           setCurrent(3);
         }
       })
-      .catch((error) =>
-        message.error(
-          error instanceof Error ? error.message : "读取初始化状态失败",
-        ),
-      );
+      .catch((error) => {
+        const errorMessage =
+          error instanceof Error ? error.message : "读取初始化状态失败";
+        setLoadError(errorMessage);
+        message.error(errorMessage);
+      });
   }, [message, router]);
 
   const syncRules = async () => {
@@ -127,6 +132,22 @@ function SetupContent() {
         <Typography.Paragraph type="secondary">
           账号、数据库、审核记录及登录状态只保存在本机，不会上传到账号服务器。
         </Typography.Paragraph>
+        {!desktopBridgeAvailable && (
+          <Alert
+            type="info"
+            showIcon
+            message="当前页面在普通浏览器中打开"
+            description="数据位置选择、桌面凭证保存等功能仅在 VERIDIA 桌面程序中可用。请从桌面快捷方式启动 VERIDIA；普通浏览器可用于查看服务状态。"
+          />
+        )}
+        {loadError && (
+          <Alert
+            type="error"
+            showIcon
+            message="首次启动状态读取失败"
+            description={loadError}
+          />
+        )}
         <Steps
           current={current}
           items={[
@@ -162,7 +183,7 @@ function SetupContent() {
                 </Button>
                 <Button
                   size="large"
-                  disabled={!status?.desktop}
+                  disabled={!status?.desktop || !desktopBridgeAvailable}
                   onClick={async () => {
                     const result =
                       await window.veridiaDesktop?.chooseDataDirectory();
@@ -195,7 +216,7 @@ function SetupContent() {
                 <Alert
                   type="error"
                   showIcon
-                  message="当前软件无法验证账号签名，请联系开发者检查账号公钥。"
+                  message="当前软件无法验证账号授权，请联系账号管理员处理。"
                 />
               )}
               <AccountActivationForm onActivated={() => setCurrent(2)} />

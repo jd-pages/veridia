@@ -47,6 +47,11 @@ function dateLabel(value: string | null) {
   return value ? new Date(value).toLocaleString("zh-CN") : "永久有效";
 }
 
+function maskedAccountId(value: string | null | undefined) {
+  if (!value) return "—";
+  return `••••${value.slice(-6)}`;
+}
+
 async function clearDesktopSession() {
   await window.veridiaDesktop?.clearPersistentSession().catch(() => false);
 }
@@ -102,8 +107,8 @@ export default function AccountSecurityPanel() {
           <Descriptions.Item label="授权有效期">
             {dateLabel(currentUser?.expiresAt || null)}
           </Descriptions.Item>
-          <Descriptions.Item label="accountId" span={2}>
-            {currentUser?.accountId || "—"}
+          <Descriptions.Item label="账号标识" span={2}>
+            {maskedAccountId(currentUser?.accountId)}
           </Descriptions.Item>
         </Descriptions>
         {currentUser?.expiresAt &&
@@ -114,7 +119,7 @@ export default function AccountSecurityPanel() {
               type="warning"
               showIcon
               style={{ marginBottom: 16 }}
-              message="账号授权将在 7 天内到期，请联系开发者生成账号更新码。"
+              message="账号授权将在 7 天内到期，请联系账号管理员办理续期。"
             />
           )}
         <Form
@@ -193,7 +198,7 @@ export default function AccountSecurityPanel() {
           <Input.TextArea
             value={updateCode}
             autoSize={{ minRows: 2, maxRows: 5 }}
-            placeholder="粘贴开发者签发的账号更新码，用于续期、修改显示名称或调整角色"
+            placeholder="粘贴账号管理员提供的更新码，用于续期、修改显示名称或调整角色"
             onChange={(event) => setUpdateCode(event.target.value)}
           />
           <Button
@@ -229,7 +234,7 @@ export default function AccountSecurityPanel() {
             type="info"
             showIcon
             style={{ marginBottom: 12 }}
-            message="客户端不能创建或提升管理员。角色与有效期变更必须导入开发者签发的账号更新码。"
+            message="账号角色和有效期由授权管理员统一维护。如需变更，请导入管理员提供的账号更新码。"
           />
           <Table<ManagedAccount>
             rowKey="id"
@@ -255,7 +260,12 @@ export default function AccountSecurityPanel() {
                   </Tag>
                 ),
               },
-              { title: "accountId", dataIndex: "accountId", width: 300 },
+              {
+                title: "账号标识",
+                dataIndex: "accountId",
+                width: 140,
+                render: (value: string) => maskedAccountId(value),
+              },
               {
                 title: "激活时间",
                 dataIndex: "activatedAt",
@@ -286,7 +296,7 @@ export default function AccountSecurityPanel() {
                 width: 190,
                 render: (_value, row) =>
                   row.id === currentUser.id || row.role === "ADMIN" ? (
-                    <span style={{ color: "#8b96a8" }}>由签发工具管理</span>
+                    <span style={{ color: "#8b96a8" }}>由授权管理员维护</span>
                   ) : (
                     <Space size={4}>
                       <Popconfirm

@@ -118,6 +118,7 @@
         "PRE段",
         "1段"
       ],
+      "requireBodyStage": false,
       "requiredTopic": "#新生儿奶粉",
       "sortOrder": 10,
       "status": "ACTIVE"
@@ -131,6 +132,7 @@
       "bodyTerms": [
         "2段"
       ],
+      "requireBodyStage": false,
       "requiredTopic": "#二段奶粉推荐",
       "sortOrder": 20,
       "status": "ACTIVE"
@@ -150,6 +152,7 @@
         "1+段",
         "2+段"
       ],
+      "requireBodyStage": false,
       "requiredTopic": "#三段奶粉推荐",
       "sortOrder": 30,
       "status": "ACTIVE"

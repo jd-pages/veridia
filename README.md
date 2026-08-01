@@ -283,23 +283,46 @@ desktop/                Electron 主进程、更新器与 NSIS 卸载逻辑
 .github/workflows/       main 检查与版本发布流水线
 ```
 
-## 发布与自动更新
+## VERIDIA 固定发布流程
 
-开发提交到 `main` 只运行检查和测试，不发布安装包。确认发布时运行：
+Codex 完成功能修改后不得直接发布，也不得直接上传安装包。软件更新固定分为以下
+三个阶段，任何时候都不要跳过本地预览和本地打包验收：
 
-```powershell
-npm run release:patch
-npm run release:minor
-npm run release:major
-```
+1. 双击 `本地预览测试.bat`。脚本只启动最新源码供浏览器检查，不打包、不升版本，
+   不创建 Tag 或 GitHub Release，也不上传任何文件。端口 3100 被占用时不会结束
+   其他程序，可由用户确认改用 3101。脚本提供三种预览方式：
+   - 安全预览（默认推荐）：使用 `E:\v-preview`，自动迁移、准备内置规则及
+     `Terry Preview` 管理员，直接进入工作台，不需要激活或重新登录。
+   - 正式数据预览：使用 `E:\v`，必须输入确认文字；迁移前自动备份数据库，不删除、
+     清空或重置正式数据。
+   - 首次启动流程测试：使用独立的新目录并保留正式 setup、VRD1/VRD2 激活和登录流程。
 
-本地命令依次执行 TypeScript、ESLint、单元测试、隔离数据库 E2E、Next.js 构建和
-Electron/NSIS 构建；失败会停止并恢复版本文件。成功产物位于 `release\<版本号>\`。
-也可双击 `发布新版.bat`。
+   免激活只在 `VERIDIA_LOCAL_PREVIEW=1`、源码开发服务器、非桌面打包且
+   `NODE_ENV=development` 同时成立时有效。正式安装包、生产构建及普通启动不能使用
+   该预览身份。
+2. 页面和功能确认后双击 `本地打包验收.bat`。脚本依次运行 TypeScript、ESLint、
+   单元测试、隔离数据库 E2E、Next.js 生产构建、敏感信息扫描和 Electron/NSIS
+   Windows 打包。安装包只保存在 `release\<版本号>\` 和 `dist-installer\`，
+   不创建 Tag、Release 或上传文件。安装、升级、登录、规则同步、审核和导出必须
+   在本机验收通过。
+3. 以上两步均通过后，最后双击 `发布新版.bat`。脚本会验证本地打包验收记录、
+   当前源码指纹、版本、Git 状态、分支、最近提交、敏感信息及待上传文件。只有准确
+   输入“我确认发布”才会提交版本变更、创建 Tag 和 GitHub Release，并上传安装包、
+   `latest.yml` 和 blockmap。
 
-提交版本文件后运行 `npm run release:tag`，再推送生成的 `v<版本号>` Tag，
-`.github/workflows/veridia-release.yml` 会创建 GitHub Release 并上传安装包、
-`latest.yml` 和 blockmap。客户端启动后检查更新，发现新版时由用户选择下载和重启安装。
+本地打包后的任何源码变化都会使验收记录失效，必须重新运行
+`本地打包验收.bat`。普通代码保存、预览和测试不会触发正式发布。
+
+规则更新与软件更新必须分开：
+
+- 只修改产品、活动、话题、图片数量等现有规则配置时，优先运行独立的规则发布流程，
+  不发布软件新版。
+- 修改审核引擎、数据库结构、桌面能力、页面或接口时，才进入上述软件新版流程。
+- `发布新版.bat` 不会发布规则；`发布规则新版.bat` 不会发布软件安装包。
+
+底层 `npm run release:patch`、`release:minor` 和 `release:major` 只用于脚本内部的
+本地版本准备与打包，不应绕过三个阶段单独执行。客户端启动后检查软件更新，发现新版
+时由用户选择下载和重启安装。
 
 代码签名通过 GitHub Secrets `WINDOWS_CSC_LINK` 和 `WINDOWS_CSC_KEY_PASSWORD`
 提供，证书不进入仓库。未配置证书仍可生成内部测试包，但 Windows 可能显示“未知发布者”。

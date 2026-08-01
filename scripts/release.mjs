@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bump = process.argv[2];
-if (!["patch", "minor", "major"].includes(bump)) {
-  throw new Error("发布类型必须为 patch、minor 或 major");
+if (!["current", "patch", "minor", "major"].includes(bump)) {
+  throw new Error("本地打包模式必须为 current、patch、minor 或 major");
 }
 
 const packagePath = path.join(root, "package.json");
@@ -149,14 +149,19 @@ try {
   run("端到端测试数据初始化", "npm.cmd", ["run", "db:seed"], e2eEnv);
   run("端到端测试", "npm.cmd", ["run", "test:e2e"], e2eEnv);
   run("预发布Next构建", "npm.cmd", ["run", "build"]);
-
-  run("升级版本号", "npm.cmd", [
-    "version",
-    bump,
-    "--no-git-tag-version",
+  run("敏感信息扫描", "node", [
+    path.join(root, "scripts", "sensitive-scan.mjs"),
   ]);
+
+  if (bump !== "current") {
+    run("升级版本号", "npm.cmd", [
+      "version",
+      bump,
+      "--no-git-tag-version",
+    ]);
+  }
   const version = JSON.parse(fs.readFileSync(packagePath, "utf8")).version;
-  updateChangelog(version);
+  if (bump !== "current") updateChangelog(version);
 
   run("正式Next构建", "npm.cmd", ["run", "build"], {
     VERIDIA_APP_VERSION: version,
@@ -180,23 +185,23 @@ try {
 
   const destination = path.join(root, "release", version);
   fs.mkdirSync(destination, { recursive: true });
-  for (const name of fs.readdirSync(path.join(root, "dist-installer"))) {
-    if (
-      /^VERIDIA-Setup-.*\.(exe|blockmap)$/i.test(name) ||
-      name === "latest.yml"
-    ) {
-      fs.copyFileSync(
-        path.join(root, "dist-installer", name),
-        path.join(destination, name),
-      );
+  const installerName = `VERIDIA-Setup-${version}.exe`;
+  for (const name of [
+    installerName,
+    `${installerName}.blockmap`,
+    "latest.yml",
+  ]) {
+    const source = path.join(root, "dist-installer", name);
+    if (!fs.existsSync(source)) {
+      throw new Error(`Windows 安装产物缺失：${source}`);
     }
+    fs.copyFileSync(source, path.join(destination, name));
   }
   fs.cpSync(logsRoot, path.join(destination, "logs"), { recursive: true });
   fs.copyFileSync(changelogPath, path.join(destination, "CHANGELOG.md"));
   process.stdout.write(
-    `\nVERIDIA ${version} 已完成本地发布：${destination}\n` +
-      "确认产物后可提交 package.json、package-lock.json、CHANGELOG.md，" +
-      `再运行 npm run release:tag 创建 v${version} 标签。\n`,
+    `\nVERIDIA ${version} 已完成本地打包：${destination}\n` +
+      "当前仅生成本地安装包，没有创建 Tag、GitHub Release 或上传文件。\n",
   );
 } catch (error) {
   restoreVersionFiles();

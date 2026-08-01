@@ -1,43 +1,35 @@
 import { prisma } from "@/lib/db";
-import { requireApiUser } from "@/lib/api";
+import { fail, requireApiUser } from "@/lib/api";
 import { getActiveImportExportTemplates } from "@/lib/import-export-templates/config";
 import {
   auditResultToExportRecord,
   buildConfiguredCsv,
   buildConfiguredWorkbook,
 } from "@/lib/import-export-templates/export";
+import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
+import {
+  buildAuditResultWhere,
+  readResultQueryFilters,
+} from "@/lib/result-query";
 
 export async function GET(request: Request) {
   const user = await requireApiUser(["ADMIN", "OPERATOR"]);
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
-  const productId = searchParams.get("productId") || undefined;
-  const campaignId = searchParams.get("campaignId") || undefined;
-  const month = searchParams.get("month") || undefined;
-  const status = searchParams.get("status") || undefined;
-  const imageStatus = searchParams.get("imageStatus") || undefined;
-  const reason = searchParams.get("reason")?.trim() || undefined;
-  const keyword = searchParams.get("keyword")?.trim() || undefined;
+  await backfillMissingProcessingFailureResults();
+  let where;
+  try {
+    where = buildAuditResultWhere(
+      readResultQueryFilters(searchParams),
+    );
+  } catch (error) {
+    return fail(
+      error instanceof Error ? error.message : "筛选条件不正确",
+      400,
+    );
+  }
   const rows = await prisma.auditResult.findMany({
-    where: {
-      ...(status ? { autoStatus: status } : {}),
-      ...(imageStatus ? { imageStatus } : {}),
-      ...(reason ? { failureReasons: { contains: reason } } : {}),
-      task: {
-        ...(productId ? { productId } : {}),
-        ...(campaignId ? { campaignId } : {}),
-        ...(month ? { campaign: { month } } : {}),
-      },
-      ...(keyword
-        ? {
-            OR: [
-              { note: { title: { contains: keyword } } },
-              { note: { body: { contains: keyword } } },
-              { note: { url: { contains: keyword } } },
-            ],
-          }
-        : {}),
-    },
+    where,
     include: {
       note: {
         include: {
@@ -63,7 +55,9 @@ export async function GET(request: Request) {
   });
   const { templates } = await getActiveImportExportTemplates();
   const records = rows.map((row) =>
-    auditResultToExportRecord(row, templates),
+    auditResultToExportRecord(row, templates, {
+      dateType: searchParams.get("dateType") || "AUDITED_AT",
+    }),
   );
   const format = searchParams.get("format") === "csv" ? "csv" : "xlsx";
   const taskName = rows[0]?.task.campaign.name || "全部任务";

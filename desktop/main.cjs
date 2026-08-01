@@ -13,6 +13,7 @@ const { autoUpdater } = require("electron-updater");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
+const net = require("node:net");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const {
@@ -29,6 +30,8 @@ const {
 const APP_NAME = "VERIDIA";
 const PORT = 3100;
 const HOST = "127.0.0.1";
+const HEALTH_PATH = "/api/health";
+const serverInstanceId = crypto.randomBytes(18).toString("base64url");
 
 app.setName(APP_NAME);
 app.setAppUserModelId("com.veridia.contentgovernance");
@@ -356,6 +359,7 @@ function serverEnvironment() {
     VERIDIA_DATA_LOCATION_CONFIRMED: "true",
     VERIDIA_DATA_DIR: dataRoot,
     VERIDIA_APP_VERSION: app.getVersion(),
+    VERIDIA_DESKTOP_INSTANCE_ID: serverInstanceId,
     VERIDIA_BUILD_DATE:
       process.env.VERIDIA_BUILD_DATE || buildInfo().buildDate || "",
     VERIDIA_DATABASE_VERSION: latestMigrationName(),
@@ -404,6 +408,25 @@ function startServer() {
   serverProcess.once("error", (error) => writeLog("后台服务启动失败", error));
 }
 
+function assertServerPortAvailable() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.once("error", (error) => {
+      reject(
+        new Error(
+          error?.code === "EADDRINUSE"
+            ? `本地端口 ${PORT} 已被其他程序占用，VERIDIA 无法启动自己的后台服务。请先退出旧版 VERIDIA 后台服务。`
+            : `无法检查本地端口 ${PORT}：${error?.message || "未知错误"}`,
+        ),
+      );
+    });
+    probe.listen({ host: HOST, port: PORT, exclusive: true }, () => {
+      probe.close(resolve);
+    });
+  });
+}
+
 function stopServer() {
   if (!serverProcess) return;
   serverProcess.kill();
@@ -442,30 +465,84 @@ function stopServerAndWait() {
 
 function waitForServer(timeoutMs = 60_000) {
   const started = Date.now();
+  let lastFailure = "尚未收到健康检查响应";
   return new Promise((resolve, reject) => {
     const check = () => {
       const request = http.get(
-        { hostname: HOST, port: PORT, path: "/api/setup/status", timeout: 2000 },
+        { hostname: HOST, port: PORT, path: HEALTH_PATH, timeout: 2000 },
         (response) => {
-          response.resume();
-          if (response.statusCode && response.statusCode < 500) {
-            resolve();
-          } else {
-            retry();
-          }
+          const chunks = [];
+          let totalBytes = 0;
+          response.on("data", (chunk) => {
+            totalBytes += chunk.length;
+            if (totalBytes <= 16 * 1024) chunks.push(chunk);
+          });
+          response.on("end", () => {
+            if (totalBytes > 16 * 1024) {
+              lastFailure = "健康检查响应体过大";
+              retry();
+              return;
+            }
+            const body = Buffer.concat(chunks).toString("utf8");
+            const contentType = String(response.headers["content-type"] || "");
+            if (response.statusCode !== 200) {
+              lastFailure = `健康检查返回 HTTP ${response.statusCode || 0}`;
+              retry();
+              return;
+            }
+            if (!contentType.toLowerCase().includes("application/json")) {
+              lastFailure = `健康检查返回非 JSON（${contentType || "无 Content-Type"}）`;
+              retry();
+              return;
+            }
+            if (!body.trim()) {
+              lastFailure = "健康检查返回空响应";
+              retry();
+              return;
+            }
+            try {
+              const payload = JSON.parse(body);
+              if (
+                payload.ok !== true ||
+                payload.service !== APP_NAME ||
+                payload.version !== app.getVersion() ||
+                payload.desktop !== true ||
+                payload.instanceId !== serverInstanceId
+              ) {
+                lastFailure = "健康检查响应与当前桌面实例不匹配";
+                retry();
+                return;
+              }
+              resolve();
+            } catch {
+              lastFailure = "健康检查返回了无效 JSON";
+              retry();
+            }
+          });
         },
       );
-      request.on("error", retry);
-      request.on("timeout", () => {
-        request.destroy();
+      request.on("error", (error) => {
+        lastFailure = `健康检查连接失败（${error.code || error.message}）`;
         retry();
+      });
+      request.on("timeout", () => {
+        lastFailure = "健康检查请求超时";
+        request.destroy();
       });
     };
     const retry = () => {
+      if (!serverProcess) {
+        reject(
+          new Error(
+            `VERIDIA 后台服务进程已退出。${lastFailure}，请查看 ${path.join(directories.logs, "server.log")}`,
+          ),
+        );
+        return;
+      }
       if (Date.now() - started > timeoutMs) {
         reject(
           new Error(
-            `后台服务未能在 ${Math.round(timeoutMs / 1000)} 秒内启动，请查看 ${path.join(directories.logs, "server.log")}`,
+            `后台服务未能在 ${Math.round(timeoutMs / 1000)} 秒内通过 ${HEALTH_PATH} 健康检查：${lastFailure}。请查看 ${path.join(directories.logs, "server.log")}`,
           ),
         );
         return;
@@ -864,6 +941,7 @@ async function startApplication() {
   ensureDirectories();
   readConfig();
   runDatabaseMigrations();
+  await assertServerPortAvailable();
   startServer();
   await waitForServer();
   setupUpdater();

@@ -21,7 +21,24 @@ describe("GitHub 规则同步", () => {
       "IFFO_2",
       "GUM_3_4_1PLUS_2PLUS",
     ]);
+    expect(
+      payload.stageGroups.every((item) => item.requireBodyStage === false),
+    ).toBe(true);
     expect(payload.topicRules.length).toBe(9);
+  });
+
+  it("旧规则包缺少正文段位开关时保持原校验语义", () => {
+    const legacy = structuredClone(builtinRules) as unknown as {
+      stageGroups: Array<Record<string, unknown>>;
+    };
+    for (const group of legacy.stageGroups) {
+      delete group.requireBodyStage;
+    }
+    expect(
+      validateRulePayload(legacy).stageGroups.every(
+        (item) => item.requireBodyStage === true,
+      ),
+    ).toBe(true);
   });
 
   it("规则包模板配置可选，存在时会严格校验", () => {

@@ -515,39 +515,40 @@ model SystemSetting {
 }
 
 model RuleStageGroup {
-  key             String   @id
-  label           String
-  canonicalStages String
-  bodyTerms       String
-  requiredTopic   String
-  sortOrder       Int      @default(0)
-  status          String   @default("ACTIVE")
-  ruleVersion     String
-  ruleSource      String   @default("LOCAL_DRAFT")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  key              String   @id
+  label            String
+  canonicalStages  String
+  bodyTerms        String
+  requireBodyStage Boolean  @default(true)
+  requiredTopic    String
+  sortOrder        Int      @default(0)
+  status           String   @default("ACTIVE")
+  ruleVersion      String
+  ruleSource       String   @default("LOCAL_DRAFT")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@index([status, sortOrder])
   @@map("rule_stage_groups")
 }
 
 model RuleSyncState {
-  id              String    @id @default("active")
-  currentVersion  String
-  latestVersion   String?
-  schemaVersion   Int       @default(1)
-  source          String    @default("BUILTIN")
-  status          String    @default("USING_BUILTIN")
-  countsJson      String    @default("{}")
-  manifestJson    String?
-  previousVersion String?
-  templateVersion String?
+  id                    String    @id @default("active")
+  currentVersion        String
+  latestVersion         String?
+  schemaVersion         Int       @default(1)
+  source                String    @default("BUILTIN")
+  status                String    @default("USING_BUILTIN")
+  countsJson            String    @default("{}")
+  manifestJson          String?
+  previousVersion       String?
+  templateVersion       String?
   templateSchemaVersion Int?
-  templateConfigJson String?
-  lastCheckedAt   DateTime?
-  lastSyncedAt    DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  templateConfigJson    String?
+  lastCheckedAt         DateTime?
+  lastSyncedAt          DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   @@map("rule_sync_states")
 }

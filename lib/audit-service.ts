@@ -97,6 +97,7 @@ export async function getAuditContext(
     campaignName: campaign.name,
     productStage: normalizedProductStage || null,
     productStageLabel: stageGroup?.label || null,
+    bodyStageRequired: stageGroup?.requireBodyStage ?? false,
     allowedBodyStageTerms: stageGroup
       ? (JSON.parse(stageGroup.bodyTerms) as string[])
       : undefined,
@@ -150,11 +151,39 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
   });
 
   const result = await prisma.$transaction(async (tx) => {
-    const existingNote = payload.noteId
+    const existingByPlatformId = payload.noteId
       ? await tx.noteRecord.findUnique({
           where: { platformNoteId: payload.noteId },
         })
-      : await tx.noteRecord.findUnique({ where: { url: payload.url } });
+      : null;
+    const existingByUrl = await tx.noteRecord.findUnique({
+      where: { url: payload.url },
+    });
+    let existingNote = existingByPlatformId || existingByUrl;
+    if (
+      existingByPlatformId &&
+      existingByUrl &&
+      existingByPlatformId.id !== existingByUrl.id
+    ) {
+      await tx.auditResult.updateMany({
+        where: { noteId: existingByUrl.id },
+        data: { noteId: existingByPlatformId.id },
+      });
+      await tx.extractionRecord.updateMany({
+        where: { noteId: existingByUrl.id },
+        data: { noteId: existingByPlatformId.id },
+      });
+      await tx.noteTopic.deleteMany({
+        where: { noteId: existingByUrl.id },
+      });
+      await tx.noteProduct.deleteMany({
+        where: { noteId: existingByUrl.id },
+      });
+      await tx.noteRecord.delete({
+        where: { id: existingByUrl.id },
+      });
+      existingNote = existingByPlatformId;
+    }
     const noteData = {
       platformNoteId: payload.noteId,
       url: payload.url,

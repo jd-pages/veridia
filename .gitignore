@@ -52,6 +52,8 @@ next-env.d.ts
 /playwright-report/
 /test-results/
 /.release-work/
+/.preview-work/
+/.next-preview-*/
 /release/
 /rules-release/
 /dist-installer/

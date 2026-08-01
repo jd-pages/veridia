@@ -109,7 +109,8 @@ test("审核结果表格悬浮横向滚动、固定列和重算", async ({ page 
     )
     .toBeGreaterThan(0);
 
-  await page
+  await reasonFilter
+    .locator("xpath=..")
     .getByRole("button", { name: "close-circle", exact: true })
     .click();
   await page.getByRole("button", { name: /查询/ }).click();

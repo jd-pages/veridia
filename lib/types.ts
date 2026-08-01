@@ -78,6 +78,7 @@ export interface AuditContext {
   campaignName: string;
   productStage?: string | null;
   productStageLabel?: string | null;
+  bodyStageRequired?: boolean;
   allowedBodyStageTerms?: string[];
   canonicalBodyStages?: string[];
   milkType?: string | null;

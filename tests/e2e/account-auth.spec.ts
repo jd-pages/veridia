@@ -155,7 +155,7 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
 
   await page.goto("/activate");
   await page
-    .getByPlaceholder("粘贴开发者提供的账号激活码")
+    .getByPlaceholder("粘贴账号管理员提供的激活码")
     .fill(account.code);
   await page.getByRole("button", { name: "验证激活码" }).click();
 

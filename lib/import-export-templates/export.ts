@@ -6,6 +6,7 @@ import {
 } from "@/lib/zh-CN";
 import {
   allowedBodyStageLabels,
+  bodyStageRequiredFromRuleSnapshot,
   detectBodyProductStages,
   productStageTopicLabel,
   stageTopicFromRuleSnapshot,
@@ -42,13 +43,20 @@ export function auditResultToExportRecord(row: {
   ruleVersion: number;
   rulePackageVersion: string | null;
   ruleSnapshot: string;
+  createdAt: Date;
   auditedAt: Date;
   imageCount: number;
   imageExtractionStatus: string;
   imageStatus: string;
   task: {
+    url: string;
+    finalUrl: string | null;
     status: string;
     source: string;
+    attempts: number;
+    failureCode: string | null;
+    failureMessage: string | null;
+    createdAt: Date;
     productStage: string | null;
     notes: string | null;
     product: { name: string };
@@ -71,26 +79,48 @@ export function auditResultToExportRecord(row: {
     createdAt: Date;
     reviewer?: { displayName: string } | null;
   }>;
-}, templates: ImportExportTemplates): ExportValueRecord {
+}, templates: ImportExportTemplates, options?: {
+  dateType?: string;
+}): ExportValueRecord {
   const separator =
     templates.exportTemplates.auditResults?.multiValueSeparator || "、";
   const manual = row.manualReviews[0];
-  const bodyStage = detectBodyProductStages(
-    row.note.body,
-    row.task.productStage,
+  const requiresManualReview =
+    row.autoStatus === "NEEDS_REVIEW" ||
+    ["FAILED", "READ_FAILED", "LOGIN_EXPIRED"].includes(row.task.status);
+  const manualReviewStatus = manual
+    ? manual.result === "PASSED"
+      ? "已人工通过"
+      : "已人工不通过"
+    : requiresManualReview
+      ? "待人工复核"
+      : "无需复核";
+  const bodyStageRequired = bodyStageRequiredFromRuleSnapshot(
+    row.ruleSnapshot,
   );
+  const bodyStage = bodyStageRequired
+    ? detectBodyProductStages(
+        row.note.body,
+        row.task.productStage,
+      )
+    : null;
+  const failureReasonList = list(row.failureReasons, separator);
   return {
     noteUrl: row.note.finalUrl || row.note.url,
+    originalUrl: row.task.url,
+    finalUrl: row.task.finalUrl || row.note.finalUrl || row.note.url,
     noteId: row.note.platformNoteId,
     productName: row.task.product.name,
     activityName: row.task.campaign.name,
     source: businessSourceLabel(row.task.source),
     productStageTopic: productStageTopicLabel(row.task.productStage),
-    allowedBodyStages: allowedBodyStageLabels(row.task.productStage).join(
-      separator,
-    ),
+    allowedBodyStages: bodyStageRequired
+      ? allowedBodyStageLabels(row.task.productStage).join(separator)
+      : "不要求正文出现段位词",
     detectedBodyStages:
-      bodyStage?.detectedStages.join(separator) || "段位未识别",
+      bodyStageRequired
+        ? bodyStage?.detectedStages.join(separator) || "段位未识别"
+        : "不参与审核",
     requiredStageTopic: stageTopicFromRuleSnapshot(row.ruleSnapshot) || "",
     influencerName: row.note.authorName,
     publishTime: row.note.publishedAt,
@@ -109,6 +139,22 @@ export function auditResultToExportRecord(row: {
       manual?.result || row.autoStatus,
       "audit",
     ),
+    exceptionCategory: row.task.failureCode
+      ? businessFailureReasonLabel(row.task.failureCode)
+      : "无异常",
+    failureReason:
+      failureReasonList ||
+      businessFailureReasonLabel(row.task.failureMessage || ""),
+    needsManualReview: requiresManualReview ? "是" : "否",
+    manualReviewStatus,
+    attemptCount: row.task.attempts,
+    auditCreatedAt: row.createdAt,
+    auditCompletedAt: row.auditedAt,
+    taskCreatedAt: row.task.createdAt,
+    dateFilterBasis:
+      options?.dateType === "CREATED_AT"
+        ? "审核创建时间"
+        : "审核完成时间",
     failedReasons: list(row.failureReasons, separator),
     matchedRules: row.ruleResults
       .filter((rule) => rule.passed)

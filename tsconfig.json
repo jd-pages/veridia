@@ -40,7 +40,9 @@
     "tests/**/*.ts",
     "middleware.ts",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
+    ".next/dev/types/**/*.ts",
+    ".next-preview-3101/types/**/*.ts",
+    ".next-preview-3101/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

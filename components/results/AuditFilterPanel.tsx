@@ -1,6 +1,7 @@
 "use client";
 
-import { Button, Input, Select } from "antd";
+import { Button, DatePicker, Input, Select, Space } from "antd";
+import dayjs from "dayjs";
 import {
   DownOutlined,
   ReloadOutlined,
@@ -110,13 +111,67 @@ export default function AuditFilterPanel({
             onChange={(value) => update("campaignId", value || "")}
           />
         </FilterField>
-        <FilterField label="月份">
-          <Input
-            type="month"
-            aria-label="月份"
-            value={filters.month}
-            onChange={(event) => update("month", event.target.value)}
-          />
+        <FilterField label="日期范围">
+          <Space.Compact block>
+            <DatePicker
+              allowClear
+              inputReadOnly
+              aria-label="开始日期"
+              placeholder="开始日期"
+              format="YYYY-MM-DD"
+              value={
+                filters.startDate
+                  ? dayjs(filters.startDate, "YYYY-MM-DD")
+                  : null
+              }
+              disabledDate={(current) =>
+                Boolean(
+                  filters.endDate &&
+                    current.isAfter(dayjs(filters.endDate), "day"),
+                )
+              }
+              onChange={(value) =>
+                update(
+                  "startDate",
+                  value ? value.format("YYYY-MM-DD") : "",
+                )
+              }
+            />
+            <Input
+              aria-label="日期范围分隔符"
+              value="至"
+              readOnly
+              style={{
+                width: 42,
+                textAlign: "center",
+                pointerEvents: "none",
+              }}
+            />
+            <DatePicker
+              allowClear
+              inputReadOnly
+              aria-label="结束日期"
+              placeholder="结束日期"
+              format="YYYY-MM-DD"
+              value={
+                filters.endDate
+                  ? dayjs(filters.endDate, "YYYY-MM-DD")
+                  : null
+              }
+              disabledDate={(current) =>
+                Boolean(
+                  filters.startDate &&
+                    current.isBefore(dayjs(filters.startDate), "day"),
+                )
+              }
+              onChange={(value) =>
+                update(
+                  "endDate",
+                  value ? value.format("YYYY-MM-DD") : "",
+                )
+              }
+            />
+          </Space.Compact>
         </FilterField>
         <FilterField label="综合审核结果">
           <Select
@@ -130,7 +185,7 @@ export default function AuditFilterPanel({
                 value: "NEEDS_REVIEW",
                 label: auditResultLabels.NEEDS_REVIEW,
               },
-              { value: "READ_FAILED", label: "读取失败" },
+              { value: "PROCESS_FAILED", label: "处理失败" },
             ]}
             onChange={(value) => update("status", value || "")}
           />
@@ -141,9 +196,10 @@ export default function AuditFilterPanel({
             placeholder="全部复核状态"
             value={filters.manualStatus || undefined}
             options={[
-              { value: "UNREVIEWED", label: "未复核" },
-              { value: "PASSED", label: "人工通过" },
-              { value: "FAILED", label: "人工不通过" },
+              { value: "PENDING", label: "待人工复核" },
+              { value: "PASSED", label: "已人工通过" },
+              { value: "FAILED", label: "已人工不通过" },
+              { value: "NOT_REQUIRED", label: "无需复核" },
             ]}
             onChange={(value) => update("manualStatus", value || "")}
           />
@@ -190,6 +246,7 @@ export default function AuditFilterPanel({
             <FilterField label="页面状态">
               <Select
                 allowClear
+                aria-label="页面状态"
                 placeholder="全部页面状态"
                 value={advancedFilters.pageStatus || undefined}
                 options={[
