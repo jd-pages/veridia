@@ -615,14 +615,13 @@ function readAcceptance() {
 async function publish() {
   ensureLocalPrerequisites();
   const info = packageInfo();
-  const acceptance =
-    dryRun && !fs.existsSync(acceptancePath)
-      ? {
-          version: info.version,
-          acceptedAt: "dry-run（未执行真实验收）",
-          sourceFingerprint: sourceFingerprint(),
-        }
-      : readAcceptance();
+  const acceptance = dryRun
+    ? {
+        version: info.version,
+        acceptedAt: "dry-run（未执行真实验收）",
+        sourceFingerprint: sourceFingerprint(),
+      }
+    : readAcceptance();
   if (acceptance.version !== info.version) {
     throw new Error("本地验收版本与当前版本不一致，请重新运行本地打包验收。");
   }
@@ -712,17 +711,20 @@ async function publish() {
   if (pending.status !== 0) {
     throw new Error("GitHub 发布前检查失败，没有创建或上传任何内容。");
   }
-  run("node", [path.join(root, "scripts", "finalize-release.mjs"), "publish"]);
+  run("node", [
+    path.join(root, "scripts", "finalize-release.mjs"),
+    "trigger-actions",
+  ]);
   process.stdout.write(
     [
       "",
       `发布版本号：${info.version}`,
       `Tag：v${info.version}`,
-      `GitHub Release：https://github.com/jd-pages/veridia/releases/tag/v${info.version}`,
-      `安装包：VERIDIA-Setup-${info.version}.exe`,
-      "latest.yml：已上传并完成匿名访问校验",
-      "Latest：已设置",
-      "下一步：在旧版客户端“系统设置 → 检查更新”验证自动更新。",
+      `已推送 Tag：v${info.version}`,
+      "GitHub Actions：已触发 Windows 云端构建与发布流程",
+      `预期安装包：VERIDIA-Setup-${info.version}.exe`,
+      "预期更新文件：latest.yml、安装包 blockmap",
+      "下一步：等待 Actions 通过，再在旧版客户端“系统设置 → 检查更新”验证自动更新。",
       "",
     ].join("\n"),
   );

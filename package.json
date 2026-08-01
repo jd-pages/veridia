@@ -1,7 +1,7 @@
 {
   "name": "veridia",
   "productName": "VERIDIA",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "repository": {
     "type": "git",
@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:desktop-health": "vitest run tests/unit/desktop-health.test.ts",
+    "electron:assert": "node scripts/assert-electron-runtime.mjs",
     "test:watch": "vitest",
     "test:e2e": "tsx tests/e2e/setup-database.ts && playwright test",
     "scan:sensitive": "node scripts/sensitive-scan.mjs",
@@ -105,7 +106,6 @@
     "directories": {
       "output": "dist-installer"
     },
-    "electronDist": "node_modules/electron/dist",
     "afterPack": "scripts/after-pack.mjs",
     "asar": false,
     "files": [

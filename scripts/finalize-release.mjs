@@ -356,12 +356,66 @@ async function verifyRemoteRelease(local, remote, token) {
 async function pendingRelease() {
   const local = validateLocalRelease();
   const response = await lookupRelease(local.version, githubToken());
-  if (response.status === 404) {
+  const tag = `v${local.version}`;
+  const remoteTag = git(["ls-remote", "--tags", "origin", `refs/tags/${tag}`])
+    .stdout.trim();
+  if (response.status === 404 && !remoteTag) {
     printSummary(local);
     process.exitCode = 0;
     return;
   }
   process.exitCode = 2;
+}
+
+async function triggerActionsRelease() {
+  const local = validateLocalRelease();
+  printSummary(local);
+  scanReleaseSources();
+  const tag = `v${local.version}`;
+  const token = githubToken();
+  const existingRelease = await lookupRelease(local.version, token);
+  if (existingRelease.status !== 404) {
+    throw new Error(`${tag} 已存在 GitHub Release，拒绝重复发布。`);
+  }
+  const remoteTag = git(["ls-remote", "--tags", "origin", `refs/tags/${tag}`])
+    .stdout.trim();
+  if (remoteTag) throw new Error(`${tag} 已存在远程 Tag，拒绝重复发布。`);
+
+  git(["add", "-A"]);
+  git(["diff", "--cached", "--check"]);
+  const staged = git(["diff", "--cached", "--quiet"], {
+    allowFailure: true,
+  });
+  if (staged.status !== 0) {
+    git(["commit", "-m", `release: prepare VERIDIA v${local.version}`]);
+  }
+  const branch = git(["branch", "--show-current"]).stdout.trim();
+  if (branch !== "main") {
+    throw new Error("软件正式发布只能从 main 分支触发 GitHub Actions。");
+  }
+  git(["push", "origin", "main"]);
+  const commit = git(["rev-parse", "HEAD"]).stdout.trim();
+  const localTag = git(["rev-parse", "-q", "--verify", `refs/tags/${tag}`], {
+    allowFailure: true,
+  });
+  if (localTag.status === 0) {
+    const taggedCommit = git(["rev-list", "-n", "1", tag]).stdout.trim();
+    if (taggedCommit !== commit) {
+      throw new Error(`${tag} 已指向其他提交，拒绝覆盖。`);
+    }
+  } else {
+    git(["tag", "-a", tag, "-m", `VERIDIA ${local.version}`]);
+  }
+  git(["push", "origin", tag]);
+  process.stdout.write(
+    [
+      `已推送 ${tag}，GitHub Actions 将构建并发布 Windows 安装包。`,
+      `Actions：https://github.com/${owner}/${repository}/actions/workflows/veridia-release.yml`,
+      `Release 完成后地址：https://github.com/${owner}/${repository}/releases/tag/${tag}`,
+      "规则仓库未被修改，也没有发布规则新版。",
+      "",
+    ].join("\n"),
+  );
 }
 
 async function publishRelease() {
@@ -449,8 +503,10 @@ try {
     await pendingRelease();
   } else if (command === "publish") {
     await publishRelease();
+  } else if (command === "trigger-actions") {
+    await triggerActionsRelease();
   } else {
-    throw new Error("Expected summary, pending or publish");
+    throw new Error("Expected summary, pending, publish or trigger-actions");
   }
 } catch (error) {
   process.stderr.write(

@@ -56,7 +56,16 @@ jobs:
           cache: npm
 
       - name: 安装依赖
-        run: npm ci
+        shell: pwsh
+        run: |
+          Remove-Item Env:ELECTRON_SKIP_BINARY_DOWNLOAD -ErrorAction SilentlyContinue
+          Remove-Item Env:npm_config_ignore_scripts -ErrorAction SilentlyContinue
+          npm ci --include=dev
+          if (-not (Test-Path "node_modules/electron/dist/electron.exe")) {
+            Write-Host "Electron 运行目录缺失，正在重新下载 Electron。"
+            npm rebuild electron
+          }
+          npm run electron:assert
 
       - name: 安装 Playwright Chromium
         run: npx playwright install chromium
@@ -133,7 +142,9 @@ jobs:
 
       - name: 构建 NSIS 安装包和更新元数据
         shell: pwsh
-        run: npx electron-builder --win nsis --publish never *>&1 | Tee-Object artifacts/release-logs/electron-builder.log
+        run: |
+          npm run electron:assert *>&1 | Tee-Object artifacts/release-logs/electron-builder.log
+          npx electron-builder --win nsis --publish never *>&1 | Tee-Object -Append artifacts/release-logs/electron-builder.log
 
       - name: 检查安装包 Prisma 运行文件
         shell: pwsh
