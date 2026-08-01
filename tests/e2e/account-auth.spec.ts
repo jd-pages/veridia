@@ -226,10 +226,14 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
   await expect(page.locator("body")).not.toContainText(
     "Unexpected end of JSON input",
   );
-  await expect(page.locator("body")).not.toContainText("localhost:3100/mock");
-  await expect(
-    page.getByPlaceholder(/xiaohongshu\.com\/explore\/xxxx/u),
-  ).toBeVisible();
+  const taskLinkInput = page.getByPlaceholder(
+    /xiaohongshu\.com\/explore\/xxxx/u,
+  );
+  await expect(taskLinkInput).toBeVisible();
+  await expect(taskLinkInput).toHaveValue("");
+  expect(await taskLinkInput.getAttribute("placeholder")).not.toContain(
+    "localhost:3100/mock",
+  );
 
   await page.goto("/products");
   await expect(page.getByRole("heading", { name: "产品管理" })).toBeVisible();
