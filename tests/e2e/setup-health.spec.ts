@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
-import packageJson from "@/package.json";
+import fs from "node:fs";
+import path from "node:path";
+
+const packageVersion = JSON.parse(
+  fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"),
+).version as string;
 
 test("健康检查返回合法 JSON", async ({ request }) => {
   const response = await request.get("/api/health");
@@ -7,7 +12,7 @@ test("健康检查返回合法 JSON", async ({ request }) => {
   expect(response.headers()["content-type"]).toContain("application/json");
   await expect(response.json()).resolves.toMatchObject({
     ok: true,
-    version: packageJson.version,
+    version: packageVersion,
     service: "VERIDIA",
   });
 });
