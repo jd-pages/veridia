@@ -27,6 +27,11 @@ const {
   writeDataLocation,
 } = require("./data-location.cjs");
 const { createExportSaveHandler } = require("./export-save.cjs");
+const {
+  createPrismaExecutionContext,
+  isPrismaCachePermissionError,
+  prismaMigrationFailureMessage,
+} = require("./prisma-environment.cjs");
 
 const APP_NAME = "VERIDIA";
 const PORT = 3100;
@@ -207,11 +212,20 @@ function buildInfo() {
   }
 }
 
-function migrationEnvironment(targetDatabasePath = databasePath) {
-  return nodeEnvironment({
-    DATABASE_URL: toDatabaseUrl(targetDatabasePath),
-    RUST_LOG: process.env.RUST_LOG || "info",
+function migrationExecutionContext(targetDatabasePath = databasePath) {
+  return createPrismaExecutionContext({
+    userDataPath: app.getPath("userData"),
+    baseEnvironment: nodeEnvironment({
+      DATABASE_URL: toDatabaseUrl(targetDatabasePath),
+      RUST_LOG: process.env.RUST_LOG || "info",
+    }),
   });
+}
+
+function childProcessFailureDetails(result) {
+  return [result.error?.stack, result.stdout, result.stderr]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function verifyDatabaseMigrations(targetDatabasePath) {
@@ -223,18 +237,25 @@ function verifyDatabaseMigrations(targetDatabasePath) {
     "index.js",
   );
   const schemaPath = path.join(applicationRoot(), "prisma", "schema.prisma");
+  const execution = migrationExecutionContext(targetDatabasePath);
   const result = spawnSync(
     nodeRuntimeExecutable(),
     [prismaCli, "migrate", "status", "--schema", schemaPath],
     {
-      cwd: applicationRoot(),
-      env: migrationEnvironment(targetDatabasePath),
+      cwd: execution.cwd,
+      env: execution.env,
       encoding: "utf8",
       windowsHide: true,
       maxBuffer: 20 * 1024 * 1024,
     },
   );
   if (result.status !== 0) {
+    const details = childProcessFailureDetails(result);
+    if (isPrismaCachePermissionError(details)) {
+      throw new Error(
+        "权限/缓存目录写入失败，仍将继续使用原数据目录。请确认数据目录可写后重试。",
+      );
+    }
     throw new Error("迁移后的数据库校验失败，仍将继续使用原数据目录。");
   }
 }
@@ -264,6 +285,7 @@ function runDatabaseMigrations() {
     "index.js",
   );
   const schemaPath = path.join(applicationRoot(), "prisma", "schema.prisma");
+  const execution = migrationExecutionContext();
   const result = spawnSync(
     nodeRuntimeExecutable(),
     existed
@@ -279,43 +301,61 @@ function runDatabaseMigrations() {
           schemaPath,
         ],
     {
-      cwd: applicationRoot(),
-      env: migrationEnvironment(),
+      cwd: execution.cwd,
+      env: execution.env,
       encoding: "utf8",
       windowsHide: true,
       maxBuffer: 20 * 1024 * 1024,
     },
   );
   if (result.status !== 0) {
-    writeLog("数据库迁移失败", `${result.stdout || ""}\n${result.stderr || ""}`);
+    const details = childProcessFailureDetails(result);
+    writeLog("数据库迁移失败", details);
     if (existed && fs.existsSync(backupPath)) {
       fs.copyFileSync(backupPath, databasePath);
     } else if (fs.existsSync(databasePath)) {
       fs.rmSync(databasePath, { force: true });
     }
     throw new Error(
-      `数据库迁移失败，原数据库已恢复。详情：${desktopLogPath}`,
+      prismaMigrationFailureMessage({
+        details,
+        logPath: desktopLogPath,
+        restored: existed,
+      }),
     );
   }
 
+  const verificationExecution = migrationExecutionContext();
   const verify = spawnSync(
     nodeRuntimeExecutable(),
     [prismaCli, "migrate", "status", "--schema", schemaPath],
     {
-      cwd: applicationRoot(),
-      env: migrationEnvironment(),
+      cwd: verificationExecution.cwd,
+      env: verificationExecution.env,
       encoding: "utf8",
       windowsHide: true,
       maxBuffer: 20 * 1024 * 1024,
     },
   );
   if (verify.status !== 0) {
-    writeLog("数据库迁移验证失败", `${verify.stdout || ""}\n${verify.stderr || ""}`);
+    const details = childProcessFailureDetails(verify);
+    writeLog("数据库迁移验证失败", details);
     if (existed && fs.existsSync(backupPath)) {
       fs.copyFileSync(backupPath, databasePath);
     }
+    if (isPrismaCachePermissionError(details)) {
+      throw new Error(
+        prismaMigrationFailureMessage({
+          details,
+          logPath: desktopLogPath,
+          restored: existed,
+        }),
+      );
+    }
     throw new Error(
-      `数据库迁移验证失败，原数据库已恢复。详情：${desktopLogPath}`,
+      `数据库迁移验证失败，${
+        existed ? "原数据库已恢复。" : "未保留未完成的数据库。"
+      }详情：${desktopLogPath}`,
     );
   }
   writeLog(`数据库迁移完成：${latestMigrationName()}`);
