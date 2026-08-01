@@ -6,7 +6,6 @@ const {
   ipcMain,
   Menu,
   safeStorage,
-  shell,
   Tray,
 } = require("electron");
 const { autoUpdater } = require("electron-updater");
@@ -882,13 +881,6 @@ function registerIpc() {
   ipcMain.handle("veridia:set-auto-update", (_event, enabled) => {
     saveConfig({ autoUpdate: Boolean(enabled) });
     return Boolean(enabled);
-  });
-  ipcMain.handle("veridia:open-release-notes", async () => {
-    const repository = buildInfo().repository;
-    if (repository) {
-      await shell.openExternal(`https://github.com/${repository}/releases`);
-    }
-    return true;
   });
   ipcMain.handle("veridia:get-update-status", () => lastUpdateStatus);
   ipcMain.handle("veridia:store-persistent-session", (_event, token) =>

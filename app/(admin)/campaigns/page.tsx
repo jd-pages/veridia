@@ -263,18 +263,6 @@ export default function CampaignsPage() {
         }
       />
 
-      <Alert
-        showIcon
-        type="info"
-        style={{ marginBottom: 16 }}
-        message={isAdmin ? "导入安全机制" : "当前为只读查看"}
-        description={
-          isAdmin
-            ? "预检查不会写入数据库。只有点击“确认导入”后才新增或更新规则；历史审核结果保存的是当时规则快照，不会随当前规则修改。"
-            : "审核员可以查看活动要求和已发布规则；如需修改活动配置，请联系管理员。"
-        }
-      />
-
       <Card className="surface-card">
         <Table<Campaign>
           rowKey="id"

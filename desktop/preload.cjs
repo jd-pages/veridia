@@ -15,7 +15,6 @@ contextBridge.exposeInMainWorld("veridiaDesktop", {
   installUpdate: () => ipcRenderer.invoke("veridia:install-update"),
   setAutoUpdate: (enabled) =>
     ipcRenderer.invoke("veridia:set-auto-update", Boolean(enabled)),
-  openReleaseNotes: () => ipcRenderer.invoke("veridia:open-release-notes"),
   getUpdateStatus: () => ipcRenderer.invoke("veridia:get-update-status"),
   storePersistentSession: (token) =>
     ipcRenderer.invoke("veridia:store-persistent-session", token),

@@ -69,7 +69,6 @@ declare global {
       downloadUpdate(): Promise<boolean>;
       installUpdate(): Promise<boolean>;
       setAutoUpdate(enabled: boolean): Promise<boolean>;
-      openReleaseNotes(): Promise<boolean>;
       getUpdateStatus(): Promise<VeridiaUpdateStatus>;
       storePersistentSession(token: string): Promise<boolean>;
       clearPersistentSession(): Promise<boolean>;

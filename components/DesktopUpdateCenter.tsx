@@ -2,11 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { App, Button, Modal, Progress, Space, Typography } from "antd";
-import {
-  CloudDownloadOutlined,
-  FileTextOutlined,
-  ReloadOutlined,
-} from "@ant-design/icons";
+import { CloudDownloadOutlined, ReloadOutlined } from "@ant-design/icons";
 
 function notesAsLines(notes?: string) {
   return (notes || "本次更新包含稳定性改进与问题修复。")
@@ -67,13 +63,6 @@ export default function DesktopUpdateCenter() {
           ? [
               <Button key="later" onClick={() => setOpen(false)}>
                 稍后提醒
-              </Button>,
-              <Button
-                key="notes"
-                icon={<FileTextOutlined />}
-                onClick={() => void api.openReleaseNotes()}
-              >
-                查看更新内容
               </Button>,
               <Button
                 key="download"

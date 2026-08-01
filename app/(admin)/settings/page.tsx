@@ -169,7 +169,7 @@ export default function SettingsPage() {
           <Descriptions.Item label="数据保存位置">
             {versionInfo?.dataDirectory || "—"}
           </Descriptions.Item>
-          <Descriptions.Item label="自动检查更新">
+          <Descriptions.Item label="自动检查更新" span={2}>
             <Switch
               checked={versionInfo?.autoUpdate || false}
               disabled={!desktopAvailable || !isAdmin}
@@ -182,15 +182,6 @@ export default function SettingsPage() {
                 );
               }}
             />
-          </Descriptions.Item>
-          <Descriptions.Item label="更新日志">
-            <Button
-              type="link"
-              disabled={!desktopAvailable}
-              onClick={() => void window.veridiaDesktop?.openReleaseNotes()}
-            >
-              查看历史版本
-            </Button>
           </Descriptions.Item>
         </Descriptions>
         <Space>
