@@ -128,9 +128,22 @@ function repositoryUpdateUrl() {
 }
 
 try {
+  if (bump !== "current") {
+    run("升级版本号", "npm.cmd", [
+      "version",
+      bump,
+      "--no-git-tag-version",
+    ]);
+  }
+  const version = JSON.parse(fs.readFileSync(packagePath, "utf8")).version;
+  if (bump !== "current") updateChangelog(version);
+
+  run("生成 Prisma Client", "npm.cmd", ["run", "db:generate"]);
+  run("检查 Prisma Client", "npm.cmd", ["run", "prisma:assert"]);
   run("TypeScript检查", "npm.cmd", ["run", "typecheck"]);
   run("ESLint", "npm.cmd", ["run", "lint"]);
   run("单元测试", "npm.cmd", ["test"]);
+  run("桌面健康检查", "npm.cmd", ["run", "test:desktop-health"]);
 
   const e2eDatabasePath = path.join(root, "prisma", "release-e2e.db");
   fs.rmSync(e2eDatabasePath, { force: true });
@@ -152,16 +165,6 @@ try {
   run("敏感信息扫描", "node", [
     path.join(root, "scripts", "sensitive-scan.mjs"),
   ]);
-
-  if (bump !== "current") {
-    run("升级版本号", "npm.cmd", [
-      "version",
-      bump,
-      "--no-git-tag-version",
-    ]);
-  }
-  const version = JSON.parse(fs.readFileSync(packagePath, "utf8")).version;
-  if (bump !== "current") updateChangelog(version);
 
   run("正式Next构建", "npm.cmd", ["run", "build"], {
     VERIDIA_APP_VERSION: version,

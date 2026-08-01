@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { GET } from "@/app/api/health/route";
+import packageJson from "@/package.json";
 
 describe("桌面端健康检查", () => {
   it("返回稳定的 200 JSON 响应", async () => {
@@ -12,7 +13,7 @@ describe("桌面端健康检查", () => {
     expect(response.headers.get("content-type")).toContain("application/json");
     expect(payload).toMatchObject({
       ok: true,
-      version: "1.0.3",
+      version: packageJson.version,
       service: "VERIDIA",
     });
   });

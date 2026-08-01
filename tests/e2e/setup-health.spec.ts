@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import packageJson from "@/package.json";
 
 test("健康检查返回合法 JSON", async ({ request }) => {
   const response = await request.get("/api/health");
@@ -6,7 +7,7 @@ test("健康检查返回合法 JSON", async ({ request }) => {
   expect(response.headers()["content-type"]).toContain("application/json");
   await expect(response.json()).resolves.toMatchObject({
     ok: true,
-    version: "1.0.3",
+    version: packageJson.version,
     service: "VERIDIA",
   });
 });

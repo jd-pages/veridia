@@ -65,6 +65,10 @@ jobs:
         shell: pwsh
         run: npm test *>&1 | Tee-Object artifacts/ci-logs/unit-tests.log
 
+      - name: 桌面健康检查
+        shell: pwsh
+        run: npm run test:desktop-health *>&1 | Tee-Object artifacts/ci-logs/desktop-health.log
+
       - name: 初始化隔离数据库
         shell: pwsh
         run: |

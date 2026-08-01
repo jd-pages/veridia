@@ -65,38 +65,6 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path .ci, artifacts/release-logs | Out-Null
 
-      - name: 生成并检查 Prisma Client
-        shell: pwsh
-        run: |
-          npm run db:generate *>&1 | Tee-Object artifacts/release-logs/prisma-generate.log
-          npm run prisma:assert *>&1 | Tee-Object -Append artifacts/release-logs/prisma-generate.log
-
-      - name: TypeScript 检查
-        shell: pwsh
-        run: npm run typecheck *>&1 | Tee-Object artifacts/release-logs/typecheck.log
-
-      - name: ESLint
-        shell: pwsh
-        run: npm run lint *>&1 | Tee-Object artifacts/release-logs/eslint.log
-
-      - name: 单元测试
-        shell: pwsh
-        run: npm test *>&1 | Tee-Object artifacts/release-logs/unit-tests.log
-
-      - name: 初始化隔离数据库
-        shell: pwsh
-        run: |
-          npm run db:init-empty *>&1 | Tee-Object artifacts/release-logs/database.log
-          npm run db:seed *>&1 | Tee-Object -Append artifacts/release-logs/database.log
-
-      - name: 端到端测试
-        shell: pwsh
-        run: npm run test:e2e *>&1 | Tee-Object artifacts/release-logs/e2e.log
-
-      - name: 预发布 Next.js 构建
-        shell: pwsh
-        run: npm run build *>&1 | Tee-Object artifacts/release-logs/preflight-build.log
-
       - name: 计算发布版本
         id: version
         shell: pwsh
@@ -115,6 +83,42 @@ jobs:
             "version=$version" >> $env:GITHUB_OUTPUT
             "tag=$tag" >> $env:GITHUB_OUTPUT
           }
+
+      - name: 生成并检查 Prisma Client
+        shell: pwsh
+        run: |
+          npm run db:generate *>&1 | Tee-Object artifacts/release-logs/prisma-generate.log
+          npm run prisma:assert *>&1 | Tee-Object -Append artifacts/release-logs/prisma-generate.log
+
+      - name: TypeScript 检查
+        shell: pwsh
+        run: npm run typecheck *>&1 | Tee-Object artifacts/release-logs/typecheck.log
+
+      - name: ESLint
+        shell: pwsh
+        run: npm run lint *>&1 | Tee-Object artifacts/release-logs/eslint.log
+
+      - name: 单元测试
+        shell: pwsh
+        run: npm test *>&1 | Tee-Object artifacts/release-logs/unit-tests.log
+
+      - name: 桌面健康检查
+        shell: pwsh
+        run: npm run test:desktop-health *>&1 | Tee-Object artifacts/release-logs/desktop-health.log
+
+      - name: 初始化隔离数据库
+        shell: pwsh
+        run: |
+          npm run db:init-empty *>&1 | Tee-Object artifacts/release-logs/database.log
+          npm run db:seed *>&1 | Tee-Object -Append artifacts/release-logs/database.log
+
+      - name: 端到端测试
+        shell: pwsh
+        run: npm run test:e2e *>&1 | Tee-Object artifacts/release-logs/e2e.log
+
+      - name: 预发布 Next.js 构建
+        shell: pwsh
+        run: npm run build *>&1 | Tee-Object artifacts/release-logs/preflight-build.log
 
       - name: 构建正式 Next.js 版本
         shell: pwsh
