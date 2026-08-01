@@ -61,6 +61,7 @@ describe("本地打包发布门禁", () => {
       "node_modules/electron/install.js",
     );
     expect(packageJson.build).not.toHaveProperty("electronDist");
+    expect(workflow).not.toMatch(/"[^"\r\n]*[“”][^"\r\n]*"/u);
   });
 
   it("软件和规则 BAT 保持独立，软件发布通过 Tag 触发 Actions", () => {

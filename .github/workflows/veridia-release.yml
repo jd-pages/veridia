@@ -150,7 +150,7 @@ jobs:
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace("${{ secrets.WINDOWS_CSC_LINK }}")) {
-            "未配置代码签名证书；本次为内部测试安装包，Windows 可能显示“未知发布者”。" |
+            '未配置代码签名证书；本次为内部测试安装包，Windows 可能显示“未知发布者”。' |
               Tee-Object artifacts/release-logs/signing.log
           } else {
             "已提供 Windows 代码签名证书。" |
