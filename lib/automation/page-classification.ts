@@ -50,6 +50,18 @@ export function classifyAutomaticPage({
   }
 
   if (
+    /安全限制|IP存在风险|安全验证|访问验证|完成验证/u.test(combined) ||
+    /\/website-login\/error(?:\/|$)/iu.test(parsed.pathname)
+  ) {
+    return "SECURITY_CHECK";
+  }
+  if (
+    /登录后推荐|请先登录|登录以继续|手机号登录|扫码登录/u.test(combined)
+  ) {
+    return "LOGIN";
+  }
+
+  if (
     /验证码|安全验证|完成验证|滑块验证|访问验证|异常访问|网络环境存在风险/u.test(
       combined,
     ) ||

@@ -157,3 +157,33 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await expect(page.getByText("自动审核与人工复核", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\/results$/u);
 });
+
+test("审核详情展示自动取证候选证据", async ({ page }) => {
+  await login(page);
+  const listResponse = await page.request.get("/api/results?page=1&pageSize=100");
+  expect(listResponse.ok()).toBeTruthy();
+  const listPayload = (await listResponse.json()) as {
+    data: {
+      items: Array<{
+        id: string;
+        note: { platformNoteId: string | null };
+      }>;
+    };
+  };
+  const evidenceFixture = listPayload.data.items.find((item) =>
+    item.note.platformNoteId?.startsWith("isolated-fixture-"),
+  );
+  expect(evidenceFixture).toBeTruthy();
+
+  await page.goto(`/results/${evidenceFixture!.id}`);
+  await expect(page.getByText("自动取证证据", { exact: true })).toBeVisible();
+  await expect(page.getByText("最终 URL", { exact: true })).toBeVisible();
+  await expect(page.getByText("页面 title", { exact: true })).toBeVisible();
+  await expect(page.getByText("正文候选", { exact: true })).toBeVisible();
+  await expect(page.getByText("话题候选", { exact: true })).toBeVisible();
+  await expect(page.getByText("图片候选", { exact: true })).toBeVisible();
+  await expect(page.getByText("NOTE_DETAIL", { exact: true })).toBeVisible();
+  await expect(page.getByText(/dom-visible-text/u)).toBeVisible();
+  await expect(page.getByText(/dom-topic-link/u).first()).toBeVisible();
+  await expect(page.getByText(/carousel-img/u).first()).toBeVisible();
+});

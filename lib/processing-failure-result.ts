@@ -87,6 +87,26 @@ export async function recordProcessingFailureResult(input: {
       },
       }));
 
+    if (task.failureEvidence) {
+      const existingEvidence = await tx.extractionRecord.findFirst({
+        where: { auditTaskId: task.id },
+        select: { id: true },
+      });
+      if (!existingEvidence) {
+        await tx.extractionRecord.create({
+          data: {
+            auditTaskId: task.id,
+            noteId: note.id,
+            adapterName: "playwright-page-evidence",
+            adapterVersion: "1.0.0",
+            pageStatus: pageStatusForProcessingFailure(input.failureCode),
+            rawData: task.failureEvidence,
+            extractedAt: finishedAt,
+          },
+        });
+      }
+    }
+
     await tx.noteProduct.upsert({
       where: {
         noteId_productId: {

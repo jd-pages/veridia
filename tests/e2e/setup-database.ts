@@ -151,6 +151,41 @@ async function main() {
       payload.url = `${payload.url}&isolated-fixture=${index + 1}`;
       payload.finalUrl = payload.url;
       payload.noteId = `isolated-fixture-${index + 1}`;
+      payload.pageEvidence = {
+        originalUrl: payload.url,
+        finalUrl: payload.finalUrl,
+        pageTitle: payload.title,
+        pageType: "NOTE_DETAIL",
+        visibleTextPreview: `${payload.title}\n${payload.body}`,
+        visibleTextLength: `${payload.title}\n${payload.body}`.length,
+        htmlLength: 4096,
+        noteIdCandidates: [
+          {
+            value: payload.noteId,
+            source: "final-url",
+          },
+        ],
+        bodyCandidates: [
+          {
+            value: payload.body,
+            source: "dom-visible-text",
+          },
+        ],
+        topicCandidates: payload.topics.map((topic) => ({
+          displayText: topic.displayText,
+          source: "dom-topic-link",
+          href: topic.href,
+          hasHref: topic.hasHref,
+          isLinkElement: topic.isLinkElement,
+        })),
+        imageCandidates: Array.from(
+          { length: payload.imageCount || 0 },
+          (_, imageIndex) => ({
+            groupKey: `mock-carousel-image-${imageIndex + 1}`,
+            source: "carousel-img",
+          }),
+        ),
+      };
       const task = await prisma.auditTask.create({
         data: {
           url: payload.url,

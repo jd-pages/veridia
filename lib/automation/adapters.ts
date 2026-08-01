@@ -1,11 +1,28 @@
 import type { Page } from "playwright";
 import type { ExtractedNote, PageStatus } from "@/lib/types";
+import {
+  collectDomPageSnapshot,
+  createEmptyCandidates,
+  mergeCandidates,
+  noteIdCandidatesFromUrls,
+  safeEvidenceUrl,
+  type XhsPageCandidates,
+} from "./xhs-page-evidence";
+
+export interface PlaywrightExtractionContext {
+  redirectChain?: string[];
+  responseCandidates?: XhsPageCandidates;
+}
 
 export interface PlaywrightExtractorAdapter {
   name: string;
   version: string;
   canHandle(url: string): boolean;
-  extract(page: Page, originalUrl: string): Promise<ExtractedNote>;
+  extract(
+    page: Page,
+    originalUrl: string,
+    context?: PlaywrightExtractionContext,
+  ): Promise<ExtractedNote>;
 }
 
 function isLocalMockUrl(value: string) {
@@ -57,7 +74,7 @@ export class PlaywrightXiaohongshuAdapter
   implements PlaywrightExtractorAdapter
 {
   name = "playwright-xiaohongshu";
-  version = "1.3.0";
+  version = "1.4.0";
 
   canHandle(url: string) {
     try {
@@ -67,7 +84,99 @@ export class PlaywrightXiaohongshuAdapter
     }
   }
 
-  async extract(page: Page, originalUrl: string): Promise<ExtractedNote> {
+  async extract(
+    page: Page,
+    originalUrl: string,
+    context: PlaywrightExtractionContext = {},
+  ): Promise<ExtractedNote> {
+    const domSnapshot = await collectDomPageSnapshot(page);
+    const urlCandidates = createEmptyCandidates();
+    urlCandidates.noteIdCandidates = noteIdCandidatesFromUrls([
+      originalUrl,
+      domSnapshot.finalUrl,
+      ...(context.redirectChain || []),
+    ]);
+    const candidates = mergeCandidates(
+      urlCandidates,
+      domSnapshot,
+      context.responseCandidates || createEmptyCandidates(),
+    );
+    const topics = candidates.topicCandidates.map((topic) => ({
+      displayText: topic.displayText,
+      isLinkElement: topic.isLinkElement,
+      hasHref: topic.hasHref,
+      href: topic.href,
+      textColor: topic.textColor,
+      styleFeature: topic.styleFeature,
+      domPath: topic.domPath,
+    }));
+    const title =
+      candidates.titleCandidates.find(
+        (item) => item.value && !/^小红书\s*[-·]/u.test(item.value),
+      )?.value || null;
+    const body =
+      candidates.bodyCandidates.find((item) => item.value.trim().length > 0)
+        ?.value || null;
+    const noteType = candidates.hasVideo
+      ? "VIDEO_NOTE"
+      : candidates.imageCandidates.length > 0
+        ? "IMAGE_TEXT"
+        : "UNKNOWN";
+    const imageExtractionStatus = candidates.hasVideo
+      ? "VIDEO_NOTE"
+      : candidates.imageCandidates.length > 0
+        ? "SUCCESS"
+        : "IMAGES_READ_FAILED";
+
+    return {
+      url: originalUrl,
+      finalUrl: domSnapshot.finalUrl,
+      pageTitle: domSnapshot.pageTitle,
+      pageType: "NOTE_DETAIL",
+      noteId: candidates.noteIdCandidates[0]?.value || null,
+      title,
+      body,
+      topics,
+      pageStatus: domSnapshot.pageStatus,
+      isPublic: domSnapshot.pageStatus === "NORMAL",
+      authorName: null,
+      noteType,
+      imageExtractionStatus,
+      imageCount:
+        imageExtractionStatus === "SUCCESS"
+          ? candidates.imageCandidates.length
+          : undefined,
+      publishedAt: null,
+      extractedAt: new Date().toISOString(),
+      adapterName: this.name,
+      adapterVersion: this.version,
+      pageEvidence: {
+        originalUrl: safeEvidenceUrl(originalUrl),
+        finalUrl: safeEvidenceUrl(domSnapshot.finalUrl),
+        pageTitle: domSnapshot.pageTitle,
+        visibleTextPreview: domSnapshot.visibleTextPreview,
+        visibleTextLength: domSnapshot.visibleTextLength,
+        htmlLength: domSnapshot.htmlLength,
+        noteIdCandidates: candidates.noteIdCandidates.slice(0, 20),
+        titleCandidates: candidates.titleCandidates.slice(0, 20),
+        bodyCandidates: candidates.bodyCandidates.slice(0, 20).map((item) => ({
+          ...item,
+          value: item.value.slice(0, 2_000),
+        })),
+        topicCandidates: candidates.topicCandidates.slice(0, 100),
+        imageCandidates: candidates.imageCandidates.slice(0, 100),
+        loginEvidence: candidates.loginEvidence,
+        responseSummaries: candidates.responseSummaries,
+        keyElementCount: domSnapshot.keyElementCount,
+        domSummary: domSnapshot.domSummary,
+      },
+    };
+  }
+
+  private async extractLegacy(
+    page: Page,
+    originalUrl: string,
+  ): Promise<ExtractedNote> {
     const mediaSelector = [
       "[data-testid='note-media']",
       ".note-slider",

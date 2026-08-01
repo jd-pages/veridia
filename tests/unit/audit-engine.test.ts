@@ -58,6 +58,18 @@ const context: AuditContext = {
 };
 
 describe("audit engine", () => {
+  it("话题技术读取失败时保留正文结论并进入待人工复核", () => {
+    const note = createMockNote("no-topics");
+    note.body = "这是一段长度足够且可以正常参与固定规则审核的正文内容。";
+    note.technicalWarnings = ["TOPICS_NOT_RECOGNIZED"];
+    const result = evaluateAudit(note, context);
+    expect(result.bodyStatus).toBe("PRESENT");
+    expect(result.bodyCompliant).toBe(true);
+    expect(result.autoStatus).toBe("NEEDS_REVIEW");
+    expect(result.missingTopics).toEqual([]);
+    expect(result.failureReasons).toContain("未识别到话题内容，需人工复核");
+  });
+
   it("通过完整合规案例", () => {
     const result = evaluateAudit(createMockNote("passed"), context);
     expect(result.autoStatus).toBe("PASSED");

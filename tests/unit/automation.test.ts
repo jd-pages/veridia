@@ -37,6 +37,18 @@ describe("自动批量审核提取分类", () => {
   });
 });
 
+describe("当前小红书页面分类", () => {
+  it("将 website-login/error 安全限制页识别为安全验证", () => {
+    expect(
+      classifyAutomaticPage({
+        url: "https://www.xiaohongshu.com/website-login/error?error_code=300012",
+        title: "安全限制",
+        visibleText: "IP存在风险，请切换可靠网络环境后重试",
+      }),
+    ).toBe("SECURITY_CHECK");
+  });
+});
+
 describe("小红书页面与短链接分类", () => {
   it("识别 xhslink.com、xhslink.cn 短链接和真实笔记详情链接", () => {
     expect(isShortXiaohongshuUrl("http://xhslink.com/o/6c1AI7QAhyf")).toBe(

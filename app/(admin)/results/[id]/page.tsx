@@ -32,6 +32,7 @@ import {
 import { useParams } from "next/navigation";
 import PageHeader from "@/components/PageHeader";
 import StatusTag from "@/components/StatusTag";
+import ExtractionEvidencePanel from "@/components/results/ExtractionEvidencePanel";
 import { apiFetch, parseJsonArray } from "@/lib/client";
 import {
   allowedBodyStageLabels,
@@ -92,6 +93,7 @@ interface Detail {
     finalUrl: string | null;
     failureCode: string | null;
     failureMessage: string | null;
+    failureEvidence: string | null;
     attempts: number;
     productStage: string | null;
     product: Product;
@@ -494,6 +496,12 @@ export default function ResultDetailPage() {
           </Card>
         </Col>
       </Row>
+      <div style={{ marginTop: 14 }}>
+        <ExtractionEvidencePanel
+          rawData={detail.note.extractions[0]?.rawData}
+          failureEvidence={detail.task.failureEvidence}
+        />
+      </div>
       <Card className="surface-card" title="识别出的全部话题与页面元素状态" style={{ marginTop: 14 }}>
         <Alert
           type="info"

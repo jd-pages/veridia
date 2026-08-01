@@ -9,7 +9,6 @@ import {
   Space,
   Spin,
   Timeline,
-  Typography,
 } from "antd";
 import {
   CheckOutlined,
@@ -29,6 +28,7 @@ import AuditConclusionCell from "./AuditConclusionCell";
 import AuditStatusTag from "./AuditStatusTag";
 import ImageAuditCell from "./ImageAuditCell";
 import TopicAuditCell from "./TopicAuditCell";
+import ExtractionEvidencePanel from "./ExtractionEvidencePanel";
 import type { BulkAction, ResultDetail, ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
 
@@ -309,11 +309,10 @@ export default function AuditDetailDrawer({
                   key: "raw",
                   label: "原始 JSON 与页面证据（默认折叠）",
                   children: (
-                    <Typography.Text>
-                      <pre className={styles.drawerRaw}>
-                        {detail.note.extractions[0]?.rawData || "暂无原始数据"}
-                      </pre>
-                    </Typography.Text>
+                    <ExtractionEvidencePanel
+                      rawData={detail.note.extractions[0]?.rawData}
+                      failureEvidence={detail.task.failureEvidence}
+                    />
                   ),
                 },
               ]}

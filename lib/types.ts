@@ -54,6 +54,8 @@ export interface ExtractedNote {
   extractedAt: string;
   adapterName: string;
   adapterVersion: string;
+  technicalWarnings?: string[];
+  pageEvidence?: Record<string, unknown>;
 }
 
 export interface AuditRule {

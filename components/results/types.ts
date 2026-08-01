@@ -62,6 +62,7 @@ export interface ResultRow {
     attempts: number;
     failureCode: string | null;
     failureMessage: string | null;
+    failureEvidence?: string | null;
     product: ProductOption;
     campaign: CampaignOption;
   };

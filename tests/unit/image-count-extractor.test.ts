@@ -79,4 +79,36 @@ describe("xiaohongshu image count extractor", () => {
     expect(result.imageExtractionStatus).toBe("IMAGES_READ_FAILED");
     expect(result.imageCount).toBeUndefined();
   });
+
+  it("兼容当前详情容器并同时提取笔记 ID、正文、话题和图片候选", async () => {
+    await page.setContent(`
+      <main>
+        <section class="note-detail-container-v2">
+          <h1 class="note-title-v2">真实体验记录</h1>
+          <div class="note-desc-v2">
+            正文内容超过四十一个有效字符，用于验证新页面结构下正文仍能稳定完成自动提取。
+            <a href="/search_result?keyword=新生儿奶粉">#新生儿奶粉</a>
+            <a href="/topic/爱他美新手爸妈日记">#爱他美新手爸妈日记</a>
+          </div>
+          <div class="media-container-v2 swiper-v2">
+            <div class="swiper-slide" data-swiper-slide-index="0"><img data-src="https://ci.example.com/1.jpg"></div>
+            <div class="swiper-slide" data-swiper-slide-index="1"><picture><source srcset="https://ci.example.com/2.webp 1x"></picture></div>
+          </div>
+        </section>
+      </main>
+    `, { waitUntil: "domcontentloaded" });
+    const result = await adapter.extract(
+      page,
+      "https://www.xiaohongshu.com/discovery/item/6a5cb375000000000301c549",
+    );
+    expect(result.noteId).toBe("6a5cb375000000000301c549");
+    expect(result.body).toContain("正文内容超过四十一个有效字符");
+    expect(result.topics.map((item) => item.displayText)).toEqual(
+      expect.arrayContaining(["#新生儿奶粉", "#爱他美新手爸妈日记"]),
+    );
+    expect(result.topics.every((item) => item.hasHref)).toBe(true);
+    expect(result.imageExtractionStatus).toBe("SUCCESS");
+    expect(result.imageCount).toBe(2);
+    expect(result.pageEvidence).toMatchObject({ htmlLength: expect.any(Number) });
+  }, 20_000);
 });

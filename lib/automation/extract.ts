@@ -8,7 +8,6 @@ import type { ExtractedNote } from "@/lib/types";
 import { getAutomationSession, getWorkerBrowserContext } from "./browser";
 import {
   AutomaticExtractionError,
-  automaticFailureLabels,
   type AutomaticFailureCode,
 } from "./failure";
 import {
@@ -23,6 +22,15 @@ import {
   type AutomaticPageType,
 } from "./page-classification";
 import { playwrightAdapters } from "./adapters";
+import {
+  collectDomPageSnapshot,
+  createEmptyCandidates,
+  createXhsResponseCollector,
+  mergeCandidates,
+  noteIdCandidatesFromUrls,
+  safeEvidenceUrl,
+  type XhsPageCandidates,
+} from "./xhs-page-evidence";
 
 export interface AutomaticExtractionOutcome {
   note: ExtractedNote;
@@ -39,9 +47,19 @@ interface PageIdentity {
 const KEY_ELEMENT_SELECTOR = [
   "#detail-title",
   "#detail-desc",
+  "[data-testid='note-title']",
+  "[data-testid='note-content']",
+  "[data-testid='note-desc']",
   ".note-content",
+  "[class*='note-content']",
+  "[class*='note-detail']",
+  "[class*='note-slider']",
+  "[class*='swiper']",
+  "[class*='carousel']",
   "a#hash-tag",
   "a[href*='/search_result']",
+  "a[href*='/topic']",
+  "script[type='application/ld+json']",
 ].join(",");
 
 function isMockUrl(value: string) {
@@ -91,25 +109,30 @@ async function readPageIdentity(page: Page): Promise<PageIdentity> {
   };
 }
 
-async function waitForRedirectCompletion(
+async function waitForPageReadiness(
   page: Page,
   originalUrl: string,
   redirectChain: string[],
 ) {
-  if (!isShortXiaohongshuUrl(originalUrl)) return;
-  const timeout = Number(process.env.AUTOMATION_REDIRECT_TIMEOUT_MS || 15_000);
+  const timeout = Number(
+    process.env.AUTOMATION_REDIRECT_TIMEOUT_MS ||
+      process.env.AUTOMATION_KEY_ELEMENT_TIMEOUT_MS ||
+      15_000,
+  );
+  const startedAt = Date.now();
   const deadline = Date.now() + timeout;
   let previousUrl = "";
   let stableChecks = 0;
+  let observedNoteDetail = isXiaohongshuNoteDetailUrl(originalUrl);
   while (Date.now() < deadline) {
     const currentUrl = page.url();
     redirectChain.push(currentUrl);
+    observedNoteDetail ||= isXiaohongshuNoteDetailUrl(currentUrl);
     if (currentUrl === previousUrl) stableChecks += 1;
     else {
       previousUrl = currentUrl;
       stableChecks = 0;
     }
-    if (isXiaohongshuNoteDetailUrl(currentUrl) && stableChecks >= 2) return;
 
     const identity = await readPageIdentity(page);
     if (
@@ -119,19 +142,31 @@ async function waitForRedirectCompletion(
     ) {
       return;
     }
+    const keyElementCount = await page
+      .locator(KEY_ELEMENT_SELECTOR)
+      .count()
+      .catch(() => 0);
+    if (keyElementCount > 0) {
+      await page.waitForTimeout(600);
+      return;
+    }
+    if (
+      observedNoteDetail &&
+      stableChecks >= 6 &&
+      Date.now() - startedAt >= 3_000
+    ) {
+      return;
+    }
     await page.waitForTimeout(250);
   }
 }
 
 async function waitForExtractionKeyElements(page: Page) {
-  const timeout = Number(
-    process.env.AUTOMATION_KEY_ELEMENT_TIMEOUT_MS || 10_000,
-  );
   await page
     .locator(KEY_ELEMENT_SELECTOR)
     .first()
-    .waitFor({ state: "attached", timeout });
-  await page.waitForTimeout(250);
+    .waitFor({ state: "attached", timeout: 2_000 })
+    .catch(() => undefined);
 }
 
 async function captureFailureEvidence(
@@ -139,6 +174,8 @@ async function captureFailureEvidence(
   task: AuditTask,
   identity: PageIdentity,
   redirectChain: string[],
+  responseCandidates: XhsPageCandidates = createEmptyCandidates(),
+  extractionEvidence?: Record<string, unknown> | null,
 ) {
   const evidenceDirectory = process.env.AUTOMATION_EVIDENCE_PATH
     ? path.resolve(process.env.AUTOMATION_EVIDENCE_PATH)
@@ -154,42 +191,49 @@ async function captureFailureEvidence(
     .screenshot({ path: screenshotPath, fullPage: false })
     .then(() => true)
     .catch(() => false);
-  const htmlSummary = await page
-    .evaluate(
-      ({ keySelector }) => {
-        const summarize = (selector: string) =>
-          [...document.querySelectorAll(selector)].slice(0, 12).map((element) => ({
-            tag: element.tagName.toLowerCase(),
-            id: element.id || null,
-            className: String(element.className || "").slice(0, 160),
-          }));
-        return {
-          htmlLang: document.documentElement.lang || null,
-          bodyTextLength: (document.body?.innerText || "").length,
-          bodyChildCount: document.body?.children.length || 0,
-          keyElementCount: document.querySelectorAll(keySelector).length,
-          keyElements: summarize(keySelector),
-          mainLandmarks: summarize(
-            "main,article,[role='main'],#noteContainer,.note-container,.note-content",
-          ),
-        };
-      },
-      {
-        keySelector: KEY_ELEMENT_SELECTOR,
-      },
-    )
-    .catch(() => ({ unavailable: true }));
+  const domSnapshot = await collectDomPageSnapshot(page).catch(() => null);
+  const urlCandidates = createEmptyCandidates();
+  urlCandidates.noteIdCandidates = noteIdCandidatesFromUrls([
+    task.url,
+    identity.finalUrl,
+    ...redirectChain,
+  ]);
+  const candidates = mergeCandidates(
+    urlCandidates,
+    domSnapshot || createEmptyCandidates(),
+    responseCandidates,
+  );
 
   return {
-    originalUrl: task.url,
-    finalUrl: identity.finalUrl,
+    ...(extractionEvidence || {}),
+    originalUrl: safeEvidenceUrl(task.url),
+    finalUrl: safeEvidenceUrl(identity.finalUrl),
     pageTitle: identity.pageTitle,
     pageType: identity.pageType,
-    redirectChain: uniqueUrls(redirectChain),
+    redirectChain: uniqueUrls(redirectChain).map(safeEvidenceUrl),
     screenshotPath: screenshotSaved
       ? path.relative(process.cwd(), screenshotPath)
       : null,
-    htmlSummary,
+    screenshotSaved,
+    visibleTextPreview: domSnapshot?.visibleTextPreview || "",
+    visibleTextLength: domSnapshot?.visibleTextLength || 0,
+    htmlLength: domSnapshot?.htmlLength || 0,
+    noteIdCandidates: candidates.noteIdCandidates.slice(0, 20),
+    titleCandidates: candidates.titleCandidates.slice(0, 20),
+    bodyCandidates: candidates.bodyCandidates.slice(0, 20).map((item) => ({
+      ...item,
+      value: item.value.slice(0, 2_000),
+    })),
+    topicCandidates: candidates.topicCandidates.slice(0, 100),
+    imageCandidates: candidates.imageCandidates.slice(0, 100),
+    loginEvidence: candidates.loginEvidence,
+    responseSummaries: candidates.responseSummaries,
+    htmlSummary: domSnapshot
+      ? {
+          keyElementCount: domSnapshot.keyElementCount,
+          domSummary: domSnapshot.domSummary,
+        }
+      : { unavailable: true },
   };
 }
 
@@ -244,8 +288,11 @@ export async function extractAuditTaskAutomatically(
 
   const context = await getWorkerBrowserContext();
   const page = await context.newPage();
+  const responseCollector = createXhsResponseCollector(page);
   const pageUrl = mock ? effectiveMockUrl(task) : task.url;
   const redirectChain = [task.url];
+  let responseCandidates = createEmptyCandidates();
+  let extractionEvidence: Record<string, unknown> | null = null;
   let identity: PageIdentity = {
     finalUrl: pageUrl,
     pageTitle: "",
@@ -276,7 +323,9 @@ export async function extractAuditTaskAutomatically(
       });
       responseUrl = response?.url() || "";
       if (responseUrl) redirectChain.push(responseUrl);
-      await waitForRedirectCompletion(page, task.url, redirectChain);
+      if (!mock) {
+        await waitForPageReadiness(page, task.url, redirectChain);
+      }
     } catch (error) {
       if (error instanceof AutomaticExtractionError) throw error;
       if (error instanceof Error && /Timeout/i.test(error.message)) {
@@ -291,7 +340,20 @@ export async function extractAuditTaskAutomatically(
     const delay = Number(url.searchParams.get("autoDelay") || 0);
     if (delay > 0) await page.waitForTimeout(Math.min(delay, 10_000));
 
+    responseCandidates = await responseCollector.snapshot();
     identity = await readPageIdentity(page);
+    if (
+      responseCandidates.loginEvidence.some((item) =>
+        /安全|风险|验证|限制/u.test(item),
+      )
+    ) {
+      identity.pageType = "SECURITY_CHECK";
+    } else if (
+      responseCandidates.loginEvidence.length > 0 &&
+      identity.pageType === "UNKNOWN"
+    ) {
+      identity.pageType = "LOGIN";
+    }
     redirectChain.push(identity.finalUrl);
     logPageIdentity(task, identity);
 
@@ -307,10 +369,10 @@ export async function extractAuditTaskAutomatically(
         `页面要求安全验证：${identity.pageTitle || "无标题"}`,
       );
     }
-    if (
-      isShortXiaohongshuUrl(task.url) &&
-      !isXiaohongshuNoteDetailUrl(identity.finalUrl)
-    ) {
+    const reachedNoteDetail = [task.url, identity.finalUrl, ...redirectChain].some(
+      isXiaohongshuNoteDetailUrl,
+    );
+    if (isShortXiaohongshuUrl(task.url) && !reachedNoteDetail) {
       const reason =
         identity.pageType === "APP_LAUNCH"
           ? "短链接进入 App 唤起页"
@@ -347,11 +409,23 @@ export async function extractAuditTaskAutomatically(
         `最终页面没有可用 Adapter：${identity.pageType}`,
       );
     }
-    const note = await adapter.extract(page, task.url);
+    const note = await adapter.extract(page, task.url, {
+      redirectChain: uniqueUrls(redirectChain),
+      responseCandidates,
+    });
     note.finalUrl = identity.finalUrl;
     note.pageTitle = identity.pageTitle;
     note.pageType = identity.pageType;
     note.redirectChain = uniqueUrls(redirectChain);
+    extractionEvidence = {
+      ...(note.pageEvidence || {}),
+      originalUrl: safeEvidenceUrl(task.url),
+      finalUrl: safeEvidenceUrl(identity.finalUrl),
+      pageTitle: identity.pageTitle,
+      pageType: identity.pageType,
+      redirectChain: uniqueUrls(redirectChain).map(safeEvidenceUrl),
+    };
+    note.pageEvidence = extractionEvidence;
     throwForPageStatus(note.pageStatus);
 
     if (!note.title?.trim() && !note.body?.trim()) {
@@ -361,16 +435,18 @@ export async function extractAuditTaskAutomatically(
       );
     }
     const warnings = detectContentWarnings(note);
-    if (!mock && warnings.length) {
-      const labels = warnings.map((code) => automaticFailureLabels[code]).join("；");
-      throw new AutomaticExtractionError(
-        warnings[0],
-        `技术读取不完整：${labels}；未生成内容不合规结论`,
-      );
-    }
-    await savePageMetadata(task.id, identity, redirectChain, null);
+    note.technicalWarnings = warnings;
+    await savePageMetadata(
+      task.id,
+      identity,
+      redirectChain,
+      extractionEvidence,
+    );
     return { note, warnings };
   } catch (error) {
+    responseCandidates = await responseCollector
+      .snapshot()
+      .catch(() => responseCandidates);
     identity = await readPageIdentity(page).catch(() => identity);
     redirectChain.push(identity.finalUrl);
     logPageIdentity(task, identity);
@@ -386,11 +462,14 @@ export async function extractAuditTaskAutomatically(
       task,
       identity,
       redirectChain,
+      responseCandidates,
+      extractionEvidence,
     );
     extractionError.attachDetails(evidence);
     await savePageMetadata(task.id, identity, redirectChain, evidence);
     throw extractionError;
   } finally {
+    responseCollector.dispose();
     page.off("framenavigated", recordNavigation);
     await page.close().catch(() => undefined);
   }

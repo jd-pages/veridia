@@ -439,6 +439,34 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       .filter((item) => item.task.status === "READ_FAILED")
       .every((item) => item.task.failureCode === "PAGE_READ_FAILED"),
   ).toBe(true);
+  const failedEvidenceResult = resultCoverage.items.find(
+    (item) => item.task.status === "READ_FAILED",
+  );
+  expect(failedEvidenceResult).toBeTruthy();
+  const failedEvidenceResponse = await page.request.get(
+    `/api/results/${failedEvidenceResult!.id}`,
+  );
+  expect(failedEvidenceResponse.ok()).toBeTruthy();
+  const failedEvidenceDetail = (await failedEvidenceResponse.json()).data as {
+    note: { extractions: Array<{ rawData: string }> };
+  };
+  expect(failedEvidenceDetail.note.extractions.length).toBeGreaterThan(0);
+  const failedEvidence = JSON.parse(
+    failedEvidenceDetail.note.extractions[0].rawData,
+  ) as {
+    finalUrl?: string;
+    pageTitle?: string;
+    noteIdCandidates?: unknown[];
+    bodyCandidates?: unknown[];
+    topicCandidates?: unknown[];
+    imageCandidates?: unknown[];
+  };
+  expect(failedEvidence.finalUrl).toContain("/mock/xhs");
+  expect(failedEvidence.pageTitle).toBeTruthy();
+  expect(failedEvidence.noteIdCandidates).toBeInstanceOf(Array);
+  expect(failedEvidence.bodyCandidates).toBeInstanceOf(Array);
+  expect(failedEvidence.topicCandidates).toBeInstanceOf(Array);
+  expect(failedEvidence.imageCandidates).toBeInstanceOf(Array);
 
   const auditedDate = new Date(resultCoverage.items[0].auditedAt);
   const auditDay = [

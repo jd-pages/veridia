@@ -51,6 +51,9 @@ export function evaluateAudit(
   const missingTopics: string[] = [];
   const forbiddenTopics: string[] = [];
   const clickableChecks: boolean[] = [];
+  const technicalWarnings = new Set(note.technicalWarnings || []);
+  const bodyReadIncomplete = technicalWarnings.has("BODY_NOT_RECOGNIZED");
+  const topicsReadIncomplete = technicalWarnings.has("TOPICS_NOT_RECOGNIZED");
 
   const pagePassed = note.pageStatus === "NORMAL";
   evaluations.push({
@@ -136,6 +139,7 @@ export function evaluateAudit(
   const bodyPresent = Boolean(note.body && note.body.trim().length > 0);
   const effectiveBodyLength = countEffectiveBodyCharacters(note.body);
   const bodyPassed =
+    bodyReadIncomplete ||
     !context.bodyRequired ||
     (bodyPresent && effectiveBodyLength >= context.minBodyLength);
   evaluations.push({
@@ -277,7 +281,22 @@ export function evaluateAudit(
     },
   });
 
-  const activeRules = [...context.rules].sort((a, b) => a.sortOrder - b.sortOrder);
+  const activeRules = topicsReadIncomplete
+    ? []
+    : [...context.rules].sort((a, b) => a.sortOrder - b.sortOrder);
+  if (topicsReadIncomplete) {
+    evaluations.push({
+      ruleKey: "TOPIC_TECHNICAL_READ",
+      ruleName: "话题读取状态",
+      expectedValue: "读取页面中的要求话题及可点击状态",
+      actualValue: "未识别到话题，待人工确认",
+      passed: true,
+      evidence: {
+        technicalWarning: "TOPICS_NOT_RECOGNIZED",
+        detectedTopics: note.topics.map((topic) => topic.displayText),
+      },
+    });
+  }
   const anyRules = activeRules.filter((rule) => rule.ruleType === "ANY");
   const nonAnyRules = activeRules.filter((rule) => rule.ruleType !== "ANY");
 
@@ -418,10 +437,15 @@ export function evaluateAudit(
   // 蓝色可点击判断，避免把“缺少话题”误报为“可点击异常”。
   const clickableCompliant = clickableChecks.every(Boolean);
 
+  if (bodyReadIncomplete) failures.push("未提取到正文，需人工复核");
+  if (topicsReadIncomplete) failures.push("未识别到话题内容，需人工复核");
+
   let autoStatus: AuditEvaluation["autoStatus"] = "PASSED";
   if (!pagePassed) {
     autoStatus =
       note.pageStatus === "READ_FAILED" ? "READ_FAILED" : "NEEDS_REVIEW";
+  } else if (technicalWarnings.size > 0) {
+    autoStatus = "NEEDS_REVIEW";
   } else if (failures.length) {
     autoStatus = "FAILED";
   } else if (
