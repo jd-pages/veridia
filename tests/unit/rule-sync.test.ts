@@ -36,7 +36,7 @@ describe("GitHub 规则同步", () => {
     }
     expect(
       validateRulePayload(legacy).stageGroups.every(
-        (item) => item.requireBodyStage === true,
+        (item) => item.requireBodyStage === false,
       ),
     ).toBe(true);
   });

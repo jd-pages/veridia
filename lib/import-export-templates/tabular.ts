@@ -10,6 +10,13 @@ import {
 import { normalizeTemplateHeader } from "./validation";
 
 type Matrix = string[][];
+type ParsedMatrix = {
+  matrix: Matrix;
+  hyperlinks: Map<string, string>;
+};
+
+const cellKey = (rowIndex: number, columnIndex: number) =>
+  `${rowIndex}:${columnIndex}`;
 
 function csvMatrix(bytes: Uint8Array): Matrix {
   const source = Buffer.from(bytes).toString("utf8").replace(/^\uFEFF/u, "");
@@ -66,12 +73,13 @@ function excelCellText(cell: ExcelJS.Cell, preferHyperlink = false) {
   return cell.text.trim();
 }
 
-async function xlsxMatrix(bytes: Uint8Array): Promise<Matrix> {
+async function xlsxMatrix(bytes: Uint8Array): Promise<ParsedMatrix> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
   const sheet = workbook.worksheets[0];
   if (!sheet) throw new Error("无法读取表格：工作簿中没有工作表");
   const rows: Matrix = [];
+  const hyperlinks = new Map<string, string>();
   for (let rowNumber = 1; rowNumber <= sheet.rowCount; rowNumber += 1) {
     const row = sheet.getRow(rowNumber);
     const values: string[] = [];
@@ -80,22 +88,47 @@ async function xlsxMatrix(bytes: Uint8Array): Promise<Matrix> {
       columnNumber <= Math.max(sheet.columnCount, row.cellCount);
       columnNumber += 1
     ) {
-      values.push(excelCellText(row.getCell(columnNumber), true));
+      const cell = row.getCell(columnNumber);
+      values.push(excelCellText(cell));
+      if (
+        cell.value &&
+        typeof cell.value === "object" &&
+        "hyperlink" in cell.value &&
+        cell.value.hyperlink
+      ) {
+        hyperlinks.set(
+          cellKey(rowNumber - 1, columnNumber - 1),
+          String(cell.value.hyperlink).trim(),
+        );
+      }
     }
     rows.push(values);
   }
-  return rows;
+  return { matrix: rows, hyperlinks };
 }
 
-function legacyExcelMatrix(bytes: Uint8Array): Matrix {
+function legacyExcelMatrix(bytes: Uint8Array): ParsedMatrix {
   const workbook = XLSX.read(bytes, { type: "array", cellDates: true });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   if (!sheet) throw new Error("无法读取表格：工作簿中没有工作表");
-  return XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
     defval: "",
     raw: false,
   }).map((row) => row.map((value) => String(value ?? "").trim()));
+  const hyperlinks = new Map<string, string>();
+  const range = sheet["!ref"] ? XLSX.utils.decode_range(sheet["!ref"]) : null;
+  if (range) {
+    for (let row = range.s.r; row <= range.e.r; row += 1) {
+      for (let column = range.s.c; column <= range.e.c; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: column });
+        const target = (sheet[address] as { l?: { Target?: string } } | undefined)
+          ?.l?.Target;
+        if (target) hyperlinks.set(cellKey(row, column), target.trim());
+      }
+    }
+  }
+  return { matrix, hyperlinks };
 }
 
 function aliasIndex(templates: ImportExportTemplates) {
@@ -155,12 +188,12 @@ export async function parseTabularPreview(input: {
       `文件不能超过${Math.round(templates.dataValidation.maxFileBytes / 1024 / 1024)}MB`,
     );
   }
-  let matrix: Matrix;
+  let parsedMatrix: ParsedMatrix;
   try {
-    matrix =
+    parsedMatrix =
       sourceType === "CSV" ||
       sourceType === "TENCENT_DOCS_EXPORTED_CSV"
-        ? csvMatrix(bytes)
+        ? { matrix: csvMatrix(bytes), hyperlinks: new Map() }
         : sourceType === "EXCEL_XLS"
           ? legacyExcelMatrix(bytes)
           : await xlsxMatrix(bytes);
@@ -172,6 +205,7 @@ export async function parseTabularPreview(input: {
       `无法读取表格：${error instanceof Error ? error.message : "表格格式不支持"}`,
     );
   }
+  const { matrix, hyperlinks: cellHyperlinks } = parsedMatrix;
   const { rowIndex, aliases } = locateHeader(matrix, templates);
   const header = matrix[rowIndex];
   const recognizedFields: TabularPreview["recognizedFields"] = [];
@@ -215,8 +249,17 @@ export async function parseTabularPreview(input: {
     const sourceRow = matrix[index];
     if (!sourceRow.some((value) => value.trim())) continue;
     const values: TabularPreviewRow["values"] = {};
+    const rawValues: TabularPreviewRow["values"] = {};
+    const hyperlinks: TabularPreviewRow["values"] = {};
     for (const match of recognizedFields) {
-      values[match.field] = String(sourceRow[match.column - 1] || "").trim();
+      const rawValue = String(sourceRow[match.column - 1] || "").trim();
+      const hyperlink = cellHyperlinks.get(
+        cellKey(index, match.column - 1),
+      );
+      rawValues[match.field] = rawValue;
+      if (hyperlink) hyperlinks[match.field] = hyperlink;
+      values[match.field] =
+        match.field === "noteUrl" && hyperlink ? hyperlink : rawValue;
     }
     const errors = [...structuralErrors];
     for (const field of templates.requiredFields) {
@@ -224,7 +267,13 @@ export async function parseTabularPreview(input: {
         errors.push(`缺少必填字段：${displayName(templates, field)}`);
       }
     }
-    rows.push({ rowNumber: index + 1, values, errors: [...new Set(errors)] });
+    rows.push({
+      rowNumber: index + 1,
+      values,
+      rawValues,
+      hyperlinks,
+      errors: [...new Set(errors)],
+    });
   }
   if (!rows.length) throw new Error("未识别到有效数据行");
   const validCount = rows.filter((row) => row.errors.length === 0).length;

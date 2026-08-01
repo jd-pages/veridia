@@ -50,6 +50,7 @@ export function evaluateAudit(
   const failures: string[] = [];
   const missingTopics: string[] = [];
   const forbiddenTopics: string[] = [];
+  const clickableChecks: boolean[] = [];
 
   const pagePassed = note.pageStatus === "NORMAL";
   evaluations.push({
@@ -309,7 +310,6 @@ export function evaluateAudit(
     const clickable = match ? topicIsClickable(match) : false;
     const passed = present && (!clickableRequired || clickable);
     let failureReason: string | undefined;
-    const isStageTopic = rule.topicCategory === "PRODUCT_STAGE";
     if (!present) {
       const expectedBody = expected.replace(/^#/u, "");
       const nearMatch = note.topics.find((topic) => {
@@ -320,16 +320,14 @@ export function evaluateAudit(
             expectedBody.includes(actualBody))
         );
       });
-      failureReason = isStageTopic
-        ? nearMatch
-          ? `阶段话题文字不准确：要求 ${expected}，实际 ${normalizeTopic(nearMatch.displayText)}`
-          : `缺少阶段话题 ${expected}`
+      failureReason = nearMatch
+        ? `话题文字不准确：要求 ${expected}，实际 ${normalizeTopic(nearMatch.displayText)}`
         : `缺少精确话题 ${expected}`;
     } else if (clickableRequired && !clickable) {
-      failureReason = isStageTopic
-        ? `阶段话题 ${expected} 不可点击`
-        : `话题 ${expected} 不是有效的蓝色可点击话题`;
+      failureReason = `要求话题不可点击 ${expected}`;
     }
+
+    if (present && clickableRequired) clickableChecks.push(clickable);
 
     evaluations.push({
       ruleKey: `TOPIC_${rule.id}`,
@@ -367,12 +365,18 @@ export function evaluateAudit(
       },
     });
     if (!passed) {
-      missingTopics.push(expected);
+      if (!present) missingTopics.push(expected);
       if (failureReason) failures.push(failureReason);
     }
   }
 
   if (anyRules.length) {
+    for (const rule of anyRules) {
+      const topic = findExactTopic(note.topics, rule.topic, rule.caseSensitive);
+      if (topic && rule.clickableRequired) {
+        clickableChecks.push(topicIsClickable(topic));
+      }
+    }
     const matches = anyRules
       .map((rule) => ({
         rule,
@@ -410,10 +414,9 @@ export function evaluateAudit(
   const topicsCompliant =
     topicEvaluations.every((item) => item.passed) &&
     (bodyStageEvaluation?.passed ?? true);
-  const clickableEvaluations = topicEvaluations.filter((item) =>
-    item.expectedValue.includes("可点击"),
-  );
-  const clickableCompliant = clickableEvaluations.every((item) => item.passed);
+  // 目标话题缺失属于“话题存在性”问题。只有已出现的目标话题才参与
+  // 蓝色可点击判断，避免把“缺少话题”误报为“可点击异常”。
+  const clickableCompliant = clickableChecks.every(Boolean);
 
   let autoStatus: AuditEvaluation["autoStatus"] = "PASSED";
   if (!pagePassed) {

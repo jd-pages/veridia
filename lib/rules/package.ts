@@ -64,7 +64,7 @@ const payloadSchema = z.object({
       label: nonEmpty,
       canonicalStages: z.array(nonEmpty).min(1),
       bodyTerms: z.array(nonEmpty).min(1),
-      requireBodyStage: z.boolean().optional().default(true),
+      requireBodyStage: z.boolean().optional().default(false),
       requiredTopic: z.string().regex(/^#[^#\s]+$/u),
       sortOrder: z.number().int(),
       status: nonEmpty,

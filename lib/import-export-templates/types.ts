@@ -37,6 +37,7 @@ export type StandardField =
   | "remark"
   | "productCode"
   | "activityMonth"
+  | "contentChannel"
   | "specification"
   | "productStage"
   | "source"
@@ -56,7 +57,15 @@ export type StandardField =
   | "auditCreatedAt"
   | "auditCompletedAt"
   | "taskCreatedAt"
-  | "dateFilterBasis";
+  | "dateFilterBasis"
+  | "pageStatus"
+  | "bodyStatus"
+  | "topicsAuditResult"
+  | "autoAuditResult"
+  | "manualAuditResult"
+  | "finalAuditConclusion"
+  | "manualReviewComment"
+  | "auditTime";
 
 export interface ImportExportTemplates {
   schemaVersion: number;
@@ -111,6 +120,8 @@ export interface TemplateFieldMatch {
 export interface TabularPreviewRow {
   rowNumber: number;
   values: Partial<Record<StandardField, string>>;
+  rawValues?: Partial<Record<StandardField, string>>;
+  hyperlinks?: Partial<Record<StandardField, string>>;
   errors: string[];
 }
 

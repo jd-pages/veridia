@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import JSZip from "jszip";
 import packageJson from "@/package.json";
+import { ensureRuleDatabaseReady } from "@/lib/rules/database-preflight";
 import { exportCurrentRulePayload } from "@/lib/rules/package";
 import type { RulePackageManifest } from "@/lib/rules/types";
 
@@ -40,6 +41,17 @@ const privateKeyPath = path.resolve(
   required("VERIDIA_RULES_SIGNING_KEY_PATH"),
 );
 if (!fs.existsSync(privateKeyPath)) throw new Error("规则签名私钥文件不存在");
+
+try {
+  await ensureRuleDatabaseReady();
+} catch (error) {
+  console.error(
+    error instanceof Error
+      ? error.message
+      : "数据库结构检查失败，规则发布已停止。",
+  );
+  process.exit(1);
+}
 
 gh(["--version"]);
 gh(["auth", "status"]);

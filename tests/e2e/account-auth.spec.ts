@@ -176,6 +176,68 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
 
   await page.reload();
   await expect(page).toHaveURL(/\/dashboard$/u);
+
+  for (const label of [
+    "仪表盘",
+    "审核任务",
+    "审核结果",
+    "产品管理",
+    "活动管理",
+    "话题规则",
+    "导入记录",
+    "系统设置",
+  ]) {
+    await expect(page.getByText(label, { exact: true })).toBeVisible();
+  }
+
+  for (const endpoint of [
+    "/api/dashboard",
+    "/api/tasks",
+    "/api/results?pageSize=1",
+    "/api/products",
+    "/api/campaigns",
+    "/api/rules",
+    "/api/rule-stage-groups",
+    "/api/automation/batches",
+    "/api/automation/session",
+    "/api/browser/status",
+    "/api/imports",
+    "/api/settings",
+  ]) {
+    const response = await page.request.get(endpoint);
+    expect(response.status(), endpoint).toBe(200);
+    expect(response.headers()["content-type"], endpoint).toContain(
+      "application/json",
+    );
+    expect((await response.json()).success, endpoint).toBe(true);
+  }
+
+  const forbidden = await page.request.post("/api/products", {
+    data: { name: "审核员越权测试产品" },
+  });
+  expect(forbidden.status()).toBe(403);
+  expect(forbidden.headers()["content-type"]).toContain("application/json");
+  expect((await forbidden.json()).error).toBe(
+    "当前账号无此操作权限，请联系管理员。",
+  );
+
+  await page.goto("/tasks");
+  await expect(page.getByText("审核任务", { exact: true }).first()).toBeVisible();
+  await expect(page.locator("body")).not.toContainText(
+    "Unexpected end of JSON input",
+  );
+  await expect(page.locator("body")).not.toContainText("localhost:3100/mock");
+  await expect(
+    page.getByPlaceholder(/xiaohongshu\.com\/explore\/xxxx/u),
+  ).toBeVisible();
+
+  await page.goto("/products");
+  await expect(page.getByRole("heading", { name: "产品管理" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "新增产品" })).toHaveCount(0);
+  await page.goto("/campaigns");
+  await expect(page.getByRole("button", { name: "导入活动规则" })).toHaveCount(0);
+  await page.goto("/rules");
+  await expect(page.getByRole("button", { name: "新增规则" })).toHaveCount(0);
 });
 
 test("旧版 VRD1 激活码仍可使用原初始密码登录", async ({ page }) => {

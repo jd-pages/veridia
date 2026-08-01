@@ -39,6 +39,9 @@ function list(value: string, separator: string) {
 
 export function auditResultToExportRecord(row: {
   autoStatus: string;
+  pageStatus: string;
+  bodyStatus: string;
+  topicsCompliant: boolean;
   failureReasons: string;
   ruleVersion: number;
   rulePackageVersion: string | null;
@@ -95,9 +98,9 @@ export function auditResultToExportRecord(row: {
     : requiresManualReview
       ? "待人工复核"
       : "无需复核";
-  const bodyStageRequired = bodyStageRequiredFromRuleSnapshot(
-    row.ruleSnapshot,
-  );
+  const bodyStageRequired =
+    bodyStageRequiredFromRuleSnapshot(row.ruleSnapshot) ||
+    row.ruleResults.some((rule) => /正文段位/u.test(rule.ruleName));
   const bodyStage = bodyStageRequired
     ? detectBodyProductStages(
         row.note.body,
@@ -105,6 +108,17 @@ export function auditResultToExportRecord(row: {
       )
     : null;
   const failureReasonList = list(row.failureReasons, separator);
+  const autoAuditResult = businessStatusLabel(row.autoStatus, "audit");
+  const manualAuditResult = manual
+    ? businessStatusLabel(manual.result, "audit")
+    : "";
+  const finalAuditConclusion = manualAuditResult || autoAuditResult;
+  const bodyStatus =
+    row.bodyStatus === "PRESENT"
+      ? "正文存在"
+      : row.bodyStatus === "EMPTY"
+        ? "正文为空"
+        : "未提取到正文 / 待人工确认";
   return {
     noteUrl: row.note.finalUrl || row.note.url,
     originalUrl: row.task.url,
@@ -134,11 +148,14 @@ export function auditResultToExportRecord(row: {
     topicTags: row.note.topics
       .map((topic) => topic.displayText)
       .join(separator),
+    pageStatus: businessStatusLabel(row.pageStatus),
+    bodyStatus,
+    topicsAuditResult: row.topicsCompliant ? "合规" : "不合规",
     auditStatus: businessStatusLabel(row.task.status, "process"),
-    auditResult: businessStatusLabel(
-      manual?.result || row.autoStatus,
-      "audit",
-    ),
+    auditResult: finalAuditConclusion,
+    autoAuditResult,
+    manualAuditResult,
+    finalAuditConclusion,
     exceptionCategory: row.task.failureCode
       ? businessFailureReasonLabel(row.task.failureCode)
       : "无异常",
@@ -147,9 +164,11 @@ export function auditResultToExportRecord(row: {
       businessFailureReasonLabel(row.task.failureMessage || ""),
     needsManualReview: requiresManualReview ? "是" : "否",
     manualReviewStatus,
+    manualReviewComment: manual?.comment || "",
     attemptCount: row.task.attempts,
     auditCreatedAt: row.createdAt,
     auditCompletedAt: row.auditedAt,
+    auditTime: row.auditedAt,
     taskCreatedAt: row.task.createdAt,
     dateFilterBasis:
       options?.dateType === "CREATED_AT"

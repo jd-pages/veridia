@@ -35,7 +35,9 @@ export function getTopicAuditSummary(row: ResultRow) {
   const required = expectedTopics(row.ruleSnapshot);
   const actual = row.note.topics.map((topic) => normalizeTopic(topic.displayText));
   const matched = required.filter((topic) => actual.includes(topic));
-  const missing = parseJsonArray(row.missingTopics);
+  const missing = parseJsonArray(row.missingTopics).filter(
+    (expected) => !actual.includes(normalizeTopic(expected)),
+  );
   const forbidden = parseJsonArray(row.forbiddenTopics);
   const unclickable = required.filter((expected) => {
     const topic = row.note.topics.find(
@@ -115,9 +117,11 @@ export default function TopicAuditCell({ row }: { row: ResultRow }) {
           </Tag>
         </div>
         <div className={styles.cellSecondary}>
-          {row.clickableCompliant
-            ? "全部可点击"
-            : `不可点击 ${Math.max(summary.unclickable.length, 1)} 个`}
+          {summary.missing.length
+            ? "要求话题缺失，可点击不适用"
+            : row.clickableCompliant
+              ? "全部可点击"
+              : `不可点击 ${Math.max(summary.unclickable.length, 1)} 个`}
         </div>
         {summary.missing.length ? (
           <div className={styles.cellSecondary}>

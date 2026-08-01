@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/db";
+import { getAuditContext } from "@/lib/audit-service";
 import {
   pageStatusForProcessingFailure,
   processingFailureReason,
@@ -34,6 +35,16 @@ export async function recordProcessingFailureResult(input: {
     input.failureMessage,
   );
   const finishedAt = input.finishedAt || new Date();
+  const taskScope = await prisma.auditTask.findUnique({
+    where: { id: input.taskId },
+    select: { productId: true, campaignId: true, productStage: true },
+  });
+  if (!taskScope) throw new Error("审核任务不存在");
+  const currentContext = await getAuditContext(
+    taskScope.productId,
+    taskScope.campaignId,
+    taskScope.productStage,
+  );
 
   return prisma.$transaction(async (tx) => {
     const task = await tx.auditTask.findUnique({
@@ -92,13 +103,8 @@ export async function recordProcessingFailureResult(input: {
     });
 
     const snapshot = JSON.stringify({
-      campaignId: task.campaignId,
-      campaignName: task.campaign.name,
-      productId: task.productId,
+      ...currentContext,
       productName: task.product.name,
-      productStage: task.productStage,
-      ruleVersion: task.campaign.ruleVersion,
-      rulePackageVersion: task.rulePackageVersion,
       processingFailure: {
         code: input.failureCode,
         taskStatus: input.status,
@@ -107,9 +113,9 @@ export async function recordProcessingFailureResult(input: {
     });
     const resultData = {
       noteId: note.id,
-      ruleVersion: task.campaign.ruleVersion,
+      ruleVersion: currentContext.ruleVersion,
       softwareVersion: task.softwareVersion || "unknown",
-      rulePackageVersion: task.rulePackageVersion,
+      rulePackageVersion: currentContext.rulePackageVersion,
       ruleSnapshot: snapshot,
       pageStatus: pageStatusForProcessingFailure(input.failureCode),
       bodyStatus: "UNKNOWN",

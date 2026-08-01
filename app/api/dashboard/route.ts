@@ -1,8 +1,9 @@
 import dayjs from "dayjs";
 import { prisma } from "@/lib/db";
-import { ok, requireApiUser } from "@/lib/api";
+import { ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
+import { parseStoredStringArray } from "@/lib/stored-json";
 
-export async function GET() {
+export const GET = withApiErrorBoundary(async function GET() {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   const start = dayjs().startOf("month").toDate();
@@ -28,7 +29,7 @@ export async function GET() {
   };
   const reasonMap = new Map<string, number>();
   for (const result of results) {
-    for (const reason of JSON.parse(result.failureReasons) as string[]) {
+    for (const reason of parseStoredStringArray(result.failureReasons)) {
       if (/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(reason)) {
         continue;
       }
@@ -44,4 +45,4 @@ export async function GET() {
     passRate: counts.total ? Math.round((counts.passed / counts.total) * 1000) / 10 : 0,
     reasonRanking,
   });
-}
+}, "读取仪表盘");

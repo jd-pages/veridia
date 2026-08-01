@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
-import { fail, ok, requireApiUser } from "@/lib/api";
+import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 
-export async function GET(request: Request) {
+export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
@@ -24,9 +24,9 @@ export async function GET(request: Request) {
     orderBy: { updatedAt: "desc" },
   });
   return ok(products);
-}
+}, "读取产品列表");
 
-export async function POST(request: Request) {
+export const POST = withApiErrorBoundary(async function POST(request: Request) {
   const user = await requireApiUser(["ADMIN"]);
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
@@ -71,4 +71,4 @@ export async function POST(request: Request) {
   } catch {
     return fail("产品编码已存在或数据无效");
   }
-}
+}, "新增产品");

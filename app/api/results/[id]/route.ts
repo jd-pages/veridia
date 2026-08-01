@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
+import { normalizeProductStageTopicValue } from "@/lib/product-stage";
 
 export async function GET(
   _request: Request,
@@ -27,6 +28,21 @@ export async function GET(
     },
   });
   if (!result) return fail("审核结果不存在", 404);
+  const normalizedStage = normalizeProductStageTopicValue(
+    result.task.productStage,
+  );
+  const currentStageGroup = normalizedStage
+    ? await prisma.ruleStageGroup.findUnique({
+        where: { key: normalizedStage },
+        select: {
+          key: true,
+          label: true,
+          requiredTopic: true,
+          requireBodyStage: true,
+          ruleVersion: true,
+        },
+      })
+    : null;
   const operationLogs = await prisma.operationLog.findMany({
     where: {
       OR: [
@@ -38,5 +54,5 @@ export async function GET(
     include: { user: { select: { displayName: true } } },
     orderBy: { createdAt: "desc" },
   });
-  return ok({ ...result, operationLogs });
+  return ok({ ...result, currentStageGroup, operationLogs });
 }

@@ -38,8 +38,11 @@ describe("自动批量审核提取分类", () => {
 });
 
 describe("小红书页面与短链接分类", () => {
-  it("识别 xhslink.com 短链接和真实笔记详情链接", () => {
+  it("识别 xhslink.com、xhslink.cn 短链接和真实笔记详情链接", () => {
     expect(isShortXiaohongshuUrl("http://xhslink.com/o/6c1AI7QAhyf")).toBe(
+      true,
+    );
+    expect(isShortXiaohongshuUrl("http://xhslink.cn/o/1JLlTKa04Vv")).toBe(
       true,
     );
     expect(

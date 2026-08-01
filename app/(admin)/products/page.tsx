@@ -26,6 +26,7 @@ import type { UploadProps } from "antd";
 import PageHeader from "@/components/PageHeader";
 import StatusTag from "@/components/StatusTag";
 import { apiFetch } from "@/lib/client";
+import type { SessionUser } from "@/lib/auth";
 
 interface Product {
   id: string;
@@ -51,6 +52,10 @@ export default function ProductsPage() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [form] = Form.useForm();
   const importRef = useRef<HTMLInputElement>(null);
+  const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
+    null,
+  );
+  const isAdmin = currentRole === "ADMIN";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,6 +74,9 @@ export default function ProductsPage() {
 
   useEffect(() => {
     void load();
+    void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
+      setCurrentRole(user?.role || null),
+    );
   }, [load]);
 
   const uploadProps: UploadProps = {
@@ -96,26 +104,30 @@ export default function ProductsPage() {
         description="产品主数据、品牌信息与运营常用别名统一维护"
         actions={
           <Space>
-            <Upload {...uploadProps}>
-              <Button icon={<UploadOutlined />}>Excel 导入</Button>
-            </Upload>
+            {isAdmin && (
+              <Upload {...uploadProps}>
+                <Button icon={<UploadOutlined />}>Excel 导入</Button>
+              </Upload>
+            )}
             <Button
               icon={<DownloadOutlined />}
               onClick={() => window.open("/api/products/excel", "_blank")}
             >
               导出
             </Button>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => {
-                setEditing(null);
-                setOpen(true);
-                window.setTimeout(() => form.resetFields(), 0);
-              }}
-            >
-              新增产品
-            </Button>
+            {isAdmin && (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  setEditing(null);
+                  setOpen(true);
+                  window.setTimeout(() => form.resetFields(), 0);
+                }}
+              >
+                新增产品
+              </Button>
+            )}
           </Space>
         }
       />
@@ -179,7 +191,7 @@ export default function ProductsPage() {
               key: "actions",
               fixed: "right",
               width: 150,
-              render: (_value, row) => (
+              render: (_value, row) => isAdmin ? (
                 <Space size={4}>
                   <Button
                     type="link"
@@ -214,7 +226,7 @@ export default function ProductsPage() {
                     </Popconfirm>
                   ) : null}
                 </Space>
-              ),
+              ) : <Tag>只读</Tag>,
             },
           ]}
           pagination={{ pageSize: 10, showSizeChanger: true }}

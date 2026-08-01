@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
-import { isSupportedNoteUrl, normalizeUrl } from "@/lib/topic";
-import { fail, ok, requireApiUser } from "@/lib/api";
+import { extractSupportedNoteUrls, isSupportedNoteUrl, normalizeUrl } from "@/lib/topic";
+import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import {
   compatibleStageRuleValues,
   normalizeProductStageTopicValue,
@@ -8,7 +8,7 @@ import {
 import packageJson from "@/package.json";
 import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
 
-export async function GET(request: Request) {
+export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
@@ -25,9 +25,9 @@ export async function GET(request: Request) {
     take: 100,
   });
   return ok(tasks);
-}
+}, "读取审核任务");
 
-export async function POST(request: Request) {
+export const POST = withApiErrorBoundary(async function POST(request: Request) {
   const user = await requireApiUser(["ADMIN", "OPERATOR"]);
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
@@ -75,10 +75,7 @@ export async function POST(request: Request) {
     return fail("请选择活动支持的产品阶段话题");
   }
 
-  const rawUrls = Array.isArray(body.urls)
-    ? body.urls
-    : String(body.urls || "").split(/\r?\n/);
-  const uniqueUrls = [...new Set(rawUrls.map((item) => item.trim()).filter(Boolean))];
+  const uniqueUrls = extractSupportedNoteUrls(body.urls || []);
   const created = [];
   const syncState = await prisma.ruleSyncState.findUnique({
     where: { id: "active" },
@@ -125,4 +122,4 @@ export async function POST(request: Request) {
     },
   });
   return ok({ created, errors });
-}
+}, "创建审核任务");

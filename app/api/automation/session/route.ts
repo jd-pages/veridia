@@ -1,17 +1,17 @@
-import { fail, ok, requireApiUser } from "@/lib/api";
+import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import {
   completeXiaohongshuLogin,
   getAutomationSession,
   startXiaohongshuLogin,
 } from "@/lib/automation/browser";
 
-export async function GET() {
+export const GET = withApiErrorBoundary(async function GET() {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   return ok(await getAutomationSession());
-}
+}, "读取小红书浏览器状态");
 
-export async function POST(request: Request) {
+export const POST = withApiErrorBoundary(async function POST(request: Request) {
   const user = await requireApiUser(["ADMIN", "OPERATOR"]);
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
@@ -26,8 +26,11 @@ export async function POST(request: Request) {
     }
     return fail("不支持的登录操作");
   } catch (error) {
+    console.error("[VERIDIA API] 小红书专用浏览器操作失败", error);
     return fail(
-      error instanceof Error ? error.message : "专用浏览器登录操作失败",
+      "小红书专用浏览器操作失败，请完全退出并重启 VERIDIA 后再试。",
+      500,
+      "BROWSER_OPERATION_FAILED",
     );
   }
-}
+}, "操作小红书专用浏览器");

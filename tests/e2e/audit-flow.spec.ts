@@ -66,7 +66,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const ruleStatusAfter = await page.request.get("/api/rule-sync/status");
   const afterRules = (await ruleStatusAfter.json()).data;
   if (appliedRuleSync.ok()) {
-    expect(afterRules.currentVersion).toBe("rules-2026.07.29.1");
+    expect(afterRules.currentVersion).toBe(afterRules.latestVersion);
+    expect(afterRules.currentVersion).toMatch(/^rules-\d{4}\.\d{2}\.\d{2}\.\d+$/u);
     expect(afterRules.source).toBe("GITHUB");
   } else {
     expect(afterRules.currentVersion).toBe(beforeRules.currentVersion);
@@ -158,10 +159,15 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(page.getByRole("heading", { name: "审核详情" })).toBeVisible();
   await expect(page.getByText(product.name, { exact: true }).first()).toBeVisible();
 
-  const exportResponse = await page.request.get("/api/results/export?status=PASSED");
+  const exportResponse = await page.request.get(
+    `/api/results/export?ids=${auditResult.id}`,
+  );
   expect(exportResponse.ok()).toBeTruthy();
   expect(exportResponse.headers()["content-type"]).toContain(
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  expect(exportResponse.headers()["content-disposition"]).toMatch(
+    /VERIDIA%E5%AE%A1%E6%A0%B8%E7%BB%93%E6%9E%9C_%E5%BD%93%E5%89%8D%E7%AD%9B%E9%80%89_\d{4}-\d{2}-\d{2}\.xlsx/u,
   );
   const exportWorkbook = new ExcelJS.Workbook();
   await exportWorkbook.xlsx.load(
@@ -178,6 +184,10 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(exportHeaders).toContain("任务来源");
   expect(exportHeaders).not.toContain("图片URL");
   const exportSheet = exportWorkbook.worksheets[0];
+  expect(exportSheet.rowCount - 1).toBe(
+    Number(exportResponse.headers()["x-veridia-export-count"]),
+  );
+  expect(exportSheet.rowCount).toBeGreaterThan(1);
   const resultColumn = exportHeaders.indexOf("审核结果") + 1;
   const sourceColumn = exportHeaders.indexOf("任务来源") + 1;
   const exportedStatuses = exportSheet
@@ -189,11 +199,25 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     .values.slice(2)
     .map(String);
   expect(exportedStatuses).not.toContain("PASSED");
-  expect(exportedStatuses.every((value) => value === "审核通过")).toBeTruthy();
+  expect(exportedStatuses).toHaveLength(1);
+  expect(exportedStatuses[0]).toMatch(/审核通过|审核不通过|待人工复核/u);
   expect(exportedSources).not.toContain("MANUAL");
 
+  const emptyExportResponse = await page.request.get(
+    `/api/results/export?keyword=no-export-${suffix}`,
+  );
+  expect(emptyExportResponse.status()).toBe(404);
+  expect(await emptyExportResponse.json()).toMatchObject({
+    success: false,
+    error: "当前筛选无结果，未生成文件",
+    errorDetail: {
+      code: "NO_EXPORT_RESULTS",
+      message: "当前筛选无结果，未生成文件",
+    },
+  });
+
   const csvExportResponse = await page.request.get(
-    "/api/results/export?status=PASSED&format=csv",
+    `/api/results/export?ids=${auditResult.id}&format=csv`,
   );
   expect(csvExportResponse.ok()).toBeTruthy();
   expect(csvExportResponse.headers()["content-type"]).toContain("text/csv");
@@ -231,26 +255,33 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "活动名称",
     "活动月份",
     "产品阶段话题",
+    "内容渠道",
     "备注",
   ]);
   sheet.addRow([
-    `${E2E_ORIGIN}/mock/xhs?case=no-images&e2e-import=${suffix}`,
+    `标题 + ${E2E_ORIGIN}/mock/xhs?case=no-images&e2e-import=${suffix} + 说明文字`,
     product.code,
     product.name,
     campaign.name,
     campaign.month,
     "2段",
+    "小红书",
     "E2E Excel 无图片但继续审核",
   ]);
-  sheet.addRow([
-    `${E2E_ORIGIN}/mock/xhs?case=read-failed&e2e-import=${suffix}-failure`,
+  const hyperlinkImportRow = sheet.addRow([
+    "点击打开小红书笔记",
     product.code,
     product.name,
     campaign.name,
     campaign.month,
     "2段",
+    "小红书",
     "E2E Excel 单条失败",
   ]);
+  hyperlinkImportRow.getCell(1).value = {
+    text: "点击打开小红书笔记",
+    hyperlink: `${E2E_ORIGIN}/mock/xhs?case=read-failed&e2e-import=${suffix}-failure`,
+  };
   sheet.addRow([
     `${E2E_ORIGIN}/mock/xhs?case=passed&e2e-import=${suffix}-after-failure`,
     product.code,
@@ -258,7 +289,18 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     campaign.name,
     campaign.month,
     "2段",
+    "",
     "E2E Excel 后续成功",
+  ]);
+  sheet.addRow([
+    "https://www.douyin.com/video/123456",
+    product.code,
+    product.name,
+    campaign.name,
+    campaign.month,
+    "2段",
+    "抖音",
+    "E2E 不支持平台不影响其他行",
   ]);
   const excel = Buffer.from(await workbook.xlsx.writeBuffer());
   const importResponse = await page.request.post("/api/import/notes", {
@@ -274,7 +316,29 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     },
   });
   expect(importResponse.ok()).toBeTruthy();
-  expect((await importResponse.json()).data.validCount).toBe(3);
+  const importPreview = (await importResponse.json()).data as {
+    validCount: number;
+    invalidCount: number;
+    rows: Array<{
+      originalLinkContent: string;
+      url: string;
+      recognitionStatus: string;
+      failureReason: string;
+    }>;
+  };
+  expect(importPreview.validCount).toBe(3);
+  expect(importPreview.invalidCount).toBe(1);
+  expect(importPreview.rows[0].url).toContain("case=no-images");
+  expect(importPreview.rows[0].originalLinkContent).toContain("标题 +");
+  expect(importPreview.rows[1]).toMatchObject({
+    originalLinkContent: "点击打开小红书笔记",
+    recognitionStatus: "RECOGNIZED",
+  });
+  expect(importPreview.rows[1].url).toContain("case=read-failed");
+  expect(importPreview.rows[3]).toMatchObject({
+    recognitionStatus: "UNSUPPORTED",
+    failureReason: "内容渠道为抖音，暂不支持小红书自动审核",
+  });
 
   const committedImportResponse = await page.request.post("/api/import/notes", {
     multipart: {
@@ -519,10 +583,42 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const failedResult = resultCoverage.items.find(
     (item) => item.task.status === "READ_FAILED",
   );
+  expect(failedResult).toBeTruthy();
   await expect(
-    page.locator(`a[href="/results/${failedResult?.id}"]`).first(),
+    page.locator(`a[href="/results/${failedResult!.id}"]`).first(),
   ).toBeVisible();
-
+  const failedDetailResponse = await page.request.get(
+    `/api/results/${failedResult!.id}`,
+  );
+  expect(failedDetailResponse.ok()).toBeTruthy();
+  const failedDetail = (await failedDetailResponse.json()).data as {
+    bodyStatus: string;
+    autoStatus: string;
+    ruleSnapshot: string;
+  };
+  const failedSnapshot = JSON.parse(failedDetail.ruleSnapshot) as {
+    bodyStageRequired?: boolean;
+    rules?: Array<{ topic: string; topicCategory?: string }>;
+  };
+  expect(failedDetail.bodyStatus).toBe("UNKNOWN");
+  expect(failedDetail.autoStatus).toBe("NEEDS_REVIEW");
+  expect(failedSnapshot.bodyStageRequired).toBe(false);
+  expect(
+    failedSnapshot.rules?.some(
+      (rule) =>
+        rule.topicCategory === "PRODUCT_STAGE" &&
+        rule.topic === "#二段奶粉推荐",
+    ),
+  ).toBe(true);
+  await page.goto(`/results/${failedResult!.id}`);
+  await expect(
+    page.getByText("未提取到正文 / 待人工确认").first(),
+  ).toBeVisible();
+  await expect(page.getByText("正文段位校验", { exact: true })).toBeVisible();
+  await expect(page.getByText("不参与审核", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("#二段奶粉推荐", { exact: true }).first(),
+  ).toBeVisible();
   const imageStateBatchResponse = await page.request.post(
     "/api/automation/batches",
     {
@@ -674,4 +770,63 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(extensionResponse.ok()).toBeTruthy();
   expect(extensionResponse.headers()["access-control-allow-origin"]).toBe("*");
   expect((await extensionResponse.json()).data.autoStatus).toBe("FAILED");
+
+  const sharedDiscoveryUrl =
+    "https://www.xiaohongshu.com/discovery/item/6a4867200000000011007d92?source=webshare&xhsshare=pc_web&xsec_token=e2e-token=&xsec_source=pc_share";
+  const sharedExploreUrl =
+    "https://www.xiaohongshu.com/explore/6a461e7600000000160272d2?xsec_token=e2e-app-token=&shareRedId=e2e-red&share_id=e2e-share&appuid=e2e-user&xhsshare=CopyLink";
+  const linkFormatResponse = await page.request.post("/api/automation/batches", {
+    data: {
+      name: "E2E 小红书分享链接识别",
+      productId: product.id,
+      campaignId: campaign.id,
+      productStage: "IFFO_2",
+      urls: [
+        `标题 + 分享码 ABC123 ${sharedDiscoveryUrl}`,
+        sharedExploreUrl,
+        "App 分享 http://xhslink.com/o/e2e-short 复制后打开小红书",
+        "http://xhslink.cn/o/e2e-short-cn",
+        `重复 ${sharedDiscoveryUrl}`,
+        "无效说明文字",
+      ].join("\n"),
+    },
+  });
+  expect(linkFormatResponse.ok()).toBeTruthy();
+  const linkFormat = (await linkFormatResponse.json()).data as {
+    batchId: string;
+    created: number;
+    recognizedCount: number;
+    deduplicatedCount: number;
+    duplicateCount: number;
+    unrecognized: Array<{ reason: string }>;
+  };
+  expect(linkFormat).toMatchObject({
+    created: 4,
+    recognizedCount: 5,
+    deduplicatedCount: 4,
+    duplicateCount: 1,
+  });
+  expect(linkFormat.unrecognized).toEqual(
+    expect.arrayContaining([expect.objectContaining({ reason: "未识别到链接" })]),
+  );
+  await page.request.post(`/api/automation/batches/${linkFormat.batchId}/control`, {
+    data: { action: "CANCEL" },
+  });
+  const linkBatch = (
+    (await (await page.request.get("/api/automation/batches")).json()).data as Array<{
+      id: string;
+      tasks: Array<{ url: string; originalInput?: string | null }>;
+    }>
+  ).find((item) => item.id === linkFormat.batchId);
+  expect(linkBatch?.tasks.map((task) => task.url)).toEqual(
+    expect.arrayContaining([
+      sharedDiscoveryUrl,
+      sharedExploreUrl,
+      "http://xhslink.com/o/e2e-short",
+      "http://xhslink.cn/o/e2e-short-cn",
+    ]),
+  );
+  expect(linkBatch?.tasks.every((task) => task.originalInput?.includes("ABC123"))).toBe(
+    true,
+  );
 });

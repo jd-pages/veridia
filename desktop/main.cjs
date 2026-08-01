@@ -26,6 +26,7 @@ const {
   validateDataDirectory,
   writeDataLocation,
 } = require("./data-location.cjs");
+const { createExportSaveHandler } = require("./export-save.cjs");
 
 const APP_NAME = "VERIDIA";
 const PORT = 3100;
@@ -855,6 +856,18 @@ function registerIpc() {
   );
   ipcMain.handle("veridia:clear-persistent-session", () =>
     clearPersistentSession(),
+  );
+  ipcMain.removeHandler("veridia:save-export-file");
+  ipcMain.handle(
+    "veridia:save-export-file",
+    createExportSaveHandler({
+      app,
+      dialog,
+      fs,
+      path,
+      getWindow: () => mainWindow,
+      writeLog,
+    }),
   );
 }
 

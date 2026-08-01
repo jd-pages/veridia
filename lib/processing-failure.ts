@@ -24,6 +24,13 @@ export function processingFailureReason(
   code: string | null,
   message: string | null,
 ) {
+  if (
+    code === "STRUCTURE_MISMATCH" &&
+    message &&
+    /没有提取到标题或正文|未提取到标题或正文/u.test(message)
+  ) {
+    return "页面结构异常，未提取到标题或正文，请人工确认。";
+  }
   const reasons: Record<string, string> = {
     PAGE_NOT_FOUND: "当前笔记无法浏览：页面不存在，需人工确认",
     NOTE_DELETED: "当前笔记无法浏览：笔记已删除，需人工确认",
@@ -32,7 +39,7 @@ export function processingFailureReason(
     LOGIN_REQUIRED: "小红书需要登录，需重新登录后人工确认",
     SECURITY_CHECK: "页面进入安全验证，需人工确认",
     SECURITY_VERIFICATION: "页面进入安全验证，需人工确认",
-    REDIRECT_FAILED: "链接解析失败，需人工确认",
+    REDIRECT_FAILED: "短链接未跳转到小红书笔记详情页，请人工复核。",
     LOAD_TIMEOUT: "小红书页面打开超时，需人工确认",
     STRUCTURE_MISMATCH: "页面主体结构异常，需人工确认",
     NETWORK_ERROR: "小红书页面打开失败，需人工确认",

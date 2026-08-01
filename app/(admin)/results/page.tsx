@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   App,
   Button,
@@ -48,6 +48,10 @@ import type {
   ResultSummary,
 } from "@/components/results/types";
 import { apiFetch } from "@/lib/client";
+import {
+  exportResultFile,
+  ResultExportError,
+} from "@/lib/result-export-client";
 import { productStageTopicLabel } from "@/lib/product-stage";
 import type { SessionUser } from "@/lib/auth";
 import styles from "@/components/results/results-workbench.module.css";
@@ -127,7 +131,13 @@ function ContentStatusCell({ row }: { row: ResultRow }) {
       <AuditStatusTag value={row.pageStatus} label={pageLabel} />
       <AuditStatusTag
         value={row.bodyStatus}
-        label={row.bodyStatus === "PRESENT" ? "正文存在" : "正文为空"}
+        label={
+          row.bodyStatus === "PRESENT"
+            ? "正文存在"
+            : row.bodyStatus === "UNKNOWN"
+              ? "未提取到正文 / 待人工确认"
+              : "正文为空"
+        }
       />
       <AuditStatusTag value={row.noteType} />
       <AuditStatusTag
@@ -172,6 +182,8 @@ export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<React.Key[]>([]);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const exportLockRef = useRef(false);
   const [drawerRow, setDrawerRow] = useState<ResultRow | null>(null);
   const [drawerDetail, setDrawerDetail] = useState<ResultDetail | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
@@ -325,30 +337,50 @@ export default function ResultsPage() {
   exportQuery.delete("page");
   exportQuery.delete("pageSize");
 
+  const runExport = useCallback(
+    async (query: URLSearchParams) => {
+      if (exportLockRef.current) return;
+      exportLockRef.current = true;
+      setExporting(true);
+      try {
+        const outcome = await exportResultFile(query);
+        if (outcome.canceled) {
+          message.info("已取消保存");
+        } else if (outcome.saved) {
+          message.success(`导出成功，共 ${outcome.count} 条`);
+        }
+      } catch (error) {
+        if (
+          error instanceof ResultExportError &&
+          error.code === "NO_EXPORT_RESULTS"
+        ) {
+          message.warning("当前筛选无结果，未生成文件");
+        } else {
+          message.error(error instanceof Error ? error.message : "导出失败");
+        }
+      } finally {
+        exportLockRef.current = false;
+        setExporting(false);
+      }
+    },
+    [message],
+  );
+
+  const exportCurrent = () => {
+    if (data.total < 1) {
+      message.warning("当前筛选无结果，未生成文件");
+      return;
+    }
+    void runExport(exportQuery);
+  };
+
   const exportSelected = () => {
-    const selectedRows = data.items.filter((row) => selected.includes(row.id));
-    if (!selectedRows.length) {
+    if (!selected.length) {
       message.warning("请先选择审核结果");
       return;
     }
-    selectedRows.forEach((row, index) => {
-      window.setTimeout(() => {
-        const query = new URLSearchParams({
-          keyword: row.note.platformNoteId || row.note.url,
-        });
-        const link = document.createElement("a");
-        link.href = `/api/results/export?${query}`;
-        link.target = "_blank";
-        link.rel = "noreferrer";
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-      }, index * 180);
-    });
-    message.success(
-      selectedRows.length === 1
-        ? "已开始导出所选结果"
-        : `已开始逐条导出 ${selectedRows.length} 个结果文件`,
+    void runExport(
+      new URLSearchParams({ ids: selected.map(String).join(",") }),
     );
   };
 
@@ -420,12 +452,8 @@ export default function ResultsPage() {
       key: "export",
       icon: <DownloadOutlined />,
       label: "导出单条",
-      onClick: () => {
-        const query = new URLSearchParams({
-          keyword: row.note.platformNoteId || row.note.url,
-        });
-        window.open(`/api/results/export?${query}`, "_blank");
-      },
+      onClick: () =>
+        void runExport(new URLSearchParams({ ids: row.id })),
     },
     {
       key: "raw",
@@ -544,37 +572,15 @@ export default function ResultsPage() {
                 刷新数据
               </Button>
               {canOperate && (
-                <Dropdown
-                  menu={{
-                    items: [
-                      {
-                        key: "xlsx",
-                        label: "导出 Excel",
-                        onClick: () =>
-                          window.open(
-                            `/api/results/export?${exportQuery}&format=xlsx`,
-                            "_blank",
-                          ),
-                      },
-                      {
-                        key: "csv",
-                        label: "导出 CSV",
-                        onClick: () =>
-                          window.open(
-                            `/api/results/export?${exportQuery}&format=csv`,
-                            "_blank",
-                          ),
-                      },
-                    ],
-                  }}
+                <Button
+                  className={styles.secondaryButton}
+                  icon={<DownloadOutlined />}
+                  loading={exporting}
+                  disabled={exporting}
+                  onClick={exportCurrent}
                 >
-                  <Button
-                    className={styles.secondaryButton}
-                    icon={<DownloadOutlined />}
-                  >
-                    导出当前结果
-                  </Button>
-                </Dropdown>
+                  {exporting ? "导出中..." : "导出当前结果"}
+                </Button>
               )}
             </div>
           }

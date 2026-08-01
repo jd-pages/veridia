@@ -1,12 +1,12 @@
 import { prisma } from "@/lib/db";
-import { fail, ok, requireApiUser } from "@/lib/api";
+import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
 import {
   buildAuditResultWhere,
   readResultQueryFilters,
 } from "@/lib/result-query";
 
-export async function GET(request: Request) {
+export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
@@ -43,4 +43,4 @@ export async function GET(request: Request) {
     }),
   ]);
   return ok({ total, page, pageSize, items });
-}
+}, "读取审核结果");

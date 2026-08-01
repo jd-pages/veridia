@@ -43,13 +43,20 @@ test("正式版任务和设置页面不显示测试链接或内部配置", async
   ).json()).data as { accountId: string };
 
   await page.goto("/tasks");
-  await expect(
-    page.getByPlaceholder("每行粘贴一个小红书笔记链接"),
-  ).toBeVisible();
+  const linkInput = page.getByPlaceholder(/xiaohongshu\.com\/explore\/xxxx/u);
+  await expect(linkInput).toBeVisible();
   await expect(page.getByText("默认填充", { exact: true })).toHaveCount(0);
+  await expect(linkInput).toHaveValue("");
+  expect(await linkInput.getAttribute("placeholder")).not.toContain(
+    "localhost:3100/mock",
+  );
+  expect(await linkInput.getAttribute("placeholder")).toContain("xhslink.cn/o/xxxx");
+  await linkInput.fill(
+    "分享说明 http://xhslink.com/o/share-one\nhttp://xhslink.cn/o/share-two\n重复 http://xhslink.com/o/share-one",
+  );
   await expect(
-    page.getByPlaceholder("每行粘贴一个小红书笔记链接"),
-  ).toHaveValue("");
+    page.getByText(/识别到 3 条有效链接，去重后 2 条/u),
+  ).toBeVisible();
 
   await page.goto("/settings");
   await expect(page.getByText("账号标识", { exact: true }).first()).toBeVisible();

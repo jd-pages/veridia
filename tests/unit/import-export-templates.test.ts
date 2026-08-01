@@ -91,12 +91,13 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("腾讯文档");
     sheet.addRow(["导出时间：2026-07-30"]);
-    sheet.addRow(["商品", "活动", "链接", "标题"]);
+    sheet.addRow(["商品", "活动", "链接", "标题", "内容渠道"]);
     const row = sheet.addRow([
       "澳白",
       "爱他美2026年7月小红书种草审核",
       "",
       "",
+      "小红书",
     ]);
     row.getCell(3).value = {
       text: "打开笔记",
@@ -115,6 +116,11 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
     expect(result.previewRows[0].values.noteUrl).toBe(
       "https://xhslink.com/hyperlink",
     );
+    expect(result.previewRows[0].rawValues?.noteUrl).toBe("打开笔记");
+    expect(result.previewRows[0].hyperlinks?.noteUrl).toBe(
+      "https://xhslink.com/hyperlink",
+    );
+    expect(result.previewRows[0].values.contentChannel).toBe("小红书");
     expect(result.previewRows[0].values.title).toBe("富文本标题");
   });
 
@@ -236,5 +242,52 @@ describe("模板驱动导出", () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes);
     expect(workbook.worksheets[0].getRow(1).getCell(1).text).toBe("笔记链接");
+  });
+
+  it("18条当前筛选结果生成18条数据行且包含运营必需字段", async () => {
+    const records = Array.from({ length: 18 }, (_, index) => ({
+      noteUrl: `https://www.xiaohongshu.com/explore/export-${index + 1}`,
+      noteId: `export-${index + 1}`,
+      productName: "爱他美澳洲白金版",
+      activityName: "爱他美2026年7月小红书种草审核",
+      productStageTopic: "IFFO：P段/1段",
+      pageStatus: "页面正常",
+      bodyStatus: "正文存在",
+      topicsAuditResult: "合规",
+      imageCount: 2,
+      autoAuditResult: "审核通过",
+      manualAuditResult: "",
+      finalAuditConclusion: "审核通过",
+      failedReasons: "",
+      manualReviewComment: "",
+      auditTime: new Date("2026-07-31T12:00:00+08:00"),
+    }));
+    const bytes = await buildConfiguredWorkbook({
+      templates,
+      kind: "auditResults",
+      records,
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    const sheet = workbook.worksheets[0];
+    expect(sheet.rowCount).toBe(19);
+    const headers = sheet.getRow(1).values as unknown[];
+    const noteIdColumn = headers.indexOf("笔记ID");
+    expect(sheet.getColumn(noteIdColumn).values).toContain("export-18");
+    for (const header of [
+      "页面状态",
+      "正文状态",
+      "话题审核结果",
+      "自动审核结果",
+      "人工复核结果",
+      "最终审核结论",
+      "人工复核备注",
+      "审核时间",
+    ]) {
+      expect(headers).toContain(header);
+    }
+    expect(new Uint8Array(bytes as ArrayBuffer).byteLength).toBeGreaterThan(
+      1_024,
+    );
   });
 });

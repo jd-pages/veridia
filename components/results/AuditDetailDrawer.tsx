@@ -176,7 +176,9 @@ export default function AuditDetailDrawer({
               <AuditStatusTag value={row.retentionStatus} />
             </Space>
             <div className={styles.cellSecondary}>
-              有效正文字数：{row.effectiveBodyLength ?? 0} 个字符
+              {row.bodyStatus === "UNKNOWN"
+                ? "未提取到正文 / 待人工确认"
+                : `有效正文字数：${row.effectiveBodyLength ?? 0} 个字符`}
             </div>
           </DrawerSection>
 
@@ -219,10 +221,10 @@ export default function AuditDetailDrawer({
                   key: "failureMessage",
                   label: "失败原因",
                   children:
-                    row.task.failureMessage ||
                     parseJsonArray(row.failureReasons)
                       .map(businessFailureReasonLabel)
                       .join("；") ||
+                    row.task.failureMessage ||
                     "无异常",
                 },
                 {

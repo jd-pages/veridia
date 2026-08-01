@@ -1,7 +1,40 @@
 export interface ApiEnvelope<T> {
   success: boolean;
+  ok?: boolean;
   data: T;
-  error?: string;
+  error?: string | { code?: string; message?: string };
+  errorDetail?: { code?: string; message?: string };
+}
+
+function responseErrorMessage<T>(payload: ApiEnvelope<T>, status: number) {
+  const serverMessage =
+    typeof payload.error === "string"
+      ? payload.error
+      : payload.error?.message || payload.errorDetail?.message;
+  if (serverMessage) return serverMessage;
+  if (status === 401) return "登录状态已失效，请重新登录。";
+  if (status === 403) return "当前账号无此操作权限，请联系管理员。";
+  return "数据读取失败，请刷新或重启 VERIDIA。";
+}
+
+export async function safeFetchJson<T>(response: Response) {
+  const rawBody = await response.text();
+  if (!rawBody.trim()) {
+    throw new Error(
+      response.status === 403
+        ? "当前账号无此操作权限，请联系管理员。"
+        : "数据读取失败，请刷新或重启 VERIDIA。",
+    );
+  }
+  const contentType = response.headers.get("content-type")?.toLowerCase() || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error("数据读取失败，请刷新或重启 VERIDIA。");
+  }
+  try {
+    return JSON.parse(rawBody) as ApiEnvelope<T>;
+  } catch {
+    throw new Error("数据读取失败，请刷新或重启 VERIDIA。");
+  }
 }
 
 export async function apiFetch<T>(
@@ -15,19 +48,7 @@ export async function apiFetch<T>(
       ...init?.headers,
     },
   });
-  const rawBody = await response.text();
-  if (!rawBody.trim()) {
-    throw new Error(`服务返回了空响应（HTTP ${response.status}）`);
-  }
-  let payload: ApiEnvelope<T>;
-  try {
-    payload = JSON.parse(rawBody) as ApiEnvelope<T>;
-  } catch {
-    const contentType = response.headers.get("content-type") || "未知类型";
-    throw new Error(
-      `服务返回了无法识别的响应（HTTP ${response.status}，${contentType}）`,
-    );
-  }
+  const payload = await safeFetchJson<T>(response);
   if (!response.ok || !payload.success) {
     if (
       response.status === 401 &&
@@ -37,7 +58,7 @@ export async function apiFetch<T>(
       void window.veridiaDesktop?.clearPersistentSession().catch(() => false);
       window.location.assign("/login");
     }
-    throw new Error(payload.error || "请求失败");
+    throw new Error(responseErrorMessage(payload, response.status));
   }
   return payload.data;
 }

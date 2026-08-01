@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/db";
-import { isSupportedNoteUrl, normalizeUrl } from "@/lib/topic";
+import { normalizeUrl } from "@/lib/topic";
+import {
+  resolveImportedNoteLink,
+  type NoteLinkPlatform,
+} from "@/lib/note-links";
 import { fail, ok, requireApiUser } from "@/lib/api";
 import {
   createAutomaticBatchInTransaction,
@@ -20,6 +24,11 @@ import {
 interface CheckedRow {
   rowNumber: number;
   url: string;
+  originalLinkContent: string;
+  contentChannel: string;
+  platform: NoteLinkPlatform;
+  recognitionStatus: "RECOGNIZED" | "UNRECOGNIZED" | "UNSUPPORTED";
+  failureReason: string;
   productCode: string;
   productName: string;
   campaignName: string;
@@ -63,9 +72,23 @@ export async function POST(request: Request) {
 
     for (const parsed of tabular.rows) {
       const values = parsed.values;
+      const originalLinkContent =
+        parsed.rawValues?.noteUrl || values.noteUrl || "";
+      const hyperlinkTarget = parsed.hyperlinks?.noteUrl || "";
+      const declaredChannel = (values.contentChannel || "").trim();
+      const linkResolution = resolveImportedNoteLink({
+        rawContent: originalLinkContent,
+        hyperlinkTarget,
+        declaredChannel,
+      });
       const checked: CheckedRow = {
         rowNumber: parsed.rowNumber,
-        url: values.noteUrl || "",
+        url: linkResolution.url,
+        originalLinkContent: linkResolution.originalContent,
+        contentChannel: declaredChannel,
+        platform: linkResolution.platform,
+        recognitionStatus: linkResolution.status,
+        failureReason: linkResolution.failureReason,
         productCode: values.productCode || "",
         productName: values.productName || "",
         campaignName: values.activityName || "",
@@ -77,13 +100,11 @@ export async function POST(request: Request) {
         notes: values.remark || "",
         errors: [...parsed.errors],
       };
-      if (!checked.url) {
-        checked.errors.push("缺少必填字段：笔记链接");
-      } else if (!isSupportedNoteUrl(checked.url)) {
-        checked.errors.push("笔记链接格式不正确");
+      if (checked.failureReason) {
+        checked.errors.push(checked.failureReason);
       }
       let normalizedUrl = "";
-      if (checked.url && isSupportedNoteUrl(checked.url)) {
+      if (checked.url && checked.recognitionStatus === "RECOGNIZED") {
         normalizedUrl = normalizeUrl(checked.url);
         if (seen.has(normalizedUrl)) checked.errors.push("文件内存在重复链接");
         seen.add(normalizedUrl);
@@ -204,6 +225,7 @@ export async function POST(request: Request) {
       const committed = await prisma.$transaction(async (tx) => {
         const tasks: AutomaticTaskInput[] = validRows.map((row) => ({
           url: row.url,
+          originalInput: row.originalLinkContent,
           productId: row.productId!,
           campaignId: row.campaignId!,
           productStage: row.productStage,

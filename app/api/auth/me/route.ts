@@ -1,6 +1,6 @@
 import { getSession } from "@/lib/auth";
-import { ok } from "@/lib/api";
+import { ok, withApiErrorBoundary } from "@/lib/api";
 
-export async function GET() {
+export const GET = withApiErrorBoundary(async function GET() {
   return ok(await getSession());
-}
+}, "读取登录状态");

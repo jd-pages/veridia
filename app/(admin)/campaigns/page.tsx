@@ -35,6 +35,7 @@ import StatusTag from "@/components/StatusTag";
 import { apiFetch } from "@/lib/client";
 import { productStageTopicLabel } from "@/lib/product-stage";
 import { topicCategoryLabels } from "@/lib/zh-CN";
+import type { SessionUser } from "@/lib/auth";
 
 interface Product {
   id: string;
@@ -159,6 +160,10 @@ export default function CampaignsPage() {
   const [detail, setDetail] = useState<Campaign | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [importForm] = Form.useForm<ImportMetadata>();
+  const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
+    null,
+  );
+  const isAdmin = currentRole === "ADMIN";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -173,6 +178,9 @@ export default function CampaignsPage() {
 
   useEffect(() => {
     void load();
+    void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
+      setCurrentRole(user?.role || null),
+    );
   }, [load]);
 
   const submitImport = async (commit: boolean) => {
@@ -235,17 +243,19 @@ export default function CampaignsPage() {
             >
               下载标准模板
             </Button>
-            <Button
-              type="primary"
-              icon={<UploadOutlined />}
-              onClick={() => {
-                setImportOpen(true);
-                setPreview(null);
-                importForm.setFieldsValue(defaultMetadata);
-              }}
-            >
-              导入活动规则
-            </Button>
+            {isAdmin && (
+              <Button
+                type="primary"
+                icon={<UploadOutlined />}
+                onClick={() => {
+                  setImportOpen(true);
+                  setPreview(null);
+                  importForm.setFieldsValue(defaultMetadata);
+                }}
+              >
+                导入活动规则
+              </Button>
+            )}
             <Button icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新
             </Button>
@@ -257,8 +267,12 @@ export default function CampaignsPage() {
         showIcon
         type="info"
         style={{ marginBottom: 16 }}
-        message="导入安全机制"
-        description="预检查不会写入数据库。只有点击“确认导入”后才新增或更新规则；历史审核结果保存的是当时规则快照，不会随当前规则修改。"
+        message={isAdmin ? "导入安全机制" : "当前为只读查看"}
+        description={
+          isAdmin
+            ? "预检查不会写入数据库。只有点击“确认导入”后才新增或更新规则；历史审核结果保存的是当时规则快照，不会随当前规则修改。"
+            : "审核员可以查看活动要求和已发布规则；如需修改活动配置，请联系管理员。"
+        }
       />
 
       <Card className="surface-card">

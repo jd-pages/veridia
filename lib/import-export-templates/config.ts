@@ -4,6 +4,11 @@ import type { ImportExportTemplates } from "./types";
 import { validateImportExportTemplates } from "./validation";
 
 const requiredFailureExportFields = {
+  failedReasons: {
+    displayName: "不通过原因",
+    type: "stringList" as const,
+    description: "未通过或待复核原因",
+  },
   originalUrl: {
     displayName: "原始链接",
     type: "url" as const,
@@ -59,12 +64,71 @@ const requiredFailureExportFields = {
     type: "string" as const,
     description: "本次导出使用的日期范围筛选字段",
   },
+  pageStatus: {
+    displayName: "页面状态",
+    type: "string" as const,
+    description: "笔记页面访问和读取状态",
+  },
+  bodyStatus: {
+    displayName: "正文状态",
+    type: "string" as const,
+    description: "笔记正文提取状态",
+  },
+  topicsAuditResult: {
+    displayName: "话题审核结果",
+    type: "string" as const,
+    description: "要求话题的审核结果",
+  },
+  autoAuditResult: {
+    displayName: "自动审核结果",
+    type: "string" as const,
+    description: "固定规则自动审核结论",
+  },
+  manualAuditResult: {
+    displayName: "人工复核结果",
+    type: "string" as const,
+    description: "最近一次人工复核结论",
+  },
+  finalAuditConclusion: {
+    displayName: "最终审核结论",
+    type: "string" as const,
+    description: "人工复核优先的最终审核结论",
+  },
+  manualReviewComment: {
+    displayName: "人工复核备注",
+    type: "string" as const,
+    description: "最近一次人工复核备注",
+  },
+  auditTime: {
+    displayName: "审核时间",
+    type: "datetime" as const,
+    description: "自动审核完成时间",
+  },
 };
 
 function ensureFailureExportFields(
   templates: ImportExportTemplates,
 ): ImportExportTemplates {
   const output = structuredClone(templates);
+  output.fieldDefinitions.contentChannel = {
+    displayName: "内容渠道",
+    type: "string",
+    description: "内容发布平台，例如小红书或抖音",
+  };
+  output.fieldAliases.contentChannel = [
+    "内容渠道",
+    "发布渠道",
+    "平台",
+    "内容平台",
+    "channel",
+    "platform",
+  ];
+  if (!output.optionalFields.includes("contentChannel")) {
+    output.optionalFields.push("contentChannel");
+  }
+  if (!output.columnOrder.import.includes("contentChannel")) {
+    output.columnOrder.import.splice(1, 0, "contentChannel");
+  }
   Object.assign(output.fieldDefinitions, requiredFailureExportFields);
   const required = Object.keys(
     requiredFailureExportFields,

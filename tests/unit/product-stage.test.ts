@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   PRODUCT_STAGE_TOPIC_OPTIONS,
+  bodyStageRequiredFromRuleSnapshot,
   detectBodyProductStages,
   detectProductStage,
   normalizeProductStage,
   normalizeProductStageTopicValue,
   productStageTopicLabel,
   resolveConfiguredProductStage,
+  stageTopicFromRuleSnapshot,
 } from "@/lib/product-stage";
 
 describe("product stage topic mapping", () => {
@@ -79,6 +81,34 @@ describe("product stage topic mapping", () => {
       "GUM_3_4_1PLUS_2PLUS",
     );
     expect(productStageTopicLabel("IFFO_P1")).toBe("IFFO：P段/1段");
+  });
+
+  it("规则快照只有明确启用时才审核正文段位", () => {
+    expect(bodyStageRequiredFromRuleSnapshot(JSON.stringify({}))).toBe(false);
+    expect(
+      bodyStageRequiredFromRuleSnapshot(
+        JSON.stringify({ bodyStageRequired: false }),
+      ),
+    ).toBe(false);
+    expect(
+      bodyStageRequiredFromRuleSnapshot(
+        JSON.stringify({ bodyStageRequired: true }),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["IFFO_P1", "#新生儿奶粉"],
+    ["IFFO_2", "#二段奶粉推荐"],
+    ["GUM_3_4_1PLUS_2PLUS", "#三段奶粉推荐"],
+  ])("规则快照中的 %s 阶段对应 %s", (stage, topic) => {
+    expect(
+      stageTopicFromRuleSnapshot(
+        JSON.stringify({
+          rules: [{ topicCategory: "PRODUCT_STAGE", applicableStage: stage, topic }],
+        }),
+      ),
+    ).toBe(topic);
   });
 
   it("Excel具体段位只映射到活动已配置的对应产品阶段话题", () => {

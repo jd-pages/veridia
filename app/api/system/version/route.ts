@@ -1,7 +1,7 @@
 import packageJson from "@/package.json";
-import { ok, requireApiUser } from "@/lib/api";
+import { ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 
-export async function GET() {
+export const GET = withApiErrorBoundary(async function GET() {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   return ok({
@@ -12,4 +12,4 @@ export async function GET() {
     autoUpdate: false,
     packaged: process.env.VERIDIA_DESKTOP === "true",
   });
-}
+}, "读取软件版本信息");

@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld("veridiaDesktop", {
     ipcRenderer.invoke("veridia:store-persistent-session", token),
   clearPersistentSession: () =>
     ipcRenderer.invoke("veridia:clear-persistent-session"),
+  saveExportFile: (payload) =>
+    ipcRenderer.invoke("veridia:save-export-file", payload),
   onUpdateStatus: (listener) => {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on("veridia:update-status", handler);

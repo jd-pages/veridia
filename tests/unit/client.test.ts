@@ -17,7 +17,7 @@ describe("API 客户端响应解析", () => {
     );
 
     await expect(apiFetch("/api/setup/status")).rejects.toThrow(
-      "服务返回了空响应（HTTP 500）",
+      "数据读取失败，请刷新或重启 VERIDIA。",
     );
   });
 
@@ -33,8 +33,41 @@ describe("API 客户端响应解析", () => {
     );
 
     await expect(apiFetch("/api/setup/status")).rejects.toThrow(
-      "服务返回了无法识别的响应（HTTP 502，text/html）",
+      "数据读取失败，请刷新或重启 VERIDIA。",
     );
+  });
+
+  it("权限不足的空响应显示中文权限提示", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("", { status: 403 })),
+    );
+
+    await expect(apiFetch("/api/products", { method: "POST" })).rejects.toThrow(
+      "当前账号无此操作权限，请联系管理员。",
+    );
+  });
+
+  it("统一错误对象会优先显示服务端中文说明", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json(
+          {
+            ok: false,
+            error: {
+              code: "PERMISSION_DENIED",
+              message: "当前账号无此操作权限，请联系管理员。",
+            },
+          },
+          { status: 403 },
+        ),
+      ),
+    );
+
+    await expect(
+      apiFetch("/api/rule-sync/check", { method: "POST" }),
+    ).rejects.toThrow("当前账号无此操作权限，请联系管理员。");
   });
 
   it("合法统一响应仍返回 data", async () => {

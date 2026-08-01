@@ -139,24 +139,30 @@ export default function DashboardPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    try {
-      const [dashboard, productItems, campaignItems, batchItems] =
-        await Promise.all([
-          apiFetch<DashboardData>("/api/dashboard"),
-          apiFetch<Product[]>("/api/products"),
-          apiFetch<Campaign[]>("/api/campaigns"),
-          apiFetch<AuditBatch[]>("/api/automation/batches"),
-        ]);
-      setData(dashboard);
-      setProducts(productItems);
-      setCampaigns(campaignItems);
-      setBatches(batchItems);
+    const [dashboard, productItems, campaignItems, batchItems] =
+      await Promise.allSettled([
+        apiFetch<DashboardData>("/api/dashboard"),
+        apiFetch<Product[]>("/api/products"),
+        apiFetch<Campaign[]>("/api/campaigns"),
+        apiFetch<AuditBatch[]>("/api/automation/batches"),
+      ]);
+    if (dashboard.status === "fulfilled") setData(dashboard.value);
+    if (productItems.status === "fulfilled") setProducts(productItems.value);
+    if (campaignItems.status === "fulfilled") setCampaigns(campaignItems.value);
+    if (batchItems.status === "fulfilled") setBatches(batchItems.value);
+    const failure = [dashboard, productItems, campaignItems].find(
+      (result) => result.status === "rejected",
+    );
+    if (failure?.status === "rejected") {
+      setError(
+        failure.reason instanceof Error
+          ? failure.reason.message
+          : "数据读取失败，请刷新或重启 VERIDIA。",
+      );
+    } else {
       setUpdatedAt(new Date());
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "加载失败");
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, []);
 
   useEffect(() => {

@@ -7,6 +7,7 @@ import { backfillMissingProcessingFailureResults } from "@/lib/processing-failur
 
 export interface AutomaticTaskInput {
   url: string;
+  originalInput?: string | null;
   productId: string;
   campaignId: string;
   productStage?: string | null;
@@ -55,6 +56,7 @@ export async function createAutomaticBatchInTransaction(
       data: {
         batchId: batch.id,
         url: task.url,
+        originalInput: task.originalInput?.trim() || null,
         normalizedUrl: normalizeUrl(task.url),
         productId: task.productId,
         campaignId: task.campaignId,

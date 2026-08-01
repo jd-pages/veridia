@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import type { AuditResult, Campaign, NoteRecord, Product } from "@prisma/client";
 import {
   allowedBodyStageLabels,
+  bodyStageRequiredFromRuleSnapshot,
   detectBodyProductStages,
   productStageTopicLabel,
   stageTopicFromRuleSnapshot,
@@ -12,6 +13,7 @@ import {
   businessFailureReasonLabel,
   businessStatusLabel,
 } from "@/lib/zh-CN";
+import { parseStoredStringArray } from "@/lib/stored-json";
 
 export function excelResponse(
   buffer: ExcelJS.Buffer,
@@ -104,23 +106,28 @@ export async function buildResultsWorkbook(rows: ResultExportRow[]) {
   ];
   for (const row of rows) {
     const manual = row.manualReviews[0];
-    const missingTopics = (JSON.parse(row.missingTopics) as string[]).join(
-      "、",
+    const missingTopicList = parseStoredStringArray(row.missingTopics).filter(
+      (expected) =>
+        !row.note.topics.some(
+          (topic) =>
+            normalizeTopic(topic.displayText) === normalizeTopic(expected),
+        ),
     );
-    const forbiddenTopics = (
-      JSON.parse(row.forbiddenTopics) as string[]
-    ).join("、");
-    const failureReasons = (JSON.parse(row.failureReasons) as string[])
+    const missingTopics = missingTopicList.join("、");
+    const forbiddenTopics = parseStoredStringArray(row.forbiddenTopics).join("、");
+    const failureReasons = parseStoredStringArray(row.failureReasons)
       .filter(
         (reason) =>
           !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(reason),
       )
       .map(businessFailureReasonLabel)
       .join("；");
-    const bodyStage = detectBodyProductStages(
-      row.note.body,
-      row.task.productStage,
+    const bodyStageRequired = bodyStageRequiredFromRuleSnapshot(
+      row.ruleSnapshot,
     );
+    const bodyStage = bodyStageRequired
+      ? detectBodyProductStages(row.note.body, row.task.productStage)
+      : null;
     const stageTopic = stageTopicFromRuleSnapshot(row.ruleSnapshot);
     const stageTopicMatch = stageTopic
       ? row.note.topics.find(
@@ -144,18 +151,24 @@ export async function buildResultsWorkbook(rows: ResultExportRow[]) {
       campaignName: row.task.campaign.name,
       source: businessSourceLabel(row.task.source),
       productStageTopic: productStageTopicLabel(row.task.productStage),
-      allowedBodyStages: allowedBodyStageLabels(
-        row.task.productStage,
-      ).join("、"),
-      detectedBodyStages: bodyStage?.detectedStages.join("、") || "段位未识别",
-      bodyStageResult: bodyStage
-        ? bodyStage.passed
+      allowedBodyStages: bodyStageRequired
+        ? allowedBodyStageLabels(row.task.productStage).join("、")
+        : "不要求正文出现段位词",
+      detectedBodyStages: bodyStageRequired
+        ? bodyStage?.detectedStages.join("、") || "段位未识别"
+        : "不参与审核",
+      bodyStageResult: bodyStageRequired
+        ? bodyStage?.passed
           ? "合规"
           : "不合规"
-        : "未配置",
+        : "不参与审核",
       requiredStageTopic: stageTopic || null,
       stageTopicMatched: stageTopicMatch ? "是" : "否",
-      stageTopicClickable: stageTopicClickable ? "是" : "否",
+      stageTopicClickable: !stageTopicMatch
+        ? "不适用"
+        : stageTopicClickable
+          ? "是"
+          : "否",
       ruleVersion: row.ruleVersion,
       pageStatus: businessStatusLabel(row.pageStatus),
       bodyStatus: businessStatusLabel(row.bodyStatus),
@@ -190,7 +203,11 @@ export async function buildResultsWorkbook(rows: ResultExportRow[]) {
       topics:
         row.note.topics.map((topic) => topic.displayText).join("、") || null,
       topicsCompliant: row.topicsCompliant ? "是" : "否",
-      clickable: row.clickableCompliant ? "正常" : "异常",
+      clickable: missingTopicList.length
+        ? "不适用（要求话题缺失）"
+        : row.clickableCompliant
+          ? "正常"
+          : "异常",
       missing: missingTopics || null,
       forbidden: forbiddenTopics || null,
       body: row.note.body,

@@ -58,6 +58,7 @@ import {
 } from "@/lib/zh-CN";
 import styles from "./tasks.module.css";
 import type { SessionUser } from "@/lib/auth";
+import { extractNoteLinksFromText } from "@/lib/note-links";
 
 interface Product {
   id: string;
@@ -177,6 +178,11 @@ interface ImportPreview {
   rows: Array<{
     rowNumber: number;
     url: string;
+    originalLinkContent: string;
+    contentChannel: string;
+    platform: string;
+    recognitionStatus: string;
+    failureReason: string;
     productName: string;
     campaignName: string;
     productStage: string;
@@ -250,6 +256,11 @@ export default function TasksPage() {
   const selectedProduct = Form.useWatch("productId", form);
   const selectedCampaign = Form.useWatch("campaignId", form);
   const selectedStage = Form.useWatch("productStage", form);
+  const rawNoteLinks = Form.useWatch("urls", form) || "";
+  const linkPreview = useMemo(
+    () => extractNoteLinksFromText(rawNoteLinks),
+    [rawNoteLinks],
+  );
   const [requirements, setRequirements] = useState<AuditRequirements | null>(
     null,
   );
@@ -263,28 +274,40 @@ export default function TasksPage() {
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
-    try {
-      const [productData, campaignData, taskData, batchData, sessionData] =
-        await Promise.all([
-          apiFetch<Product[]>("/api/products"),
-          apiFetch<Campaign[]>("/api/campaigns"),
-          apiFetch<Task[]>("/api/tasks"),
-          apiFetch<AuditBatch[]>("/api/automation/batches"),
-          apiFetch<AutomationSession>("/api/automation/session"),
-        ]);
-      setProducts(productData);
-      setCampaigns(campaignData);
-      setTasks(taskData);
-      setBatches(batchData);
-      setSession(sessionData);
-      setSelectedBatchId((current) => current || batchData[0]?.id);
-    } catch (error) {
-      if (!quiet) {
-        message.error(error instanceof Error ? error.message : "加载任务失败");
-      }
-    } finally {
-      if (!quiet) setLoading(false);
+    const [productResult, campaignResult, taskResult, batchResult, sessionResult] =
+      await Promise.allSettled([
+        apiFetch<Product[]>("/api/products"),
+        apiFetch<Campaign[]>("/api/campaigns"),
+        apiFetch<Task[]>("/api/tasks"),
+        apiFetch<AuditBatch[]>("/api/automation/batches"),
+        apiFetch<AutomationSession>("/api/automation/session"),
+      ]);
+    if (productResult.status === "fulfilled") setProducts(productResult.value);
+    if (campaignResult.status === "fulfilled") setCampaigns(campaignResult.value);
+    if (taskResult.status === "fulfilled") setTasks(taskResult.value);
+    if (batchResult.status === "fulfilled") {
+      setBatches(batchResult.value);
+      setSelectedBatchId((current) => current || batchResult.value[0]?.id);
     }
+    if (sessionResult.status === "fulfilled") {
+      setSession(sessionResult.value);
+    } else {
+      setSession({ status: "LOGIN_REQUIRED", lastLoginAt: null, lastError: null });
+    }
+    const dataFailure = [
+      productResult,
+      campaignResult,
+      taskResult,
+      batchResult,
+    ].find((result) => result.status === "rejected");
+    if (!quiet && dataFailure?.status === "rejected") {
+      message.error(
+        dataFailure.reason instanceof Error
+          ? dataFailure.reason.message
+          : "数据读取失败，请刷新或重启 VERIDIA。",
+      );
+    }
+    if (!quiet) setLoading(false);
   }, [message]);
 
   useEffect(() => {
@@ -347,6 +370,10 @@ export default function TasksPage() {
         batchId: string;
         created: number;
         skipped: Array<{ url: string; reason: string }>;
+        recognizedCount: number;
+        deduplicatedCount: number;
+        duplicateCount: number;
+        unrecognized: Array<{ input: string; reason: string }>;
       }>("/api/automation/batches", {
         method: "POST",
         body: JSON.stringify(values),
@@ -355,6 +382,11 @@ export default function TasksPage() {
       message.success(`已创建 ${result.created} 条任务，自动审核已开始`);
       if (result.skipped.length) {
         message.warning(`跳过 ${result.skipped.length} 条重复链接`);
+      }
+      if (result.unrecognized.length) {
+        message.warning(
+          `${result.unrecognized.length} 段内容未识别到有效小红书链接，其他有效链接已正常创建`,
+        );
       }
       form.setFieldValue("urls", "");
       await load(true);
@@ -680,11 +712,26 @@ export default function TasksPage() {
                         name="urls"
                         label="小红书笔记链接"
                         rules={[{ required: true }]}
-                        extra="支持批量粘贴，每行一个链接；后台默认单线程处理"
+                        extra={
+                          <Space direction="vertical" size={2}>
+                            <span>
+                              也支持粘贴“标题 + 链接 + 说明文字”，系统会自动提取链接；后台默认单线程处理。
+                            </span>
+                            {rawNoteLinks.trim() ? (
+                              <span>
+                                识别到 {linkPreview.recognizedCount} 条有效链接，去重后 {linkPreview.links.length} 条
+                                {linkPreview.duplicateCount
+                                  ? `，重复 ${linkPreview.duplicateCount} 条`
+                                  : ""}
+                                ，未识别内容 {linkPreview.unrecognized.length} 段。
+                              </span>
+                            ) : null}
+                          </Space>
+                        }
                       >
                         <Input.TextArea
                           rows={7}
-                          placeholder="每行粘贴一个小红书笔记链接"
+                          placeholder={"https://www.xiaohongshu.com/explore/xxxx\nhttp://xhslink.com/o/xxxx\nhttp://xhslink.cn/o/xxxx"}
                         />
                       </Form.Item>
                       <Form.Item name="notes" label="内部备注">
@@ -856,9 +903,36 @@ export default function TasksPage() {
                         columns={[
                           { title: "行", dataIndex: "rowNumber", width: 70 },
                           {
-                            title: "笔记链接",
+                            title: "原始链接内容",
+                            dataIndex: "originalLinkContent",
+                            ellipsis: true,
+                            width: 240,
+                          },
+                          {
+                            title: "提取后的真实链接",
                             dataIndex: "url",
                             ellipsis: true,
+                            width: 260,
+                          },
+                          {
+                            title: "识别状态",
+                            dataIndex: "recognitionStatus",
+                            width: 120,
+                            render: (value: string) =>
+                              value === "RECOGNIZED" ? (
+                                <Tag color="green">已识别</Tag>
+                              ) : value === "UNSUPPORTED" ? (
+                                <Tag color="orange">暂不支持</Tag>
+                              ) : (
+                                <Tag color="red">识别失败</Tag>
+                              ),
+                          },
+                          {
+                            title: "链接识别说明",
+                            dataIndex: "failureReason",
+                            ellipsis: true,
+                            width: 220,
+                            render: (value: string) => value || "-",
                           },
                           {
                             title: "产品",

@@ -78,6 +78,13 @@ interface Detail {
   aiRelevance: string | null;
   aiReason: string | null;
   auditedAt: string;
+  currentStageGroup: {
+    key: string;
+    label: string;
+    requiredTopic: string;
+    requireBodyStage: boolean;
+    ruleVersion: string;
+  } | null;
   task: {
     id: string;
     status: string;
@@ -115,6 +122,7 @@ interface Detail {
   };
   ruleResults: Array<{
     id: string;
+    ruleKey: string;
     ruleName: string;
     expectedValue: string;
     actualValue: string;
@@ -184,9 +192,11 @@ export default function ResultDetailPage() {
       !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(rule.ruleName),
   );
   const productStageLabel = productStageTopicLabel(detail.task.productStage);
-  const bodyStageRequired = bodyStageRequiredFromRuleSnapshot(
-    detail.ruleSnapshot,
-  );
+  const bodyStageRequired =
+    bodyStageRequiredFromRuleSnapshot(detail.ruleSnapshot) ||
+    detail.ruleResults.some(
+      (rule) => rule.ruleKey === "PRODUCT_STAGE_BODY",
+    );
   const bodyStage = bodyStageRequired
     ? detectBodyProductStages(
         detail.note.body,
@@ -194,10 +204,13 @@ export default function ResultDetailPage() {
       )
     : null;
   const stageTopic = stageTopicFromRuleSnapshot(detail.ruleSnapshot);
-  const stageTopicMatch = stageTopic
+  const requiredStageTopic =
+    stageTopic ||
+    (processingFailed ? detail.currentStageGroup?.requiredTopic || null : null);
+  const stageTopicMatch = requiredStageTopic
     ? detail.note.topics.find(
         (topic) =>
-          normalizeTopic(topic.displayText) === normalizeTopic(stageTopic),
+          normalizeTopic(topic.displayText) === normalizeTopic(requiredStageTopic),
       )
     : undefined;
   const stageTopicClickable = Boolean(
@@ -208,6 +221,15 @@ export default function ResultDetailPage() {
           stageTopicMatch.href &&
           stageTopicMatch.styleFeature)),
   );
+  const missingRequiredTopics = parseJsonArray(detail.missingTopics).filter(
+    (expected) =>
+      !detail.note.topics.some(
+        (topic) =>
+          normalizeTopic(topic.displayText) === normalizeTopic(expected),
+      ),
+  );
+  const clickableNotApplicable = missingRequiredTopics.length > 0;
+  const bodyUnavailable = detail.bodyStatus === "UNKNOWN";
 
   return (
     <>
@@ -318,7 +340,11 @@ export default function ResultDetailPage() {
           </Card>
           <Card className="surface-card" title="笔记正文" style={{ marginTop: 14 }}>
             <Typography.Paragraph style={{ whiteSpace: "pre-wrap", lineHeight: 1.9, marginBottom: 0 }}>
-              {detail.note.body?.trim() || <span className="danger-text">正文为空</span>}
+              {detail.note.body?.trim() || (
+                <span className="danger-text">
+                  {bodyUnavailable ? "未提取到正文 / 待人工确认" : "正文为空"}
+                </span>
+              )}
             </Typography.Paragraph>
           </Card>
         </Col>
@@ -337,18 +363,22 @@ export default function ResultDetailPage() {
                   : "无异常"}
               </Descriptions.Item>
               <Descriptions.Item label="失败原因">
-                {detail.task.failureMessage ||
-                  reasons.map(businessFailureReasonLabel).join("；") ||
+                {reasons.map(businessFailureReasonLabel).join("；") ||
+                  detail.task.failureMessage ||
                   "无异常"}
               </Descriptions.Item>
               <Descriptions.Item label="尝试次数">
                 {detail.task.attempts}
               </Descriptions.Item>
               <Descriptions.Item label="正文">
-                <Tag color={detail.bodyCompliant ? "green" : "red"}>
-                  {detail.effectiveBodyLength} 个有效字符 ·{" "}
-                  {detail.bodyCompliant ? "合规" : "不合规"}
-                </Tag>
+                {bodyUnavailable ? (
+                  <Tag color="orange">未提取到正文 / 待人工确认</Tag>
+                ) : (
+                  <Tag color={detail.bodyCompliant ? "green" : "red"}>
+                    {detail.effectiveBodyLength} 个有效字符 ·{" "}
+                    {detail.bodyCompliant ? "合规" : "不合规"}
+                  </Tag>
+                )}
               </Descriptions.Item>
               {bodyStageRequired ? (
                 <>
@@ -374,17 +404,25 @@ export default function ResultDetailPage() {
                 </Descriptions.Item>
               )}
               <Descriptions.Item label="要求阶段话题">
-                {stageTopic || "未配置"}
+                {requiredStageTopic || "当前活动未配置阶段话题规则"}
               </Descriptions.Item>
               <Descriptions.Item label="阶段话题命中">
-                <Tag color={stageTopicMatch ? "green" : "red"}>
-                  {stageTopicMatch ? "是" : "否"}
-                </Tag>
+                {requiredStageTopic ? (
+                  <Tag color={stageTopicMatch ? "green" : "red"}>
+                    {stageTopicMatch ? "是" : "否"}
+                  </Tag>
+                ) : (
+                  <Tag>不适用</Tag>
+                )}
               </Descriptions.Item>
               <Descriptions.Item label="阶段话题可点击">
-                <Tag color={stageTopicClickable ? "green" : "red"}>
-                  {stageTopicClickable ? "是" : "否"}
-                </Tag>
+                {!requiredStageTopic || !stageTopicMatch ? (
+                  <Tag>不适用</Tag>
+                ) : (
+                  <Tag color={stageTopicClickable ? "green" : "red"}>
+                    {stageTopicClickable ? "是" : "否"}
+                  </Tag>
+                )}
               </Descriptions.Item>
               <Descriptions.Item label="笔记类型">
                 <StatusTag value={detail.noteType} />
@@ -404,7 +442,13 @@ export default function ResultDetailPage() {
                 <Tag color={detail.topicsCompliant ? "green" : "red"}>{detail.topicsCompliant ? "合规" : "不合规"}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="蓝色可点击">
-                <Tag color={detail.clickableCompliant ? "green" : "red"}>{detail.clickableCompliant ? "正常" : "异常"}</Tag>
+                {clickableNotApplicable ? (
+                  <Tag>不适用（要求话题缺失）</Tag>
+                ) : (
+                  <Tag color={detail.clickableCompliant ? "green" : "red"}>
+                    {detail.clickableCompliant ? "正常" : "异常"}
+                  </Tag>
+                )}
               </Descriptions.Item>
               <Descriptions.Item label="当前公开状态">
                 <StatusTag value={detail.publicStatus} />
@@ -451,6 +495,12 @@ export default function ResultDetailPage() {
         </Col>
       </Row>
       <Card className="surface-card" title="识别出的全部话题与页面元素状态" style={{ marginTop: 14 }}>
+        <Alert
+          type="info"
+          showIcon
+          message="下方仅展示页面中已识别到的话题状态；缺少的要求话题不会出现在此列表中。"
+          style={{ marginBottom: 12 }}
+        />
         <Table
           rowKey="id"
           size="small"

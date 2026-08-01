@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { compareTopic, isSupportedNoteUrl, normalizeTopic } from "@/lib/topic";
+import {
+  compareTopic,
+  extractSupportedNoteUrls,
+  isSupportedNoteUrl,
+  normalizeTopic,
+} from "@/lib/topic";
 
 describe("topic helpers", () => {
   it("规范化井号和首尾空格", () => {
@@ -17,5 +22,16 @@ describe("topic helpers", () => {
     expect(isSupportedNoteUrl("https://www.xiaohongshu.com/explore/123")).toBe(true);
     expect(isSupportedNoteUrl("http://localhost:3000/mock/xhs")).toBe(true);
     expect(isSupportedNoteUrl("https://example.com/note")).toBe(false);
+  });
+
+  it("从标题、链接和说明文字中提取正式笔记链接并去重", () => {
+    expect(
+      extractSupportedNoteUrls(
+        "第一篇 https://www.xiaohongshu.com/explore/abc 说明文字\n短链：http://xhslink.com/o/xyz。\n重复 https://www.xiaohongshu.com/explore/abc",
+      ),
+    ).toEqual([
+      "https://www.xiaohongshu.com/explore/abc",
+      "http://xhslink.com/o/xyz",
+    ]);
   });
 });

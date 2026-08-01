@@ -189,14 +189,14 @@ export function stageTopicFromRuleSnapshot(
 export function bodyStageRequiredFromRuleSnapshot(
   ruleSnapshot: string | null | undefined,
 ): boolean {
-  if (!ruleSnapshot) return true;
+  if (!ruleSnapshot) return false;
   try {
     const snapshot = JSON.parse(ruleSnapshot) as {
       bodyStageRequired?: boolean;
     };
-    return snapshot.bodyStageRequired !== false;
+    return snapshot.bodyStageRequired === true;
   } catch {
-    return true;
+    return false;
   }
 }
 

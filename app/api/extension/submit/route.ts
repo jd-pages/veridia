@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { assertExtractorPayload } from "@/lib/extractor";
 import { normalizeUrl } from "@/lib/topic";
 import { runAuditTask } from "@/lib/audit-service";
+import { parseStoredStringArray } from "@/lib/stored-json";
 import {
   extensionFail,
   extensionOk,
@@ -52,7 +53,7 @@ export async function POST(request: Request) {
     return extensionOk({
       auditResultId: result.id,
       autoStatus: result.autoStatus,
-      failureReasons: JSON.parse(result.failureReasons),
+      failureReasons: parseStoredStringArray(result.failureReasons),
     });
   } catch (error) {
     return extensionFail(

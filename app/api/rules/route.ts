@@ -1,8 +1,8 @@
 import { prisma } from "@/lib/db";
 import { normalizeTopic } from "@/lib/topic";
-import { fail, ok, requireApiUser } from "@/lib/api";
+import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 
-export async function GET(request: Request) {
+export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
@@ -14,9 +14,9 @@ export async function GET(request: Request) {
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
   return ok(rules);
-}
+}, "读取话题规则");
 
-export async function POST(request: Request) {
+export const POST = withApiErrorBoundary(async function POST(request: Request) {
   const user = await requireApiUser(["ADMIN"]);
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
@@ -86,4 +86,4 @@ export async function POST(request: Request) {
   } catch {
     return fail("规则数据无效或所属活动不存在");
   }
-}
+}, "新增话题规则");

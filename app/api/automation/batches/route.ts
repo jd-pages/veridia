@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
-import { fail, ok, requireApiUser } from "@/lib/api";
-import { isSupportedNoteUrl, normalizeUrl } from "@/lib/topic";
+import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
+import { normalizeUrl } from "@/lib/topic";
+import { extractNoteLinksFromText } from "@/lib/note-links";
 import {
   createAutomaticBatch,
   getAutomaticBatches,
@@ -11,14 +12,14 @@ import {
   normalizeProductStageTopicValue,
 } from "@/lib/product-stage";
 
-export async function GET() {
+export const GET = withApiErrorBoundary(async function GET() {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   kickAutomaticAuditQueue();
   return ok(await getAutomaticBatches());
-}
+}, "读取自动审核批次");
 
-export async function POST(request: Request) {
+export const POST = withApiErrorBoundary(async function POST(request: Request) {
   const user = await requireApiUser(["ADMIN", "OPERATOR"]);
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
@@ -65,13 +66,9 @@ export async function POST(request: Request) {
     return fail("请选择活动支持的产品阶段话题");
   }
 
-  const rawUrls = Array.isArray(body.urls)
-    ? body.urls
-    : String(body.urls || "").split(/\r?\n/);
-  const urls = [...new Set(rawUrls.map((item) => item.trim()).filter(Boolean))];
+  const extraction = extractNoteLinksFromText(body.urls || []);
+  const urls = extraction.links.map((item) => item.url);
   if (!urls.length) return fail("请至少输入一条笔记链接");
-  const invalid = urls.filter((url) => !isSupportedNoteUrl(url));
-  if (invalid.length) return fail(`有 ${invalid.length} 条链接格式不正确`);
 
   const accepted: string[] = [];
   const skipped: Array<{ url: string; reason: string }> = [];
@@ -98,6 +95,7 @@ export async function POST(request: Request) {
     intervalMs: body.intervalMs,
     tasks: accepted.map((url) => ({
       url,
+      originalInput: extraction.rawInput,
       productId: body.productId!,
       campaignId: body.campaignId!,
       productStage,
@@ -116,5 +114,13 @@ export async function POST(request: Request) {
     },
   });
   kickAutomaticAuditQueue();
-  return ok({ batchId: batch.id, created: accepted.length, skipped });
-}
+  return ok({
+    batchId: batch.id,
+    created: accepted.length,
+    skipped,
+    recognizedCount: extraction.recognizedCount,
+    deduplicatedCount: urls.length,
+    duplicateCount: extraction.duplicateCount,
+    unrecognized: extraction.unrecognized,
+  });
+}, "创建自动审核批次");

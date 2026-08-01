@@ -32,6 +32,18 @@ test("后台侧栏、顶部栏、主内容滚动和折叠布局", async ({ page 
       page.getByText("CONTENT GOVERNANCE", { exact: true }),
     ).toBeVisible();
     await expect(page.getByLabel("VERIDIA V-Core")).toHaveCSS("width", "40px");
+    for (const label of [
+      "仪表盘",
+      "审核任务",
+      "审核结果",
+      "产品管理",
+      "活动管理",
+      "话题规则",
+      "导入记录",
+      "系统设置",
+    ]) {
+      await expect(page.getByText(label, { exact: true })).toBeVisible();
+    }
 
     const before = await page.evaluate(() => {
       const sider = document.querySelector(".admin-sider")!;

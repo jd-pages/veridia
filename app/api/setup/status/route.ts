@@ -49,10 +49,15 @@ export async function GET() {
   } catch (error) {
     if (isDatabaseSchemaMismatch(error)) {
       return fail(
-        "本地数据库结构与当前代码不匹配，请先执行数据库迁移后重新启动（SETUP_SCHEMA_MISMATCH）",
+        "本地数据库结构与当前代码不匹配，请完全退出并重新启动 VERIDIA。",
         503,
+        "SETUP_SCHEMA_MISMATCH",
       );
     }
-    return fail("读取首次启动状态失败（SETUP_STATUS_FAILED）", 500);
+    return fail(
+      "首次启动状态读取失败，请完全退出并重新启动 VERIDIA。",
+      500,
+      "SETUP_STATUS_FAILED",
+    );
   }
 }

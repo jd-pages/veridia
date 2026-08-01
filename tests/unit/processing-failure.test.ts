@@ -7,6 +7,7 @@ import {
 import {
   buildAuditResultWhere,
   buildLocalDateRange,
+  readResultQueryFilters,
 } from "@/lib/result-query";
 
 describe("处理失败结果口径", () => {
@@ -26,6 +27,12 @@ describe("处理失败结果口径", () => {
     expect(processingFailureReason("BODY_NOT_RECOGNIZED", null)).toContain(
       "人工复核",
     );
+    expect(
+      processingFailureReason(
+        "STRUCTURE_MISMATCH",
+        "页面结构已匹配，但没有提取到标题或正文",
+      ),
+    ).toBe("页面结构异常，未提取到标题或正文，请人工确认。");
   });
 
   it("处理失败筛选只按任务处理状态筛选", () => {
@@ -128,5 +135,15 @@ describe("处理失败结果口径", () => {
     expect(() =>
       buildLocalDateRange("2026-07-31", "2026-07-01"),
     ).toThrow("开始日期");
+  });
+
+  it("导出所选将多个结果ID合并为同一次查询", () => {
+    const filters = readResultQueryFilters(
+      new URLSearchParams("ids=result-1,result-2,result-1"),
+    );
+    expect(filters.ids).toEqual(["result-1", "result-2", "result-1"]);
+    expect(buildAuditResultWhere(filters)).toEqual({
+      AND: [{ id: { in: ["result-1", "result-2"] } }],
+    });
   });
 });

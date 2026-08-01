@@ -1,7 +1,7 @@
 {
   "name": "veridia",
   "productName": "VERIDIA",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "repository": {
     "type": "git",
@@ -34,7 +34,9 @@
     "release:major": "node scripts/release.mjs major",
     "release:tag": "node scripts/create-release-tag.mjs",
     "rules:export-default": "tsx scripts/export-default-rules.ts",
-    "rules:publish": "tsx scripts/publish-rules.ts",
+    "rules:db:preflight": "tsx scripts/preflight-rule-database.ts",
+    "rules:validate-local": "tsx scripts/validate-local-rule-package.ts",
+    "rules:publish": "tsx scripts/run-publish-rules.ts",
     "db:generate": "prisma generate",
     "prisma:assert": "node scripts/assert-prisma-generated.mjs",
     "prisma:assert-packaged": "node scripts/assert-packaged-prisma.mjs",

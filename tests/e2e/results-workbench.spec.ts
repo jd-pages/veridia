@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import ExcelJS from "exceljs";
 
 async function login(page: Page) {
   const response = await page.request.post("/api/auth/login", {
@@ -9,6 +10,7 @@ async function login(page: Page) {
 
 test("审核结果决策工作台整合列、筛选、批量操作和详情抽屉", async ({
   page,
+  context,
 }) => {
   await login(page);
   await page.setViewportSize({ width: 1366, height: 768 });
@@ -61,34 +63,29 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await page.getByText("页面正常", { exact: true }).last().click();
   await page.getByRole("button", { name: "查询" }).click();
 
-  await page.evaluate(() => {
-    (window as Window & { __veridiaExportUrl?: string }).__veridiaExportUrl =
-      undefined;
-    window.open = ((url?: string | URL) => {
-      (window as Window & { __veridiaExportUrl?: string }).__veridiaExportUrl =
-        String(url ?? "");
-      return null;
-    }) as typeof window.open;
+  const exportRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/results/export")) {
+      exportRequests.push(request.url());
+    }
   });
-  await page.getByRole("button", { name: /导出当前结果/u }).click();
-  await page.getByText("导出 Excel", { exact: true }).click();
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          (window as Window & { __veridiaExportUrl?: string })
-            .__veridiaExportUrl ?? "",
-      ),
-    )
-    .toContain("/api/results/export");
-  const exportedUrl = new URL(
-    await page.evaluate(
-      () =>
-        (window as Window & { __veridiaExportUrl?: string })
-          .__veridiaExportUrl ?? "",
-    ),
-    "http://localhost",
+  const pagesBeforeExport = context.pages().length;
+  const exportButton = page.getByRole("button", {
+    name: /导出当前结果/u,
+  });
+  const downloadPromise = page.waitForEvent("download");
+  await exportButton.evaluate((button) => {
+    for (let index = 0; index < 5; index += 1) {
+      (button as HTMLButtonElement).click();
+    }
+  });
+  const download = await downloadPromise;
+  await expect.poll(() => exportRequests.length).toBe(1);
+  expect(context.pages()).toHaveLength(pagesBeforeExport);
+  expect(download.suggestedFilename()).toMatch(
+    /^VERIDIA审核结果_当前筛选_\d{4}-\d{2}-\d{2}\.xlsx$/u,
   );
+  const exportedUrl = new URL(exportRequests[0]);
   expect(exportedUrl.searchParams.get("startDate")).toMatch(
     /^\d{4}-\d{2}-01$/u,
   );
@@ -97,6 +94,50 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   );
   expect(exportedUrl.searchParams.get("dateType")).toBe("AUDITED_AT");
   expect(exportedUrl.searchParams.get("pageStatus")).toBe("NORMAL");
+  const filteredList = (await (
+    await page.request.get(
+      `/api/results?${exportedUrl.searchParams.toString()}&page=1&pageSize=1`,
+    )
+  ).json()).data as { total: number };
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile((await download.path())!);
+  expect(workbook.worksheets[0].rowCount - 1).toBe(filteredList.total);
+  const exportHeaders = workbook.worksheets[0]
+    .getRow(1)
+    .values as unknown[];
+  for (const requiredHeader of [
+    "笔记链接",
+    "笔记ID",
+    "产品",
+    "活动",
+    "产品阶段话题",
+    "页面状态",
+    "正文状态",
+    "话题审核结果",
+    "图片数量",
+    "自动审核结果",
+    "人工复核结果",
+    "最终审核结论",
+    "不通过原因",
+    "人工复核备注",
+    "审核时间",
+  ]) {
+    expect(exportHeaders).toContain(requiredHeader);
+  }
+  await expect(page.getByText(/导出成功，共 \d+ 条/u)).toBeVisible();
+
+  await page.getByLabel("关键词搜索").fill(`无结果-${Date.now()}`);
+  await page.getByRole("button", { name: "查询" }).click();
+  await expect(page.getByText("当前筛选共 0 条", { exact: true })).toBeVisible();
+  await exportButton.evaluate((button) =>
+    (button as HTMLButtonElement).click(),
+  );
+  await expect(
+    page.getByText("当前筛选无结果，未生成文件", { exact: true }),
+  ).toBeVisible();
+  expect(exportRequests).toHaveLength(1);
+  await page.getByRole("button", { name: "重置" }).click();
+  await expect(page.locator(".ant-table-row").first()).toBeVisible();
 
   const firstRowCheckbox = page
     .locator(".ant-table-row")

@@ -317,7 +317,7 @@ export async function extractAuditTaskAutomatically(
           : "短链接未跳转到小红书笔记详情页";
       throw new AutomaticExtractionError(
         "REDIRECT_FAILED",
-        `${reason}；最终页面：${identity.pageTitle || "无标题"}`,
+        `${reason}，请人工复核。最终页面：${identity.pageTitle || "无标题"}`,
       );
     }
     if (identity.pageType === "APP_LAUNCH") {

@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
-import { fail, ok, requireApiUser } from "@/lib/api";
+import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 
-export async function GET(request: Request) {
+export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
@@ -28,9 +28,9 @@ export async function GET(request: Request) {
     orderBy: [{ month: "desc" }, { updatedAt: "desc" }],
   });
   return ok(campaigns);
-}
+}, "读取活动列表");
 
-export async function POST(request: Request) {
+export const POST = withApiErrorBoundary(async function POST(request: Request) {
   const user = await requireApiUser(["ADMIN"]);
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
@@ -103,4 +103,4 @@ export async function POST(request: Request) {
   } catch {
     return fail("活动重复、产品不存在或日期无效");
   }
-}
+}, "新增活动");

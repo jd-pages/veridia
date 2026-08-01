@@ -83,9 +83,9 @@ const items = [
   { key: "/dashboard", icon: <BarChartOutlined />, label: "仪表盘", roles: ["ADMIN", "OPERATOR", "VIEWER"] },
   { key: "/tasks", icon: <AuditOutlined />, label: "审核任务", roles: ["ADMIN", "OPERATOR", "VIEWER"] },
   { key: "/results", icon: <FileSearchOutlined />, label: "审核结果", roles: ["ADMIN", "OPERATOR", "VIEWER"] },
-  { key: "/products", icon: <ProductOutlined />, label: "产品管理", roles: ["ADMIN"] },
-  { key: "/campaigns", icon: <AppstoreOutlined />, label: "活动管理", roles: ["ADMIN"] },
-  { key: "/rules", icon: <TagsOutlined />, label: "话题规则", roles: ["ADMIN"] },
+  { key: "/products", icon: <ProductOutlined />, label: "产品管理", roles: ["ADMIN", "OPERATOR"] },
+  { key: "/campaigns", icon: <AppstoreOutlined />, label: "活动管理", roles: ["ADMIN", "OPERATOR"] },
+  { key: "/rules", icon: <TagsOutlined />, label: "话题规则", roles: ["ADMIN", "OPERATOR"] },
   { key: "/imports", icon: <ImportOutlined />, label: "导入记录", roles: ["ADMIN", "OPERATOR"] },
   { key: "/settings", icon: <SettingOutlined />, label: "系统设置", roles: ["ADMIN", "OPERATOR", "VIEWER"] },
 ];

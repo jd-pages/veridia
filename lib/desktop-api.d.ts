@@ -34,6 +34,13 @@ declare global {
     error?: string;
   }
 
+  interface VeridiaExportSaveResult {
+    success: boolean;
+    canceled?: boolean;
+    filePath?: string;
+    error?: string;
+  }
+
   interface Window {
     veridiaDesktop?: {
       getSystemInfo(): Promise<{
@@ -66,6 +73,10 @@ declare global {
       getUpdateStatus(): Promise<VeridiaUpdateStatus>;
       storePersistentSession(token: string): Promise<boolean>;
       clearPersistentSession(): Promise<boolean>;
+      saveExportFile(payload: {
+        fileName: string;
+        data: Uint8Array;
+      }): Promise<VeridiaExportSaveResult>;
       onUpdateStatus(
         listener: (status: VeridiaUpdateStatus) => void,
       ): () => void;

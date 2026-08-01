@@ -1,12 +1,12 @@
 import { prisma } from "@/lib/db";
-import { fail, ok, requireApiUser } from "@/lib/api";
+import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 
-export async function GET() {
+export const GET = withApiErrorBoundary(async function GET() {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
-  if (user.role !== "ADMIN") return ok([]);
   const settings = await prisma.systemSetting.findMany({
     where: {
+      isSecret: false,
       key: {
         notIn: [
           "AI_ENABLED",
@@ -26,9 +26,9 @@ export async function GET() {
       value: setting.isSecret ? "••••••••" : setting.value,
     })),
   );
-}
+}, "读取系统基础设置");
 
-export async function PUT(request: Request) {
+export const PUT = withApiErrorBoundary(async function PUT(request: Request) {
   const user = await requireApiUser(["ADMIN"]);
   if (user instanceof Response) return user;
   const body = (await request.json()) as { key?: string; value?: string };
@@ -53,4 +53,4 @@ export async function PUT(request: Request) {
       data: { value: body.value },
     }),
   );
-}
+}, "修改系统设置");

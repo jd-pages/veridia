@@ -104,7 +104,8 @@ describe("audit engine", () => {
   it("不能只根据蓝色判断可点击", () => {
     const result = evaluateAudit(createMockNote("unclickable-topic"), context);
     expect(result.clickableCompliant).toBe(false);
-    expect(result.failureReasons.join()).toContain("不是有效的蓝色可点击话题");
+    expect(result.failureReasons.join()).toContain("要求话题不可点击 #inne多维锌");
+    expect(result.missingTopics).not.toContain("#inne多维锌");
   });
 
   it("识别禁止话题", () => {
@@ -134,6 +135,7 @@ describe("audit engine", () => {
       publicRequired: true,
       retentionDays: 15,
       bodyRequired: true,
+      bodyStageRequired: true,
       clickableTopicRequired: true,
       rules: [
         ["brand", "#爱他美新手爸妈日记", "BRAND_COMMON"],
@@ -199,9 +201,9 @@ describe("audit engine", () => {
     );
     const plainTextOnly = evaluateAudit(note, stageContext);
     expect(plainTextOnly.autoStatus).toBe("FAILED");
-    expect(plainTextOnly.missingTopics).toContain("#二段奶粉推荐");
+    expect(plainTextOnly.missingTopics).not.toContain("#二段奶粉推荐");
     expect(plainTextOnly.failureReasons).toContain(
-      "阶段话题 #二段奶粉推荐 不可点击",
+      "要求话题不可点击 #二段奶粉推荐",
     );
   });
 
@@ -209,6 +211,7 @@ describe("audit engine", () => {
     const stageContext: AuditContext = {
       ...context,
       productStage: "GUM_3_4_1PLUS_2PLUS",
+      bodyStageRequired: true,
       rules: [
         {
           id: "stage-gum",
@@ -292,7 +295,7 @@ describe("audit engine", () => {
     );
   });
 
-  it("近似阶段话题与缺少阶段话题使用不同失败原因", () => {
+  it("近似阶段话题与精确话题缺失使用不同失败原因", () => {
     const stageContext: AuditContext = {
       ...context,
       productStage: "IFFO_P1",
@@ -326,11 +329,50 @@ describe("audit engine", () => {
       },
     ];
     expect(evaluateAudit(note, stageContext).failureReasons.join("；")).toContain(
-      "阶段话题文字不准确",
+      "话题文字不准确",
     );
     note.topics = [];
     expect(evaluateAudit(note, stageContext).failureReasons).toContain(
-      "缺少阶段话题 #新生儿奶粉",
+      "缺少精确话题 #新生儿奶粉",
     );
+  });
+
+  it("缺少目标话题时不误报蓝色可点击异常", () => {
+    const missingContext: AuditContext = {
+      ...context,
+      bodyStageRequired: false,
+      rules: [
+        {
+          id: "product-green",
+          scope: "CAMPAIGN",
+          ruleType: "REQUIRED",
+          topic: "#爱他美奇迹绿罐",
+          topicCategory: "PRODUCT_COMMON",
+          exactMatch: true,
+          clickableRequired: true,
+          caseSensitive: false,
+          minCount: 1,
+          sortOrder: 1,
+          version: 1,
+        },
+      ],
+    };
+    const note = createMockNote("passed");
+    note.topics = ["#京东", "#新生儿奶粉", "#爱他美德国白金版"].map(
+      (displayText) => ({
+        displayText,
+        isLinkElement: true,
+        hasHref: true,
+        href: `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(displayText)}`,
+        textColor: "rgb(19, 92, 173)",
+        styleFeature: true,
+      }),
+    );
+
+    const result = evaluateAudit(note, missingContext);
+    expect(result.topicsCompliant).toBe(false);
+    expect(result.clickableCompliant).toBe(true);
+    expect(result.missingTopics).toEqual(["#爱他美奇迹绿罐"]);
+    expect(result.failureReasons).toContain("缺少精确话题 #爱他美奇迹绿罐");
   });
 });

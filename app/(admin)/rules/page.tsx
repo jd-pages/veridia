@@ -21,6 +21,7 @@ import PageHeader from "@/components/PageHeader";
 import StatusTag from "@/components/StatusTag";
 import { apiFetch } from "@/lib/client";
 import { ruleScopeLabels, ruleTypeLabels } from "@/lib/zh-CN";
+import type { SessionUser } from "@/lib/auth";
 
 interface Product {
   id: string;
@@ -76,9 +77,13 @@ export default function RulesPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Rule | null>(null);
   const [editingStage, setEditingStage] = useState<StageGroup | null>(null);
+  const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
+    null,
+  );
   const [form] = Form.useForm();
   const [stageForm] = Form.useForm();
   const scope = Form.useWatch("scope", form);
+  const isAdmin = currentRole === "ADMIN";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -104,6 +109,9 @@ export default function RulesPage() {
 
   useEffect(() => {
     void load();
+    void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
+      setCurrentRole(user?.role || null),
+    );
   }, [load]);
 
   return (
@@ -111,7 +119,7 @@ export default function RulesPage() {
       <PageHeader
         title="话题规则"
         description="产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #"
-        actions={
+        actions={isAdmin ? (
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -134,7 +142,7 @@ export default function RulesPage() {
           >
             新增规则
           </Button>
-        }
+        ) : undefined}
       />
       <Card
         className="surface-card"
@@ -172,7 +180,7 @@ export default function RulesPage() {
             {
               title: "操作",
               width: 100,
-              render: (_value, row) => (
+              render: (_value, row) => isAdmin ? (
                 <Button
                   type="link"
                   icon={<EditOutlined />}
@@ -187,7 +195,7 @@ export default function RulesPage() {
                 >
                   编辑
                 </Button>
-              ),
+              ) : <Tag>只读</Tag>,
             },
           ]}
         />
@@ -278,7 +286,7 @@ export default function RulesPage() {
               title: "操作",
               width: 150,
               fixed: "right",
-              render: (_value, row) => (
+              render: (_value, row) => isAdmin ? (
                 <Space size={2}>
                   <Button
                     type="link"
@@ -310,7 +318,7 @@ export default function RulesPage() {
                     </Popconfirm>
                   ) : null}
                 </Space>
-              ),
+              ) : <Tag>只读</Tag>,
             },
           ]}
           pagination={{ pageSize: 12 }}

@@ -28,16 +28,36 @@ export function normalizeUrl(input: string): string {
 }
 
 export function isSupportedNoteUrl(input: string): boolean {
-  try {
-    const url = new URL(input.trim());
-    return (
-      ["http:", "https:"].includes(url.protocol) &&
-      (url.hostname === "localhost" ||
-        url.hostname === "127.0.0.1" ||
-        url.hostname.endsWith("xiaohongshu.com") ||
-        url.hostname === "xhslink.com")
-    );
-  } catch {
-    return false;
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      const url = new URL(input.trim());
+      if (["localhost", "127.0.0.1"].includes(url.hostname)) return true;
+    } catch {
+      return false;
+    }
   }
+  return isSupportedXiaohongshuNoteUrl(input);
 }
+
+export function extractSupportedNoteUrls(input: string | string[]): string[] {
+  const extracted = extractNoteLinksFromText(input).links.map((item) => item.url);
+  if (process.env.NODE_ENV === "production") return extracted;
+  const values = Array.isArray(input) ? input : [input];
+  const localUrls = values
+    .flatMap((value) => value.match(/https?:\/\/[^\s<>"']+/giu) || [])
+    .map((value) => value.replace(/[，。；;）)】\]]+$/u, ""))
+    .filter((value) => {
+      try {
+        return ["localhost", "127.0.0.1"].includes(new URL(value).hostname);
+      } catch {
+        return false;
+      }
+    });
+  return [...new Set([...extracted, ...localUrls])];
+}
+
+export { extractNoteLinksFromText } from "./note-links";
+import {
+  extractNoteLinksFromText,
+  isSupportedXiaohongshuNoteUrl,
+} from "./note-links";

@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
-import { ok, requireApiUser } from "@/lib/api";
+import { ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 
-export async function GET() {
+export const GET = withApiErrorBoundary(async function GET() {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   return ok(
@@ -10,4 +10,4 @@ export async function GET() {
       take: 100,
     }),
   );
-}
+}, "读取导入记录");

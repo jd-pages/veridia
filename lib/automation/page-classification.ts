@@ -16,7 +16,9 @@ export interface PageClassificationInput {
 export function isShortXiaohongshuUrl(value: string) {
   try {
     const hostname = new URL(value).hostname.toLowerCase();
-    return hostname === "xhslink.com" || hostname.endsWith(".xhslink.com");
+    return ["xhslink.com", "xhslink.cn"].some(
+      (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+    );
   } catch {
     return false;
   }

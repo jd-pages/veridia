@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { processingFailureTaskStatuses } from "@/lib/processing-failure";
 
 export interface ResultQueryFilters {
+  ids?: string[];
   productId?: string;
   campaignId?: string;
   batchId?: string;
@@ -30,6 +31,11 @@ export function readResultQueryFilters(
   const value = (key: string) =>
     searchParams.get(key)?.trim() || undefined;
   return {
+    ids: value("ids")
+      ?.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 100),
     productId: value("productId"),
     campaignId: value("campaignId"),
     batchId: value("batchId"),
@@ -99,6 +105,10 @@ export function buildAuditResultWhere(
   filters: ResultQueryFilters,
 ): Prisma.AuditResultWhereInput {
   const and: Prisma.AuditResultWhereInput[] = [];
+
+  if (filters.ids?.length) {
+    and.push({ id: { in: [...new Set(filters.ids)] } });
+  }
 
   const dateRange = buildLocalDateRange(
     filters.startDate,

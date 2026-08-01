@@ -248,6 +248,7 @@ model AuditTask {
   id                 String             @id @default(cuid())
   batchId            String?
   url                String
+  originalInput      String?
   normalizedUrl      String
   productId          String
   campaignId         String
@@ -519,7 +520,7 @@ model RuleStageGroup {
   label            String
   canonicalStages  String
   bodyTerms        String
-  requireBodyStage Boolean  @default(true)
+  requireBodyStage Boolean  @default(false)
   requiredTopic    String
   sortOrder        Int      @default(0)
   status           String   @default("ACTIVE")

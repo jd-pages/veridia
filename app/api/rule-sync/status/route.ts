@@ -1,8 +1,8 @@
-import { ok, requireApiUser } from "@/lib/api";
+import { ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { getRuleSyncStatus } from "@/lib/rules/sync";
 
-export async function GET() {
+export const GET = withApiErrorBoundary(async function GET() {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   return ok(await getRuleSyncStatus());
-}
+}, "读取规则同步状态");
