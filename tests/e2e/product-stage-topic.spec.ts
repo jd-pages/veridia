@@ -118,7 +118,15 @@ test("产品阶段话题只显示三组，仅匹配对应的可点击话题", as
   await expect(page.getByText("15天留存", { exact: true })).toHaveCount(0);
   await expect(page.getByText("作者", { exact: true })).toHaveCount(0);
   await expect(page.getByText("发布时间", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("留存计算", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("暂无结论", { exact: true })).toHaveCount(0);
   await expect(page.getByText("正文允许段位", { exact: true })).toHaveCount(0);
+  await page.getByText("本次使用的规则快照（内部技术字段）").click();
+  await expect(page.locator("body")).not.toContainText("发布时间");
+  await expect(page.locator("body")).not.toContainText("作者");
+  await expect(page.locator("body")).not.toContainText("15天留存");
+  await expect(page.locator("body")).not.toContainText("留存计算");
+  await expect(page.locator("body")).not.toContainText("暂无结论");
   await expect(
     page.getByText("#二段奶粉推荐", { exact: true }).first(),
   ).toBeVisible();

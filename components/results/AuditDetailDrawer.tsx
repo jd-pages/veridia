@@ -17,12 +17,15 @@ import {
   ReloadOutlined,
   StopOutlined,
 } from "@ant-design/icons";
-import {
-  businessEvidenceLabel,
-  businessFailureReasonLabel,
-  businessTextLabel,
-} from "@/lib/zh-CN";
 import { parseJsonArray } from "@/lib/client";
+import {
+  auditDetailEvidenceLabel,
+  auditDetailFailureReasonLabel,
+  auditDetailStatusLabel,
+  auditDetailTextLabel,
+  filterAuditDetailReasons,
+  filterAuditDetailRules,
+} from "@/lib/audit-detail-visibility";
 import { productStageTopicLabel } from "@/lib/product-stage";
 import AuditConclusionCell from "./AuditConclusionCell";
 import AuditStatusTag from "./AuditStatusTag";
@@ -66,6 +69,13 @@ export default function AuditDetailDrawer({
   onAction: (row: ResultRow, action: BulkAction) => void;
   canOperate?: boolean;
 }) {
+  const visibleFailureReasons = row
+    ? filterAuditDetailReasons(parseJsonArray(row.failureReasons))
+    : [];
+  const visibleRuleResults = detail
+    ? filterAuditDetailRules(detail.ruleResults)
+    : [];
+
   return (
     <Drawer
       open={open}
@@ -124,7 +134,7 @@ export default function AuditDetailDrawer({
       ) : (
         <Spin spinning={loading}>
           <div className={styles.drawerHeaderResult}>
-            <AuditConclusionCell row={row} />
+            <AuditConclusionCell row={row} detailView />
           </div>
 
           <DrawerSection title="笔记基础信息">
@@ -169,11 +179,10 @@ export default function AuditDetailDrawer({
 
           <DrawerSection title="页面与正文状态">
             <Space size={[6, 6]} wrap>
-              <AuditStatusTag value={row.pageStatus} />
-              <AuditStatusTag value={row.bodyStatus} />
-              <AuditStatusTag value={row.noteType} />
-              <AuditStatusTag value={row.publicStatus} />
-              <AuditStatusTag value={row.retentionStatus} />
+              <AuditStatusTag value={row.pageStatus} label={auditDetailStatusLabel(row.pageStatus)} />
+              <AuditStatusTag value={row.bodyStatus} label={auditDetailStatusLabel(row.bodyStatus)} />
+              <AuditStatusTag value={row.noteType} label={auditDetailStatusLabel(row.noteType)} />
+              <AuditStatusTag value={row.publicStatus} label={auditDetailStatusLabel(row.publicStatus)} />
             </Space>
             <div className={styles.cellSecondary}>
               {row.bodyStatus === "UNKNOWN"
@@ -200,32 +209,31 @@ export default function AuditDetailDrawer({
                   key: "process",
                   label: "处理状态",
                   children: (
-                    <AuditStatusTag value={row.task.status} domain="process" />
+                    <AuditStatusTag value={row.task.status} domain="process" label={auditDetailStatusLabel(row.task.status, "process")} />
                   ),
                 },
                 {
                   key: "auto",
                   label: "自动审核结果",
                   children: (
-                    <AuditStatusTag value={row.autoStatus} domain="audit" />
+                    <AuditStatusTag value={row.autoStatus} domain="audit" label={auditDetailStatusLabel(row.autoStatus, "audit")} />
                   ),
                 },
                 {
                   key: "exception",
                   label: "异常分类",
                   children: row.task.failureCode
-                    ? businessFailureReasonLabel(row.task.failureCode)
+                    ? auditDetailFailureReasonLabel(row.task.failureCode)
                     : "无异常",
                 },
                 {
                   key: "failureMessage",
                   label: "失败原因",
                   children:
-                    parseJsonArray(row.failureReasons)
-                      .map(businessFailureReasonLabel)
-                      .join("；") ||
-                    row.task.failureMessage ||
-                    "无异常",
+                    visibleFailureReasons.join("；") ||
+                    (row.task.failureMessage
+                      ? auditDetailTextLabel(row.task.failureMessage)
+                      : "无异常"),
                 },
                 {
                   key: "attempts",
@@ -253,9 +261,7 @@ export default function AuditDetailDrawer({
                   key: "reasons",
                   label: "异常或失败原因",
                   children:
-                    parseJsonArray(row.failureReasons)
-                      .map(businessFailureReasonLabel)
-                      .join("；") || "无异常",
+                    visibleFailureReasons.join("；") || "无异常",
                 },
               ]}
             />
@@ -267,7 +273,7 @@ export default function AuditDetailDrawer({
                 items={detail.operationLogs.slice(0, 8).map((log) => ({
                   children: (
                     <>
-                      <strong>{businessTextLabel(log.summary)}</strong>
+                      <strong>{auditDetailTextLabel(log.summary)}</strong>
                       <div className={styles.cellSecondary}>
                         {log.user?.displayName || "系统"} ·{" "}
                         {new Date(log.createdAt).toLocaleString("zh-CN")}
@@ -293,12 +299,12 @@ export default function AuditDetailDrawer({
                   label: "逐条规则审核证据",
                   children: (
                     <div className={styles.stack}>
-                      {detail.ruleResults.map((rule) => (
+                      {visibleRuleResults.map((rule) => (
                         <div key={rule.id}>
                           <strong>{rule.ruleName}</strong>
                           <div className={styles.cellSecondary}>
                             {rule.passed ? "通过" : "不通过"} ·{" "}
-                            {businessEvidenceLabel(rule.evidence)}
+                            {auditDetailEvidenceLabel(rule.evidence)}
                           </div>
                         </div>
                       ))}

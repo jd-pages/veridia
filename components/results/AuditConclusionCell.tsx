@@ -6,6 +6,10 @@ import {
   auditResultLabels,
   businessFailureReasonLabel,
 } from "@/lib/zh-CN";
+import {
+  auditDetailStatusLabel,
+  filterAuditDetailReasons,
+} from "@/lib/audit-detail-visibility";
 import AuditStatusTag from "./AuditStatusTag";
 import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
@@ -21,17 +25,26 @@ const resultMeta: Record<
   PROCESSING: { className: styles.dotInfo, label: "处理中" },
 };
 
-export default function AuditConclusionCell({ row }: { row: ResultRow }) {
-  const reasons = parseJsonArray(row.failureReasons)
-    .filter(
-      (reason) =>
-        !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(reason),
-    )
-    .map(businessFailureReasonLabel);
+export default function AuditConclusionCell({
+  row,
+  detailView = false,
+}: {
+  row: ResultRow;
+  detailView?: boolean;
+}) {
+  const rawReasons = parseJsonArray(row.failureReasons).filter(
+    (reason) =>
+      !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(reason),
+  );
+  const reasons = detailView
+    ? filterAuditDetailReasons(rawReasons)
+    : rawReasons.map(businessFailureReasonLabel);
   const manual = row.manualReviews[0];
   const autoMeta = resultMeta[row.autoStatus] || {
     className: styles.dotInfo,
-    label: auditResultLabels[row.autoStatus] || "暂无结论",
+    label: detailView
+      ? auditDetailStatusLabel(row.autoStatus, "audit")
+      : auditResultLabels[row.autoStatus] || "暂无结论",
   };
   const mainValue = manual?.result || row.autoStatus;
   const processingFailed = [

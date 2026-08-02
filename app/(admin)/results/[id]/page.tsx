@@ -26,7 +26,6 @@ import {
   CheckCircleOutlined,
   EditOutlined,
   LinkOutlined,
-  ReloadOutlined,
   StopOutlined,
 } from "@ant-design/icons";
 import { useParams } from "next/navigation";
@@ -35,9 +34,6 @@ import StatusTag from "@/components/StatusTag";
 import ExtractionEvidencePanel from "@/components/results/ExtractionEvidencePanel";
 import { apiFetch, parseJsonArray } from "@/lib/client";
 import {
-  allowedBodyStageLabels,
-  bodyStageRequiredFromRuleSnapshot,
-  detectBodyProductStages,
   productStageTopicLabel,
   stageTopicFromRuleSnapshot,
 } from "@/lib/product-stage";
@@ -47,10 +43,16 @@ import {
   aiRelevanceLabels,
   aiStatusLabels,
   auditResultLabels,
-  businessEvidenceLabel,
-  businessFailureReasonLabel,
-  businessTextLabel,
 } from "@/lib/zh-CN";
+import {
+  auditDetailEvidenceLabel,
+  auditDetailFailureReasonLabel,
+  auditDetailJsonForDisplay,
+  auditDetailStatusLabel,
+  auditDetailTextLabel,
+  filterAuditDetailReasons,
+  filterAuditDetailRules,
+} from "@/lib/audit-detail-visibility";
 
 interface Product { id: string; name: string; code: string }
 interface Campaign { id: string; name: string; productId: string; month: string }
@@ -181,31 +183,24 @@ export default function ResultDetailPage() {
   if (!detail) {
     return <div style={{ minHeight: 420, display: "grid", placeItems: "center" }}><Spin size="large" /></div>;
   }
-  const reasons = parseJsonArray(detail.failureReasons).filter(
-    (reason) =>
-      !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(reason),
+  const reasons = filterAuditDetailReasons(
+    parseJsonArray(detail.failureReasons).filter(
+      (reason) =>
+        !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(reason),
+    ),
   );
   const processingFailed = [
     "FAILED",
     "READ_FAILED",
     "LOGIN_EXPIRED",
   ].includes(detail.task.status);
-  const displayedRuleResults = detail.ruleResults.filter(
-    (rule) =>
-      !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(rule.ruleName),
+  const displayedRuleResults = filterAuditDetailRules(
+    detail.ruleResults.filter(
+      (rule) =>
+        !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(rule.ruleName),
+    ),
   );
   const productStageLabel = productStageTopicLabel(detail.task.productStage);
-  const bodyStageRequired =
-    bodyStageRequiredFromRuleSnapshot(detail.ruleSnapshot) ||
-    detail.ruleResults.some(
-      (rule) => rule.ruleKey === "PRODUCT_STAGE_BODY",
-    );
-  const bodyStage = bodyStageRequired
-    ? detectBodyProductStages(
-        detail.note.body,
-        detail.task.productStage,
-      )
-    : null;
   const stageTopic = stageTopicFromRuleSnapshot(detail.ruleSnapshot);
   const requiredStageTopic =
     stageTopic ||
@@ -236,26 +231,11 @@ export default function ResultDetailPage() {
         description={`笔记 ${detail.note.platformNoteId || "未识别ID"} · 规则版本 v${detail.ruleVersion}`}
         actions={
           <Space>
-            <StatusTag value={detail.autoStatus} domain="audit" />
-            {detail.retentionStatus === "PENDING" ? (
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={async () => {
-                  try {
-                    await apiFetch(`/api/results/${detail.id}/retention/recheck`, {
-                      method: "POST",
-                    });
-                    message.success("留存复查任务已创建，历史结果保持不变");
-                  } catch (error) {
-                    message.warning(
-                      error instanceof Error ? error.message : "无法创建留存复查",
-                    );
-                  }
-                }}
-              >
-                重新检查留存
-              </Button>
-            ) : null}
+            <StatusTag
+              value={detail.autoStatus}
+              domain="audit"
+              label={auditDetailStatusLabel(detail.autoStatus, "audit")}
+            />
             <Button
               type="primary"
               icon={<EditOutlined />}
@@ -282,7 +262,7 @@ export default function ResultDetailPage() {
           type="warning"
           showIcon
           message="处理失败，待人工复核"
-          description={reasons.map(businessFailureReasonLabel).join("；")}
+          description={reasons.join("；")}
           style={{ marginBottom: 16 }}
         />
       ) : reasons.length ? (
@@ -290,7 +270,7 @@ export default function ResultDetailPage() {
           type="error"
           showIcon
           message="自动审核未通过"
-          description={reasons.map(businessFailureReasonLabel).join("；")}
+          description={reasons.join("；")}
           style={{ marginBottom: 16 }}
         />
       ) : detail.autoStatus === "NEEDS_REVIEW" ? (
@@ -318,7 +298,7 @@ export default function ResultDetailPage() {
           <Card className="surface-card" title="笔记基础信息">
             <Descriptions column={2} bordered size="small">
               <Descriptions.Item label="笔记ID">{detail.note.platformNoteId || "-"}</Descriptions.Item>
-              <Descriptions.Item label="页面状态"><StatusTag value={detail.pageStatus} /></Descriptions.Item>
+              <Descriptions.Item label="页面状态"><StatusTag value={detail.pageStatus} label={auditDetailStatusLabel(detail.pageStatus)} /></Descriptions.Item>
               <Descriptions.Item label="产品">{detail.task.product.name}</Descriptions.Item>
               <Descriptions.Item label="活动">{detail.task.campaign.name}</Descriptions.Item>
               <Descriptions.Item label="产品阶段话题" span={2}>
@@ -346,20 +326,21 @@ export default function ResultDetailPage() {
           <Card className="surface-card" title="综合判断">
             <Descriptions column={1} size="small">
               <Descriptions.Item label="处理状态">
-                <StatusTag value={detail.task.status} domain="process" />
+                <StatusTag value={detail.task.status} domain="process" label={auditDetailStatusLabel(detail.task.status, "process")} />
               </Descriptions.Item>
               <Descriptions.Item label="审核结论">
-                <StatusTag value={detail.autoStatus} domain="audit" />
+                <StatusTag value={detail.autoStatus} domain="audit" label={auditDetailStatusLabel(detail.autoStatus, "audit")} />
               </Descriptions.Item>
               <Descriptions.Item label="异常分类">
                 {detail.task.failureCode
-                  ? businessFailureReasonLabel(detail.task.failureCode)
+                  ? auditDetailFailureReasonLabel(detail.task.failureCode)
                   : "无异常"}
               </Descriptions.Item>
               <Descriptions.Item label="失败原因">
-                {reasons.map(businessFailureReasonLabel).join("；") ||
-                  detail.task.failureMessage ||
-                  "无异常"}
+                {reasons.join("；") ||
+                  (detail.task.failureMessage
+                    ? auditDetailTextLabel(detail.task.failureMessage)
+                    : "无异常")}
               </Descriptions.Item>
               <Descriptions.Item label="尝试次数">
                 {detail.task.attempts}
@@ -374,22 +355,6 @@ export default function ResultDetailPage() {
                   </Tag>
                 )}
               </Descriptions.Item>
-              {bodyStageRequired ? (
-                <>
-                  <Descriptions.Item label="正文允许段位">
-                    {allowedBodyStageLabels(detail.task.productStage).join("、") ||
-                      "段位未识别"}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="正文实际识别段位">
-                    {bodyStage?.detectedStages.join("、") || "段位未识别"}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="正文段位结果">
-                    <Tag color={bodyStage?.passed ? "green" : "red"}>
-                      {bodyStage?.passed ? "合规" : "不合规"}
-                    </Tag>
-                  </Descriptions.Item>
-                </>
-              ) : null}
               <Descriptions.Item label="要求阶段话题">
                 {requiredStageTopic || "当前活动未配置阶段话题规则"}
               </Descriptions.Item>
@@ -424,17 +389,17 @@ export default function ResultDetailPage() {
                 )}
               </Descriptions.Item>
               <Descriptions.Item label="笔记类型">
-                <StatusTag value={detail.noteType} />
+                <StatusTag value={detail.noteType} label={auditDetailStatusLabel(detail.noteType)} />
               </Descriptions.Item>
               <Descriptions.Item label="图片数量">
                 {detail.imageStatus === "COMPLIANT" ||
                 detail.imageStatus === "NON_COMPLIANT" ? (
                   <Space>
                     <span>{detail.imageCount} 张</span>
-                    <StatusTag value={detail.imageStatus} />
+                    <StatusTag value={detail.imageStatus} label={auditDetailStatusLabel(detail.imageStatus)} />
                   </Space>
                 ) : (
-                  <StatusTag value={detail.imageStatus} />
+                  <StatusTag value={detail.imageStatus} label={auditDetailStatusLabel(detail.imageStatus)} />
                 )}
               </Descriptions.Item>
               <Descriptions.Item label="话题">
@@ -450,7 +415,7 @@ export default function ResultDetailPage() {
                 )}
               </Descriptions.Item>
               <Descriptions.Item label="当前公开状态">
-                <StatusTag value={detail.publicStatus} />
+                <StatusTag value={detail.publicStatus} label={auditDetailStatusLabel(detail.publicStatus)} />
               </Descriptions.Item>
               <Descriptions.Item label="智能辅助">
                 <Space direction="vertical" size={2}>
@@ -473,7 +438,7 @@ export default function ResultDetailPage() {
                     <>
                       <Space><StatusTag value={review.result} domain="audit" /><strong>{review.reviewer.displayName}</strong></Space>
                       <div className="muted">{new Date(review.createdAt).toLocaleString("zh-CN")}</div>
-                      <div>{review.comment || "无意见"}</div>
+                      <div>{review.comment ? auditDetailTextLabel(review.comment) : "无意见"}</div>
                     </>
                   ),
                 }))}
@@ -533,14 +498,14 @@ export default function ResultDetailPage() {
           columns={[
             { title: "规则名称", dataIndex: "ruleName", width: 240 },
             { title: "期望值", dataIndex: "expectedValue", width: 260 },
-            { title: "实际值", dataIndex: "actualValue", width: 240, render: (value) => businessTextLabel(value) },
+            { title: "实际值", dataIndex: "actualValue", width: 240, render: (value) => auditDetailTextLabel(value) },
             { title: "结果", dataIndex: "passed", width: 100, render: (value) => <Tag color={value ? "green" : "red"}>{value ? "通过" : "不通过"}</Tag> },
-            { title: "不通过原因", dataIndex: "failureReason", width: 280, render: (value) => value ? <span className="danger-text">{businessFailureReasonLabel(value)}</span> : "-" },
+            { title: "不通过原因", dataIndex: "failureReason", width: 280, render: (value) => value ? <span className="danger-text">{auditDetailFailureReasonLabel(value)}</span> : "-" },
             {
               title: "审核证据",
               dataIndex: "evidence",
               render: (value) => {
-                const localizedEvidence = businessEvidenceLabel(value);
+                const localizedEvidence = auditDetailEvidenceLabel(value);
                 return (
                   <Typography.Text code>
                     {localizedEvidence.slice(0, 200)}
@@ -560,12 +525,12 @@ export default function ResultDetailPage() {
               {
                 key: "snapshot",
                 label: "本次使用的规则快照（内部技术字段）",
-                children: <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(JSON.parse(detail.ruleSnapshot), null, 2)}</pre>,
+                children: <pre style={{ whiteSpace: "pre-wrap" }}>{auditDetailJsonForDisplay(detail.ruleSnapshot)}</pre>,
               },
               ...detail.note.extractions.map((extraction, index) => ({
                 key: extraction.id,
                 label: `原始提取数据 ${index + 1}（内部技术字段）· 提取器版本 ${extraction.adapterVersion}`,
-                children: <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(JSON.parse(extraction.rawData), null, 2)}</pre>,
+                children: <pre style={{ whiteSpace: "pre-wrap" }}>{auditDetailJsonForDisplay(extraction.rawData)}</pre>,
               })),
             ]}
           />
@@ -576,7 +541,7 @@ export default function ResultDetailPage() {
               <Timeline items={detail.operationLogs.map((log) => ({
                 children: (
                   <>
-                    <strong>{businessTextLabel(log.summary)}</strong>
+                    <strong>{auditDetailTextLabel(log.summary)}</strong>
                     <div className="muted">{log.user?.displayName || "系统"} · {new Date(log.createdAt).toLocaleString("zh-CN")}</div>
                   </>
                 ),

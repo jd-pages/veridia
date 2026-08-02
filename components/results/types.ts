@@ -125,6 +125,7 @@ export interface ResultDetail extends ResultRow {
   };
   ruleResults: Array<{
     id: string;
+    ruleKey: string;
     ruleName: string;
     expectedValue: string;
     actualValue: string;

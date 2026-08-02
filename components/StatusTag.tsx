@@ -53,13 +53,15 @@ const colors: Record<string, string> = {
 export default function StatusTag({
   value,
   domain = "common",
+  label,
 }: {
   value: string | null | undefined;
   domain?: StatusLabelDomain;
+  label?: string;
 }) {
   return (
     <Tag color={colors[value || ""] || "default"}>
-      {businessStatusLabel(value, domain)}
+      {label || businessStatusLabel(value, domain)}
     </Tag>
   );
 }

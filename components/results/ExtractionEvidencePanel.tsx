@@ -2,6 +2,7 @@
 
 import { Alert, Card, Descriptions, Empty, Space, Tag, Typography } from "antd";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
+import { sanitizeAuditDetailEvidence } from "@/lib/audit-detail-visibility";
 
 interface Candidate {
   value?: string;
@@ -58,7 +59,7 @@ function parseEvidence(value?: string | null): PageEvidence | null {
       candidate.bodyCandidates ||
       candidate.topicCandidates ||
       candidate.imageCandidates
-      ? candidate
+      ? sanitizeAuditDetailEvidence(candidate)
       : null;
   } catch {
     return null;
