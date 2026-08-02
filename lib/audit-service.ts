@@ -231,7 +231,9 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
           textColor: topic.textColor,
           styleFeature: topic.styleFeature,
           isClickable: Boolean(
-            classifyTopicClickability(topic) === "CLICKABLE",
+            classifyTopicClickability(topic, {
+              pageUrl: payload.finalUrl || payload.url,
+            }) === "CLICKABLE",
           ),
           domPath: topic.domPath,
         })),

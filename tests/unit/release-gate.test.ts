@@ -86,6 +86,10 @@ describe("本地打包发布门禁", () => {
     expect(softwareBat).not.toContain("rules:publish");
     expect(rulesBat).toContain("rules:publish");
     expect(rulesBat).not.toContain("fixed-workflow.mjs publish");
+    expect(rulesBat).toContain("chcp 65001 >nul");
+    expect(rulesBat).toContain(
+      "echo(远程旧规则未被覆盖，也没有上传新的规则包。",
+    );
     expect(workflow).toContain('"trigger-actions"');
     for (const ignored of [
       "/release/",

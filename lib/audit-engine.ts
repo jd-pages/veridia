@@ -8,6 +8,7 @@ import type {
 import { compareTopic, normalizeTopic } from "@/lib/topic";
 import {
   classifyTopicCandidates,
+  type TopicClickabilityContext,
   type TopicClickability,
 } from "@/lib/topic-clickability";
 import {
@@ -38,11 +39,12 @@ function findExactTopics(
 function preferredTopicCandidate(
   candidates: ExtractedTopic[],
   clickability: TopicClickability,
+  context: TopicClickabilityContext,
 ) {
   return (
     candidates.find(
       (candidate) =>
-        classifyTopicCandidates([candidate]) === clickability,
+        classifyTopicCandidates([candidate], context) === clickability,
     ) || candidates[0]
   );
 }
@@ -65,8 +67,24 @@ export function evaluateAudit(
   const clickableChecks: boolean[] = [];
   let clickabilityNeedsReview = false;
   const technicalWarnings = new Set(note.technicalWarnings || []);
-  const bodyReadIncomplete = technicalWarnings.has("BODY_NOT_RECOGNIZED");
-  const topicsReadIncomplete = technicalWarnings.has("TOPICS_NOT_RECOGNIZED");
+  const extractedBodyAvailable = Boolean(note.body?.trim());
+  const extractedTopicsAvailable = note.topics.length > 0;
+  const bodyReadIncomplete =
+    technicalWarnings.has("BODY_NOT_RECOGNIZED") && !extractedBodyAvailable;
+  const topicsReadIncomplete =
+    technicalWarnings.has("TOPICS_NOT_RECOGNIZED") && !extractedTopicsAvailable;
+  const unresolvedTechnicalWarnings = new Set(
+    [...technicalWarnings].filter(
+      (warning) =>
+        !(
+          (warning === "BODY_NOT_RECOGNIZED" && extractedBodyAvailable) ||
+          (warning === "TOPICS_NOT_RECOGNIZED" && extractedTopicsAvailable)
+        ),
+    ),
+  );
+  const topicClickabilityContext: TopicClickabilityContext = {
+    pageUrl: note.finalUrl || note.url,
+  };
 
   const pagePassed = note.pageStatus === "NORMAL";
   evaluations.push({
@@ -321,8 +339,15 @@ export function evaluateAudit(
       expected,
       rule.caseSensitive,
     );
-    const clickability = classifyTopicCandidates(matches);
-    const match = preferredTopicCandidate(matches, clickability);
+    const clickability = classifyTopicCandidates(
+      matches,
+      topicClickabilityContext,
+    );
+    const match = preferredTopicCandidate(
+      matches,
+      clickability,
+      topicClickabilityContext,
+    );
     const clickableRequired =
       rule.clickableRequired || context.clickableTopicRequired;
 
@@ -428,7 +453,10 @@ export function evaluateAudit(
         rule.topic,
         rule.caseSensitive,
       );
-      const clickability = classifyTopicCandidates(topics);
+      const clickability = classifyTopicCandidates(
+        topics,
+        topicClickabilityContext,
+      );
       if (topics.length && rule.clickableRequired) {
         clickableChecks.push(clickability !== "NOT_CLICKABLE");
         clickabilityNeedsReview ||= clickability === "UNKNOWN";
@@ -441,10 +469,17 @@ export function evaluateAudit(
           rule.topic,
           rule.caseSensitive,
         );
-        const clickability = classifyTopicCandidates(topics);
+        const clickability = classifyTopicCandidates(
+          topics,
+          topicClickabilityContext,
+        );
         return {
           rule,
-          topic: preferredTopicCandidate(topics, clickability),
+          topic: preferredTopicCandidate(
+            topics,
+            clickability,
+            topicClickabilityContext,
+          ),
           clickability,
         };
       })
@@ -491,7 +526,7 @@ export function evaluateAudit(
   if (!pagePassed) {
     autoStatus =
       note.pageStatus === "READ_FAILED" ? "READ_FAILED" : "NEEDS_REVIEW";
-  } else if (technicalWarnings.size > 0 || clickabilityNeedsReview) {
+  } else if (unresolvedTechnicalWarnings.size > 0 || clickabilityNeedsReview) {
     autoStatus = "NEEDS_REVIEW";
   } else if (failures.length) {
     autoStatus = "FAILED";

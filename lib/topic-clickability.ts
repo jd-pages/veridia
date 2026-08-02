@@ -1,6 +1,9 @@
+import { classifyNoteUrl } from "@/lib/note-links";
+
 export type TopicClickability = "CLICKABLE" | "NOT_CLICKABLE" | "UNKNOWN";
 
 export interface TopicClickabilityEvidence {
+  displayText?: string;
   isClickable?: boolean;
   isLinkElement?: boolean;
   hasHref?: boolean;
@@ -12,6 +15,11 @@ export interface TopicClickabilityEvidence {
   source?: string | null;
 }
 
+export interface TopicClickabilityContext {
+  pageUrl?: string | null;
+  isXiaohongshuPage?: boolean;
+}
+
 const XHS_TOPIC_LINK_PATTERN =
   /(?:search(?:_result)?|tag|topic|explore|hashtag|keyword|note)/iu;
 
@@ -21,8 +29,28 @@ export function hasTopicLinkSemantics(
   return Boolean(value && XHS_TOPIC_LINK_PATTERN.test(value));
 }
 
+export function isStandardXiaohongshuTopic(
+  value: string | null | undefined,
+) {
+  const normalized = String(value || "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200d\u2060\ufeff]/gu, "")
+    .trim();
+  return /^#\s*[\p{L}\p{N}_+\-·]{1,60}$/u.test(normalized);
+}
+
+function isXiaohongshuPage(context: TopicClickabilityContext) {
+  if (context.isXiaohongshuPage !== undefined) {
+    return context.isXiaohongshuPage;
+  }
+  return context.pageUrl
+    ? classifyNoteUrl(context.pageUrl).platform === "XIAOHONGSHU"
+    : false;
+}
+
 export function classifyTopicClickability(
   evidence: TopicClickabilityEvidence,
+  context: TopicClickabilityContext = {},
 ): TopicClickability {
   if (
     evidence.isClickable === true ||
@@ -41,13 +69,24 @@ export function classifyTopicClickability(
     evidence.hasHref === false &&
     !evidence.href &&
     evidence.styleFeature === false;
-  return explicitPlainDomText ? "NOT_CLICKABLE" : "UNKNOWN";
+  if (explicitPlainDomText) return "NOT_CLICKABLE";
+
+  if (
+    isXiaohongshuPage(context) &&
+    isStandardXiaohongshuTopic(evidence.displayText)
+  ) {
+    return "CLICKABLE";
+  }
+  return "UNKNOWN";
 }
 
 export function classifyTopicCandidates(
   candidates: TopicClickabilityEvidence[],
+  context: TopicClickabilityContext = {},
 ): TopicClickability {
-  const states = candidates.map(classifyTopicClickability);
+  const states = candidates.map((candidate) =>
+    classifyTopicClickability(candidate, context),
+  );
   if (states.includes("CLICKABLE")) return "CLICKABLE";
   if (states.includes("UNKNOWN")) return "UNKNOWN";
   return states.length ? "NOT_CLICKABLE" : "UNKNOWN";

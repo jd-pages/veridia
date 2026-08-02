@@ -79,7 +79,42 @@ test("产品阶段话题只显示三组，仅匹配对应的可点击话题", as
 
   const auditResponse = await page.request.post(
     `/api/tasks/${task.id}/audit`,
-    { data: { mockCase: "aptamil-stage2-passed" } },
+    {
+      data: {
+        extraction: {
+          url,
+          finalUrl: url,
+          pageTitle: "爱他美澳洲白金版2段真实体验",
+          pageType: "NOTE_DETAIL",
+          noteId: `stage-topic-body-${suffix}`,
+          title: "爱他美澳洲白金版2段真实体验",
+          body: `${"这是一次真实的小红书喂养体验记录".repeat(5)} #爱他美新手爸妈日记 #爱他美澳洲白金版 #二段奶粉推荐`,
+          noteType: "IMAGE_TEXT",
+          imageExtractionStatus: "SUCCESS",
+          imageCount: 2,
+          topics: [
+            "#爱他美新手爸妈日记",
+            "#爱他美澳洲白金版",
+            "#二段奶粉推荐",
+          ].map((displayText) => ({
+            displayText,
+            isLinkElement: false,
+            hasHref: false,
+            href: null,
+            textColor: null,
+            styleFeature: false,
+            domPath: null,
+            source: "BODY_VISIBLE_TEXT",
+          })),
+          pageStatus: "NORMAL",
+          isPublic: true,
+          extractedAt: new Date().toISOString(),
+          adapterName: "playwright-xiaohongshu",
+          adapterVersion: "1.4.0",
+          technicalWarnings: ["TOPICS_NOT_RECOGNIZED"],
+        },
+      },
+    },
   );
   expect(auditResponse.ok()).toBeTruthy();
   const result = (await auditResponse.json()).data as {
@@ -130,6 +165,17 @@ test("产品阶段话题只显示三组，仅匹配对应的可点击话题", as
   await expect(
     page.getByText("#二段奶粉推荐", { exact: true }).first(),
   ).toBeVisible();
+  await expect(
+    page.getByText("阶段话题可点击", { exact: true }).locator("..").getByText("是", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("存在需要人工确认的审核项", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("技术读取失败不会生成内容不合规结论。", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
 
   await page.goto("/rules");
   await expect(

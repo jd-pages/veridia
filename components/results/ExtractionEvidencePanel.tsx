@@ -180,7 +180,9 @@ export default function ExtractionEvidencePanel({
             <Space wrap>
               {topics.slice(0, 100).map((item, index) => (
                 (() => {
-                  const clickability = classifyTopicClickability(item);
+                  const clickability = classifyTopicClickability(item, {
+                    pageUrl: evidence.finalUrl || evidence.originalUrl,
+                  });
                   return (
                     <Tag
                       color={

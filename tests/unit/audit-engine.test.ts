@@ -133,7 +133,16 @@ describe("audit engine", () => {
         href: "https://www.xiaohongshu.com/unknown-path",
       },
     },
-    ...["search_result", "tag", "topic", "explore", "hashtag", "keyword"].map(
+    ...[
+      "search",
+      "search_result",
+      "tag",
+      "topic",
+      "explore",
+      "hashtag",
+      "keyword",
+      "note",
+    ].map(
       (path) => ({
         name: `${path} 路径`,
         topic: {
@@ -183,7 +192,7 @@ describe("audit engine", () => {
     expect(result.clickableCompliant).toBe(true);
   });
 
-  it("候选存在但交互证据不完整时进入待人工复核", () => {
+  it("小红书正文标准话题缺少 href 和 DOM 证据时仍判定可点击", () => {
     const note = createMockNote("passed");
     note.topics[0] = {
       ...note.topics[0],
@@ -195,13 +204,56 @@ describe("audit engine", () => {
       source: "BODY_VISIBLE_TEXT",
     };
     const result = evaluateAudit(note, context);
-    expect(result.autoStatus).toBe("NEEDS_REVIEW");
+    expect(result.autoStatus).toBe("PASSED");
     expect(result.clickableCompliant).toBe(true);
     expect(result.failureReasons.join("；")).not.toContain("要求话题不可点击");
     expect(
       result.ruleResults.find((rule) => rule.ruleKey === "TOPIC_r1"),
     ).toMatchObject({
       passed: true,
+      actualValue: "精确出现，可点击",
+    });
+  });
+
+  it("正文和标准话题已提取时忽略已解决的话题读取告警", () => {
+    const note = createMockNote("passed");
+    note.topics[0] = {
+      ...note.topics[0],
+      isLinkElement: false,
+      hasHref: false,
+      href: null,
+      styleFeature: false,
+      domPath: null,
+      source: "BODY_VISIBLE_TEXT",
+    };
+    note.technicalWarnings = ["TOPICS_NOT_RECOGNIZED"];
+
+    const result = evaluateAudit(note, context);
+    expect(result.autoStatus).toBe("PASSED");
+    expect(result.failureReasons).not.toContain(
+      "未识别到话题内容，需人工复核",
+    );
+  });
+
+  it("非小红书页面的无交互标准文本不会自动判定可点击", () => {
+    const note = createMockNote("passed");
+    note.url = "https://example.com/note/1";
+    note.finalUrl = note.url;
+    note.topics[0] = {
+      ...note.topics[0],
+      isLinkElement: false,
+      hasHref: false,
+      href: null,
+      styleFeature: false,
+      domPath: null,
+      source: "BODY_VISIBLE_TEXT",
+    };
+
+    const result = evaluateAudit(note, context);
+    expect(result.autoStatus).toBe("NEEDS_REVIEW");
+    expect(
+      result.ruleResults.find((rule) => rule.ruleKey === "TOPIC_r1"),
+    ).toMatchObject({
       actualValue: "精确出现，可点击状态需人工确认",
     });
   });

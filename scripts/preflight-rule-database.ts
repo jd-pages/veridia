@@ -6,7 +6,7 @@ try {
 } catch (error) {
   console.error(
     error instanceof Error
-      ? error.message
+      ? error.stack || error.message
       : "数据库结构检查失败，规则发布已停止。",
   );
   process.exitCode = 1;

@@ -1,10 +1,25 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ensureRuleDatabaseReady,
   formatRulePublishError,
+  resolveRuleDatabaseLocation,
 } from "@/lib/rules/database-preflight";
+
+const originalDatabaseUrl = process.env.DATABASE_URL;
+const originalRuleDatabasePath = process.env.VERIDIA_RULE_DATABASE_PATH;
+
+afterEach(() => {
+  if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+  else process.env.DATABASE_URL = originalDatabaseUrl;
+  if (originalRuleDatabasePath === undefined) {
+    delete process.env.VERIDIA_RULE_DATABASE_PATH;
+  } else {
+    process.env.VERIDIA_RULE_DATABASE_PATH = originalRuleDatabasePath;
+  }
+});
 
 describe("规则发布数据库前置检查", () => {
   it("检测缺字段后执行迁移，并确认默认值为 false", async () => {
@@ -56,10 +71,69 @@ describe("规则发布数据库前置检查", () => {
           requireBodyStageDefaultsToFalse: false,
         }),
         checkMigrationStatus: () => ({ ok: false }),
-        deployMigrations: () => ({ ok: false }),
+        deployMigrations: () => ({
+          ok: false,
+          status: 1,
+          stderr: "P3018: migration SQL failed",
+        }),
         log: vi.fn(),
       }),
-    ).rejects.toThrow("数据库安全迁移失败，规则发布已停止");
+    ).rejects.toThrow(
+      /数据库安全迁移失败，规则发布已停止。[\s\S]*失败步骤：prisma migrate deploy[\s\S]*P3018/u,
+    );
+  });
+
+  it("迁移前先备份已定位的规则数据库", async () => {
+    const backupDatabase = vi.fn(() => "D:\\rules\\backup.db");
+    const deployMigrations = vi.fn(() => ({ ok: true }));
+    await ensureRuleDatabaseReady({
+      resolveDatabase: () => ({
+        databasePath: "D:\\rules\\veridia.db",
+        databaseUrl: "file:D:\\rules\\veridia.db",
+        source: "test",
+      }),
+      backupDatabase,
+      inspectStructure: vi
+        .fn()
+        .mockResolvedValueOnce({
+          hasRequireBodyStage: false,
+          requireBodyStageDefaultsToFalse: false,
+        })
+        .mockResolvedValueOnce({
+          hasRequireBodyStage: true,
+          requireBodyStageDefaultsToFalse: true,
+        }),
+      checkMigrationStatus: vi
+        .fn()
+        .mockReturnValueOnce({ ok: false })
+        .mockReturnValueOnce({ ok: true }),
+      deployMigrations,
+      log: vi.fn(),
+    });
+
+    expect(backupDatabase).toHaveBeenCalledWith("D:\\rules\\veridia.db");
+    expect(backupDatabase.mock.invocationCallOrder[0]).toBeLessThan(
+      deployMigrations.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("显式规则数据库路径会转换为 Prisma SQLite 地址", () => {
+    const temporaryRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "veridia-rule-db-"),
+    );
+    const databasePath = path.join(temporaryRoot, "veridia.db");
+    fs.writeFileSync(databasePath, "fixture");
+    delete process.env.DATABASE_URL;
+    process.env.VERIDIA_RULE_DATABASE_PATH = databasePath;
+
+    try {
+      const location = resolveRuleDatabaseLocation();
+      expect(location.databasePath).toBe(databasePath);
+      expect(location.databaseUrl).toBe(`file:${databasePath}`);
+      expect(process.env.DATABASE_URL).toBe(`file:${databasePath}`);
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
   });
 
   it("P2022 不会把英文 Prisma 堆栈直接显示给用户", () => {

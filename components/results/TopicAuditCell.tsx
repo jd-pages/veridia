@@ -46,7 +46,8 @@ export function getTopicAuditSummary(row: ResultRow) {
     );
     return (
       topics.length > 0 &&
-      classifyTopicCandidates(topics) === "NOT_CLICKABLE"
+      classifyTopicCandidates(topics, { pageUrl: row.note.url }) ===
+        "NOT_CLICKABLE"
     );
   });
   const uncertain = required.filter((expected) => {
@@ -54,7 +55,8 @@ export function getTopicAuditSummary(row: ResultRow) {
       (candidate) => normalizeTopic(candidate.displayText) === expected,
     );
     return (
-      topics.length > 0 && classifyTopicCandidates(topics) === "UNKNOWN"
+      topics.length > 0 &&
+      classifyTopicCandidates(topics, { pageUrl: row.note.url }) === "UNKNOWN"
     );
   });
   return {

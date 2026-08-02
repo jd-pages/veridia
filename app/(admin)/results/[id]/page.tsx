@@ -212,7 +212,9 @@ export default function ResultDetailPage() {
       )
     : undefined;
   const stageTopicClickability = stageTopicMatch
-    ? classifyTopicClickability(stageTopicMatch)
+    ? classifyTopicClickability(stageTopicMatch, {
+        pageUrl: detail.note.url,
+      })
     : "UNKNOWN";
   const missingRequiredTopics = parseJsonArray(detail.missingTopics).filter(
     (expected) =>
