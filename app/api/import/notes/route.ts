@@ -21,6 +21,10 @@ import {
   parseTabularPreview,
 } from "@/lib/import-export-templates/tabular";
 import { findBlockingAuditTask } from "@/lib/audit-task-deduplication";
+import {
+  productResolutionError,
+  resolveProductReference,
+} from "@/lib/product-matching";
 
 interface CheckedRow {
   rowNumber: number;
@@ -70,6 +74,10 @@ export async function POST(request: Request) {
     });
     const rows: CheckedRow[] = [];
     const seen = new Set<string>();
+    const activeProducts = await prisma.product.findMany({
+      where: { status: "ACTIVE", deletedAt: null },
+      include: { aliases: { select: { alias: true } } },
+    });
 
     for (const parsed of tabular.rows) {
       const values = parsed.values;
@@ -110,23 +118,21 @@ export async function POST(request: Request) {
         if (seen.has(normalizedUrl)) checked.errors.push("文件内存在重复链接");
         seen.add(normalizedUrl);
       }
-      const product = await prisma.product.findFirst({
-        where: {
-          status: "ACTIVE",
-          deletedAt: null,
-          OR: [
-            ...(checked.productCode ? [{ code: checked.productCode }] : []),
-            ...(checked.productName
-              ? [
-                  { name: checked.productName },
-                  { aliases: { some: { alias: checked.productName } } },
-                ]
-              : []),
-          ],
-        },
+      const productResolution = resolveProductReference(activeProducts, {
+        code: checked.productCode,
+        name: checked.productName,
       });
-      if (!product) checked.errors.push("产品不存在或名称/别名未匹配");
-      else checked.productId = product.id;
+      const product =
+        productResolution.status === "MATCHED"
+          ? productResolution.product
+          : null;
+      if (!product) {
+        checked.errors.push(productResolutionError(productResolution));
+      } else {
+        checked.productId = product.id;
+        checked.productName = product.name;
+        checked.productCode = product.code || checked.productCode;
+      }
 
       const campaign = product
         ? await prisma.campaign.findFirst({

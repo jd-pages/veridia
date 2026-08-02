@@ -9,6 +9,12 @@ import {
   detectProductStage,
   normalizeProductStageTopicValue,
 } from "@/lib/product-stage";
+import {
+  PRODUCT_ALIAS_AMBIGUOUS_MESSAGE,
+  PRODUCT_NOT_RECOGNIZED_MESSAGE,
+  normalizeProductMatchKey,
+  resolveProductReference,
+} from "@/lib/product-matching";
 
 export const PRODUCT_STAGES = PRODUCT_STAGE_TOPIC_VALUES;
 
@@ -87,6 +93,26 @@ function splitTopics(value: string) {
 
 function unique(values: string[]) {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function resolveImportedProductName(
+  products: NormalizedProductRule[],
+  value: string,
+) {
+  const resolution = resolveProductReference(
+    products.map((product, index) => ({
+      ...product,
+      id: `imported-product-${index}`,
+    })),
+    { name: value },
+  );
+  if (resolution.status === "AMBIGUOUS") {
+    throw new Error(PRODUCT_ALIAS_AMBIGUOUS_MESSAGE);
+  }
+  if (resolution.status === "NOT_FOUND") {
+    throw new Error(PRODUCT_NOT_RECOGNIZED_MESSAGE);
+  }
+  return resolution.product.name;
 }
 
 function inferSharedBrandName(products: NormalizedProductRule[]) {
@@ -434,11 +460,16 @@ function parseStandardTemplate(
   }
   const directionHeaders = readHeaders(directionSheet);
   for (let row = 2; row <= directionSheet.rowCount; row += 1) {
-    const productName = valueAt(
+    const importedProductName = valueAt(
       directionSheet,
       row,
       directionHeaders,
       "产品名称",
+    );
+    if (!importedProductName) continue;
+    const productName = resolveImportedProductName(
+      products,
+      importedProductName,
     );
     const product = products.find((item) => item.name === productName);
     if (product) {
@@ -477,9 +508,16 @@ function parseStandardTemplate(
     if (!rawTopic.trim().startsWith("#")) {
       irregularTopics.push(`话题规则!第${row}行：${rawTopic}`);
     }
+    const importedProductName = valueAt(
+      topicSheet,
+      row,
+      topicHeaders,
+      "所属产品",
+    );
     topicRules.push({
-      productName:
-        valueAt(topicSheet, row, topicHeaders, "所属产品") || null,
+      productName: importedProductName
+        ? resolveImportedProductName(products, importedProductName)
+        : null,
       applicableStage:
         normalizeStage(
           valueAt(topicSheet, row, topicHeaders, "产品阶段话题") ||
@@ -589,8 +627,97 @@ export async function parseCampaignRuleWorkbook(
   const normalized = isStandard
     ? parseStandardTemplate(workbook)
     : parseRawCampaign(workbook, metadata);
+  await standardizeImportedProducts(normalized);
   validateNormalizedRules(normalized);
   return normalized;
+}
+
+async function standardizeImportedProducts(data: NormalizedCampaignRules) {
+  const systemProducts = await prisma.product.findMany({
+    where: { deletedAt: null },
+    include: { aliases: { select: { alias: true } } },
+  });
+  const remappedNames = new Map<string, string>();
+  const matchedSystemIds = new Map<NormalizedProductRule, string>();
+
+  for (const input of data.products) {
+    const originalName = input.name;
+    const resolution = resolveProductReference(systemProducts, {
+      code: input.code,
+      name: originalName,
+    });
+    if (resolution.status === "AMBIGUOUS") {
+      throw new Error(PRODUCT_ALIAS_AMBIGUOUS_MESSAGE);
+    }
+    if (resolution.status === "MATCHED") {
+      const systemProduct = resolution.product;
+      matchedSystemIds.set(input, systemProduct.id);
+      input.code ||= systemProduct.code;
+      input.name = systemProduct.name;
+      input.seriesName ||= systemProduct.seriesName || systemProduct.name;
+      input.aliases = unique([
+        ...input.aliases,
+        ...systemProduct.aliases.map((alias) => alias.alias),
+        ...(normalizeProductMatchKey(originalName) !==
+        normalizeProductMatchKey(systemProduct.name)
+          ? [originalName]
+          : []),
+      ]);
+      if (originalName !== systemProduct.name) {
+        data.diagnostics.corrections.push(
+          `产品“${originalName}”已标准化为“${systemProduct.name}”`,
+        );
+      }
+    }
+    remappedNames.set(normalizeProductMatchKey(originalName), input.name);
+  }
+
+  const duplicateNames = new Set<string>();
+  const seenNames = new Set<string>();
+  for (const product of data.products) {
+    const key = normalizeProductMatchKey(product.name);
+    if (seenNames.has(key)) duplicateNames.add(product.name);
+    seenNames.add(key);
+
+    for (const alias of product.aliases) {
+      const existing = resolveProductReference(systemProducts, { name: alias });
+      if (existing.status === "AMBIGUOUS") {
+        throw new Error(PRODUCT_ALIAS_AMBIGUOUS_MESSAGE);
+      }
+      if (
+        existing.status === "MATCHED" &&
+        existing.product.id !== matchedSystemIds.get(product)
+      ) {
+        throw new Error(PRODUCT_ALIAS_AMBIGUOUS_MESSAGE);
+      }
+    }
+  }
+  if (duplicateNames.size) {
+    throw new Error(`产品资料存在重复产品：${[...duplicateNames].join("、")}`);
+  }
+
+  const importedCandidates = data.products.map((product, index) => ({
+    ...product,
+    id: `normalized-product-${index}`,
+  }));
+  for (const rule of data.topicRules) {
+    if (!rule.productName) continue;
+    const remapped = remappedNames.get(normalizeProductMatchKey(rule.productName));
+    if (remapped) {
+      rule.productName = remapped;
+      continue;
+    }
+    const resolution = resolveProductReference(importedCandidates, {
+      name: rule.productName,
+    });
+    if (resolution.status === "AMBIGUOUS") {
+      throw new Error(PRODUCT_ALIAS_AMBIGUOUS_MESSAGE);
+    }
+    if (resolution.status === "NOT_FOUND") {
+      throw new Error(PRODUCT_NOT_RECOGNIZED_MESSAGE);
+    }
+    rule.productName = resolution.product.name;
+  }
 }
 
 function validateNormalizedRules(data: NormalizedCampaignRules) {

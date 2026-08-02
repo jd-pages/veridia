@@ -24,6 +24,14 @@ describe("处理失败结果口径", () => {
     expect(processingFailureReason("NOTE_DELETED", null)).toContain(
       "笔记已删除",
     );
+    expect(
+      processingFailureReason(
+        "PAGE_NOT_FOUND",
+        "小红书页面提示“你访问的页面不见了”，疑似笔记不存在或链接失效",
+      ),
+    ).toBe(
+      "小红书页面提示“你访问的页面不见了”，疑似笔记不存在或链接失效",
+    );
     expect(processingFailureReason("BODY_NOT_RECOGNIZED", null)).toContain(
       "人工复核",
     );

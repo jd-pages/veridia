@@ -48,7 +48,7 @@ export const commonStatusLabels: Record<string, string> = {
   ...processStatusLabels,
   ...auditResultLabels,
   NORMAL: "正常",
-  NOT_FOUND: "页面不存在",
+  NOT_FOUND: "页面失效",
   DELETED: "笔记已删除",
   NO_PERMISSION: "无权限访问",
   LOGIN_EXPIRED: "登录失效",
@@ -85,8 +85,8 @@ export const pageTypeLabels: Record<string, string> = {
 };
 
 export const failureReasonLabels: Record<string, string> = {
-  PAGE_NOT_FOUND: "页面不存在",
-  NOTE_DELETED: "笔记已删除",
+  PAGE_NOT_FOUND: "页面异常（页面失效）",
+  NOTE_DELETED: "页面异常（笔记已删除）",
   NO_PERMISSION: "无权限访问",
   LOGIN_EXPIRED: "小红书登录失效",
   LOGIN_REQUIRED: "需要重新登录小红书",

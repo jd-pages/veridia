@@ -16,9 +16,11 @@ import {
 } from "./classification";
 import {
   classifyAutomaticPage,
+  detectUnavailableXhsPage,
   isShortXiaohongshuUrl,
   isXiaohongshuNoteDetailUrl,
   safePageLogUrl,
+  unavailablePageFailureMessage,
   type AutomaticPageType,
 } from "./page-classification";
 import { playwrightAdapters } from "./adapters";
@@ -369,6 +371,26 @@ export async function extractAuditTaskAutomatically(
         `页面要求安全验证：${identity.pageTitle || "无标题"}`,
       );
     }
+    const unavailablePage = detectUnavailableXhsPage({
+      url: identity.finalUrl,
+      title: identity.pageTitle,
+      visibleText: identity.visibleText,
+    });
+    if (unavailablePage) {
+      throw new AutomaticExtractionError(
+        unavailablePage.status === "DELETED"
+          ? "NOTE_DELETED"
+          : "PAGE_NOT_FOUND",
+        unavailablePageFailureMessage(unavailablePage),
+        {
+          unavailablePage: {
+            status: unavailablePage.status,
+            matchedText: unavailablePage.matchedText,
+            source: unavailablePage.source,
+          },
+        },
+      );
+    }
     const reachedNoteDetail = [task.url, identity.finalUrl, ...redirectChain].some(
       isXiaohongshuNoteDetailUrl,
     );
@@ -457,7 +479,7 @@ export async function extractAuditTaskAutomatically(
             "PAGE_READ_FAILED",
             error instanceof Error ? error.message : "页面读取失败",
           );
-    const evidence = await captureFailureEvidence(
+    const capturedEvidence = await captureFailureEvidence(
       page,
       task,
       identity,
@@ -465,6 +487,10 @@ export async function extractAuditTaskAutomatically(
       responseCandidates,
       extractionEvidence,
     );
+    const evidence = {
+      ...(extractionError.details || {}),
+      ...capturedEvidence,
+    };
     extractionError.attachDetails(evidence);
     await savePageMetadata(task.id, identity, redirectChain, evidence);
     throw extractionError;

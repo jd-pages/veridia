@@ -7,6 +7,7 @@ import type {
 } from "@/lib/types";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
+import { detectUnavailableXhsPage } from "./page-classification";
 
 export interface TextCandidate {
   value: string;
@@ -1037,6 +1038,11 @@ export async function collectDomPageSnapshot(
     },
     ...jsonCandidates,
   );
+  const unavailablePage = detectUnavailableXhsPage({
+    url: snapshot.finalUrl,
+    title: snapshot.pageTitle,
+    visibleText: snapshot.visibleTextPreview,
+  });
 
   return {
     ...merged,
@@ -1045,7 +1051,7 @@ export async function collectDomPageSnapshot(
     visibleTextPreview: snapshot.visibleTextPreview,
     visibleTextLength: snapshot.visibleTextLength,
     htmlLength: snapshot.htmlLength,
-    pageStatus: snapshot.pageStatus,
+    pageStatus: unavailablePage?.status || snapshot.pageStatus,
     keyElementCount: snapshot.keyElementCount,
     domSummary: snapshot.domSummary,
     domHasVideo: snapshot.hasVideo,

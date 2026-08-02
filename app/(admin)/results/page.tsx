@@ -123,6 +123,10 @@ function ContentStatusCell({ row }: { row: ResultRow }) {
   const pageLabel =
     row.pageStatus === "NORMAL"
       ? "页面正常"
+      : row.pageStatus === "NOT_FOUND"
+        ? "页面失效"
+        : row.pageStatus === "DELETED"
+          ? "笔记已删除"
       : row.pageStatus === "READ_FAILED"
         ? "读取失败"
         : row.pageStatus === "NO_PERMISSION"

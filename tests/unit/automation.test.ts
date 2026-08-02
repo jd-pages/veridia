@@ -6,6 +6,7 @@ import {
 } from "../../lib/automation/classification";
 import {
   classifyAutomaticPage,
+  detectUnavailableXhsPage,
   isShortXiaohongshuUrl,
   isXiaohongshuNoteDetailUrl,
   safePageLogUrl,
@@ -46,6 +47,63 @@ describe("当前小红书页面分类", () => {
         visibleText: "IP存在风险，请切换可靠网络环境后重试",
       }),
     ).toBe("SECURITY_CHECK");
+  });
+
+  it.each([
+    {
+      title: "错误页 · 小红书 - 你访问的页面不见了",
+      visibleText: "",
+      expected: "NOT_FOUND",
+    },
+    {
+      title: "小红书",
+      visibleText: "你访问的页面不见了",
+      expected: "NOT_FOUND",
+    },
+    {
+      title: "小红书",
+      visibleText: "当前笔记无法浏览",
+      expected: "NOT_FOUND",
+    },
+    {
+      title: "小红书",
+      visibleText: "该内容无法查看",
+      expected: "NOT_FOUND",
+    },
+    {
+      title: "小红书",
+      visibleText: "笔记已删除",
+      expected: "DELETED",
+    },
+  ])("识别错误页文案：$visibleText$title", ({ expected, ...input }) => {
+    const evidence = detectUnavailableXhsPage({
+      url: "https://www.xiaohongshu.com/explore/6a5cb375000000000301c549",
+      ...input,
+    });
+    expect(evidence?.status).toBe(expected);
+    expect(
+      classifyAutomaticPage({
+        url: "https://www.xiaohongshu.com/explore/6a5cb375000000000301c549",
+        ...input,
+      }),
+    ).toBe("ERROR_PAGE");
+  });
+
+  it("通过最终错误页 URL 识别页面失效，但不把安全验证 URL 当成 404", () => {
+    expect(
+      detectUnavailableXhsPage({
+        url: "https://www.xiaohongshu.com/not-found",
+        title: "小红书",
+        visibleText: "",
+      })?.status,
+    ).toBe("NOT_FOUND");
+    expect(
+      detectUnavailableXhsPage({
+        url: "https://www.xiaohongshu.com/website-login/error",
+        title: "安全限制",
+        visibleText: "IP存在风险",
+      }),
+    ).toBeNull();
   });
 });
 

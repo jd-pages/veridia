@@ -109,7 +109,7 @@ export interface RuleEvaluation {
 
 export interface AuditEvaluation {
   pageStatus: PageStatus;
-  bodyStatus: "PRESENT" | "EMPTY";
+  bodyStatus: "PRESENT" | "EMPTY" | "UNKNOWN";
   effectiveBodyLength: number;
   bodyCompliant: boolean;
   noteType: NoteType;

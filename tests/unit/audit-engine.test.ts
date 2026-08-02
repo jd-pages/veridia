@@ -58,6 +58,28 @@ const context: AuditContext = {
 };
 
 describe("audit engine", () => {
+  it.each(["not-found", "deleted"] as const)(
+    "页面失效 %s 时短路正文、图片和话题审核",
+    (caseName) => {
+      const note = createMockNote(caseName);
+      note.technicalWarnings = [
+        "BODY_NOT_RECOGNIZED",
+        "TOPICS_NOT_RECOGNIZED",
+      ];
+      const result = evaluateAudit(note, context);
+      expect(result.autoStatus).toBe("NEEDS_REVIEW");
+      expect(result.bodyStatus).toBe("UNKNOWN");
+      expect(result.imageStatus).toBe("NOT_REQUIRED");
+      expect(result.topicsCompliant).toBe(true);
+      expect(result.missingTopics).toEqual([]);
+      expect(result.ruleResults).toHaveLength(1);
+      expect(result.ruleResults[0].ruleKey).toBe("GLOBAL_PAGE_STATUS");
+      expect(result.failureReasons.join("；")).not.toMatch(
+        /未识别到话题|缺少精确话题|有效正文字数不足|图片数量不足/u,
+      );
+    },
+  );
+
   it("话题技术读取失败时保留正文结论并进入待人工复核", () => {
     const note = createMockNote("no-topics");
     note.body = "这是一段长度足够且可以正常参与固定规则审核的正文内容。";
@@ -493,9 +515,131 @@ describe("audit engine", () => {
       "话题文字不准确",
     );
     note.topics = [];
-    expect(evaluateAudit(note, stageContext).failureReasons).toContain(
-      "缺少精确话题 #新生儿奶粉",
+    expect(evaluateAudit(note, stageContext).failureReasons.join("；")).toContain(
+      "IFFO 阶段话题未命中",
     );
+  });
+
+  it.each([
+    ["#新生儿奶粉", "#二段奶粉推荐"],
+    ["#二段奶粉推荐", "#新生儿奶粉"],
+  ])("IFFO 命中 %s 时不要求同时出现 %s", (matched, absent) => {
+    const stageContext: AuditContext = {
+      ...context,
+      productStage: "IFFO",
+      bodyStageRequired: false,
+      rules: [
+        {
+          id: "stage-p1",
+          scope: "CAMPAIGN",
+          ruleType: "REQUIRED",
+          topic: "#新生儿奶粉",
+          topicCategory: "PRODUCT_STAGE",
+          applicableStage: "IFFO_P1",
+          exactMatch: true,
+          clickableRequired: true,
+          caseSensitive: false,
+          minCount: 1,
+          sortOrder: 1,
+          version: 1,
+        },
+        {
+          id: "stage-2",
+          scope: "CAMPAIGN",
+          ruleType: "REQUIRED",
+          topic: "#二段奶粉推荐",
+          topicCategory: "PRODUCT_STAGE",
+          applicableStage: "IFFO_2",
+          exactMatch: true,
+          clickableRequired: true,
+          caseSensitive: false,
+          minCount: 1,
+          sortOrder: 2,
+          version: 1,
+        },
+      ],
+    };
+    const note = createMockNote("passed");
+    note.topics = [
+      {
+        displayText: matched,
+        isLinkElement: true,
+        hasHref: true,
+        href: `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(matched)}`,
+        styleFeature: true,
+      },
+    ];
+    const result = evaluateAudit(note, stageContext);
+    expect(result.autoStatus).toBe("PASSED");
+    expect(result.missingTopics).toEqual([]);
+    expect(result.failureReasons.join("；")).not.toContain(absent);
+    expect(
+      result.ruleResults.filter((rule) =>
+        rule.ruleKey.startsWith("TOPIC_PRODUCT_STAGE_GROUP_"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("IFFO 阶段候选均未命中时只生成一个 OR 组失败结论", () => {
+    const stageContext: AuditContext = {
+      ...context,
+      productStage: "IFFO",
+      bodyStageRequired: false,
+      rules: ["#新生儿奶粉", "#二段奶粉推荐"].map((topic, index) => ({
+        id: `stage-${index}`,
+        scope: "CAMPAIGN",
+        ruleType: "REQUIRED",
+        topic,
+        topicCategory: "PRODUCT_STAGE",
+        applicableStage: index ? "IFFO_2" : "IFFO_P1",
+        exactMatch: true,
+        clickableRequired: true,
+        caseSensitive: false,
+        minCount: 1,
+        sortOrder: index,
+        version: 1,
+      })),
+    };
+    const note = createMockNote("passed");
+    note.topics = [];
+    const result = evaluateAudit(note, stageContext);
+    expect(result.autoStatus).toBe("FAILED");
+    expect(result.failureReasons).toEqual([
+      "IFFO 阶段话题未命中：#新生儿奶粉、#二段奶粉推荐 中至少出现 1 个",
+    ]);
+  });
+
+  it("GUM 命中任一阶段候选时通过阶段话题审核", () => {
+    const stageContext: AuditContext = {
+      ...context,
+      productStage: "GUM",
+      bodyStageRequired: false,
+      rules: ["#三段奶粉推荐", "#高段奶粉推荐"].map((topic, index) => ({
+        id: `gum-${index}`,
+        scope: "CAMPAIGN",
+        ruleType: "REQUIRED",
+        topic,
+        topicCategory: "PRODUCT_STAGE",
+        applicableStage: index ? "4段" : "GUM_3_4_1PLUS_2PLUS",
+        exactMatch: true,
+        clickableRequired: true,
+        caseSensitive: false,
+        minCount: 1,
+        sortOrder: index,
+        version: 1,
+      })),
+    };
+    const note = createMockNote("passed");
+    note.topics = [
+      {
+        displayText: "#三段奶粉推荐",
+        isLinkElement: true,
+        hasHref: true,
+        href: "https://www.xiaohongshu.com/search_result?keyword=gum",
+        styleFeature: true,
+      },
+    ];
+    expect(evaluateAudit(note, stageContext).autoStatus).toBe("PASSED");
   });
 
   it("缺少目标话题时不误报蓝色可点击异常", () => {

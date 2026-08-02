@@ -180,19 +180,29 @@ export function allowedBodyStageLabels(
 export function stageTopicFromRuleSnapshot(
   ruleSnapshot: string | null | undefined,
 ): string | null {
-  if (!ruleSnapshot) return null;
+  return stageTopicsFromRuleSnapshot(ruleSnapshot)[0] || null;
+}
+
+export function stageTopicsFromRuleSnapshot(
+  ruleSnapshot: string | null | undefined,
+): string[] {
+  if (!ruleSnapshot) return [];
   try {
     const snapshot = JSON.parse(ruleSnapshot) as {
       rules?: Array<{ topic?: string; topicCategory?: string }>;
     };
-    return (
-      snapshot.rules?.find(
-        (rule) =>
-          rule.topicCategory === "PRODUCT_STAGE" && Boolean(rule.topic),
-      )?.topic || null
-    );
+    return [
+      ...new Set(
+        (snapshot.rules || [])
+          .filter(
+            (rule) =>
+              rule.topicCategory === "PRODUCT_STAGE" && Boolean(rule.topic),
+          )
+          .map((rule) => String(rule.topic)),
+      ),
+    ];
   } catch {
-    return null;
+    return [];
   }
 }
 

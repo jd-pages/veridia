@@ -35,7 +35,7 @@ import ExtractionEvidencePanel from "@/components/results/ExtractionEvidencePane
 import { apiFetch, parseJsonArray } from "@/lib/client";
 import {
   productStageTopicLabel,
-  stageTopicFromRuleSnapshot,
+  stageTopicsFromRuleSnapshot,
 } from "@/lib/product-stage";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
@@ -207,21 +207,32 @@ export default function ResultDetailPage() {
     ),
   );
   const productStageLabel = productStageTopicLabel(detail.task.productStage);
-  const stageTopic = stageTopicFromRuleSnapshot(detail.ruleSnapshot);
-  const requiredStageTopic =
-    stageTopic ||
-    (processingFailed ? detail.currentStageGroup?.requiredTopic || null : null);
-  const stageTopicMatch = requiredStageTopic
-    ? detail.note.topics.find(
+  const pageUnavailable = ["NOT_FOUND", "DELETED"].includes(detail.pageStatus);
+  const snapshotStageTopics = stageTopicsFromRuleSnapshot(detail.ruleSnapshot);
+  const requiredStageTopics = pageUnavailable
+    ? []
+    : snapshotStageTopics.length
+      ? snapshotStageTopics
+      : processingFailed && detail.currentStageGroup?.requiredTopic
+        ? [detail.currentStageGroup.requiredTopic]
+        : [];
+  const stageTopicMatches = requiredStageTopics.flatMap((requiredTopic) =>
+    detail.note.topics
+      .filter(
         (topic) =>
-          normalizeTopic(topic.displayText) === normalizeTopic(requiredStageTopic),
+          normalizeTopic(topic.displayText) === normalizeTopic(requiredTopic),
       )
-    : undefined;
-  const stageTopicClickability = stageTopicMatch
-    ? classifyTopicClickability(stageTopicMatch, {
-        pageUrl: detail.note.url,
-      })
-    : "UNKNOWN";
+      .map((topic) => ({
+        topic,
+        clickability: classifyTopicClickability(topic, {
+          pageUrl: detail.note.url,
+        }),
+      })),
+  );
+  const stageTopicMatch =
+    stageTopicMatches.find((item) => item.clickability === "CLICKABLE") ||
+    stageTopicMatches[0];
+  const stageTopicClickability = stageTopicMatch?.clickability || "UNKNOWN";
   const missingRequiredTopics = parseJsonArray(detail.missingTopics).filter(
     (expected) =>
       !detail.note.topics.some(
@@ -364,19 +375,25 @@ export default function ResultDetailPage() {
                 )}
               </Descriptions.Item>
               <Descriptions.Item label="要求阶段话题">
-                {requiredStageTopic || "当前活动未配置阶段话题规则"}
+                {requiredStageTopics.length
+                  ? `${requiredStageTopics.join(" 或 ")}（任一命中）`
+                  : pageUnavailable
+                    ? "页面失效，不执行阶段话题审核"
+                    : "当前活动未配置阶段话题规则"}
               </Descriptions.Item>
               <Descriptions.Item label="阶段话题命中">
-                {requiredStageTopic ? (
+                {requiredStageTopics.length ? (
                   <Tag color={stageTopicMatch ? "green" : "red"}>
-                    {stageTopicMatch ? "是" : "否"}
+                    {stageTopicMatch
+                      ? `已命中 ${normalizeTopic(stageTopicMatch.topic.displayText)}`
+                      : "否"}
                   </Tag>
                 ) : (
                   <Tag>不适用</Tag>
                 )}
               </Descriptions.Item>
               <Descriptions.Item label="阶段话题可点击">
-                {!requiredStageTopic || !stageTopicMatch ? (
+                {!requiredStageTopics.length || !stageTopicMatch ? (
                   <Tag>不适用</Tag>
                 ) : (
                   <Tag

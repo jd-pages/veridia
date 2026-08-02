@@ -98,6 +98,31 @@ export function evaluateAudit(
   });
   if (!pagePassed) failures.push(pageFailureLabels[note.pageStatus] ?? "页面状态异常");
 
+  if (!pagePassed) {
+    return {
+      pageStatus: note.pageStatus,
+      bodyStatus: "UNKNOWN",
+      effectiveBodyLength: 0,
+      bodyCompliant: true,
+      noteType: note.noteType ?? "UNKNOWN",
+      imageExtractionStatus: note.imageExtractionStatus ?? "NOT_CHECKED",
+      imageStatus: "NOT_REQUIRED",
+      imageCount: null,
+      imageCompliant: null,
+      topicsCompliant: true,
+      clickableCompliant: true,
+      publicStatus: "UNKNOWN",
+      retentionStatus: "NOT_REQUIRED",
+      retentionDueAt: null,
+      missingTopics: [],
+      forbiddenTopics: [],
+      autoStatus:
+        note.pageStatus === "READ_FAILED" ? "READ_FAILED" : "NEEDS_REVIEW",
+      failureReasons: [...new Set(failures)],
+      ruleResults: evaluations,
+    };
+  }
+
   const noteType = note.noteType ?? "UNKNOWN";
   const imageExtractionStatus =
     note.imageExtractionStatus ??
@@ -328,8 +353,21 @@ export function evaluateAudit(
       },
     });
   }
-  const anyRules = activeRules.filter((rule) => rule.ruleType === "ANY");
-  const nonAnyRules = activeRules.filter((rule) => rule.ruleType !== "ANY");
+  const productStageRules = activeRules.filter(
+    (rule) =>
+      rule.topicCategory === "PRODUCT_STAGE" &&
+      rule.ruleType !== "FORBIDDEN" &&
+      rule.ruleType !== "ALIAS",
+  );
+  const anyRules = activeRules.filter(
+    (rule) =>
+      rule.ruleType === "ANY" && rule.topicCategory !== "PRODUCT_STAGE",
+  );
+  const nonAnyRules = activeRules.filter(
+    (rule) =>
+      rule.ruleType !== "ANY" &&
+      rule.topicCategory !== "PRODUCT_STAGE",
+  );
 
   for (const rule of nonAnyRules) {
     if (rule.ruleType === "ALIAS") continue;
@@ -444,6 +482,116 @@ export function evaluateAudit(
       if (!present) missingTopics.push(expected);
       if (failureReason) failures.push(failureReason);
     }
+  }
+
+  if (productStageRules.length) {
+    const candidates = productStageRules.map((rule) => {
+      const topics = findExactTopics(
+        note.topics,
+        rule.topic,
+        rule.caseSensitive,
+      );
+      const clickability = classifyTopicCandidates(
+        topics,
+        topicClickabilityContext,
+      );
+      return {
+        rule,
+        topics,
+        clickability,
+        clickableRequired:
+          rule.clickableRequired || context.clickableTopicRequired,
+        preferred: preferredTopicCandidate(
+          topics,
+          clickability,
+          topicClickabilityContext,
+        ),
+      };
+    });
+    const matchedCandidates = candidates.filter(
+      (candidate) => candidate.topics.length > 0,
+    );
+    const acceptedCandidates = matchedCandidates.filter(
+      (candidate) =>
+        !candidate.clickableRequired ||
+        candidate.clickability !== "NOT_CLICKABLE",
+    );
+    const passed = acceptedCandidates.length > 0;
+    const expectedTopics = productStageRules.map((rule) =>
+      normalizeTopic(rule.topic),
+    );
+    const matchedTopics = matchedCandidates.map((candidate) =>
+      normalizeTopic(candidate.rule.topic),
+    );
+    const nearMatches = candidates.flatMap((candidate) => {
+      if (candidate.topics.length) return [];
+      const expected = normalizeTopic(candidate.rule.topic);
+      const expectedBody = expected.replace(/^#/u, "");
+      const nearMatch = note.topics.find((topic) => {
+        const actualBody = normalizeTopic(topic.displayText).replace(/^#/u, "");
+        return (
+          actualBody !== expectedBody &&
+          (actualBody.includes(expectedBody) ||
+            expectedBody.includes(actualBody))
+        );
+      });
+      return nearMatch
+        ? [
+            {
+              expected,
+              actual: normalizeTopic(nearMatch.displayText),
+            },
+          ]
+        : [];
+    });
+    const acceptedTopics = acceptedCandidates.map((candidate) =>
+      normalizeTopic(candidate.rule.topic),
+    );
+    const stageLabel = productStageTopicLabel(context.productStage);
+    const clickabilityUnknown =
+      passed &&
+      acceptedCandidates.every(
+        (candidate) => candidate.clickability === "UNKNOWN",
+      );
+    if (matchedCandidates.some((candidate) => candidate.clickableRequired)) {
+      clickableChecks.push(passed);
+      clickabilityNeedsReview ||= clickabilityUnknown;
+    }
+    const failureReason = passed
+      ? undefined
+      : matchedCandidates.length
+        ? `要求话题不可点击 ${matchedTopics.join("、")}`
+        : nearMatches.length
+          ? `话题文字不准确：要求 ${nearMatches[0].expected}，实际 ${nearMatches[0].actual}`
+          : `${stageLabel} 阶段话题未命中：${expectedTopics.join("、")} 中至少出现 1 个`;
+    evaluations.push({
+      ruleKey: `TOPIC_PRODUCT_STAGE_GROUP_${stageLabel}`,
+      ruleName: `产品阶段话题 ${stageLabel}`,
+      expectedValue: `${expectedTopics.join("、")} 中任意 1 个${
+        context.clickableTopicRequired ? "，且可点击" : ""
+      }`,
+      actualValue: matchedCandidates.length
+        ? `已命中 ${matchedTopics.join("、")}${
+            clickabilityUnknown ? "，可点击状态需人工确认" : ""
+          }`
+        : "未命中阶段话题候选",
+      passed,
+      failureReason,
+      evidence: {
+        stageGroup: stageLabel,
+        expectedTopics,
+        matchedTopics,
+        acceptedTopics,
+        candidates: candidates.map((candidate) => ({
+          topic: normalizeTopic(candidate.rule.topic),
+          applicableStage: candidate.rule.applicableStage || null,
+          present: candidate.topics.length > 0,
+          clickability: candidate.clickability,
+          match: candidate.preferred || null,
+        })),
+      },
+    });
+    if (!passed && failureReason) failures.push(failureReason);
   }
 
   if (anyRules.length) {

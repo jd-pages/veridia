@@ -181,6 +181,60 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
   ).data.length as number;
   expect(tasksAfterPreview).toBe(tasksBeforePreview);
 
+  const aliasWorkbook = new ExcelJS.Workbook();
+  const aliasSheet = aliasWorkbook.addWorksheet("产品别名识别");
+  aliasSheet.addRow(["笔记链接", "产品", "活动", "产品阶段话题"]);
+  const germanProduct = products.find((item) =>
+    item.name.includes("德国白金版"),
+  )!;
+  const zhiyiProduct = products.find((item) => item.name.includes("至熠"))!;
+  const aliasCases = [
+    [product.name, product.name],
+    [" 澳　白 ", product.name],
+    ["澳洲白金", product.name],
+    ["德白", germanProduct.name],
+    ["至熠", zhiyiProduct.name],
+    ["不存在简称", null],
+  ] as const;
+  aliasCases.forEach(([input], index) => {
+    aliasSheet.addRow([
+      `${E2E_ORIGIN}/mock/xhs?case=passed&product-alias=${suffix}-${index}`,
+      input,
+      campaign.name,
+      "IFFO",
+    ]);
+  });
+  const aliasResponse = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: "product-alias-import.xlsx",
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await aliasWorkbook.xlsx.writeBuffer()),
+      },
+      commit: "false",
+      skipDuplicates: "true",
+    },
+  });
+  expect(aliasResponse.ok()).toBeTruthy();
+  const aliasPreview = (await aliasResponse.json()).data as {
+    validCount: number;
+    invalidCount: number;
+    rows: Array<{ productName: string; errors: string[] }>;
+  };
+  expect(aliasPreview).toMatchObject({ validCount: 5, invalidCount: 1 });
+  aliasCases.forEach(([, expectedName], index) => {
+    if (expectedName) {
+      expect(aliasPreview.rows[index]).toMatchObject({
+        productName: expectedName,
+        errors: [],
+      });
+    }
+  });
+  expect(aliasPreview.rows[5].errors).toContain(
+    "产品名称无法识别，请填写系统产品名称或已配置简称。",
+  );
+
   const gumCommitWorkbook = new ExcelJS.Workbook();
   const gumCommitSheet = gumCommitWorkbook.addWorksheet("笔记导入");
   gumCommitSheet.addRow(["笔记链接", "产品", "活动", "产品阶段话题"]);

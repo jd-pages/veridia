@@ -25,6 +25,12 @@ export function processingFailureReason(
   message: string | null,
 ) {
   if (
+    (code === "PAGE_NOT_FOUND" || code === "NOTE_DELETED") &&
+    message?.trim()
+  ) {
+    return message.trim();
+  }
+  if (
     code === "STRUCTURE_MISMATCH" &&
     message &&
     /没有提取到标题或正文|未提取到标题或正文/u.test(message)

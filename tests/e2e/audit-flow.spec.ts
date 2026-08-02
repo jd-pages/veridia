@@ -91,8 +91,16 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const campaign = ((await campaignsResponse.json()).data as Array<{ id: string; name: string; month: string }>)[0];
   expect(campaign).toBeTruthy();
 
-  const ruleTemplateBuffer = await readFile(
-    "templates/活动规则标准导入模板.xlsx",
+  const ruleTemplateWorkbook = new ExcelJS.Workbook();
+  await ruleTemplateWorkbook.xlsx.load(
+    (await readFile(
+      "templates/活动规则标准导入模板.xlsx",
+    )) as unknown as ExcelJS.Buffer,
+  );
+  ruleTemplateWorkbook.getWorksheet("话题规则")!.getCell("A3").value =
+    " 澳　白 ";
+  const ruleTemplateBuffer = Buffer.from(
+    await ruleTemplateWorkbook.xlsx.writeBuffer(),
   );
   const rulePreviewResponse = await page.request.post("/api/rule-import", {
     multipart: {
@@ -117,11 +125,17 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       customerRegistrationNotes: string;
       minImageCount?: number;
     };
+    topicRules: Array<{ productName: string | null; topic: string }>;
   };
   expect(rulePreview.campaign.customerRegistrationNotes).toMatch(
     /图片.*不参与自动审核/u,
   );
   expect(rulePreview.campaign.minImageCount).toBe(2);
+  expect(
+    rulePreview.topicRules.find(
+      (rule) => rule.topic === "#爱他美澳洲白金版",
+    )?.productName,
+  ).toBe("爱他美澳洲白金版");
 
   const suffix = Date.now();
   const taskUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&e2e=${suffix}`;
@@ -523,6 +537,71 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(failedEvidence.bodyCandidates).toBeInstanceOf(Array);
   expect(failedEvidence.topicCandidates).toBeInstanceOf(Array);
   expect(failedEvidence.imageCandidates).toBeInstanceOf(Array);
+
+  const unavailableSuffix = `${suffix}-page-unavailable`;
+  const unavailableBatchResponse = await page.request.post(
+    "/api/automation/batches",
+    {
+      data: {
+        name: "E2E 错误页识别",
+        productId: product.id,
+        campaignId: campaign.id,
+        productStage: "IFFO",
+        urls: [
+          `${E2E_ORIGIN}/mock/xhs?case=not-found&unavailable=${unavailableSuffix}`,
+        ],
+      },
+    },
+  );
+  expect(unavailableBatchResponse.ok()).toBeTruthy();
+  const unavailableBatchId = (
+    await unavailableBatchResponse.json()
+  ).data.batchId as string;
+  await waitForBatch(page, unavailableBatchId, ["COMPLETED_WITH_ERRORS"]);
+  const unavailableResultsResponse = await page.request.get(
+    `/api/results?batchId=${unavailableBatchId}`,
+  );
+  expect(unavailableResultsResponse.ok()).toBeTruthy();
+  const unavailableResult = (await unavailableResultsResponse.json()).data
+    .items[0] as {
+    id: string;
+    pageStatus: string;
+    bodyStatus: string;
+    imageStatus: string;
+    missingTopics: string;
+    failureReasons: string;
+    task: {
+      failureCode: string;
+      failureMessage: string;
+    };
+  };
+  expect(unavailableResult.pageStatus).toBe("NOT_FOUND");
+  expect(unavailableResult.bodyStatus).toBe("UNKNOWN");
+  expect(unavailableResult.imageStatus).toBe("NOT_REQUIRED");
+  expect(JSON.parse(unavailableResult.missingTopics)).toEqual([]);
+  expect(unavailableResult.task.failureCode).toBe("PAGE_NOT_FOUND");
+  expect(unavailableResult.task.failureMessage).toContain("页面不存在");
+  expect(JSON.parse(unavailableResult.failureReasons).join("；")).not.toMatch(
+    /未识别到话题|缺少精确话题|有效正文字数不足|图片数量不足/u,
+  );
+  const unavailableDetailResponse = await page.request.get(
+    `/api/results/${unavailableResult.id}`,
+  );
+  const unavailableDetail = (await unavailableDetailResponse.json()).data as {
+    note: { extractions: Array<{ rawData: string }> };
+  };
+  const unavailableEvidence = JSON.parse(
+    unavailableDetail.note.extractions[0].rawData,
+  ) as {
+    pageTitle?: string;
+    visibleTextPreview?: string;
+    unavailablePage?: { status?: string; matchedText?: string };
+  };
+  expect(unavailableEvidence.visibleTextPreview).toContain("页面不存在");
+  expect(unavailableEvidence.unavailablePage).toMatchObject({
+    status: "NOT_FOUND",
+    matchedText: "页面不存在",
+  });
 
   const auditedDate = new Date(resultCoverage.items[0].auditedAt);
   const auditDay = [

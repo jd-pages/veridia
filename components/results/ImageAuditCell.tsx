@@ -5,6 +5,14 @@ import AuditStatusTag from "./AuditStatusTag";
 import styles from "./results-workbench.module.css";
 
 export default function ImageAuditCell({ row }: { row: ResultRow }) {
+  if (["NOT_FOUND", "DELETED"].includes(row.pageStatus)) {
+    return (
+      <div className={styles.stack}>
+        <span className={styles.cellPrimary}>页面失效</span>
+        <span className={styles.cellSecondary}>未执行图片数量审核</span>
+      </div>
+    );
+  }
   if (row.noteType === "VIDEO_NOTE" || row.imageStatus === "VIDEO_NOTE") {
     return (
       <div className={styles.stack}>

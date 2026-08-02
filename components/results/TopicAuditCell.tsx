@@ -2,6 +2,7 @@
 
 import { Popover, Tag } from "antd";
 import { parseJsonArray } from "@/lib/client";
+import { productStageTopicLabel } from "@/lib/product-stage";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicCandidates } from "@/lib/topic-clickability";
 import type { ResultRow } from "./types";
@@ -13,55 +14,81 @@ function expectedTopics(ruleSnapshot: string) {
       rules?: Array<{
         ruleType?: string;
         topic?: string;
+        topicCategory?: string;
       }>;
     };
-    return [
-      ...new Set(
-        (snapshot.rules || [])
-          .filter(
-            (rule) =>
-              Boolean(rule.topic) &&
-              rule.ruleType !== "FORBIDDEN" &&
-              rule.ruleType !== "ALIAS",
-          )
-          .map((rule) => normalizeTopic(rule.topic || "")),
-      ),
-    ];
+    const requiredRules = (snapshot.rules || []).filter(
+      (rule) =>
+        Boolean(rule.topic) &&
+        rule.ruleType !== "FORBIDDEN" &&
+        rule.ruleType !== "ALIAS",
+    );
+    return {
+      required: [
+        ...new Set(
+          requiredRules
+            .filter((rule) => rule.topicCategory !== "PRODUCT_STAGE")
+            .map((rule) => normalizeTopic(rule.topic || "")),
+        ),
+      ],
+      stageCandidates: [
+        ...new Set(
+          requiredRules
+            .filter((rule) => rule.topicCategory === "PRODUCT_STAGE")
+            .map((rule) => normalizeTopic(rule.topic || "")),
+        ),
+      ],
+    };
   } catch {
-    return [];
+    return { required: [], stageCandidates: [] };
   }
 }
 
 export function getTopicAuditSummary(row: ResultRow) {
-  const required = expectedTopics(row.ruleSnapshot);
-  const actual = row.note.topics.map((topic) => normalizeTopic(topic.displayText));
+  const { required, stageCandidates } = expectedTopics(row.ruleSnapshot);
+  const actual = row.note.topics.map((topic) =>
+    normalizeTopic(topic.displayText),
+  );
   const matched = required.filter((topic) => actual.includes(topic));
+  const matchedStageCandidates = stageCandidates.filter((topic) =>
+    actual.includes(topic),
+  );
   const missing = parseJsonArray(row.missingTopics).filter(
     (expected) => !actual.includes(normalizeTopic(expected)),
   );
   const forbidden = parseJsonArray(row.forbiddenTopics);
-  const unclickable = required.filter((expected) => {
+  const clickabilityFor = (expected: string) => {
     const topics = row.note.topics.filter(
       (candidate) => normalizeTopic(candidate.displayText) === expected,
     );
-    return (
-      topics.length > 0 &&
-      classifyTopicCandidates(topics, { pageUrl: row.note.url }) ===
-        "NOT_CLICKABLE"
-    );
-  });
-  const uncertain = required.filter((expected) => {
-    const topics = row.note.topics.filter(
-      (candidate) => normalizeTopic(candidate.displayText) === expected,
-    );
-    return (
-      topics.length > 0 &&
-      classifyTopicCandidates(topics, { pageUrl: row.note.url }) === "UNKNOWN"
-    );
-  });
+    return topics.length
+      ? classifyTopicCandidates(topics, { pageUrl: row.note.url })
+      : null;
+  };
+  const unclickable = required.filter(
+    (expected) => clickabilityFor(expected) === "NOT_CLICKABLE",
+  );
+  const uncertain = required.filter(
+    (expected) => clickabilityFor(expected) === "UNKNOWN",
+  );
+  const stageClickabilities = matchedStageCandidates.map(clickabilityFor);
+  const stageGroupMissing =
+    stageCandidates.length > 0 && matchedStageCandidates.length === 0;
+  const stageGroupUnclickable =
+    matchedStageCandidates.length > 0 &&
+    stageClickabilities.every((value) => value === "NOT_CLICKABLE");
+  const stageGroupUncertain =
+    matchedStageCandidates.length > 0 &&
+    !stageClickabilities.includes("CLICKABLE") &&
+    stageClickabilities.some((value) => value === "UNKNOWN");
   return {
     required,
     matched,
+    stageCandidates,
+    matchedStageCandidates,
+    stageGroupMissing,
+    stageGroupUnclickable,
+    stageGroupUncertain,
     missing,
     forbidden,
     unclickable,
@@ -70,38 +97,83 @@ export function getTopicAuditSummary(row: ResultRow) {
 }
 
 export default function TopicAuditCell({ row }: { row: ResultRow }) {
+  if (["NOT_FOUND", "DELETED"].includes(row.pageStatus)) {
+    return (
+      <div className={styles.stack}>
+        <span className={styles.cellPrimary}>页面失效</span>
+        <span className={styles.cellSecondary}>未执行话题审核</span>
+      </div>
+    );
+  }
+
   const summary = getTopicAuditSummary(row);
-  const expectedCount = summary.required.length;
-  const matchedCount = summary.matched.length;
+  const expectedCount =
+    summary.required.length + (summary.stageCandidates.length ? 1 : 0);
+  const matchedCount =
+    summary.matched.length + (summary.matchedStageCandidates.length ? 1 : 0);
+  const needsReview =
+    summary.uncertain.length > 0 || summary.stageGroupUncertain;
   const compliant =
     row.topicsCompliant &&
     row.clickableCompliant &&
     !summary.missing.length &&
     !summary.forbidden.length &&
-    !summary.uncertain.length;
+    !summary.stageGroupMissing &&
+    !summary.stageGroupUnclickable &&
+    !needsReview;
 
   const detail = (
     <div className={styles.topicDetail}>
       <div className={styles.topicDetailSection}>
         <div className={styles.topicDetailTitle}>要求话题</div>
-        <div>{summary.required.join("、") || "规则快照中未配置话题"}</div>
+        <div>
+          {summary.required.join("、") || "无额外通用或产品必填话题"}
+        </div>
       </div>
+      {summary.stageCandidates.length ? (
+        <div className={styles.topicDetailSection}>
+          <div className={styles.topicDetailTitle}>
+            {productStageTopicLabel(row.task.productStage)} 阶段候选（任一命中）
+          </div>
+          <div>{summary.stageCandidates.join("、")}</div>
+        </div>
+      ) : null}
+      {summary.stageGroupMissing ? (
+        <div className={styles.topicDetailSection}>
+          <div className={styles.topicDetailTitle}>阶段话题未命中</div>
+          <div>{summary.stageCandidates.join("、")}</div>
+        </div>
+      ) : null}
       {summary.missing.length ? (
         <div className={styles.topicDetailSection}>
           <div className={styles.topicDetailTitle}>缺少话题</div>
           <div>{summary.missing.join("、")}</div>
         </div>
       ) : null}
-      {summary.unclickable.length ? (
+      {summary.unclickable.length || summary.stageGroupUnclickable ? (
         <div className={styles.topicDetailSection}>
           <div className={styles.topicDetailTitle}>不可点击话题</div>
-          <div>{summary.unclickable.join("、")}</div>
+          <div>
+            {[
+              ...summary.unclickable,
+              ...(summary.stageGroupUnclickable
+                ? summary.matchedStageCandidates
+                : []),
+            ].join("、")}
+          </div>
         </div>
       ) : null}
-      {summary.uncertain.length ? (
+      {needsReview ? (
         <div className={styles.topicDetailSection}>
           <div className={styles.topicDetailTitle}>可点击状态待确认</div>
-          <div>{summary.uncertain.join("、")}</div>
+          <div>
+            {[
+              ...summary.uncertain,
+              ...(summary.stageGroupUncertain
+                ? summary.matchedStageCandidates
+                : []),
+            ].join("、")}
+          </div>
         </div>
       ) : null}
       {summary.forbidden.length ? (
@@ -123,32 +195,34 @@ export default function TopicAuditCell({ row }: { row: ResultRow }) {
           <Tag
             bordered={false}
             className={`${styles.compactTag} ${
-              summary.uncertain.length
+              needsReview
                 ? styles.statusWarning
                 : compliant
                   ? styles.statusSuccess
                   : styles.statusDanger
             }`}
           >
-            {summary.uncertain.length
-              ? "待复核"
-              : compliant
-                ? "合规"
-                : "异常"}
+            {needsReview ? "待复核" : compliant ? "合规" : "异常"}
           </Tag>
         </div>
         <div className={styles.cellSecondary}>
-          {summary.missing.length
-            ? "要求话题缺失，可点击不适用"
-            : summary.uncertain.length
-              ? "可点击状态需人工确认"
-              : row.clickableCompliant
-              ? "全部可点击"
-              : `不可点击 ${Math.max(summary.unclickable.length, 1)} 个`}
+          {summary.stageGroupMissing
+            ? "阶段话题候选均未命中"
+            : summary.missing.length
+              ? "要求话题缺失，可点击不适用"
+              : needsReview
+                ? "可点击状态需人工确认"
+                : row.clickableCompliant
+                  ? "全部可点击"
+                  : `不可点击 ${Math.max(
+                      summary.unclickable.length +
+                        (summary.stageGroupUnclickable ? 1 : 0),
+                      1,
+                    )} 个`}
         </div>
-        {summary.missing.length ? (
+        {summary.missing.length || summary.stageGroupMissing ? (
           <div className={styles.cellSecondary}>
-            缺少 {summary.missing.length} 个
+            缺少 {summary.missing.length + (summary.stageGroupMissing ? 1 : 0)} 个
           </div>
         ) : null}
       </div>

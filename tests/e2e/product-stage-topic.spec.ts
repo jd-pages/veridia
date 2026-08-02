@@ -106,14 +106,13 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
           pageType: "NOTE_DETAIL",
           noteId: `stage-topic-body-${suffix}`,
           title: "爱他美澳洲白金版2段真实体验",
-          body: `${"这是一次真实的小红书喂养体验记录".repeat(5)} #爱他美新手爸妈日记 #爱他美澳洲白金版 #新生儿奶粉 #二段奶粉推荐`,
+          body: `${"这是一次真实的小红书喂养体验记录".repeat(5)} #爱他美新手爸妈日记 #爱他美澳洲白金版 #二段奶粉推荐`,
           noteType: "IMAGE_TEXT",
           imageExtractionStatus: "SUCCESS",
           imageCount: 2,
           topics: [
             "#爱他美新手爸妈日记",
             "#爱他美澳洲白金版",
-            "#新生儿奶粉",
             "#二段奶粉推荐",
           ].map((displayText) => ({
             displayText,
@@ -146,6 +145,8 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   expect(detailResponse.ok()).toBeTruthy();
   const detail = (await detailResponse.json()).data as {
     task: { productStage: string };
+    failureReasons: string;
+    missingTopics: string;
     ruleResults: Array<{
       ruleKey: string;
       ruleName: string;
@@ -154,6 +155,10 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
     }>;
   };
   expect(detail.task.productStage).toBe("IFFO");
+  expect(JSON.parse(detail.failureReasons)).not.toContain(
+    "缺少精确话题 #新生儿奶粉",
+  );
+  expect(JSON.parse(detail.missingTopics)).toEqual([]);
   expect(
     detail.ruleResults.find((item) => item.ruleKey === "PRODUCT_STAGE_BODY"),
   ).toBeUndefined();
@@ -161,13 +166,18 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
     detail.ruleResults.find((item) =>
       item.ruleName.includes("产品阶段话题 IFFO"),
     ),
-  ).toMatchObject({ passed: true });
+  ).toMatchObject({
+    passed: true,
+    actualValue: expect.stringContaining("#二段奶粉推荐"),
+  });
 
   await page.goto("/results");
   const resultRow = page.locator(
     `.ant-table-row[data-row-key="${result.id}"]`,
   );
   await expect(resultRow).toContainText("IFFO");
+  await expect(resultRow).toContainText("3 / 3");
+  await expect(resultRow).not.toContainText("3 / 4");
   await expect(resultRow).not.toContainText("IFFO：P段/1段");
   await expect(resultRow).not.toContainText("IFFO：2段");
 

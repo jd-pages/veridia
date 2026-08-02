@@ -13,6 +13,73 @@ export interface PageClassificationInput {
   visibleText: string;
 }
 
+export interface UnavailablePageEvidence {
+  status: "NOT_FOUND" | "DELETED";
+  matchedText: string;
+  source: "TITLE" | "BODY" | "URL";
+}
+
+const DELETED_PAGE_PATTERN =
+  /笔记已删除|内容已被删除|内容已删除|作者已删除/u;
+const NOT_FOUND_PAGE_PATTERN =
+  /错误页|你访问的页面不见了|访问的页面不见了|页面不存在|页面失效|内容不存在|笔记不存在|当前笔记无法浏览|该内容无法查看|链接失效/u;
+
+function firstPatternMatch(value: string, pattern: RegExp) {
+  return value.match(pattern)?.[0] || null;
+}
+
+export function detectUnavailableXhsPage({
+  url,
+  title,
+  visibleText,
+}: PageClassificationInput): UnavailablePageEvidence | null {
+  const sources = [
+    { source: "TITLE" as const, value: title },
+    { source: "BODY" as const, value: visibleText },
+  ];
+  for (const item of sources) {
+    const deleted = firstPatternMatch(item.value, DELETED_PAGE_PATTERN);
+    if (deleted) {
+      return { status: "DELETED", matchedText: deleted, source: item.source };
+    }
+    const notFound = firstPatternMatch(item.value, NOT_FOUND_PAGE_PATTERN);
+    if (notFound) {
+      return {
+        status: "NOT_FOUND",
+        matchedText: notFound,
+        source: item.source,
+      };
+    }
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (
+      !/^\/website-login\/error(?:\/|$)/iu.test(parsed.pathname) &&
+      /(?:^|\/)(?:404|not[-_]?found|error(?:-page)?)(?:\/|$)/iu.test(
+        parsed.pathname,
+      )
+    ) {
+      return {
+        status: "NOT_FOUND",
+        matchedText: parsed.pathname,
+        source: "URL",
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function unavailablePageFailureMessage(
+  evidence: UnavailablePageEvidence,
+) {
+  const description =
+    evidence.status === "DELETED" ? "疑似笔记已删除或链接失效" : "疑似笔记不存在或链接失效";
+  return `小红书页面提示“${evidence.matchedText}”，${description}`;
+}
+
 export function isShortXiaohongshuUrl(value: string) {
   try {
     const hostname = new URL(value).hostname.toLowerCase();
@@ -85,11 +152,7 @@ export function classifyAutomaticPage({
   ) {
     return "APP_LAUNCH";
   }
-  if (
-    /笔记已删除|内容已删除|内容不存在|笔记不存在|页面不存在|访问的页面不见了/u.test(
-      combined,
-    )
-  ) {
+  if (detectUnavailableXhsPage({ url, title, visibleText })) {
     return "ERROR_PAGE";
   }
   if (isXiaohongshuNoteDetailUrl(url)) return "NOTE_DETAIL";
