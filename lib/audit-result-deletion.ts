@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { processingFailureTaskStatuses } from "@/lib/processing-failure";
 
 export const MAX_AUDIT_RESULT_DELETE_COUNT = 200;
 
@@ -34,9 +35,12 @@ export async function deleteAuditResultsInTransaction(
 ) {
   const existing = await tx.auditResult.findMany({
     where: { id: { in: input.ids } },
-    select: { id: true },
+    select: { id: true, auditTaskId: true, noteId: true },
   });
   const deletedIds = existing.map(({ id }) => id);
+  const affectedTaskIds = [...new Set(existing.map(({ auditTaskId }) => auditTaskId))];
+  const affectedNoteIds = [...new Set(existing.map(({ noteId }) => noteId))];
+  let closedFailureTaskIds: string[] = [];
 
   if (deletedIds.length) {
     await tx.manualReview.deleteMany({
@@ -50,6 +54,26 @@ export async function deleteAuditResultsInTransaction(
     });
     if (deleted.count !== deletedIds.length) {
       throw new Error("审核结果删除数量不一致");
+    }
+
+    const failureTasksWithoutResults = await tx.auditTask.findMany({
+      where: {
+        id: { in: affectedTaskIds },
+        status: { in: [...processingFailureTaskStatuses] },
+        auditResults: { none: {} },
+      },
+      select: { id: true },
+    });
+    closedFailureTaskIds = failureTasksWithoutResults.map(({ id }) => id);
+    if (closedFailureTaskIds.length) {
+      await tx.auditTask.updateMany({
+        where: { id: { in: closedFailureTaskIds } },
+        data: {
+          status: "CANCELLED",
+          failureCode: "CANCELLED",
+          failureMessage: "对应审核结果已删除，可重新提交审核",
+        },
+      });
     }
   }
 
@@ -70,6 +94,11 @@ export async function deleteAuditResultsInTransaction(
         requestedIds: input.ids,
         deletedIds,
         deletedCount: deletedIds.length,
+        affectedTaskIds,
+        affectedNoteIds,
+        closedFailureTaskIds,
+        taskRecordsRetained: true,
+        noteRecordsRetained: true,
       }),
     },
   });

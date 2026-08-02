@@ -1,6 +1,42 @@
 import { expect, test, type Page } from "@playwright/test";
 import ExcelJS from "exceljs";
 
+const resultExportHeaders = [
+  "产品",
+  "活动",
+  "产品阶段话题",
+  "要求阶段话题",
+  "最终审核结论",
+  "人工复核状态",
+  "失败原因",
+  "正文有效字数",
+  "图片数量",
+  "话题审核结果",
+  "当前公开状态",
+  "正文内容",
+];
+
+const removedResultExportHeaders = [
+  "异常分类",
+  "笔记链接",
+  "最终链接",
+  "笔记ID",
+  "任务来源",
+  "正文允许段位",
+  "正文实际识别段位",
+  "达人昵称",
+  "发布时间",
+  "标题",
+  "图片数量合规",
+  "图片提取状态",
+  "规则版本",
+  "命中规则",
+  "审核创建时间",
+  "审核完成时间",
+  "审核时间",
+  "页面状态",
+];
+
 async function login(page: Page) {
   const response = await page.request.post("/api/auth/login", {
     data: { username: "admin", password: "Admin123!" },
@@ -144,24 +180,9 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   const exportHeaders = workbook.worksheets[0]
     .getRow(1)
     .values as unknown[];
-  for (const requiredHeader of [
-    "笔记链接",
-    "笔记ID",
-    "产品",
-    "活动",
-    "产品阶段话题",
-    "页面状态",
-    "正文状态",
-    "话题审核结果",
-    "图片数量",
-    "自动审核结果",
-    "人工复核结果",
-    "最终审核结论",
-    "不通过原因",
-    "人工复核备注",
-    "审核时间",
-  ]) {
-    expect(exportHeaders).toContain(requiredHeader);
+  expect(exportHeaders.slice(1)).toEqual(resultExportHeaders);
+  for (const removedHeader of removedResultExportHeaders) {
+    expect(exportHeaders).not.toContain(removedHeader);
   }
   await expect(page.getByText(/导出成功，共 \d+ 条/u)).toBeVisible();
 
@@ -187,6 +208,19 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await expect(
     page.getByRole("button", { name: "批量重新审核" }),
   ).toBeEnabled();
+
+  const selectedDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出所选" }).click();
+  const selectedDownload = await selectedDownloadPromise;
+  const selectedWorkbook = new ExcelJS.Workbook();
+  await selectedWorkbook.xlsx.readFile((await selectedDownload.path())!);
+  expect(selectedWorkbook.worksheets[0].rowCount - 1).toBe(1);
+  const selectedHeaders = selectedWorkbook.worksheets[0].getRow(1)
+    .values as unknown[];
+  expect(selectedHeaders.slice(1)).toEqual(resultExportHeaders);
+  for (const removedHeader of removedResultExportHeaders) {
+    expect(selectedHeaders).not.toContain(removedHeader);
+  }
 
   await page
     .getByRole("button", { name: /查看详情/ })
@@ -229,6 +263,20 @@ test("审核详情展示自动取证候选证据", async ({ page }) => {
 
 test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) => {
   await login(page);
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get("/api/tasks");
+        const payload = (await response.json()) as {
+          data: Array<{ status: string }>;
+        };
+        return payload.data.filter(({ status }) =>
+          ["PENDING", "PROCESSING"].includes(status),
+        ).length;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(0);
   await page.goto("/results");
   await expect(page.locator(".ant-table-row").first()).toBeVisible();
 
@@ -244,6 +292,7 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
     data: {
       task: {
         id: string;
+        url: string;
         productStage: string | null;
         product: { id: string };
         campaign: { id: string };
@@ -306,6 +355,22 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
 
   const deletedDetail = await page.request.get(`/api/results/${firstResultId}`);
   expect(deletedDetail.status()).toBe(404);
+  const deletedExport = await page.request.get(
+    `/api/results/export?ids=${firstResultId}`,
+  );
+  expect(deletedExport.status()).toBe(404);
+  const deletedSearch = (await (
+    await page.request.get(
+      `/api/results?keyword=${encodeURIComponent(detail.data.task.url)}&page=1&pageSize=100`,
+    )
+  ).json()) as { data: { items: Array<{ id: string }> } };
+  expect(deletedSearch.data.items.map(({ id }) => id)).not.toContain(
+    firstResultId,
+  );
+  const afterSingleDelete = (await (
+    await page.request.get("/api/results?page=1&pageSize=100")
+  ).json()) as { data: { total: number } };
+  expect(afterSingleDelete.data.total).toBe(initialList.data.total - 1);
   const tasks = (await (await page.request.get("/api/tasks")).json()) as {
     data: Array<{ id: string }>;
   };
@@ -331,10 +396,71 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
     rulesBefore.data.map(({ id }) => id),
   );
 
-  const rows = page.locator(".ant-table-row");
-  await expect(rows.nth(1)).toBeVisible();
-  await rows.nth(0).getByRole("checkbox").check({ force: true });
-  await rows.nth(1).getByRole("checkbox").check({ force: true });
+  const recreateResponse = await page.request.post("/api/automation/batches", {
+    data: {
+      name: "E2E 删除后重新审核",
+      urls: detail.data.task.url,
+      productId: detail.data.task.product.id,
+      campaignId: detail.data.task.campaign.id,
+      productStage: detail.data.task.productStage,
+    },
+  });
+  expect(recreateResponse.ok()).toBeTruthy();
+  const recreated = (await recreateResponse.json()) as {
+    data: { batchId: string; created: number; skipped: unknown[] };
+  };
+  expect(recreated.data).toMatchObject({ created: 1, skipped: [] });
+  await expect
+    .poll(
+      async () => {
+        const payload = (await (
+          await page.request.get(
+            `/api/results?batchId=${recreated.data.batchId}&page=1&pageSize=10`,
+          )
+        ).json()) as { data: { total: number } };
+        return payload.data.total;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(1);
+
+  await page.reload();
+  const beforeBatchDelete = (await (
+    await page.request.get("/api/results?page=1&pageSize=20")
+  ).json()) as { data: { items: Array<{ id: string }> } };
+  const visibleCandidates = await Promise.all(
+    beforeBatchDelete.data.items.map(async ({ id }) => {
+      const payload = (await (
+        await page.request.get(`/api/results/${id}`)
+      ).json()) as {
+        data: {
+          task: {
+            url: string;
+            productStage: string | null;
+            product: { id: string };
+            campaign: { id: string };
+          };
+        };
+      };
+      return { resultId: id, task: payload.data.task };
+    }),
+  );
+  const batchCandidates = visibleCandidates.filter(
+    (candidate, index, candidates) =>
+      candidates.findIndex(
+        (other) =>
+          other.task.url === candidate.task.url &&
+          other.task.campaign.id === candidate.task.campaign.id,
+      ) === index,
+  ).slice(0, 2);
+  expect(batchCandidates).toHaveLength(2);
+  for (const candidate of batchCandidates) {
+    const keyedRow = page.locator(
+      `.ant-table-row[data-row-key="${candidate.resultId}"]`,
+    );
+    await expect(keyedRow).toBeVisible();
+    await keyedRow.getByRole("checkbox").check({ force: true });
+  }
   const batchDeleteButton = page.getByRole("button", {
     name: "批量删除（2）",
   });
@@ -375,11 +501,47 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
   expect([...batchDeletePayload.data.deletedIds].sort()).toEqual(
     [...batchDeletedIds].sort(),
   );
+  expect([...batchDeletedIds].sort()).toEqual(
+    batchCandidates.map(({ resultId }) => resultId).sort(),
+  );
   await expect(
     page.getByText("已成功删除 2 条审核结果", { exact: true }),
   ).toBeVisible();
   await expect.poll(() => batchRequests.length).toBe(1);
   await expect(page.getByText(/已选择\s*0\s*条/u)).toBeVisible();
+
+  for (const { task: deletedTask } of batchCandidates) {
+    const response = await page.request.post("/api/automation/batches", {
+      data: {
+        name: "E2E 批量删除后重新审核",
+        urls: deletedTask.url,
+        productId: deletedTask.product.id,
+        campaignId: deletedTask.campaign.id,
+        productStage: deletedTask.productStage,
+      },
+    });
+    const payload = (await response.json()) as {
+      data?: { batchId?: string; created?: number };
+      error?: string;
+    };
+    expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
+    expect(payload.data?.created).toBe(1);
+    expect(payload.data?.batchId).toBeTruthy();
+    await expect
+      .poll(
+        async () => {
+          const resultResponse = await page.request.get(
+            `/api/results?batchId=${payload.data!.batchId}&page=1&pageSize=10`,
+          );
+          const resultPayload = (await resultResponse.json()) as {
+            data: { total: number };
+          };
+          return resultPayload.data.total;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(1);
+  }
 
   const finalList = (await (
     await page.request.get("/api/results?page=1&pageSize=100")
@@ -391,6 +553,7 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
   for (const deletedId of batchDeletedIds) {
     expect(finalIds).not.toContain(deletedId);
   }
+  await page.reload();
   await expect(
     page.getByText(`当前筛选共 ${finalList.data.total} 条`, { exact: true }),
   ).toBeVisible();

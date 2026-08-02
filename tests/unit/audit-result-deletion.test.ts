@@ -10,10 +10,20 @@ import {
 
 function transactionFixture(existingIds: string[]) {
   const calls = {
-    findMany: vi.fn().mockResolvedValue(existingIds.map((id) => ({ id }))),
+    findMany: vi.fn().mockResolvedValue(
+      existingIds.map((id) => ({
+        id,
+        auditTaskId: `task-${id}`,
+        noteId: `note-${id}`,
+      })),
+    ),
     deleteManualReviews: vi.fn().mockResolvedValue({ count: 2 }),
     deleteRuleResults: vi.fn().mockResolvedValue({ count: 4 }),
     deleteResults: vi.fn().mockResolvedValue({ count: existingIds.length }),
+    findFailureTasks: vi.fn().mockResolvedValue(
+      existingIds.map((id) => ({ id: `task-${id}` })),
+    ),
+    closeFailureTasks: vi.fn().mockResolvedValue({ count: existingIds.length }),
     createLog: vi.fn().mockResolvedValue({ id: "log-1" }),
   };
   const tx = {
@@ -23,6 +33,10 @@ function transactionFixture(existingIds: string[]) {
     },
     manualReview: { deleteMany: calls.deleteManualReviews },
     ruleResult: { deleteMany: calls.deleteRuleResults },
+    auditTask: {
+      findMany: calls.findFailureTasks,
+      updateMany: calls.closeFailureTasks,
+    },
     operationLog: { create: calls.createLog },
   } as unknown as Prisma.TransactionClient;
   return { tx, calls };
@@ -77,11 +91,28 @@ describe("审核结果删除事务", () => {
     expect(calls.deleteResults).toHaveBeenCalledWith({
       where: { id: { in: ["result-1", "result-2"] } },
     });
+    expect(calls.findFailureTasks).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["task-result-1", "task-result-2"] },
+        status: { in: ["FAILED", "READ_FAILED", "LOGIN_EXPIRED"] },
+        auditResults: { none: {} },
+      },
+      select: { id: true },
+    });
+    expect(calls.closeFailureTasks).toHaveBeenCalledWith({
+      where: { id: { in: ["task-result-1", "task-result-2"] } },
+      data: {
+        status: "CANCELLED",
+        failureCode: "CANCELLED",
+        failureMessage: "对应审核结果已删除，可重新提交审核",
+      },
+    });
     expect(calls.createLog).toHaveBeenCalledWith({
       data: expect.objectContaining({
         userId: "admin-1",
         action: "BULK_DELETE_AUDIT_RESULTS",
         entityType: "AUDIT_RESULT",
+        metadata: expect.stringContaining("task-result-1"),
       }),
     });
     expect(calls.deleteManualReviews.mock.invocationCallOrder[0]).toBeLessThan(
@@ -104,6 +135,8 @@ describe("审核结果删除事务", () => {
     expect(calls.deleteManualReviews).not.toHaveBeenCalled();
     expect(calls.deleteRuleResults).not.toHaveBeenCalled();
     expect(calls.deleteResults).not.toHaveBeenCalled();
+    expect(calls.findFailureTasks).not.toHaveBeenCalled();
+    expect(calls.closeFailureTasks).not.toHaveBeenCalled();
     expect(calls.createLog).toHaveBeenCalledOnce();
   });
 

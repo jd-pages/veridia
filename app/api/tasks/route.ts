@@ -7,6 +7,7 @@ import {
 } from "@/lib/product-stage";
 import packageJson from "@/package.json";
 import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
+import { findBlockingAuditTask } from "@/lib/audit-task-deduplication";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -88,11 +89,12 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
       continue;
     }
     const normalizedUrl = normalizeUrl(url);
-    const duplicate = await prisma.auditTask.findFirst({
-      where: { normalizedUrl, campaignId: body.campaignId },
+    const duplicate = await findBlockingAuditTask({
+      url,
+      campaignId: body.campaignId,
     });
-    if (duplicate && body.skipDuplicates !== false) {
-      errors.push({ url, reason: "同一活动中已存在该链接，已跳过" });
+    if (duplicate) {
+      errors.push({ url, reason: duplicate.message });
       continue;
     }
     created.push(

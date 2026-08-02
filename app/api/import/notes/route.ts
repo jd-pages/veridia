@@ -20,6 +20,7 @@ import {
   detectLocalSourceType,
   parseTabularPreview,
 } from "@/lib/import-export-templates/tabular";
+import { findBlockingAuditTask } from "@/lib/audit-task-deduplication";
 
 interface CheckedRow {
   rowNumber: number;
@@ -194,16 +195,12 @@ export async function POST(request: Request) {
         );
       }
       checked.milkType = stageRule?.milkType || undefined;
-      if (normalizedUrl) {
-        const existing = await prisma.auditTask.findFirst({
-          where: { normalizedUrl, campaignId: campaign?.id },
-          include: { auditResults: { take: 1 } },
+      if (normalizedUrl && campaign?.id) {
+        const duplicate = await findBlockingAuditTask({
+          url: checked.url,
+          campaignId: campaign.id,
         });
-        if (existing?.auditResults.length) {
-          checked.errors.push("同一链接已完成审核");
-        } else if (existing) {
-          checked.errors.push("同一链接已有待审核任务");
-        }
+        if (duplicate) checked.errors.push(duplicate.message);
       }
       checked.errors = [...new Set(checked.errors)];
       rows.push(checked);

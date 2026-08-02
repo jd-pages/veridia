@@ -28,6 +28,7 @@
     "publishTime": { "displayName": "发布时间", "type": "datetime", "description": "笔记发布时间" },
     "title": { "displayName": "标题", "type": "string", "description": "笔记标题" },
     "content": { "displayName": "正文内容", "type": "string", "description": "笔记正文" },
+    "effectiveBodyLength": { "displayName": "正文有效字数", "type": "integer", "description": "固定规则计算后的有效正文字符数" },
     "imageCount": { "displayName": "图片数量", "type": "integer", "description": "图文笔记图片数量" },
     "topicTags": { "displayName": "话题标签", "type": "stringList", "description": "笔记话题标签" },
     "screenshotStatus": { "displayName": "截图状态", "type": "string", "description": "客服登记截图状态" },
@@ -35,6 +36,7 @@
     "auditStatus": { "displayName": "处理状态", "type": "string", "description": "任务提取和处理状态" },
     "auditResult": { "displayName": "审核结果", "type": "string", "description": "规则审核结果" },
     "pageStatus": { "displayName": "页面状态", "type": "string", "description": "笔记页面访问和读取状态" },
+    "publicStatus": { "displayName": "当前公开状态", "type": "string", "description": "审核时识别的笔记公开状态" },
     "bodyStatus": { "displayName": "正文状态", "type": "string", "description": "笔记正文提取状态" },
     "topicsAuditResult": { "displayName": "话题审核结果", "type": "string", "description": "要求话题的审核结果" },
     "autoAuditResult": { "displayName": "自动审核结果", "type": "string", "description": "固定规则自动审核结论" },
@@ -42,7 +44,7 @@
     "finalAuditConclusion": { "displayName": "最终审核结论", "type": "string", "description": "人工复核优先的最终审核结论" },
     "manualReviewComment": { "displayName": "人工复核备注", "type": "string", "description": "最近一次人工复核备注" },
     "auditTime": { "displayName": "审核时间", "type": "datetime", "description": "自动审核完成时间" },
-    "failedReasons": { "displayName": "不通过原因", "type": "stringList", "description": "未通过或待复核原因" },
+    "failedReasons": { "displayName": "失败原因", "type": "stringList", "description": "未通过或待复核原因" },
     "matchedRules": { "displayName": "命中规则", "type": "stringList", "description": "本次审核命中的规则证据" },
     "ruleVersion": { "displayName": "规则版本", "type": "string", "description": "审核时使用的规则版本" },
     "reviewedBy": { "displayName": "复核人员", "type": "string", "description": "最近一次人工复核人员" },
@@ -94,10 +96,10 @@
     "productStage": ["产品阶段话题", "产品段位", "奶粉段位", "段位", "productStage"]
   },
   "requiredFields": ["noteUrl", "productName", "activityName"],
-  "optionalFields": ["noteId", "influencerName", "publishTime", "title", "content", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark", "productCode", "activityMonth", "contentChannel", "specification", "productStage"],
+  "optionalFields": ["noteId", "influencerName", "publishTime", "title", "content", "effectiveBodyLength", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark", "productCode", "activityMonth", "contentChannel", "specification", "productStage", "publicStatus"],
   "columnOrder": {
-    "import": ["noteUrl", "contentChannel", "productCode", "productName", "specification", "activityName", "activityMonth", "productStage", "influencerName", "publishTime", "title", "content", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark"],
-    "auditResults": ["noteUrl", "originalUrl", "finalUrl", "noteId", "productName", "activityName", "source", "productStageTopic", "allowedBodyStages", "detectedBodyStages", "requiredStageTopic", "influencerName", "publishTime", "title", "content", "pageStatus", "bodyStatus", "topicsAuditResult", "imageExtractionStatus", "imageCount", "imageStatus", "topicTags", "auditStatus", "autoAuditResult", "manualAuditResult", "finalAuditConclusion", "auditResult", "exceptionCategory", "failureReason", "needsManualReview", "manualReviewStatus", "manualReviewComment", "attemptCount", "auditCreatedAt", "auditCompletedAt", "auditTime", "taskCreatedAt", "dateFilterBasis", "failedReasons", "matchedRules", "ruleVersion", "reviewedBy", "reviewedAt", "remark"],
+    "import": ["noteUrl", "productName", "activityName", "productStage"],
+    "auditResults": ["productName", "activityName", "productStageTopic", "requiredStageTopic", "finalAuditConclusion", "manualReviewStatus", "failedReasons", "effectiveBodyLength", "imageCount", "topicsAuditResult", "publicStatus", "content"],
     "auditTasks": ["noteUrl", "noteId", "productName", "activityName", "auditStatus", "auditResult", "ruleVersion", "reviewedAt", "remark"]
   },
   "dataValidation": {

@@ -59,6 +59,7 @@ export async function recordProcessingFailureResult(input: {
       },
     });
     if (!task) throw new Error("审核任务不存在");
+    if (task.status === "CANCELLED") return null;
 
     await tx.auditTask.update({
       where: { id: task.id },

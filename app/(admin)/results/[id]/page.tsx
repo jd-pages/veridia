@@ -28,7 +28,7 @@ import {
   LinkOutlined,
   StopOutlined,
 } from "@ant-design/icons";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import PageHeader from "@/components/PageHeader";
 import StatusTag from "@/components/StatusTag";
 import ExtractionEvidencePanel from "@/components/results/ExtractionEvidencePanel";
@@ -153,6 +153,7 @@ interface Detail {
 
 export default function ResultDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const { message } = App.useApp();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -172,9 +173,14 @@ export default function ResultDetailPage() {
       setProducts(productData);
       setCampaigns(campaignData);
     } catch (error) {
+      if (error instanceof Error && error.message === "审核结果不存在") {
+        message.warning("该审核结果已删除或不存在");
+        router.replace("/results");
+        return;
+      }
       message.error(error instanceof Error ? error.message : "加载详情失败");
     }
-  }, [message, params.id]);
+  }, [message, params.id, router]);
 
   useEffect(() => {
     void load();

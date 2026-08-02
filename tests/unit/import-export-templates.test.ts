@@ -12,6 +12,10 @@ import {
   parseTabularPreview,
 } from "@/lib/import-export-templates/tabular";
 import { validateImportExportTemplates } from "@/lib/import-export-templates/validation";
+import {
+  IMPORT_TEMPLATE_FIELDS,
+  RESULT_EXPORT_FIELDS,
+} from "@/lib/import-export-templates/config";
 
 const templates = validateImportExportTemplates(builtinTemplates);
 
@@ -26,20 +30,8 @@ describe("远程表格模板配置", () => {
     expect(templates.sourcePresets.TENCENT_DOCS_EXPORTED_XLSX?.localOnly).toBe(
       true,
     );
-    expect(templates.columnOrder.auditResults).toEqual(
-      expect.arrayContaining([
-        "auditStatus",
-        "auditResult",
-        "exceptionCategory",
-        "failureReason",
-        "needsManualReview",
-        "manualReviewStatus",
-        "auditCreatedAt",
-        "auditCompletedAt",
-        "taskCreatedAt",
-        "dateFilterBasis",
-      ]),
-    );
+    expect(templates.columnOrder.import).toEqual(IMPORT_TEMPLATE_FIELDS);
+    expect(templates.columnOrder.auditResults).toEqual(RESULT_EXPORT_FIELDS);
   });
 
   it("拒绝必填字段缺失、列字段未定义和跨字段别名冲突", () => {
@@ -120,8 +112,11 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
     expect(result.previewRows[0].hyperlinks?.noteUrl).toBe(
       "https://xhslink.com/hyperlink",
     );
-    expect(result.previewRows[0].values.contentChannel).toBe("小红书");
-    expect(result.previewRows[0].values.title).toBe("富文本标题");
+    expect(result.previewRows[0].values.contentChannel).toBeUndefined();
+    expect(result.previewRows[0].values.title).toBeUndefined();
+    expect(result.unknownHeaders).toEqual(
+      expect.arrayContaining(["标题", "内容渠道"]),
+    );
   });
 
   it("旧版 .xls 文件使用同一字段映射预览", async () => {
@@ -161,6 +156,14 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
     });
     expect(missing.missingRequiredFields).toContain("noteUrl");
     expect(missing.rows[0].errors).toContain("缺少必填字段：笔记链接");
+
+    const blankLink = await parseTabularPreview({
+      bytes: Buffer.from("笔记链接,产品,活动\r\n,澳白,7月活动"),
+      fileName: "blank-link.csv",
+      sourceType: "CSV",
+      templates,
+    });
+    expect(blankLink.rows[0].errors).toContain("缺少必填字段：笔记链接");
 
     const duplicate = await parseTabularPreview({
       bytes: Buffer.from(
@@ -215,6 +218,33 @@ describe("模板驱动导出", () => {
     expect(workbook.getWorksheet("填写说明")?.getCell("B2").text).toBe(
       templates.templateVersion,
     );
+    const headerValues = (workbook.getWorksheet("笔记导入")?.getRow(1)
+      .values || []) as unknown[];
+    const headers = headerValues.slice(1).map(String);
+    expect(headers).toEqual([
+      "笔记链接 *",
+      "产品 *",
+      "活动 *",
+      "产品阶段话题",
+    ]);
+    for (const removed of [
+      "内容渠道",
+      "产品编码",
+      "规格",
+      "活动月份",
+      "达人昵称",
+      "发布时间",
+      "标题",
+      "正文内容",
+      "图片数量",
+      "话题标签",
+      "截图状态",
+      "缺图状态",
+      "笔记状态",
+      "备注",
+    ]) {
+      expect(headers.some((header) => header.includes(removed))).toBe(false);
+    }
   });
 
   it("Excel和CSV严格使用模板列顺序且CSV含UTF-8 BOM", async () => {
@@ -232,7 +262,7 @@ describe("模板驱动导出", () => {
       records,
     });
     expect(csv.charCodeAt(0)).toBe(0xfeff);
-    expect(csv.slice(1).split("\r\n")[0].split(",")[0]).toBe("笔记链接");
+    expect(csv.slice(1).split("\r\n")[0].split(",")[0]).toBe("产品");
 
     const bytes = await buildConfiguredWorkbook({
       templates,
@@ -241,7 +271,7 @@ describe("模板驱动导出", () => {
     });
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes);
-    expect(workbook.worksheets[0].getRow(1).getCell(1).text).toBe("笔记链接");
+    expect(workbook.worksheets[0].getRow(1).getCell(1).text).toBe("产品");
   });
 
   it("18条当前筛选结果生成18条数据行且包含运营必需字段", async () => {
@@ -251,16 +281,15 @@ describe("模板驱动导出", () => {
       productName: "爱他美澳洲白金版",
       activityName: "爱他美2026年7月小红书种草审核",
       productStageTopic: "IFFO：P段/1段",
-      pageStatus: "页面正常",
-      bodyStatus: "正文存在",
+      requiredStageTopic: "#爱他美新手爸妈日记",
       topicsAuditResult: "合规",
       imageCount: 2,
-      autoAuditResult: "审核通过",
-      manualAuditResult: "",
       finalAuditConclusion: "审核通过",
+      manualReviewStatus: "无需复核",
       failedReasons: "",
-      manualReviewComment: "",
-      auditTime: new Date("2026-07-31T12:00:00+08:00"),
+      effectiveBodyLength: 120,
+      publicStatus: "当前公开",
+      content: "示例正文",
     }));
     const bytes = await buildConfiguredWorkbook({
       templates,
@@ -272,19 +301,44 @@ describe("模板驱动导出", () => {
     const sheet = workbook.worksheets[0];
     expect(sheet.rowCount).toBe(19);
     const headers = sheet.getRow(1).values as unknown[];
-    const noteIdColumn = headers.indexOf("笔记ID");
-    expect(sheet.getColumn(noteIdColumn).values).toContain("export-18");
-    for (const header of [
-      "页面状态",
-      "正文状态",
-      "话题审核结果",
-      "自动审核结果",
-      "人工复核结果",
+    expect(headers.slice(1)).toEqual([
+      "产品",
+      "活动",
+      "产品阶段话题",
+      "要求阶段话题",
       "最终审核结论",
-      "人工复核备注",
+      "人工复核状态",
+      "失败原因",
+      "正文有效字数",
+      "图片数量",
+      "话题审核结果",
+      "当前公开状态",
+      "正文内容",
+    ]);
+    expect(sheet.getColumn(headers.indexOf("产品")).values).toContain(
+      "爱他美澳洲白金版",
+    );
+    for (const removed of [
+      "异常分类",
+      "笔记链接",
+      "最终链接",
+      "笔记ID",
+      "任务来源",
+      "正文允许段位",
+      "正文实际识别段位",
+      "达人昵称",
+      "发布时间",
+      "标题",
+      "图片数量合规",
+      "图片提取状态",
+      "规则版本",
+      "命中规则",
+      "审核创建时间",
+      "审核完成时间",
       "审核时间",
+      "页面状态",
     ]) {
-      expect(headers).toContain(header);
+      expect(headers).not.toContain(removed);
     }
     expect(new Uint8Array(bytes as ArrayBuffer).byteLength).toBeGreaterThan(
       1_024,

@@ -48,9 +48,11 @@ export function auditResultToExportRecord(row: {
   ruleSnapshot: string;
   createdAt: Date;
   auditedAt: Date;
+  effectiveBodyLength: number;
   imageCount: number;
   imageExtractionStatus: string;
   imageStatus: string;
+  publicStatus: string;
   task: {
     url: string;
     finalUrl: string | null;
@@ -140,6 +142,7 @@ export function auditResultToExportRecord(row: {
     publishTime: row.note.publishedAt,
     title: row.note.title,
     content: row.note.body,
+    effectiveBodyLength: row.effectiveBodyLength,
     imageCount: row.imageCount,
     imageExtractionStatus: businessStatusLabel(
       row.imageExtractionStatus,
@@ -151,6 +154,7 @@ export function auditResultToExportRecord(row: {
     pageStatus: businessStatusLabel(row.pageStatus),
     bodyStatus,
     topicsAuditResult: row.topicsCompliant ? "合规" : "不合规",
+    publicStatus: businessStatusLabel(row.publicStatus),
     auditStatus: businessStatusLabel(row.task.status, "process"),
     auditResult: finalAuditConclusion,
     autoAuditResult,

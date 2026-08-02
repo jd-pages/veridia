@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import ExcelJS from "exceljs";
 import { E2E_ORIGIN } from "./e2e-origin";
 
-test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突", async ({
+test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略", async ({
   page,
 }) => {
   const loginResponse = await page.request.post("/api/auth/login", {
@@ -56,7 +56,7 @@ test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突
     "PRE 800g",
     campaign.name,
     campaign.month,
-    "",
+    "P段",
     "从规格识别PRE",
   ]);
   sheet.addRow([
@@ -66,7 +66,7 @@ test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突
     "1+段 800g",
     campaign.name,
     campaign.month,
-    "",
+    "1+段",
     "优先识别1+段",
   ]);
   sheet.addRow([
@@ -113,8 +113,8 @@ test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突
     }>;
   };
 
-  expect(preview.validCount).toBe(3);
-  expect(preview.invalidCount).toBe(1);
+  expect(preview.validCount).toBe(4);
+  expect(preview.invalidCount).toBe(0);
   expect(preview.rows[0]).toMatchObject({
     productStage: "IFFO_P1",
     stageGroup: "IFFO：P段/1段",
@@ -130,8 +130,11 @@ test("Excel按产品名称、规格和段位分组识别，并拦截跨组冲突
     stageGroup: "IFFO：2段",
     errors: [],
   });
-  expect(preview.rows[3].productStage).toBe("");
-  expect(preview.rows[3].errors.join("；")).toContain("段位信息冲突");
+  expect(preview.rows[3]).toMatchObject({
+    productStage: "IFFO_2",
+    stageGroup: "IFFO：2段",
+    errors: [],
+  });
   const tasksAfterPreview = (
     await (await page.request.get("/api/tasks")).json()
   ).data.length as number;

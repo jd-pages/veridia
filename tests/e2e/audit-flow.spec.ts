@@ -174,34 +174,33 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     (await exportResponse.body()) as unknown as ExcelJS.Buffer,
   );
   const exportHeaders = worksheetHeaders(exportWorkbook.worksheets[0]);
-  expect(exportHeaders).toContain("图片数量");
-  expect(exportHeaders).toContain("图片提取状态");
-  expect(exportHeaders).toContain("图片数量合规");
-  expect(exportHeaders).toContain("产品阶段话题");
-  expect(exportHeaders).toContain("正文允许段位");
-  expect(exportHeaders).toContain("正文实际识别段位");
-  expect(exportHeaders).toContain("要求阶段话题");
-  expect(exportHeaders).toContain("任务来源");
-  expect(exportHeaders).not.toContain("图片URL");
+  expect(exportHeaders).toEqual([
+    "产品",
+    "活动",
+    "产品阶段话题",
+    "要求阶段话题",
+    "最终审核结论",
+    "人工复核状态",
+    "失败原因",
+    "正文有效字数",
+    "图片数量",
+    "话题审核结果",
+    "当前公开状态",
+    "正文内容",
+  ]);
   const exportSheet = exportWorkbook.worksheets[0];
   expect(exportSheet.rowCount - 1).toBe(
     Number(exportResponse.headers()["x-veridia-export-count"]),
   );
   expect(exportSheet.rowCount).toBeGreaterThan(1);
-  const resultColumn = exportHeaders.indexOf("审核结果") + 1;
-  const sourceColumn = exportHeaders.indexOf("任务来源") + 1;
+  const resultColumn = exportHeaders.indexOf("最终审核结论") + 1;
   const exportedStatuses = exportSheet
     .getColumn(resultColumn)
-    .values.slice(2)
-    .map(String);
-  const exportedSources = exportSheet
-    .getColumn(sourceColumn)
     .values.slice(2)
     .map(String);
   expect(exportedStatuses).not.toContain("PASSED");
   expect(exportedStatuses).toHaveLength(1);
   expect(exportedStatuses[0]).toMatch(/审核通过|审核不通过|待人工复核/u);
-  expect(exportedSources).not.toContain("MANUAL");
 
   const emptyExportResponse = await page.request.get(
     `/api/results/export?keyword=no-export-${suffix}`,
@@ -241,10 +240,43 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const noteTemplateHeaders = worksheetHeaders(
     noteTemplateWorkbook.worksheets[0],
   );
-  expect(noteTemplateHeaders).toContain("产品阶段话题");
-  expect(noteTemplateHeaders.some((header) => header.includes("图片数量"))).toBe(
-    true,
+  expect(noteTemplateHeaders).toEqual([
+    "笔记链接 *",
+    "产品 *",
+    "活动 *",
+    "产品阶段话题",
+  ]);
+  const downloadedTemplateSheet = noteTemplateWorkbook.worksheets[0];
+  downloadedTemplateSheet.getRow(2).values = [
+    `${E2E_ORIGIN}/mock/xhs?case=passed&minimal-template=${suffix}`,
+    product.name,
+    campaign.name,
+    "2段",
+  ];
+  const minimalTemplateImport = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: "minimal-template.xlsx",
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await noteTemplateWorkbook.xlsx.writeBuffer()),
+      },
+      commit: "true",
+      skipDuplicates: "true",
+    },
+  });
+  expect(minimalTemplateImport.ok()).toBeTruthy();
+  const minimalTemplatePayload = (await minimalTemplateImport.json()).data as {
+    imported: number;
+    batchId: string;
+  };
+  expect(minimalTemplatePayload.imported).toBe(1);
+  const minimalTemplateBatch = await waitForBatch(
+    page,
+    minimalTemplatePayload.batchId,
+    ["COMPLETED"],
   );
+  expect(minimalTemplateBatch.stats.succeeded).toBe(1);
 
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("导入");
@@ -319,6 +351,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const importPreview = (await importResponse.json()).data as {
     validCount: number;
     invalidCount: number;
+    unknownHeaders: string[];
     rows: Array<{
       originalLinkContent: string;
       url: string;
@@ -328,6 +361,14 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   };
   expect(importPreview.validCount).toBe(3);
   expect(importPreview.invalidCount).toBe(1);
+  expect(importPreview.unknownHeaders).toEqual(
+    expect.arrayContaining([
+      "产品编码",
+      "活动月份",
+      "内容渠道",
+      "备注",
+    ]),
+  );
   expect(importPreview.rows[0].url).toContain("case=no-images");
   expect(importPreview.rows[0].originalLinkContent).toContain("标题 +");
   expect(importPreview.rows[1]).toMatchObject({
@@ -592,19 +633,23 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   );
   expect(failureExportResponse.ok()).toBeTruthy();
   const failureExportCsv = await failureExportResponse.text();
-  expect(failureExportCsv).toContain("处理状态");
-  expect(failureExportCsv).toContain("审核结果");
-  expect(failureExportCsv).toContain("异常分类");
-  expect(failureExportCsv).toContain("失败原因");
-  expect(failureExportCsv).toContain("是否需要人工复核");
-  expect(failureExportCsv).toContain("人工复核状态");
-  expect(failureExportCsv).toContain("审核创建时间");
-  expect(failureExportCsv).toContain("审核完成时间");
-  expect(failureExportCsv).toContain("任务创建时间");
-  expect(failureExportCsv).toContain("发布时间");
-  expect(failureExportCsv).toContain("日期筛选口径");
-  expect(failureExportCsv).toContain(`${resultCoverageSuffix}-failed-1`);
-  expect(failureExportCsv).toContain(`${resultCoverageSuffix}-failed-2`);
+  expect(failureExportCsv.replace(/^\uFEFF/u, "").split("\r\n")[0]).toBe(
+    [
+      "产品",
+      "活动",
+      "产品阶段话题",
+      "要求阶段话题",
+      "最终审核结论",
+      "人工复核状态",
+      "失败原因",
+      "正文有效字数",
+      "图片数量",
+      "话题审核结果",
+      "当前公开状态",
+      "正文内容",
+    ].join(","),
+  );
+  expect(failureExportResponse.headers()["x-veridia-export-count"]).toBe("2");
   expect(failureExportCsv).toContain("待人工复核");
 
   await page.goto("/tasks");

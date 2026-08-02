@@ -1,148 +1,65 @@
 import builtinTemplateJson from "@/rules/default-import-export-templates.json";
 import { prisma } from "@/lib/db";
-import type { ImportExportTemplates } from "./types";
+import type { ImportExportTemplates, StandardField } from "./types";
 import { validateImportExportTemplates } from "./validation";
 
-const requiredFailureExportFields = {
-  failedReasons: {
-    displayName: "不通过原因",
-    type: "stringList" as const,
-    description: "未通过或待复核原因",
-  },
-  originalUrl: {
-    displayName: "原始链接",
-    type: "url" as const,
-    description: "任务提交时保存的原始笔记链接",
-  },
-  finalUrl: {
-    displayName: "最终链接",
-    type: "url" as const,
-    description: "短链接完成跳转后的最终页面链接",
-  },
-  exceptionCategory: {
-    displayName: "异常分类",
-    type: "string" as const,
-    description: "页面访问或自动提取的异常分类",
-  },
-  failureReason: {
-    displayName: "失败原因",
-    type: "string" as const,
-    description: "处理失败或待人工复核的具体原因",
-  },
-  needsManualReview: {
-    displayName: "是否需要人工复核",
-    type: "string" as const,
-    description: "当前结果是否需要人工确认",
-  },
-  manualReviewStatus: {
-    displayName: "人工复核状态",
-    type: "string" as const,
-    description: "待人工复核、已人工通过、已人工不通过或无需复核",
-  },
-  attemptCount: {
-    displayName: "尝试次数",
-    type: "integer" as const,
-    description: "自动处理该笔记的累计尝试次数",
-  },
-  auditCreatedAt: {
-    displayName: "审核创建时间",
-    type: "datetime" as const,
-    description: "审核结果记录创建时间",
-  },
-  auditCompletedAt: {
-    displayName: "审核完成时间",
-    type: "datetime" as const,
-    description: "自动审核执行完成时间",
-  },
-  taskCreatedAt: {
-    displayName: "任务创建时间",
-    type: "datetime" as const,
-    description: "审核任务进入系统的时间",
-  },
-  dateFilterBasis: {
-    displayName: "日期筛选口径",
-    type: "string" as const,
-    description: "本次导出使用的日期范围筛选字段",
-  },
-  pageStatus: {
-    displayName: "页面状态",
-    type: "string" as const,
-    description: "笔记页面访问和读取状态",
-  },
-  bodyStatus: {
-    displayName: "正文状态",
-    type: "string" as const,
-    description: "笔记正文提取状态",
-  },
-  topicsAuditResult: {
-    displayName: "话题审核结果",
-    type: "string" as const,
-    description: "要求话题的审核结果",
-  },
-  autoAuditResult: {
-    displayName: "自动审核结果",
-    type: "string" as const,
-    description: "固定规则自动审核结论",
-  },
-  manualAuditResult: {
-    displayName: "人工复核结果",
-    type: "string" as const,
-    description: "最近一次人工复核结论",
-  },
-  finalAuditConclusion: {
-    displayName: "最终审核结论",
-    type: "string" as const,
-    description: "人工复核优先的最终审核结论",
-  },
-  manualReviewComment: {
-    displayName: "人工复核备注",
-    type: "string" as const,
-    description: "最近一次人工复核备注",
-  },
-  auditTime: {
-    displayName: "审核时间",
-    type: "datetime" as const,
-    description: "自动审核完成时间",
-  },
-};
+export const RESULT_EXPORT_FIELDS: StandardField[] = [
+  "productName",
+  "activityName",
+  "productStageTopic",
+  "requiredStageTopic",
+  "finalAuditConclusion",
+  "manualReviewStatus",
+  "failedReasons",
+  "effectiveBodyLength",
+  "imageCount",
+  "topicsAuditResult",
+  "publicStatus",
+  "content",
+];
 
-function ensureFailureExportFields(
+export const IMPORT_TEMPLATE_FIELDS: StandardField[] = [
+  "noteUrl",
+  "productName",
+  "activityName",
+  "productStage",
+];
+
+function normalizeBusinessTemplates(
   templates: ImportExportTemplates,
 ): ImportExportTemplates {
   const output = structuredClone(templates);
-  output.fieldDefinitions.contentChannel = {
-    displayName: "内容渠道",
-    type: "string",
-    description: "内容发布平台，例如小红书或抖音",
+  output.fieldDefinitions.failedReasons = {
+    displayName: "失败原因",
+    type: "stringList",
+    description: "未通过或待复核原因",
   };
-  output.fieldAliases.contentChannel = [
-    "内容渠道",
-    "发布渠道",
-    "平台",
-    "内容平台",
-    "channel",
-    "platform",
+  output.fieldDefinitions.effectiveBodyLength = {
+    displayName: "正文有效字数",
+    type: "integer",
+    description: "固定规则计算后的有效正文字符数",
+  };
+  output.fieldDefinitions.publicStatus = {
+    displayName: "当前公开状态",
+    type: "string",
+    description: "审核时识别的笔记公开状态",
+  };
+  output.requiredFields = ["noteUrl", "productName", "activityName"];
+  output.optionalFields = [
+    ...new Set([
+      ...output.optionalFields,
+      "productStage" as const,
+      "effectiveBodyLength" as const,
+      "publicStatus" as const,
+    ]),
   ];
-  if (!output.optionalFields.includes("contentChannel")) {
-    output.optionalFields.push("contentChannel");
-  }
-  if (!output.columnOrder.import.includes("contentChannel")) {
-    output.columnOrder.import.splice(1, 0, "contentChannel");
-  }
-  Object.assign(output.fieldDefinitions, requiredFailureExportFields);
-  const required = Object.keys(
-    requiredFailureExportFields,
-  ) as Array<keyof typeof requiredFailureExportFields>;
-  for (const field of required) {
-    if (!output.columnOrder.auditResults.includes(field)) {
-      output.columnOrder.auditResults.push(field);
-    }
-  }
+  output.columnOrder.import = [...IMPORT_TEMPLATE_FIELDS];
+  output.columnOrder.auditResults = [...RESULT_EXPORT_FIELDS];
   return output;
 }
 
 export const BUILTIN_IMPORT_EXPORT_TEMPLATES =
-  ensureFailureExportFields(
+  normalizeBusinessTemplates(
     validateImportExportTemplates(builtinTemplateJson),
   );
 
@@ -161,7 +78,7 @@ export async function getActiveImportExportTemplates(): Promise<{
     });
     if (state?.templateConfigJson) {
       return {
-        templates: ensureFailureExportFields(
+        templates: normalizeBusinessTemplates(
           validateImportExportTemplates(
             JSON.parse(state.templateConfigJson),
           ),

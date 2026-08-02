@@ -379,10 +379,11 @@ export default function TasksPage() {
         body: JSON.stringify(values),
       });
       setSelectedBatchId(result.batchId);
-      message.success(`已创建 ${result.created} 条任务，自动审核已开始`);
-      if (result.skipped.length) {
-        message.warning(`跳过 ${result.skipped.length} 条重复链接`);
-      }
+      message.success(
+        result.skipped.length
+          ? `已创建 ${result.created} 条，跳过 ${result.skipped.length} 条重复链接，自动审核已开始`
+          : `已创建 ${result.created} 条任务，自动审核已开始`,
+      );
       if (result.unrecognized.length) {
         message.warning(
           `${result.unrecognized.length} 段内容未识别到有效小红书链接，其他有效链接已正常创建`,
