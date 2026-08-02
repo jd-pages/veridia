@@ -11,9 +11,9 @@ import {
 } from "@/lib/automation/batch-service";
 import { kickAutomaticAuditQueue } from "@/lib/automation/queue";
 import {
-  detectProductStage,
-  normalizeProductStageTopicValue,
-  resolveConfiguredProductStage,
+  compatibleStageRuleValues,
+  normalizeImportedProductStageTopicValue,
+  productStageTopicLabel,
 } from "@/lib/product-stage";
 import { getActiveImportExportTemplates } from "@/lib/import-export-templates/config";
 import {
@@ -148,16 +148,15 @@ export async function POST(request: Request) {
         checked.month = campaign.month;
       }
 
-      const stageDetection = detectProductStage([
-        checked.productName,
-        checked.specification,
+      const importedStage = normalizeImportedProductStageTopicValue(
         checked.stageInput,
-      ]);
-      checked.stageGroup = stageDetection.groupLabel || "";
-      if (stageDetection.status === "CONFLICT") {
-        checked.errors.push(
-          `段位信息冲突：${stageDetection.matchedStages.join("、")}，请人工确认`,
-        );
+      );
+      checked.productStage = importedStage || "";
+      checked.stageGroup = importedStage
+        ? productStageTopicLabel(importedStage)
+        : "";
+      if (!importedStage) {
+        checked.errors.push("产品阶段话题请填写 IFFO 或 GUM。");
       }
       const stageRules = campaign
         ? await prisma.topicRule.findMany({
@@ -169,29 +168,15 @@ export async function POST(request: Request) {
             select: { applicableStage: true, milkType: true },
           })
         : [];
-      const resolvedStage = resolveConfiguredProductStage(
-        stageDetection,
-        stageRules.map((rule) => rule.applicableStage),
-      );
-      const stageRule = resolvedStage
+      const compatibleStages = compatibleStageRuleValues(importedStage);
+      const stageRule = importedStage
         ? stageRules.find(
-            (rule) =>
-              normalizeProductStageTopicValue(rule.applicableStage) ===
-              resolvedStage,
+            (rule) => compatibleStages.includes(rule.applicableStage || ""),
           )
         : null;
-      if (stageDetection.status === "MATCHED") {
-        checked.productStage = stageDetection.group || "";
-      }
-      if (stageRules.length && stageDetection.status === "MISSING") {
-        checked.errors.push("段位未识别：请填写产品规格、段位或产品阶段话题");
-      } else if (
-        stageRules.length &&
-        stageDetection.status === "MATCHED" &&
-        !stageRule
-      ) {
+      if (stageRules.length && importedStage && !stageRule) {
         checked.errors.push(
-          `活动未配置${stageDetection.groupLabel || "对应"}的产品阶段话题规则`,
+          `活动未配置 ${productStageTopicLabel(importedStage)} 的产品阶段话题规则`,
         );
       }
       checked.milkType = stageRule?.milkType || undefined;

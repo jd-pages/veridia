@@ -14,6 +14,7 @@ export type MockCase =
   | "login-expired"
   | "security-verification"
   | "no-images"
+  | "live-photo"
   | "video-note"
   | "no-topics"
   | "structure-mismatch"
@@ -167,6 +168,29 @@ export function createMockNote(
         imageExtractionStatus: "IMAGES_READ_FAILED",
         imageCount: undefined,
       };
+    case "live-photo":
+      return {
+        ...base,
+        noteType: "IMAGE_TEXT",
+        imageExtractionStatus: "SUCCESS",
+        imageCount: 3,
+        pageEvidence: {
+          mediaEvidence: {
+            livePhotoMarker: true,
+            carouselPageIndicator: "1/3",
+            carouselCurrent: 1,
+            carouselTotal: 3,
+            carouselStructure: true,
+            domImageCandidateCount: 1,
+            domHasVideo: true,
+            videoCandidateCount: 1,
+            videoEvidence: ["VIDEO_ELEMENT", "VIDEO_ATTRIBUTES"],
+            noteTypeDecision: "IMAGE_TEXT",
+            noteTypeReason: "IMAGE_CAROUSEL",
+            resolvedImageCount: 3,
+          },
+        },
+      };
     case "video-note":
       return {
         ...base,
@@ -209,6 +233,7 @@ export function createMockNote(
         topics: [
           clickableTopic("#爱他美新手爸妈日记"),
           clickableTopic("#爱他美澳洲白金版"),
+          clickableTopic("#新生儿奶粉"),
           clickableTopic("#二段奶粉推荐"),
         ],
       };
@@ -253,6 +278,7 @@ export const mockCaseLabels: Record<MockCase, string> = {
   "login-expired": "登录失效",
   "security-verification": "安全验证",
   "no-images": "图片数量读取失败",
+  "live-photo": "LIVE 实况图轮播",
   "video-note": "视频笔记",
   "no-topics": "未识别到话题",
   "structure-mismatch": "页面结构不匹配",

@@ -11,17 +11,24 @@ function createExportSaveHandler(dependencies) {
       const rawName = path.basename(String(payload?.fileName || ""));
       const safeName = rawName.replace(/[\\/:*?"<>|]/gu, "_");
       if (!safeName || !/\.(xlsx|csv)$/iu.test(safeName)) {
-        return { success: false, error: "导出文件名不正确。" };
+        return { success: false, error: "保存文件名不正确。" };
       }
       const bytes = payload?.data
         ? Buffer.from(payload.data)
         : Buffer.alloc(0);
-      if (bytes.byteLength < 1_024 || bytes.byteLength > 100 * 1024 * 1024) {
-        return { success: false, error: "导出文件内容为空或大小异常。" };
+      const isImportTemplate = payload?.kind === "import-template";
+      const minimumBytes = isImportTemplate ? 1 : 1_024;
+      if (
+        bytes.byteLength < minimumBytes ||
+        bytes.byteLength > 100 * 1024 * 1024
+      ) {
+        return { success: false, error: "保存文件内容为空或大小异常。" };
       }
       const extension = path.extname(safeName).toLowerCase();
       const saveResult = await dialog.showSaveDialog(getWindow(), {
-        title: "保存 VERIDIA 审核结果",
+        title: isImportTemplate
+          ? "保存 VERIDIA 导入模板"
+          : "保存 VERIDIA 审核结果",
         defaultPath: path.join(app.getPath("documents"), safeName),
         buttonLabel: "保存",
         filters: [
@@ -35,14 +42,14 @@ function createExportSaveHandler(dependencies) {
       }
       await fs.promises.writeFile(saveResult.filePath, bytes);
       writeLog(
-        `审核结果导出完成：${bytes.byteLength} 字节，保存到用户选择的位置。`,
+        `${isImportTemplate ? "导入模板" : "审核结果导出"}保存完成：${bytes.byteLength} 字节，保存到用户选择的位置。`,
       );
       return { success: true, filePath: saveResult.filePath };
     } catch (error) {
-      writeLog("保存审核结果导出文件失败", error);
+      writeLog("保存 VERIDIA 文件失败", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : "保存导出文件失败。",
+        error: error instanceof Error ? error.message : "保存文件失败。",
       };
     } finally {
       saveInProgress = false;

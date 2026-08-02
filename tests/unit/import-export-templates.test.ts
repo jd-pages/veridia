@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import * as XLSX from "@e965/xlsx";
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import builtinTemplates from "@/rules/default-import-export-templates.json";
 import {
@@ -25,6 +26,7 @@ describe("远程表格模板配置", () => {
       "noteUrl",
       "productName",
       "activityName",
+      "productStage",
     ]);
     expect(templates.fieldAliases.noteUrl).toContain("小红书链接");
     expect(templates.sourcePresets.TENCENT_DOCS_EXPORTED_XLSX?.localOnly).toBe(
@@ -60,9 +62,9 @@ describe("远程表格模板配置", () => {
 describe("Excel、CSV与腾讯文档导出文件预览", () => {
   it("CSV支持BOM、别名、乱序、多余列和空行", async () => {
     const csv = [
-      "\uFEFF活动名称,额外列,小红书链接,商品名称",
-      "爱他美2026年7月小红书种草审核,忽略,https://xhslink.com/example,澳白",
-      ",,,",
+      "\uFEFF活动名称,额外列,小红书链接,商品名称,产品阶段话题",
+      "爱他美2026年7月小红书种草审核,忽略,https://xhslink.com/example,澳白,IFFO",
+      ",,,,,",
     ].join("\r\n");
     const result = await parseTabularPreview({
       bytes: Buffer.from(csv),
@@ -83,13 +85,21 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("腾讯文档");
     sheet.addRow(["导出时间：2026-07-30"]);
-    sheet.addRow(["商品", "活动", "链接", "标题", "内容渠道"]);
+    sheet.addRow([
+      "商品",
+      "活动",
+      "链接",
+      "标题",
+      "内容渠道",
+      "产品阶段话题",
+    ]);
     const row = sheet.addRow([
       "澳白",
       "爱他美2026年7月小红书种草审核",
       "",
       "",
       "小红书",
+      "GUM",
     ]);
     row.getCell(3).value = {
       text: "打开笔记",
@@ -124,11 +134,12 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
     XLSX.utils.book_append_sheet(
       workbook,
       XLSX.utils.aoa_to_sheet([
-        ["链接", "商品", "活动名称"],
+        ["链接", "商品", "活动名称", "产品阶段话题"],
         [
           "https://xhslink.com/legacy-xls",
           "澳白",
           "爱他美2026年7月小红书种草审核",
+          "IFFO",
         ],
       ]),
       "导入",
@@ -158,7 +169,9 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
     expect(missing.rows[0].errors).toContain("缺少必填字段：笔记链接");
 
     const blankLink = await parseTabularPreview({
-      bytes: Buffer.from("笔记链接,产品,活动\r\n,澳白,7月活动"),
+      bytes: Buffer.from(
+        "笔记链接,产品,活动,产品阶段话题\r\n,澳白,7月活动,IFFO",
+      ),
       fileName: "blank-link.csv",
       sourceType: "CSV",
       templates,
@@ -167,7 +180,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
 
     const duplicate = await parseTabularPreview({
       bytes: Buffer.from(
-        "笔记链接,链接,产品,活动\r\nhttps://xhslink.com/a,https://xhslink.com/b,澳白,活动",
+        "笔记链接,链接,产品,活动,产品阶段话题\r\nhttps://xhslink.com/a,https://xhslink.com/b,澳白,活动,IFFO",
       ),
       fileName: "duplicate.csv",
       sourceType: "CSV",
@@ -225,8 +238,15 @@ describe("模板驱动导出", () => {
       "笔记链接 *",
       "产品 *",
       "活动 *",
-      "产品阶段话题",
+      "产品阶段话题 *",
     ]);
+    const stageCell = workbook.getWorksheet("笔记导入")?.getCell("D2");
+    expect(stageCell?.text).toBe("IFFO");
+    expect(stageCell?.dataValidation).toMatchObject({
+      type: "list",
+      formulae: ['"IFFO,GUM"'],
+      error: "产品阶段话题请填写 IFFO 或 GUM。",
+    });
     for (const removed of [
       "内容渠道",
       "产品编码",
@@ -245,6 +265,38 @@ describe("模板驱动导出", () => {
     ]) {
       expect(headers.some((header) => header.includes(removed))).toBe(false);
     }
+  });
+
+  it("仓库内标准模板只展示 IFFO / GUM 并保留精简列", async () => {
+    const noteWorkbook = new ExcelJS.Workbook();
+    await noteWorkbook.xlsx.load(
+      (await readFile("templates/笔记导入模板.xlsx")) as unknown as ExcelJS.Buffer,
+    );
+    const noteSheet = noteWorkbook.worksheets[0];
+    expect((noteSheet.getRow(1).values as unknown[]).slice(1)).toEqual([
+      "笔记链接 *",
+      "产品 *",
+      "活动 *",
+      "产品阶段话题 *",
+    ]);
+    expect(noteSheet.getCell("D2").text).toBe("IFFO");
+    expect(noteSheet.getCell("D2").dataValidation).toMatchObject({
+      type: "list",
+      formulae: ['"IFFO,GUM"'],
+    });
+
+    const ruleWorkbook = new ExcelJS.Workbook();
+    await ruleWorkbook.xlsx.load(
+      (await readFile(
+        "templates/活动规则标准导入模板.xlsx",
+      )) as unknown as ExcelJS.Buffer,
+    );
+    const ruleSheet = ruleWorkbook.getWorksheet("话题规则")!;
+    expect(["C8", "C9", "C10"].map((cell) => ruleSheet.getCell(cell).text)).toEqual([
+      "IFFO",
+      "IFFO",
+      "GUM",
+    ]);
   });
 
   it("Excel和CSV严格使用模板列顺序且CSV含UTF-8 BOM", async () => {
@@ -280,7 +332,7 @@ describe("模板驱动导出", () => {
       noteId: `export-${index + 1}`,
       productName: "爱他美澳洲白金版",
       activityName: "爱他美2026年7月小红书种草审核",
-      productStageTopic: "IFFO：P段/1段",
+      productStageTopic: "IFFO",
       requiredStageTopic: "#爱他美新手爸妈日记",
       topicsAuditResult: "合规",
       imageCount: 2,

@@ -44,6 +44,10 @@ import type { UploadFile } from "antd";
 import PageHeader from "@/components/PageHeader";
 import { apiFetch } from "@/lib/client";
 import {
+  downloadImportTemplate,
+  type ImportTemplateFormat,
+} from "@/lib/import-template-download-client";
+import {
   PRODUCT_STAGE_TOPIC_OPTIONS,
   productStageTopicLabel,
 } from "@/lib/product-stage";
@@ -267,6 +271,7 @@ export default function TasksPage() {
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [importing, setImporting] = useState(false);
+  const [templateDownloading, setTemplateDownloading] = useState(false);
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
   );
@@ -468,6 +473,19 @@ export default function TasksPage() {
       }
     } catch (error) {
       message.error(error instanceof Error ? error.message : "登录操作失败");
+    }
+  };
+
+  const downloadTemplate = async (format: ImportTemplateFormat) => {
+    if (templateDownloading) return;
+    setTemplateDownloading(true);
+    try {
+      const result = await downloadImportTemplate(format);
+      if (result.saved) message.success(`导入模板已保存：${result.fileName}`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "下载导入模板失败");
+    } finally {
+      setTemplateDownloading(false);
     }
   };
 
@@ -802,25 +820,22 @@ export default function TasksPage() {
                         {
                           key: "xlsx",
                           label: "下载 Excel 模板",
-                          onClick: () =>
-                            window.open(
-                              "/api/import/template?format=xlsx",
-                              "_blank",
-                            ),
+                          onClick: () => void downloadTemplate("xlsx"),
                         },
                         {
                           key: "csv",
                           label: "下载 CSV 模板",
-                          onClick: () =>
-                            window.open(
-                              "/api/import/template?format=csv",
-                              "_blank",
-                            ),
+                          onClick: () => void downloadTemplate("csv"),
                         },
                       ],
                     }}
                   >
-                    <Button icon={<DownloadOutlined />}>下载导入模板</Button>
+                    <Button
+                      icon={<DownloadOutlined />}
+                      loading={templateDownloading}
+                    >
+                      下载导入模板
+                    </Button>
                   </Dropdown>
                 </div>
                 <Space direction="vertical" size={18} style={{ width: "100%" }}>

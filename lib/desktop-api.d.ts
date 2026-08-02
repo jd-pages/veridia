@@ -75,6 +75,7 @@ declare global {
       saveExportFile(payload: {
         fileName: string;
         data: Uint8Array;
+        kind?: "audit-export" | "import-template";
       }): Promise<VeridiaExportSaveResult>;
       onUpdateStatus(
         listener: (status: VeridiaUpdateStatus) => void,

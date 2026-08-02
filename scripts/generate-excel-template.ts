@@ -27,23 +27,27 @@ async function main() {
   workbook.creator = "小红书笔记合规审核系统";
   const sheet = workbook.addWorksheet("笔记导入模板");
   sheet.columns = [
-    { header: "笔记链接", key: "url", width: 48 },
-    { header: "产品编码", key: "productCode", width: 20 },
-    { header: "产品名称", key: "productName", width: 28 },
-    { header: "产品阶段话题", key: "productStage", width: 30 },
-    { header: "活动名称", key: "campaignName", width: 32 },
-    { header: "活动月份", key: "month", width: 14 },
-    { header: "备注", key: "notes", width: 36 },
+    { header: "笔记链接 *", key: "url", width: 48 },
+    { header: "产品 *", key: "productName", width: 28 },
+    { header: "活动 *", key: "campaignName", width: 32 },
+    { header: "产品阶段话题 *", key: "productStage", width: 24 },
   ];
   sheet.addRow({
     url: "http://localhost:3100/mock/xhs?case=passed",
-    productCode: null,
     productName: "爱他美澳洲白金版",
-    productStage: "2段",
     campaignName: "爱他美2026年7月小红书种草审核",
-    month: "2026-07",
-    notes: "示例：系统仅提取并审核图片数量，不识别图片内容",
+    productStage: "IFFO",
   });
+  for (let row = 2; row <= 5001; row += 1) {
+    sheet.getCell(row, 4).dataValidation = {
+      type: "list",
+      allowBlank: false,
+      formulae: ['"IFFO,GUM"'],
+      showErrorMessage: true,
+      errorTitle: "产品阶段话题无效",
+      error: "产品阶段话题请填写 IFFO 或 GUM。",
+    };
+  }
   styleSheet(sheet);
 
   const outputDir = path.join(process.cwd(), "templates");

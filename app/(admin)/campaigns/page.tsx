@@ -574,14 +574,16 @@ export default function CampaignsPage() {
                   width: 260,
                   render: (_value, row) =>
                     [
-                      row.product?.name,
-                      row.applicableStage
-                        ? productStageTopicLabel(row.applicableStage)
-                        : null,
-                      row.milkType,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || "全产品",
+                      ...new Set(
+                        [
+                          row.product?.name,
+                          row.applicableStage
+                            ? productStageTopicLabel(row.applicableStage)
+                            : null,
+                          row.milkType,
+                        ].filter((value): value is string => Boolean(value)),
+                      ),
+                    ].join(" · ") || "全产品",
                 },
                 { title: "标准话题", dataIndex: "topic" },
                 {

@@ -1,5 +1,10 @@
 import type { Page, Response } from "playwright";
-import type { ExtractedTopic, PageStatus } from "@/lib/types";
+import type {
+  ExtractedTopic,
+  ImageExtractionStatus,
+  NoteType,
+  PageStatus,
+} from "@/lib/types";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
 
@@ -52,6 +57,89 @@ export interface DomPageSnapshot extends XhsPageCandidates {
     className: string | null;
   }>;
   domHasVideo: boolean;
+  videoEvidence: string[];
+  videoCandidateCount: number;
+  hasLivePhotoMarker: boolean;
+  hasCarouselStructure: boolean;
+  carouselPageIndicator: string | null;
+  carouselCurrent: number | null;
+  carouselTotal: number | null;
+}
+
+export interface XhsMediaEvidence {
+  domHasVideo: boolean;
+  responseHasVideo: boolean;
+  videoEvidence: string[];
+  videoCandidateCount: number;
+  hasLivePhotoMarker: boolean;
+  hasCarouselStructure: boolean;
+  carouselPageIndicator: string | null;
+  carouselTotal: number | null;
+  imageCandidateCount: number;
+}
+
+export interface XhsMediaDecision {
+  noteType: NoteType;
+  imageExtractionStatus: ImageExtractionStatus;
+  imageCount?: number;
+  reason:
+    | "IMAGE_CAROUSEL"
+    | "IMAGE_MEDIA"
+    | "EXPLICIT_VIDEO"
+    | "MEDIA_UNKNOWN";
+}
+
+export function resolveXhsMediaDecision(
+  evidence: XhsMediaEvidence,
+): XhsMediaDecision {
+  const carouselTotal =
+    Number.isInteger(evidence.carouselTotal) && Number(evidence.carouselTotal) >= 2
+      ? Number(evidence.carouselTotal)
+      : 0;
+  const imageCandidateCount = Math.max(0, evidence.imageCandidateCount);
+  const hasCarouselEvidence =
+    (carouselTotal >= 2 &&
+      (evidence.hasCarouselStructure || imageCandidateCount > 0)) ||
+    (evidence.hasCarouselStructure && imageCandidateCount > 1);
+  const imageCount = Math.max(imageCandidateCount, carouselTotal);
+
+  // LIVE / Live Photo may contain a video element for motion playback. A real
+  // image carousel is stronger note-type evidence and must keep image auditing.
+  if (hasCarouselEvidence && imageCount > 0) {
+    return {
+      noteType: "IMAGE_TEXT",
+      imageExtractionStatus: "SUCCESS",
+      imageCount,
+      reason: "IMAGE_CAROUSEL",
+    };
+  }
+
+  if (
+    evidence.domHasVideo ||
+    evidence.responseHasVideo ||
+    evidence.videoEvidence.length > 0
+  ) {
+    return {
+      noteType: "VIDEO_NOTE",
+      imageExtractionStatus: "VIDEO_NOTE",
+      reason: "EXPLICIT_VIDEO",
+    };
+  }
+
+  if (imageCount > 0) {
+    return {
+      noteType: "IMAGE_TEXT",
+      imageExtractionStatus: "SUCCESS",
+      imageCount,
+      reason: "IMAGE_MEDIA",
+    };
+  }
+
+  return {
+    noteType: "UNKNOWN",
+    imageExtractionStatus: "IMAGES_READ_FAILED",
+    reason: "MEDIA_UNKNOWN",
+  };
 }
 
 const HASHTAG_PATTERN = /[#＃]\s*[\p{L}\p{N}_+\-·]{1,60}/gu;
@@ -648,11 +736,120 @@ export async function collectDomPageSnapshot(
       "article [class*='image']",
       "video",
     ]);
-    const hasVideo = mediaRoots.some(
-      (element) =>
-        element.matches("video,[class*='video-player']") ||
-        Boolean(element.querySelector("video,[class*='video-player']")),
+    const carouselElements = mediaRoots.flatMap((root) => [
+      ...(root.matches(
+        "[data-swiper-slide-index],[class*='swiper'],[class*='carousel'],[class*='note-slider']",
+      )
+        ? [root]
+        : []),
+      ...root.querySelectorAll(
+        "[data-swiper-slide-index],[class*='swiper-slide'],[class*='carousel-item'],[class*='slide-item']",
+      ),
+    ]);
+    const hasCarouselStructure = carouselElements.length > 0;
+    const indicatorTexts = mediaRoots.flatMap((root) => [
+      root.textContent || "",
+      ...[...root.querySelectorAll(
+        "[class*='pagination'],[class*='indicator'],[class*='counter'],[data-testid*='pagination'],[aria-label*='图片'],[aria-label*='轮播']",
+      )].map((element) => element.textContent || element.getAttribute("aria-label") || ""),
+    ]);
+    let carouselPageIndicator: string | null = null;
+    let carouselCurrent: number | null = null;
+    let carouselTotal: number | null = null;
+    for (const indicatorText of indicatorTexts) {
+      for (const match of indicatorText.matchAll(
+        /(?:^|[^\d])(\d{1,3})\s*\/\s*(\d{1,3})(?!\d)/gu,
+      )) {
+        const current = Number(match[1]);
+        const total = Number(match[2]);
+        if (current < 1 || total < 2 || current > total || total > 100) continue;
+        if (carouselTotal === null || total > carouselTotal) {
+          carouselCurrent = current;
+          carouselTotal = total;
+          carouselPageIndicator = `${current}/${total}`;
+        }
+      }
+    }
+    const livePhotoElements = [
+      ...new Set(
+        mediaRoots.flatMap((root) => [
+          ...(root.matches("[class*='live'],[data-testid*='live']")
+            ? [root]
+            : []),
+          ...root.querySelectorAll("[class*='live'],[data-testid*='live']"),
+        ]),
+      ),
+    ];
+    const hasLivePhotoMarker = livePhotoElements.some((element) =>
+      /(?:^|\s)(?:LIVE|Live\s*Photo|实况(?:图)?|动态图片)(?:\s|$)/u.test(
+        (element.textContent || element.getAttribute("aria-label") || "").trim(),
+      ),
     );
+    const videoElements = [
+      ...new Set(
+        mediaRoots.flatMap((root) => [
+          ...(root.matches("video") ? [root] : []),
+          ...root.querySelectorAll("video"),
+        ]),
+      ),
+    ];
+    const videoEvidence: string[] = [];
+    if (videoElements.length > 0) videoEvidence.push("VIDEO_ELEMENT");
+    if (
+      videoElements.some((element) =>
+        [
+          element.getAttribute("src"),
+          element.getAttribute("data-src"),
+          ...[...element.querySelectorAll("source")].map((source) =>
+            source.getAttribute("src"),
+          ),
+        ].some((value) => /\.(?:mp4|m3u8|mov)(?:[?#]|$)/iu.test(value || "")),
+      )
+    ) {
+      videoEvidence.push("VIDEO_STREAM");
+    }
+    if (
+      videoElements.some(
+        (element) =>
+          element.hasAttribute("controls") ||
+          element.hasAttribute("autoplay") ||
+          element.hasAttribute("muted"),
+      )
+    ) {
+      videoEvidence.push("VIDEO_ATTRIBUTES");
+    }
+    if (
+      mediaRoots.some(
+        (element) =>
+          element.matches("[class*='video-player'],[data-testid*='video-player']") ||
+          Boolean(
+            element.querySelector(
+              "[class*='video-player'],[data-testid*='video-player']",
+            ),
+          ),
+      )
+    ) {
+      videoEvidence.push("VIDEO_PLAYER");
+    }
+    if (
+      mediaRoots.some((element) =>
+        /(?:^|\s)\d{1,2}:\d{2}(?:\s|$)/u.test(element.textContent || ""),
+      )
+    ) {
+      videoEvidence.push("VIDEO_DURATION");
+    }
+    if (
+      mediaRoots.some((element) =>
+        Boolean(
+          element.querySelector(
+            "[aria-label*='播放'],[title*='播放'],button[class*='play']",
+          ),
+        ),
+      )
+    ) {
+      videoEvidence.push("VIDEO_PLAY_CONTROL");
+    }
+    const hasVideo = videoEvidence.length > 0;
     const imageCandidates: Array<{
       source: string;
       groupKey: string;
@@ -783,6 +980,13 @@ export async function collectDomPageSnapshot(
       topicCandidates,
       imageCandidates,
       hasVideo,
+      videoEvidence,
+      videoCandidateCount: videoElements.length,
+      hasLivePhotoMarker,
+      hasCarouselStructure,
+      carouselPageIndicator,
+      carouselCurrent,
+      carouselTotal,
       loginEvidence,
       jsonPayloads,
       keyElementCount: uniqueElements([
@@ -845,5 +1049,12 @@ export async function collectDomPageSnapshot(
     keyElementCount: snapshot.keyElementCount,
     domSummary: snapshot.domSummary,
     domHasVideo: snapshot.hasVideo,
+    videoEvidence: snapshot.videoEvidence,
+    videoCandidateCount: snapshot.videoCandidateCount,
+    hasLivePhotoMarker: snapshot.hasLivePhotoMarker,
+    hasCarouselStructure: snapshot.hasCarouselStructure,
+    carouselPageIndicator: snapshot.carouselPageIndicator,
+    carouselCurrent: snapshot.carouselCurrent,
+    carouselTotal: snapshot.carouselTotal,
   };
 }

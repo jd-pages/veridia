@@ -49,6 +49,48 @@ describe("xiaohongshu image count extractor", () => {
     expect(result.imageUrls).toBeUndefined();
   });
 
+  it("treats a LIVE 1/3 carousel as a three-image note", async () => {
+    await page.setContent(`
+      <main>
+        <section class="swiper-container live-photo-container" data-testid="note-media">
+          <span class="live-photo-badge">LIVE</span>
+          <span class="swiper-pagination">1/3</span>
+          <div class="swiper-slide" data-swiper-slide-index="0">
+            <picture><img src="https://cdn.example/live-note-1.jpg"></picture>
+            <video muted autoplay aria-label="LIVE photo motion layer"></video>
+          </div>
+        </section>
+        <div id="detail-desc">LIVE 实况图仍然属于图文轮播，并且图片数量需要正常参与审核。</div>
+      </main>
+    `, { waitUntil: "domcontentloaded" });
+
+    const result = await adapter.extract(
+      page,
+      "https://www.xiaohongshu.com/explore/live-photo-note",
+    );
+    expect(result.noteType).toBe("IMAGE_TEXT");
+    expect(result.imageExtractionStatus).toBe("SUCCESS");
+    expect(result.imageCount).toBe(3);
+    expect(result.pageEvidence).toMatchObject({
+      mediaEvidence: {
+        livePhotoMarker: true,
+        carouselPageIndicator: "1/3",
+        carouselTotal: 3,
+        carouselStructure: true,
+        domImageCandidateCount: 1,
+        domHasVideo: true,
+        videoCandidateCount: 1,
+        videoEvidence: expect.arrayContaining([
+          "VIDEO_ELEMENT",
+          "VIDEO_ATTRIBUTES",
+        ]),
+        noteTypeDecision: "IMAGE_TEXT",
+        noteTypeReason: "IMAGE_CAROUSEL",
+        resolvedImageCount: 3,
+      },
+    });
+  });
+
   it("视频笔记标记 VIDEO_NOTE，不保存 0 张", async () => {
     await page.setContent(`
       <main>

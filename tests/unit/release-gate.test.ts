@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { TextDecoder } from "node:util";
 import { describe, expect, it } from "vitest";
 
 describe("本地打包发布门禁", () => {
@@ -69,10 +70,10 @@ describe("本地打包发布门禁", () => {
       path.resolve(process.cwd(), "发布新版.bat"),
       "utf8",
     );
-    const rulesBat = fs.readFileSync(
+    const rulesBatBytes = fs.readFileSync(
       path.resolve(process.cwd(), "发布规则新版.bat"),
-      "utf8",
     );
+    const rulesBat = new TextDecoder("gbk").decode(rulesBatBytes);
     const workflow = fs.readFileSync(
       path.resolve(process.cwd(), "scripts", "fixed-workflow.mjs"),
       "utf8",
@@ -86,10 +87,30 @@ describe("本地打包发布门禁", () => {
     expect(softwareBat).not.toContain("rules:publish");
     expect(rulesBat).toContain("rules:publish");
     expect(rulesBat).not.toContain("fixed-workflow.mjs publish");
-    expect(rulesBat).toContain("chcp 65001 >nul");
+    expect([...rulesBatBytes.subarray(0, 3)]).not.toEqual([0xef, 0xbb, 0xbf]);
+    expect(rulesBat).toContain("chcp 936 >nul");
+    expect(rulesBat).not.toContain("chcp 65001 >nul");
     expect(rulesBat).toContain(
-      "echo(远程旧规则未被覆盖，也没有上传新的规则包。",
+      'set "VERIDIA_RULES_REPOSITORY=jd-pages/veridia-rules"',
     );
+    for (const message of [
+      "数据库检查或迁移失败，规则发布已停止。",
+      "远程旧规则未被覆盖，也没有上传新的规则包。",
+      "本地规则数据读取失败，规则发布已停止。",
+      "规则发布失败。上一版远程规则未被覆盖。",
+    ]) {
+      expect(rulesBat).toContain(`echo ${message}`);
+    }
+    const executableLines = rulesBat
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    expect(
+      executableLines.filter((line) => /^[\u3400-\u9fff]/u.test(line)),
+    ).toEqual([]);
+    expect(rulesBat.match(/if errorlevel 1 \(/gu)).toHaveLength(3);
+    expect(rulesBat.match(/exit \/b 1/gu)).toHaveLength(3);
+    expect(rulesBat).toContain("exit /b 0");
     expect(workflow).toContain('"trigger-actions"');
     for (const ignored of [
       "/release/",

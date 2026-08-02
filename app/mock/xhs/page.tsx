@@ -61,6 +61,12 @@ export default async function MockXhsPage({
           </div>
         ) : note.imageExtractionStatus === "SUCCESS" ? (
           <div data-testid="note-media" className="swiper-container">
+            {caseName === "live-photo" ? (
+              <>
+                <span className="live-photo-badge">LIVE</span>
+                <span className="swiper-pagination">1/3</span>
+              </>
+            ) : null}
             {Array.from({ length: note.imageCount ?? 0 }, (_, index) => (
               <div
                 className="swiper-slide"
@@ -76,6 +82,9 @@ export default async function MockXhsPage({
                     alt={`模拟笔记图片 ${index + 1}`}
                   />
                 </picture>
+                {caseName === "live-photo" && index === 0 ? (
+                  <video muted autoPlay aria-label="LIVE 实况图动态层" />
+                ) : null}
               </div>
             ))}
           </div>

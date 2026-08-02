@@ -11,9 +11,8 @@ export const CANONICAL_PRODUCT_STAGES = [
 export type CanonicalProductStage = (typeof CANONICAL_PRODUCT_STAGES)[number];
 
 export const PRODUCT_STAGE_TOPIC_OPTIONS = [
-  { value: "IFFO_P1", label: "IFFO：P段/1段" },
-  { value: "IFFO_2", label: "IFFO：2段" },
-  { value: "GUM_3_4_1PLUS_2PLUS", label: "GUM：3段/4段/1+段/2+段" },
+  { value: "IFFO", label: "IFFO" },
+  { value: "GUM", label: "GUM" },
 ] as const;
 
 export type ProductStageTopicValue =
@@ -28,15 +27,13 @@ const GROUP_STAGES: Record<
   ProductStageTopicValue,
   CanonicalProductStage[]
 > = {
-  IFFO_P1: ["P段", "1段"],
-  IFFO_2: ["2段"],
-  GUM_3_4_1PLUS_2PLUS: ["3段", "4段", "1+段", "2+段"],
+  IFFO: ["P段", "1段", "2段"],
+  GUM: ["3段", "4段", "1+段", "2+段"],
 };
 
 const GROUP_ALLOWED_LABELS: Record<ProductStageTopicValue, string[]> = {
-  IFFO_P1: ["P段", "PRE", "PRE段", "1段"],
-  IFFO_2: ["2段"],
-  GUM_3_4_1PLUS_2PLUS: ["3段", "4段", "1+段", "2+段"],
+  IFFO: ["P段", "PRE", "PRE段", "1段", "2段"],
+  GUM: ["3段", "4段", "1+段", "2+段"],
 };
 
 const GROUP_LABELS = Object.fromEntries(
@@ -44,9 +41,17 @@ const GROUP_LABELS = Object.fromEntries(
 ) as Record<ProductStageTopicValue, string>;
 
 const LEGACY_GROUP_VALUES: Record<string, ProductStageTopicValue> = {
-  IFFO_NEWBORN: "IFFO_P1",
-  IFFO_STAGE_2: "IFFO_2",
-  GUM: "GUM_3_4_1PLUS_2PLUS",
+  IFFO_P1: "IFFO",
+  IFFO_2: "IFFO",
+  IFFO_NEWBORN: "IFFO",
+  IFFO_STAGE_2: "IFFO",
+  GUM_3_4_1PLUS_2PLUS: "GUM",
+};
+
+const LEGACY_GROUP_LABELS: Record<string, ProductStageTopicValue> = {
+  "IFFO:P段/1段": "IFFO",
+  "IFFO:2段": "IFFO",
+  "GUM:3段/4段/1+段/2+段": "GUM",
 };
 
 const TOKEN_PATTERN =
@@ -123,9 +128,26 @@ export function normalizeProductStage(
 export function productStageGroup(
   stage: CanonicalProductStage,
 ): ProductStageTopicValue {
-  if (stage === "P段" || stage === "1段") return "IFFO_P1";
-  if (stage === "2段") return "IFFO_2";
-  return "GUM_3_4_1PLUS_2PLUS";
+  if (stage === "P段" || stage === "1段" || stage === "2段") return "IFFO";
+  return "GUM";
+}
+
+function normalizedGroupInput(value: string | null | undefined) {
+  return normalizeCharacters(String(value || "").trim())
+    .replace(/\s+/gu, "")
+    .replace(/：/gu, ":");
+}
+
+export function normalizeImportedProductStageTopicValue(
+  value: string | null | undefined,
+): ProductStageTopicValue | null {
+  const compact = normalizedGroupInput(value);
+  if (!compact) return null;
+  if (compact === "IFFO" || compact === "GUM") {
+    return compact as ProductStageTopicValue;
+  }
+  if (LEGACY_GROUP_VALUES[compact]) return LEGACY_GROUP_VALUES[compact];
+  return LEGACY_GROUP_LABELS[compact] || null;
 }
 
 export function normalizeProductStageTopicValue(
@@ -133,22 +155,10 @@ export function normalizeProductStageTopicValue(
 ): ProductStageTopicValue | null {
   const raw = String(value || "").trim();
   if (!raw) return null;
-  if (PRODUCT_STAGE_TOPIC_VALUES.includes(raw as ProductStageTopicValue)) {
-    return raw as ProductStageTopicValue;
-  }
-  if (LEGACY_GROUP_VALUES[raw]) return LEGACY_GROUP_VALUES[raw];
+  const direct = normalizeImportedProductStageTopicValue(raw);
+  if (direct) return direct;
 
-  const compact = normalizeCharacters(raw)
-    .replace(/\s+/gu, "")
-    .replace(/：/gu, ":");
-  const direct = PRODUCT_STAGE_TOPIC_OPTIONS.find(
-    (item) =>
-      normalizeCharacters(item.label)
-        .replace(/\s+/gu, "")
-        .replace(/：/gu, ":") === compact,
-  );
-  if (direct) return direct.value;
-
+  // 历史任务可能保存了具体段位，读取时继续兼容；新导入使用上面的严格入口。
   const detection = detectProductStage([raw]);
   return detection.status === "MATCHED" ? detection.group : null;
 }
@@ -205,7 +215,16 @@ export function compatibleStageRuleValues(
 ): string[] {
   const normalized = normalizeProductStageTopicValue(value);
   if (!normalized) return [];
-  return [normalized, ...GROUP_STAGES[normalized]];
+  return normalized === "IFFO"
+    ? [
+        "IFFO",
+        "IFFO_P1",
+        "IFFO_2",
+        "IFFO_NEWBORN",
+        "IFFO_STAGE_2",
+        ...GROUP_STAGES.IFFO,
+      ]
+    : ["GUM", "GUM_3_4_1PLUS_2PLUS", ...GROUP_STAGES.GUM];
 }
 
 export function detectProductStage(

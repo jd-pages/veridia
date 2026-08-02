@@ -44,11 +44,21 @@ function normalizeBusinessTemplates(
     type: "string",
     description: "审核时识别的笔记公开状态",
   };
-  output.requiredFields = ["noteUrl", "productName", "activityName"];
+  output.fieldDefinitions.productStage = {
+    displayName: "产品阶段话题",
+    type: "string",
+    description: "必填，只填写 IFFO 或 GUM",
+  };
+  output.examples.productStage = "IFFO";
+  output.requiredFields = [
+    "noteUrl",
+    "productName",
+    "activityName",
+    "productStage",
+  ];
   output.optionalFields = [
     ...new Set([
-      ...output.optionalFields,
-      "productStage" as const,
+      ...output.optionalFields.filter((field) => field !== "productStage"),
       "effectiveBodyLength" as const,
       "publicStatus" as const,
     ]),

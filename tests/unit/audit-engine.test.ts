@@ -87,6 +87,15 @@ describe("audit engine", () => {
     expect(fewImages.failureReasons.join()).toContain("图片数量不足");
   });
 
+  it("LIVE 图文轮播的三张图片正常参与最低图片数量审核", () => {
+    const result = evaluateAudit(createMockNote("live-photo"), context);
+    expect(result.noteType).toBe("IMAGE_TEXT");
+    expect(result.imageCount).toBe(3);
+    expect(result.imageStatus).toBe("COMPLIANT");
+    expect(result.imageCompliant).toBe(true);
+    expect(result.autoStatus).toBe("PASSED");
+  });
+
   it("图片数量读取失败进入人工复核，不生成图片不合规结论", () => {
     const noImages = createMockNote("no-images");
     const result = evaluateAudit(noImages, context);
@@ -396,7 +405,7 @@ describe("audit engine", () => {
     const result = evaluateAudit(note, stageContext);
     expect(result.autoStatus).toBe("FAILED");
     expect(result.failureReasons).toContain(
-      "正文段位不属于当前产品阶段话题：GUM：3段/4段/1+段/2+段",
+      "正文段位不属于当前产品阶段话题：GUM",
     );
     expect(result.failureReasons.join("；")).not.toContain("缺少阶段话题");
   });

@@ -55,7 +55,7 @@
     "activityMonth": { "displayName": "活动月份", "type": "string", "description": "活动月份，例如2026-07" },
     "contentChannel": { "displayName": "内容渠道", "type": "string", "description": "内容发布平台，例如小红书或抖音" },
     "specification": { "displayName": "规格", "type": "string", "description": "用于识别产品段位的规格信息" },
-    "productStage": { "displayName": "产品阶段话题", "type": "string", "description": "产品具体段位或阶段组选项" },
+    "productStage": { "displayName": "产品阶段话题", "type": "string", "description": "必填，只填写 IFFO 或 GUM" },
     "source": { "displayName": "任务来源", "type": "string", "description": "任务创建来源" },
     "productStageTopic": { "displayName": "产品阶段话题", "type": "string", "description": "审核选择的产品阶段话题组" },
     "allowedBodyStages": { "displayName": "正文允许段位", "type": "stringList", "description": "当前阶段组允许的正文段位词" },
@@ -95,8 +95,8 @@
     "specification": ["规格", "产品规格", "商品规格", "specification"],
     "productStage": ["产品阶段话题", "产品段位", "奶粉段位", "段位", "productStage"]
   },
-  "requiredFields": ["noteUrl", "productName", "activityName"],
-  "optionalFields": ["noteId", "influencerName", "publishTime", "title", "content", "effectiveBodyLength", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark", "productCode", "activityMonth", "contentChannel", "specification", "productStage", "publicStatus"],
+  "requiredFields": ["noteUrl", "productName", "activityName", "productStage"],
+  "optionalFields": ["noteId", "influencerName", "publishTime", "title", "content", "effectiveBodyLength", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark", "productCode", "activityMonth", "contentChannel", "specification", "publicStatus"],
   "columnOrder": {
     "import": ["noteUrl", "productName", "activityName", "productStage"],
     "auditResults": ["productName", "activityName", "productStageTopic", "requiredStageTopic", "finalAuditConclusion", "manualReviewStatus", "failedReasons", "effectiveBodyLength", "imageCount", "topicsAuditResult", "publicStatus", "content"],
@@ -115,7 +115,7 @@
     "activityName": "爱他美2026年7月小红书种草审核",
     "influencerName": "示例达人",
     "publishTime": "2026-07-15 10:30:00",
-    "productStage": "3段",
+    "productStage": "IFFO",
     "remark": "仅为格式示例，不会随软件上传"
   },
   "compatibility": {

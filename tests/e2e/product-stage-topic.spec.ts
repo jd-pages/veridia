@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { E2E_ORIGIN } from "./e2e-origin";
 
-test("产品阶段话题只显示三组，仅匹配对应的可点击话题", async ({
+test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", async ({
   page,
 }) => {
   const loginResponse = await page.request.post("/api/auth/login", {
@@ -23,10 +23,9 @@ test("产品阶段话题只显示三组，仅匹配对应的可点击话题", as
   });
   await stageSelect.click();
   const options = page.locator(".ant-select-dropdown:visible .ant-select-item-option");
-  await expect(options).toHaveCount(3);
-  await expect(options.nth(0)).toHaveText("IFFO：P段/1段");
-  await expect(options.nth(1)).toHaveText("IFFO：2段");
-  await expect(options.nth(2)).toHaveText("GUM：3段/4段/1+段/2+段");
+  await expect(options).toHaveCount(2);
+  await expect(options.nth(0)).toHaveText("IFFO");
+  await expect(options.nth(1)).toHaveText("GUM");
   await expect(page.getByText("新生儿阶段", { exact: true })).toHaveCount(0);
   await expect(page.getByText("二段阶段", { exact: true })).toHaveCount(0);
   await expect(page.getByText("成长阶段", { exact: true })).toHaveCount(0);
@@ -47,6 +46,25 @@ test("产品阶段话题只显示三组，仅匹配对应的可点击话题", as
   );
   expect(campaign).toBeTruthy();
 
+  await page.getByRole("combobox", { name: "所属产品" }).click();
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: product.name })
+    .click();
+  await page.getByRole("combobox", { name: "所属活动" }).click();
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: campaign!.name })
+    .click();
+  await page.getByRole("combobox", { name: "产品阶段话题" }).click();
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: /^IFFO$/u })
+    .click();
+  await expect(
+    page.getByText(`当前规则集 · ${product.name} · IFFO`, { exact: true }),
+  ).toBeVisible();
+
   const disableBodyStageResponse = await page.request.put(
     "/api/rule-stage-groups/IFFO_2",
     {
@@ -66,7 +84,7 @@ test("产品阶段话题只显示三组，仅匹配对应的可点击话题", as
       urls: url,
       productId: product.id,
       campaignId: campaign!.id,
-      productStage: "IFFO_2",
+      productStage: "IFFO",
       skipDuplicates: true,
     },
   });
@@ -75,7 +93,7 @@ test("产品阶段话题只显示三组，仅匹配对应的可点击话题", as
     id: string;
     productStage: string;
   };
-  expect(task.productStage).toBe("IFFO_2");
+  expect(task.productStage).toBe("IFFO");
 
   const auditResponse = await page.request.post(
     `/api/tasks/${task.id}/audit`,
@@ -88,13 +106,14 @@ test("产品阶段话题只显示三组，仅匹配对应的可点击话题", as
           pageType: "NOTE_DETAIL",
           noteId: `stage-topic-body-${suffix}`,
           title: "爱他美澳洲白金版2段真实体验",
-          body: `${"这是一次真实的小红书喂养体验记录".repeat(5)} #爱他美新手爸妈日记 #爱他美澳洲白金版 #二段奶粉推荐`,
+          body: `${"这是一次真实的小红书喂养体验记录".repeat(5)} #爱他美新手爸妈日记 #爱他美澳洲白金版 #新生儿奶粉 #二段奶粉推荐`,
           noteType: "IMAGE_TEXT",
           imageExtractionStatus: "SUCCESS",
           imageCount: 2,
           topics: [
             "#爱他美新手爸妈日记",
             "#爱他美澳洲白金版",
+            "#新生儿奶粉",
             "#二段奶粉推荐",
           ].map((displayText) => ({
             displayText,
@@ -134,20 +153,33 @@ test("产品阶段话题只显示三组，仅匹配对应的可点击话题", as
       passed: boolean;
     }>;
   };
-  expect(detail.task.productStage).toBe("IFFO_2");
+  expect(detail.task.productStage).toBe("IFFO");
   expect(
     detail.ruleResults.find((item) => item.ruleKey === "PRODUCT_STAGE_BODY"),
   ).toBeUndefined();
   expect(
     detail.ruleResults.find((item) =>
-      item.ruleName.includes("产品阶段话题 IFFO：2段"),
+      item.ruleName.includes("产品阶段话题 IFFO"),
     ),
   ).toMatchObject({ passed: true });
+
+  await page.goto("/results");
+  const resultRow = page.locator(
+    `.ant-table-row[data-row-key="${result.id}"]`,
+  );
+  await expect(resultRow).toContainText("IFFO");
+  await expect(resultRow).not.toContainText("IFFO：P段/1段");
+  await expect(resultRow).not.toContainText("IFFO：2段");
 
   await page.goto(`/results/${result.id}`);
   await expect(page).toHaveTitle("VERIDIA");
   await expect(page.getByText("产品阶段话题", { exact: true })).toBeVisible();
-  await expect(page.getByText("IFFO：2段", { exact: true })).toBeVisible();
+  await expect(page.getByText("IFFO", { exact: true }).first()).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("IFFO：P段/1段");
+  await expect(page.locator("body")).not.toContainText("IFFO：2段");
+  await expect(page.locator("body")).not.toContainText(
+    "GUM：3段/4段/1+段/2+段",
+  );
   await expect(page.getByText("正文段位校验", { exact: true })).toHaveCount(0);
   await expect(page.getByText("不参与审核", { exact: true })).toHaveCount(0);
   await expect(page.getByText("15天留存", { exact: true })).toHaveCount(0);
@@ -186,4 +218,9 @@ test("产品阶段话题只显示三组，仅匹配对应的可点击话题", as
   ).toBeVisible();
   await expect(page.getByText("正文允许段位", { exact: true })).toHaveCount(0);
   await expect(page.getByText("不校验，仅匹配话题").first()).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("IFFO：P段/1段");
+  await expect(page.locator("body")).not.toContainText("IFFO：2段");
+  await expect(page.locator("body")).not.toContainText(
+    "GUM：3段/4段/1+段/2+段",
+  );
 });

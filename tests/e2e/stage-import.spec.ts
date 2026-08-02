@@ -56,8 +56,8 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     "PRE 800g",
     campaign.name,
     campaign.month,
-    "P段",
-    "从规格识别PRE",
+    "IFFO",
+    "新模板 IFFO",
   ]);
   sheet.addRow([
     `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-gum`,
@@ -66,28 +66,58 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     "1+段 800g",
     campaign.name,
     campaign.month,
-    "1+段",
-    "优先识别1+段",
+    " gum ",
+    "新模板 GUM，兼容空格和大小写",
   ]);
   sheet.addRow([
-    `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-stage-2`,
+    `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-legacy-p1`,
     product.code,
     product.name,
     "800g",
     campaign.name,
     campaign.month,
-    "2段",
-    "从段位字段识别2段",
+    "IFFO：P段/1段",
+    "兼容旧 IFFO P1",
   ]);
   sheet.addRow([
-    `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-conflict`,
+    `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-legacy-stage-2`,
     product.code,
     product.name,
-    "1段 800g",
+    "800g",
     campaign.name,
     campaign.month,
-    "2段",
-    "跨组冲突",
+    "IFFO：2段",
+    "兼容旧 IFFO 2段",
+  ]);
+  sheet.addRow([
+    `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-legacy-gum`,
+    product.code,
+    product.name,
+    "800g",
+    campaign.name,
+    campaign.month,
+    "GUM：3段/4段/1+段/2+段",
+    "兼容旧 GUM",
+  ]);
+  sheet.addRow([
+    `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-invalid-stage`,
+    product.code,
+    product.name,
+    "3段 800g",
+    campaign.name,
+    campaign.month,
+    "3段",
+    "具体段位应拒绝",
+  ]);
+  sheet.addRow([
+    `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-missing-stage`,
+    product.code,
+    product.name,
+    "800g",
+    campaign.name,
+    campaign.month,
+    "",
+    "阶段组必填",
   ]);
 
   const response = await page.request.post("/api/import/notes", {
@@ -113,36 +143,79 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     }>;
   };
 
-  expect(preview.validCount).toBe(4);
-  expect(preview.invalidCount).toBe(0);
+  expect(preview.validCount).toBe(5);
+  expect(preview.invalidCount).toBe(2);
   expect(preview.rows[0]).toMatchObject({
-    productStage: "IFFO_P1",
-    stageGroup: "IFFO：P段/1段",
+    productStage: "IFFO",
+    stageGroup: "IFFO",
     errors: [],
   });
   expect(preview.rows[1]).toMatchObject({
-    productStage: "GUM_3_4_1PLUS_2PLUS",
-    stageGroup: "GUM：3段/4段/1+段/2+段",
+    productStage: "GUM",
+    stageGroup: "GUM",
     errors: [],
   });
   expect(preview.rows[2]).toMatchObject({
-    productStage: "IFFO_2",
-    stageGroup: "IFFO：2段",
+    productStage: "IFFO",
+    stageGroup: "IFFO",
     errors: [],
   });
   expect(preview.rows[3]).toMatchObject({
-    productStage: "IFFO_2",
-    stageGroup: "IFFO：2段",
+    productStage: "IFFO",
+    stageGroup: "IFFO",
     errors: [],
   });
+  expect(preview.rows[4]).toMatchObject({
+    productStage: "GUM",
+    stageGroup: "GUM",
+    errors: [],
+  });
+  expect(preview.rows[5].errors).toContain(
+    "产品阶段话题请填写 IFFO 或 GUM。",
+  );
+  expect(preview.rows[6].errors).toContain(
+    "产品阶段话题请填写 IFFO 或 GUM。",
+  );
   const tasksAfterPreview = (
     await (await page.request.get("/api/tasks")).json()
   ).data.length as number;
   expect(tasksAfterPreview).toBe(tasksBeforePreview);
 
+  const gumCommitWorkbook = new ExcelJS.Workbook();
+  const gumCommitSheet = gumCommitWorkbook.addWorksheet("笔记导入");
+  gumCommitSheet.addRow(["笔记链接", "产品", "活动", "产品阶段话题"]);
+  const gumCommitUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-gum-commit`;
+  gumCommitSheet.addRow([
+    gumCommitUrl,
+    product.name,
+    campaign.name,
+    "GUM",
+  ]);
+  const gumCommitResponse = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: "gum-import.xlsx",
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await gumCommitWorkbook.xlsx.writeBuffer()),
+      },
+      commit: "true",
+      skipDuplicates: "true",
+    },
+  });
+  expect(gumCommitResponse.ok()).toBeTruthy();
+  expect((await gumCommitResponse.json()).data.imported).toBe(1);
+  const committedGumTask = (
+    (await (await page.request.get("/api/tasks")).json()).data as Array<{
+      url: string;
+      productStage: string;
+    }>
+  ).find((task) => task.url === gumCommitUrl);
+  expect(committedGumTask?.productStage).toBe("GUM");
+
   const csv = [
     "\uFEFF活动名称,段位,小红书链接,商品,额外登记列",
-    `${campaign.name},2段,${E2E_ORIGIN}/mock/xhs?case=passed&csv=${suffix},${product.name},忽略`,
+    `${campaign.name},IFFO,${E2E_ORIGIN}/mock/xhs?case=passed&csv=${suffix},${product.name},忽略`,
   ].join("\r\n");
   const csvResponse = await page.request.post("/api/import/notes", {
     multipart: {
@@ -170,12 +243,11 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     unknownHeaders: ["额外登记列"],
   });
 
-  const expectedStageTopics = new Map([
-    ["IFFO_P1", "#新生儿奶粉"],
-    ["IFFO_2", "#二段奶粉推荐"],
-    ["GUM_3_4_1PLUS_2PLUS", "#三段奶粉推荐"],
+  const expectedStageTopics = new Map<string, string[]>([
+    ["IFFO", ["#新生儿奶粉", "#二段奶粉推荐"]],
+    ["GUM", ["#三段奶粉推荐"]],
   ]);
-  for (const [stage, expectedTopic] of expectedStageTopics) {
+  for (const [stage, expectedTopics] of expectedStageTopics) {
     const requirementsResponse = await page.request.get(
       `/api/campaigns/${campaign.id}/requirements?productId=${encodeURIComponent(product.id)}&stage=${encodeURIComponent(stage)}`,
     );
@@ -193,11 +265,11 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     const stageRules = requirements.context.rules.filter(
       (rule) => rule.topicCategory === "PRODUCT_STAGE",
     );
-    expect(stageRules).toHaveLength(1);
-    expect(stageRules[0]).toMatchObject({
-      topic: expectedTopic,
-      exactMatch: true,
-      clickableRequired: true,
-    });
+    expect(stageRules.map((rule) => rule.topic)).toEqual(
+      expect.arrayContaining(expectedTopics),
+    );
+    expect(stageRules).toHaveLength(expectedTopics.length);
+    expect(stageRules.every((rule) => rule.exactMatch)).toBe(true);
+    expect(stageRules.every((rule) => rule.clickableRequired)).toBe(true);
   }
 });

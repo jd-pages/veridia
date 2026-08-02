@@ -22,6 +22,7 @@ import StatusTag from "@/components/StatusTag";
 import { apiFetch } from "@/lib/client";
 import { ruleScopeLabels, ruleTypeLabels } from "@/lib/zh-CN";
 import type { SessionUser } from "@/lib/auth";
+import { productStageTopicLabel } from "@/lib/product-stage";
 
 interface Product {
   id: string;
@@ -154,7 +155,11 @@ export default function RulesPage() {
           dataSource={stageGroups}
           pagination={false}
           columns={[
-            { title: "产品阶段话题", dataIndex: "label", width: 260 },
+            {
+              title: "产品阶段话题",
+              width: 180,
+              render: (_value, row) => productStageTopicLabel(row.key),
+            },
             {
               title: "正文段位校验",
               width: 220,
@@ -187,7 +192,6 @@ export default function RulesPage() {
                   onClick={() => {
                     setEditingStage(row);
                     stageForm.setFieldsValue({
-                      bodyTerms: row.bodyTerms.join("、"),
                       requireBodyStage: row.requireBodyStage,
                       requiredTopic: row.requiredTopic,
                     });
@@ -448,7 +452,11 @@ export default function RulesPage() {
       </Modal>
       <Modal
         open={Boolean(editingStage)}
-        title={`编辑 ${editingStage?.label || "产品阶段话题"}`}
+        title={`编辑 ${
+          editingStage
+            ? productStageTopicLabel(editingStage.key)
+            : "产品阶段话题"
+        }`}
         okText="保存为本地草稿"
         onCancel={() => setEditingStage(null)}
         onOk={() => stageForm.submit()}
@@ -461,9 +469,7 @@ export default function RulesPage() {
             await apiFetch(`/api/rule-stage-groups/${editingStage.key}`, {
               method: "PUT",
               body: JSON.stringify({
-                bodyTerms: String(values.bodyTerms || "")
-                  .split(/[、,，\s]+/u)
-                  .filter(Boolean),
+                bodyTerms: editingStage.bodyTerms,
                 requireBodyStage: Boolean(values.requireBodyStage),
                 requiredTopic: values.requiredTopic,
               }),
@@ -480,14 +486,6 @@ export default function RulesPage() {
             extra="当前业务规则关闭此项；产品阶段仅用于匹配对应的蓝色可点击话题。"
           >
             <Switch checkedChildren="校验" unCheckedChildren="不校验" />
-          </Form.Item>
-          <Form.Item
-            name="bodyTerms"
-            label="可识别段位词"
-            rules={[{ required: true }]}
-            extra="仅在启用正文段位校验时使用；多个词使用顿号或逗号分隔。"
-          >
-            <Input />
           </Form.Item>
           <Form.Item
             name="requiredTopic"

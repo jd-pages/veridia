@@ -8,6 +8,7 @@ import type { AuditContext, ExtractedNote } from "@/lib/types";
 import {
   compatibleStageRuleValues,
   normalizeProductStageTopicValue,
+  productStageTopicLabel,
 } from "@/lib/product-stage";
 
 export async function getAuditContext(
@@ -71,11 +72,12 @@ export async function getAuditContext(
       rule.topicCategory === "PRODUCT_STAGE" &&
       compatibleStages.includes(rule.applicableStage || ""),
   );
-  const stageGroup = normalizedProductStage
-    ? await prisma.ruleStageGroup.findUnique({
-        where: { key: normalizedProductStage },
+  const stageGroups = normalizedProductStage
+    ? await prisma.ruleStageGroup.findMany({
+        where: { key: { in: compatibleStages } },
+        orderBy: { sortOrder: "asc" },
       })
-    : null;
+    : [];
   const syncState = await prisma.ruleSyncState.findUnique({
     where: { id: "active" },
     select: { currentVersion: true },
@@ -97,13 +99,27 @@ export async function getAuditContext(
     campaignId,
     campaignName: campaign.name,
     productStage: normalizedProductStage || null,
-    productStageLabel: stageGroup?.label || null,
-    bodyStageRequired: stageGroup?.requireBodyStage ?? false,
-    allowedBodyStageTerms: stageGroup
-      ? (JSON.parse(stageGroup.bodyTerms) as string[])
+    productStageLabel: normalizedProductStage
+      ? productStageTopicLabel(normalizedProductStage)
+      : null,
+    bodyStageRequired: stageGroups.some((group) => group.requireBodyStage),
+    allowedBodyStageTerms: stageGroups.length
+      ? [
+          ...new Set(
+            stageGroups.flatMap(
+              (group) => JSON.parse(group.bodyTerms) as string[],
+            ),
+          ),
+        ]
       : undefined,
-    canonicalBodyStages: stageGroup
-      ? (JSON.parse(stageGroup.canonicalStages) as string[])
+    canonicalBodyStages: stageGroups.length
+      ? [
+          ...new Set(
+            stageGroups.flatMap(
+              (group) => JSON.parse(group.canonicalStages) as string[],
+            ),
+          ),
+        ]
       : undefined,
     milkType: selectedStageRule?.milkType || null,
     ruleVersion: campaign.ruleVersion,

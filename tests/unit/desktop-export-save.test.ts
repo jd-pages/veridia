@@ -15,7 +15,11 @@ const { createExportSaveHandler } = require(
     writeLog: ReturnType<typeof vi.fn>;
   }): (
     event: unknown,
-    payload: { fileName: string; data: Uint8Array },
+    payload: {
+      fileName: string;
+      data: Uint8Array;
+      kind?: "audit-export" | "import-template";
+    },
   ) => Promise<{
     success: boolean;
     canceled?: boolean;
@@ -77,5 +81,37 @@ describe("Electron 审核结果保存", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("内容为空");
     expect(showSaveDialog).not.toHaveBeenCalled();
+  });
+
+  it("导入模板复用原生保存流程并使用模板文件名和对话框", async () => {
+    const showSaveDialog = vi.fn().mockResolvedValue({
+      canceled: false,
+      filePath: "C:\\Exports\\VERIDIA导入模板.xlsx",
+    });
+    const writeFile = vi.fn().mockResolvedValue(undefined);
+    const handler = createExportSaveHandler({
+      app: { getPath: () => "C:\\Exports" },
+      dialog: { showSaveDialog },
+      fs: { promises: { writeFile } },
+      path,
+      getWindow: () => ({}),
+      writeLog: vi.fn(),
+    });
+
+    const result = await handler(null, {
+      fileName: "VERIDIA导入模板_2026-08-02.xlsx",
+      data: new Uint8Array([1, 2, 3]),
+      kind: "import-template",
+    });
+
+    expect(result.success).toBe(true);
+    expect(showSaveDialog).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        title: "保存 VERIDIA 导入模板",
+        defaultPath: expect.stringContaining("VERIDIA导入模板_2026-08-02.xlsx"),
+      }),
+    );
+    expect(writeFile).toHaveBeenCalledTimes(1);
   });
 });

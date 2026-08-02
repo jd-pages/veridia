@@ -282,6 +282,23 @@ export async function buildImportTemplateWorkbook(
       fields.map((field) => [field, templates.examples[field] || ""]),
     ),
   );
+  const productStageColumn = fields.indexOf("productStage") + 1;
+  if (productStageColumn > 0) {
+    for (
+      let rowNumber = 2;
+      rowNumber <= templates.dataValidation.maxRows + 1;
+      rowNumber += 1
+    ) {
+      sheet.getCell(rowNumber, productStageColumn).dataValidation = {
+        type: "list",
+        allowBlank: false,
+        formulae: ['"IFFO,GUM"'],
+        showErrorMessage: true,
+        errorTitle: "产品阶段话题无效",
+        error: "产品阶段话题请填写 IFFO 或 GUM。",
+      };
+    }
+  }
   const header = sheet.getRow(1);
   header.font = { bold: true, color: { argb: "FFFFFFFF" } };
   header.fill = {

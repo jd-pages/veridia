@@ -6,6 +6,7 @@ const {
   ipcMain,
   Menu,
   safeStorage,
+  shell,
   Tray,
 } = require("electron");
 const { autoUpdater } = require("electron-updater");
@@ -26,6 +27,7 @@ const {
   writeDataLocation,
 } = require("./data-location.cjs");
 const { createExportSaveHandler } = require("./export-save.cjs");
+const { installWindowOpenPolicy } = require("./window-open-policy.cjs");
 const {
   createPrismaExecutionContext,
   isPrismaCachePermissionError,
@@ -937,6 +939,7 @@ function createTray() {
 }
 
 function createMainWindow() {
+  Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -953,6 +956,12 @@ function createMainWindow() {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+  installWindowOpenPolicy({
+    window: mainWindow,
+    shell,
+    internalOrigin: `http://${HOST}:${PORT}`,
+    writeLog,
   });
   mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.on("close", async (event) => {

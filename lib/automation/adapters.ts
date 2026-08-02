@@ -5,6 +5,7 @@ import {
   createEmptyCandidates,
   mergeCandidates,
   noteIdCandidatesFromUrls,
+  resolveXhsMediaDecision,
   safeEvidenceUrl,
   type XhsPageCandidates,
 } from "./xhs-page-evidence";
@@ -74,7 +75,7 @@ export class PlaywrightXiaohongshuAdapter
   implements PlaywrightExtractorAdapter
 {
   name = "playwright-xiaohongshu";
-  version = "1.4.0";
+  version = "1.5.0";
 
   canHandle(url: string) {
     try {
@@ -121,16 +122,18 @@ export class PlaywrightXiaohongshuAdapter
     const reliableImageCandidates = candidates.imageCandidates.filter(
       (candidate) => candidate.source === "DOM_MEDIA",
     );
-    const noteType = domSnapshot.domHasVideo
-      ? "VIDEO_NOTE"
-      : reliableImageCandidates.length > 0
-        ? "IMAGE_TEXT"
-        : "UNKNOWN";
-    const imageExtractionStatus = domSnapshot.domHasVideo
-      ? "VIDEO_NOTE"
-      : reliableImageCandidates.length > 0
-        ? "SUCCESS"
-        : "IMAGES_READ_FAILED";
+    const mediaDecision = resolveXhsMediaDecision({
+      domHasVideo: domSnapshot.domHasVideo,
+      responseHasVideo: candidates.hasVideo,
+      videoEvidence: domSnapshot.videoEvidence,
+      videoCandidateCount: domSnapshot.videoCandidateCount,
+      hasLivePhotoMarker: domSnapshot.hasLivePhotoMarker,
+      hasCarouselStructure: domSnapshot.hasCarouselStructure,
+      carouselPageIndicator: domSnapshot.carouselPageIndicator,
+      carouselTotal: domSnapshot.carouselTotal,
+      imageCandidateCount: reliableImageCandidates.length,
+    });
+    const { noteType, imageExtractionStatus, imageCount } = mediaDecision;
 
     return {
       url: originalUrl,
@@ -146,10 +149,7 @@ export class PlaywrightXiaohongshuAdapter
       authorName: null,
       noteType,
       imageExtractionStatus,
-      imageCount:
-        imageExtractionStatus === "SUCCESS"
-          ? reliableImageCandidates.length
-          : undefined,
+      imageCount,
       publishedAt: null,
       extractedAt: new Date().toISOString(),
       adapterName: this.name,
@@ -169,6 +169,22 @@ export class PlaywrightXiaohongshuAdapter
         })),
         topicCandidates: candidates.topicCandidates.slice(0, 100),
         imageCandidates: candidates.imageCandidates.slice(0, 100),
+        mediaEvidence: {
+          livePhotoMarker: domSnapshot.hasLivePhotoMarker,
+          carouselPageIndicator: domSnapshot.carouselPageIndicator,
+          carouselCurrent: domSnapshot.carouselCurrent,
+          carouselTotal: domSnapshot.carouselTotal,
+          carouselStructure: domSnapshot.hasCarouselStructure,
+          domImageCandidateCount: reliableImageCandidates.length,
+          mergedImageCandidateCount: candidates.imageCandidates.length,
+          domHasVideo: domSnapshot.domHasVideo,
+          responseHasVideo: candidates.hasVideo,
+          videoEvidence: domSnapshot.videoEvidence,
+          videoCandidateCount: domSnapshot.videoCandidateCount,
+          noteTypeDecision: noteType,
+          noteTypeReason: mediaDecision.reason,
+          resolvedImageCount: imageCount ?? null,
+        },
         loginEvidence: candidates.loginEvidence,
         responseSummaries: candidates.responseSummaries,
         keyElementCount: domSnapshot.keyElementCount,

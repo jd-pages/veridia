@@ -231,6 +231,21 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   );
   expect(taskExportResponse.ok()).toBeTruthy();
 
+  await page.goto("/tasks");
+  await page.getByRole("tab", { name: "Excel 自动审核" }).click();
+  const pageCountBeforeTemplateDownloads = page.context().pages().length;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const templateDownloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "下载导入模板" }).click();
+    await page.getByRole("menuitem", { name: "下载 Excel 模板" }).click();
+    const templateDownload = await templateDownloadPromise;
+    expect(templateDownload.suggestedFilename()).toMatch(
+      /^VERIDIA导入模板_.+_\d{4}-\d{2}-\d{2}\.xlsx$/u,
+    );
+  }
+  expect(page.context().pages()).toHaveLength(pageCountBeforeTemplateDownloads);
+  await expect(page).toHaveURL(/\/tasks$/u);
+
   const noteTemplateResponse = await page.request.get("/api/import/template");
   expect(noteTemplateResponse.ok()).toBeTruthy();
   const noteTemplateWorkbook = new ExcelJS.Workbook();
@@ -244,14 +259,14 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "笔记链接 *",
     "产品 *",
     "活动 *",
-    "产品阶段话题",
+    "产品阶段话题 *",
   ]);
   const downloadedTemplateSheet = noteTemplateWorkbook.worksheets[0];
   downloadedTemplateSheet.getRow(2).values = [
     `${E2E_ORIGIN}/mock/xhs?case=passed&minimal-template=${suffix}`,
     product.name,
     campaign.name,
-    "2段",
+    "IFFO",
   ];
   const minimalTemplateImport = await page.request.post("/api/import/notes", {
     multipart: {
@@ -296,7 +311,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     product.name,
     campaign.name,
     campaign.month,
-    "2段",
+    "IFFO",
     "小红书",
     "E2E Excel 无图片但继续审核",
   ]);
@@ -306,7 +321,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     product.name,
     campaign.name,
     campaign.month,
-    "2段",
+    "IFFO",
     "小红书",
     "E2E Excel 单条失败",
   ]);
@@ -320,7 +335,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     product.name,
     campaign.name,
     campaign.month,
-    "2段",
+    "IFFO",
     "",
     "E2E Excel 后续成功",
   ]);
@@ -330,7 +345,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     product.name,
     campaign.name,
     campaign.month,
-    "2段",
+    "IFFO",
     "抖音",
     "E2E 不支持平台不影响其他行",
   ]);
@@ -414,7 +429,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
         name: "E2E 失败结果完整落库",
         productId: product.id,
         campaignId: campaign.id,
-        productStage: "IFFO_2",
+        productStage: "IFFO",
         urls: [
           `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-passed&result-coverage=${resultCoverageSuffix}-passed`,
           `${E2E_ORIGIN}/mock/xhs?case=read-failed&result-coverage=${resultCoverageSuffix}-failed-1`,
@@ -689,9 +704,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   ).toBeVisible();
   await expect(page.getByText("正文段位校验", { exact: true })).toHaveCount(0);
   await expect(page.getByText("不参与审核", { exact: true })).toHaveCount(0);
-  await expect(
-    page.getByText("#二段奶粉推荐", { exact: true }).first(),
-  ).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("IFFO：P段/1段");
+  await expect(page.locator("body")).not.toContainText("IFFO：2段");
   const imageStateBatchResponse = await page.request.post(
     "/api/automation/batches",
     {
@@ -703,6 +717,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
         urls: [
           `${E2E_ORIGIN}/mock/xhs?case=few-images&image-state=${suffix}`,
           `${E2E_ORIGIN}/mock/xhs?case=no-images&image-state=${suffix}`,
+          `${E2E_ORIGIN}/mock/xhs?case=live-photo&image-state=${suffix}`,
           `${E2E_ORIGIN}/mock/xhs?case=video-note&image-state=${suffix}`,
         ],
       },
@@ -716,6 +731,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       await page.request.get(`/api/results?keyword=image-state%3D${suffix}`)
     ).json()
   ).data.items as Array<{
+    id: string;
+    noteType: string;
     imageStatus: string;
     autoStatus: string;
     imageCount: number;
@@ -738,6 +755,36 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     imageStateResults.find((item) => item.note.url.includes("video-note"))
       ?.imageStatus,
   ).toBe("VIDEO_NOTE");
+  const livePhotoResult = imageStateResults.find((item) =>
+    item.note.url.includes("live-photo"),
+  );
+  expect(livePhotoResult).toMatchObject({
+    noteType: "IMAGE_TEXT",
+    imageStatus: "COMPLIANT",
+    imageCount: 3,
+  });
+  expect(livePhotoResult?.failureReasons).not.toContain("图片数量");
+
+  await page.goto("/results");
+  const livePhotoRow = page.locator(
+    `.ant-table-row[data-row-key="${livePhotoResult!.id}"]`,
+  );
+  await expect(livePhotoRow).toContainText("图文笔记");
+  await expect(livePhotoRow).toContainText("3 张");
+  await expect(livePhotoRow).toContainText("数量合规");
+  await expect(livePhotoRow).not.toContainText("视频笔记");
+  await expect(livePhotoRow).not.toContainText("不参与图片数量判断");
+
+  await page.goto(`/results/${livePhotoResult!.id}`);
+  await expect(page.getByText("图文笔记", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("3 张", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.getByText("图片数量合规", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(page.getByText("视频笔记", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText("不参与图片数量判断", { exact: true }),
+  ).toHaveCount(0);
 
   const pauseSuffix = `${suffix}-pause`;
   const pauseBatchResponse = await page.request.post("/api/automation/batches", {
