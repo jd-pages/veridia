@@ -42,6 +42,7 @@ import {
   stageTopicFromRuleSnapshot,
 } from "@/lib/product-stage";
 import { normalizeTopic } from "@/lib/topic";
+import { classifyTopicClickability } from "@/lib/topic-clickability";
 import {
   aiRelevanceLabels,
   aiStatusLabels,
@@ -215,14 +216,9 @@ export default function ResultDetailPage() {
           normalizeTopic(topic.displayText) === normalizeTopic(requiredStageTopic),
       )
     : undefined;
-  const stageTopicClickable = Boolean(
-    stageTopicMatch &&
-      (stageTopicMatch.isClickable ||
-        (stageTopicMatch.isLinkElement &&
-          stageTopicMatch.hasHref &&
-          stageTopicMatch.href &&
-          stageTopicMatch.styleFeature)),
-  );
+  const stageTopicClickability = stageTopicMatch
+    ? classifyTopicClickability(stageTopicMatch)
+    : "UNKNOWN";
   const missingRequiredTopics = parseJsonArray(detail.missingTopics).filter(
     (expected) =>
       !detail.note.topics.some(
@@ -328,10 +324,6 @@ export default function ResultDetailPage() {
               <Descriptions.Item label="产品阶段话题" span={2}>
                 {productStageLabel}
               </Descriptions.Item>
-              <Descriptions.Item label="作者">{detail.note.authorName || "-"}</Descriptions.Item>
-              <Descriptions.Item label="发布时间">
-                {detail.note.publishedAt ? new Date(detail.note.publishedAt).toLocaleString("zh-CN") : "-"}
-              </Descriptions.Item>
               <Descriptions.Item label="链接" span={2}>
                 <a href={detail.note.url} target="_blank" rel="noreferrer" style={{ color: "#175cd3" }}>
                   {detail.note.url}
@@ -397,14 +389,7 @@ export default function ResultDetailPage() {
                     </Tag>
                   </Descriptions.Item>
                 </>
-              ) : (
-                <Descriptions.Item label="正文段位校验">
-                  <Tag>不参与审核</Tag>
-                  <span style={{ marginLeft: 8 }}>
-                    产品阶段仅用于匹配对应话题
-                  </span>
-                </Descriptions.Item>
-              )}
+              ) : null}
               <Descriptions.Item label="要求阶段话题">
                 {requiredStageTopic || "当前活动未配置阶段话题规则"}
               </Descriptions.Item>
@@ -421,8 +406,20 @@ export default function ResultDetailPage() {
                 {!requiredStageTopic || !stageTopicMatch ? (
                   <Tag>不适用</Tag>
                 ) : (
-                  <Tag color={stageTopicClickable ? "green" : "red"}>
-                    {stageTopicClickable ? "是" : "否"}
+                  <Tag
+                    color={
+                      stageTopicClickability === "CLICKABLE"
+                        ? "green"
+                        : stageTopicClickability === "UNKNOWN"
+                          ? "orange"
+                          : "red"
+                    }
+                  >
+                    {stageTopicClickability === "CLICKABLE"
+                      ? "是"
+                      : stageTopicClickability === "UNKNOWN"
+                        ? "待人工确认"
+                        : "否"}
                   </Tag>
                 )}
               </Descriptions.Item>
@@ -454,17 +451,6 @@ export default function ResultDetailPage() {
               </Descriptions.Item>
               <Descriptions.Item label="当前公开状态">
                 <StatusTag value={detail.publicStatus} />
-              </Descriptions.Item>
-              <Descriptions.Item label="15天留存">
-                <Space direction="vertical" size={2}>
-                  <StatusTag value={detail.retentionStatus} />
-                  {detail.retentionDueAt ? (
-                    <span className="muted">
-                      复查时间：
-                      {new Date(detail.retentionDueAt).toLocaleString("zh-CN")}
-                    </span>
-                  ) : null}
-                </Space>
               </Descriptions.Item>
               <Descriptions.Item label="智能辅助">
                 <Space direction="vertical" size={2}>

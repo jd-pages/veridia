@@ -9,6 +9,17 @@ import {
 describe("topic helpers", () => {
   it("规范化井号和首尾空格", () => {
     expect(normalizeTopic("  ##inne多维锌  ")).toBe("#inne多维锌");
+    for (const value of [
+      "爱他美新手爸妈日记",
+      "#爱他美新手爸妈日记",
+      " #爱他美新手爸妈日记",
+      "# 爱他美新手爸妈日记",
+      "＃爱他美新手爸妈日记",
+      "#爱他美新手爸妈日记 \n",
+      "\u200b#\t爱他美新手爸妈日记\ufeff",
+    ]) {
+      expect(normalizeTopic(value)).toBe("#爱他美新手爸妈日记");
+    }
   });
 
   it("精确匹配不接受多字少字或错字", () => {

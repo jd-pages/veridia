@@ -3,6 +3,7 @@
 import { Popover, Tag } from "antd";
 import { parseJsonArray } from "@/lib/client";
 import { normalizeTopic } from "@/lib/topic";
+import { classifyTopicCandidates } from "@/lib/topic-clickability";
 import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
 
@@ -40,18 +41,20 @@ export function getTopicAuditSummary(row: ResultRow) {
   );
   const forbidden = parseJsonArray(row.forbiddenTopics);
   const unclickable = required.filter((expected) => {
-    const topic = row.note.topics.find(
+    const topics = row.note.topics.filter(
       (candidate) => normalizeTopic(candidate.displayText) === expected,
     );
-    return Boolean(
-      topic &&
-        !(
-          topic.isClickable ||
-          (topic.isLinkElement &&
-            topic.hasHref &&
-            topic.href &&
-            topic.styleFeature)
-        ),
+    return (
+      topics.length > 0 &&
+      classifyTopicCandidates(topics) === "NOT_CLICKABLE"
+    );
+  });
+  const uncertain = required.filter((expected) => {
+    const topics = row.note.topics.filter(
+      (candidate) => normalizeTopic(candidate.displayText) === expected,
+    );
+    return (
+      topics.length > 0 && classifyTopicCandidates(topics) === "UNKNOWN"
     );
   });
   return {
@@ -60,6 +63,7 @@ export function getTopicAuditSummary(row: ResultRow) {
     missing,
     forbidden,
     unclickable,
+    uncertain,
   };
 }
 
@@ -71,7 +75,8 @@ export default function TopicAuditCell({ row }: { row: ResultRow }) {
     row.topicsCompliant &&
     row.clickableCompliant &&
     !summary.missing.length &&
-    !summary.forbidden.length;
+    !summary.forbidden.length &&
+    !summary.uncertain.length;
 
   const detail = (
     <div className={styles.topicDetail}>
@@ -89,6 +94,12 @@ export default function TopicAuditCell({ row }: { row: ResultRow }) {
         <div className={styles.topicDetailSection}>
           <div className={styles.topicDetailTitle}>不可点击话题</div>
           <div>{summary.unclickable.join("、")}</div>
+        </div>
+      ) : null}
+      {summary.uncertain.length ? (
+        <div className={styles.topicDetailSection}>
+          <div className={styles.topicDetailTitle}>可点击状态待确认</div>
+          <div>{summary.uncertain.join("、")}</div>
         </div>
       ) : null}
       {summary.forbidden.length ? (
@@ -110,16 +121,26 @@ export default function TopicAuditCell({ row }: { row: ResultRow }) {
           <Tag
             bordered={false}
             className={`${styles.compactTag} ${
-              compliant ? styles.statusSuccess : styles.statusDanger
+              summary.uncertain.length
+                ? styles.statusWarning
+                : compliant
+                  ? styles.statusSuccess
+                  : styles.statusDanger
             }`}
           >
-            {compliant ? "合规" : "异常"}
+            {summary.uncertain.length
+              ? "待复核"
+              : compliant
+                ? "合规"
+                : "异常"}
           </Tag>
         </div>
         <div className={styles.cellSecondary}>
           {summary.missing.length
             ? "要求话题缺失，可点击不适用"
-            : row.clickableCompliant
+            : summary.uncertain.length
+              ? "可点击状态需人工确认"
+              : row.clickableCompliant
               ? "全部可点击"
               : `不可点击 ${Math.max(summary.unclickable.length, 1)} 个`}
         </div>

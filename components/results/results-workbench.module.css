@@ -161,7 +161,7 @@
   grid-template-columns:
     minmax(160px, 0.9fr)
     minmax(210px, 1.25fr)
-    minmax(150px, 0.75fr)
+    minmax(300px, 1.35fr)
     minmax(160px, 0.85fr)
     minmax(170px, 0.9fr);
   gap: 12px;
@@ -183,6 +183,16 @@
 .filterField :global(.ant-input-affix-wrapper),
 .filterField :global(.ant-input) {
   width: 100%;
+}
+
+.dateRangeControl {
+  min-width: 288px;
+  flex-wrap: nowrap;
+}
+
+.dateRangeControl :global(.ant-picker) {
+  min-width: 116px;
+  flex: 1 1 0;
 }
 
 .filterActions {
@@ -674,6 +684,12 @@
 
   .floatingThumb {
     height: 7px !important;
+  }
+}
+
+@media (max-width: 1200px) {
+  .filterGrid {
+    grid-template-columns: repeat(2, minmax(288px, 1fr));
   }
 }
 

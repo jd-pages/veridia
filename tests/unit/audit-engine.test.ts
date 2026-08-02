@@ -120,6 +120,92 @@ describe("audit engine", () => {
     expect(result.missingTopics).not.toContain("#inne多维锌");
   });
 
+  it.each([
+    {
+      name: "链接元素",
+      topic: { isLinkElement: true, hasHref: false, href: null },
+    },
+    {
+      name: "存在 href",
+      topic: {
+        isLinkElement: false,
+        hasHref: true,
+        href: "https://www.xiaohongshu.com/unknown-path",
+      },
+    },
+    ...["search_result", "tag", "topic", "explore", "hashtag", "keyword"].map(
+      (path) => ({
+        name: `${path} 路径`,
+        topic: {
+          isLinkElement: false,
+          hasHref: false,
+          href: `https://www.xiaohongshu.com/${path}/value`,
+        },
+      }),
+    ),
+  ])("$name 证据可独立判定话题可点击", ({ topic }) => {
+    const note = createMockNote("passed");
+    note.topics[0] = {
+      ...note.topics[0],
+      ...topic,
+      styleFeature: false,
+    };
+    const result = evaluateAudit(note, context);
+    expect(result.clickableCompliant).toBe(true);
+    expect(result.failureReasons.join("；")).not.toContain("要求话题不可点击");
+  });
+
+  it("同一话题多个候选时任意一个可点击即整体通过", () => {
+    const note = createMockNote("passed");
+    note.topics = [
+      {
+        displayText: "#inne多维锌",
+        isLinkElement: false,
+        hasHref: false,
+        href: null,
+        styleFeature: false,
+        domPath: "span.plain-topic",
+        source: "DOM_TEXT",
+      },
+      {
+        displayText: "＃ inne多维锌\n",
+        isLinkElement: true,
+        hasHref: false,
+        href: null,
+        styleFeature: false,
+        domPath: "a.topic",
+        source: "DOM_LINK",
+      },
+      note.topics[1],
+    ];
+    const result = evaluateAudit(note, context);
+    expect(result.autoStatus).toBe("PASSED");
+    expect(result.clickableCompliant).toBe(true);
+  });
+
+  it("候选存在但交互证据不完整时进入待人工复核", () => {
+    const note = createMockNote("passed");
+    note.topics[0] = {
+      ...note.topics[0],
+      isLinkElement: false,
+      hasHref: false,
+      href: null,
+      styleFeature: true,
+      domPath: null,
+      source: "BODY_VISIBLE_TEXT",
+    };
+    const result = evaluateAudit(note, context);
+    expect(result.autoStatus).toBe("NEEDS_REVIEW");
+    expect(result.clickableCompliant).toBe(true);
+    expect(result.failureReasons.join("；")).not.toContain("要求话题不可点击");
+    expect(
+      result.ruleResults.find((rule) => rule.ruleKey === "TOPIC_r1"),
+    ).toMatchObject({
+      passed: true,
+      actualValue: "精确出现，可点击状态需人工确认",
+    });
+  });
+
   it("识别禁止话题", () => {
     const result = evaluateAudit(createMockNote("failed"), context);
     expect(result.forbiddenTopics).toContain("#治疗挑食");
@@ -208,6 +294,8 @@ describe("audit engine", () => {
             hasHref: false,
             href: null,
             styleFeature: false,
+            domPath: "span.plain-topic",
+            source: "DOM_TEXT",
           }
         : topic,
     );

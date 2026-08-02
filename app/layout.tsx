@@ -44,7 +44,7 @@ const notoSerifSC = Noto_Serif_SC({
 });
 
 export const metadata: Metadata = {
-  title: "VERIDIA | 内容治理审核系统",
+  title: "VERIDIA",
   description: "公司内部运营使用的多产品小红书笔记合规审核平台",
   icons: {
     icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],

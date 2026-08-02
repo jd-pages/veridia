@@ -65,6 +65,45 @@ describe("xiaohongshu image count extractor", () => {
     expect(result.imageCount).toBeUndefined();
   });
 
+  it("正文实际 4 张时忽略页面 JSON 的推荐图并按稳定轮播页去重", async () => {
+    const recommendationImages = Array.from(
+      { length: 36 },
+      (_, index) => ({ cover: { url: `https://cdn.example/recommend-${index}.jpg` } }),
+    );
+    await page.setContent(`
+      <main>
+        <img class="avatar" src="https://cdn.example/avatar.jpg">
+        <img class="logo" src="https://cdn.example/logo.png">
+        <section class="swiper-container" data-testid="note-media">
+          ${Array.from(
+            { length: 4 },
+            (_, index) => `
+              <div class="swiper-slide" data-swiper-slide-index="${index}">
+                <picture>
+                  <source srcset="https://cdn.example/note-${index + 1}.jpg?width=320 1x, https://cdn.example/note-${index + 1}.jpg?width=1280 2x">
+                  <img src="https://cdn.example/note-${index + 1}.jpg?x-oss-process=resize">
+                </picture>
+              </div>`,
+          ).join("")}
+          <div class="swiper-slide swiper-slide-duplicate" data-swiper-slide-index="0">
+            <img src="https://cdn.example/note-1.jpg?width=640">
+          </div>
+        </section>
+        <section class="comment-list"><img src="https://cdn.example/comment.jpg"></section>
+        <section class="recommend-list"><img src="https://cdn.example/recommend.jpg"></section>
+        <script type="application/ld+json">${JSON.stringify({ recommendationImages })}</script>
+        <div id="detail-desc">这是包含四张正文图片的笔记。</div>
+      </main>
+    `, { waitUntil: "domcontentloaded" });
+
+    const result = await adapter.extract(
+      page,
+      "https://www.xiaohongshu.com/explore/four-image-note",
+    );
+    expect(result.imageExtractionStatus).toBe("SUCCESS");
+    expect(result.imageCount).toBe(4);
+  });
+
   it("页面正常但无法确认媒体数量时标记待人工复核状态", async () => {
     await page.setContent(`
       <main>

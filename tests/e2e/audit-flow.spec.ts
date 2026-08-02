@@ -642,8 +642,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(
     page.getByText("未提取到正文 / 待人工确认").first(),
   ).toBeVisible();
-  await expect(page.getByText("正文段位校验", { exact: true })).toBeVisible();
-  await expect(page.getByText("不参与审核", { exact: true })).toBeVisible();
+  await expect(page.getByText("正文段位校验", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("不参与审核", { exact: true })).toHaveCount(0);
   await expect(
     page.getByText("#二段奶粉推荐", { exact: true }).first(),
   ).toBeVisible();

@@ -3,6 +3,7 @@ import packageJson from "@/package.json";
 import { evaluateAudit } from "@/lib/audit-engine";
 import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
+import { classifyTopicClickability } from "@/lib/topic-clickability";
 import type { AuditContext, ExtractedNote } from "@/lib/types";
 import {
   compatibleStageRuleValues,
@@ -230,7 +231,7 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
           textColor: topic.textColor,
           styleFeature: topic.styleFeature,
           isClickable: Boolean(
-            topic.isLinkElement && topic.hasHref && topic.href && topic.styleFeature,
+            classifyTopicClickability(topic) === "CLICKABLE",
           ),
           domPath: topic.domPath,
         })),

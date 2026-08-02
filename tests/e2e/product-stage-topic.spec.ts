@@ -110,10 +110,14 @@ test("产品阶段话题只显示三组，仅匹配对应的可点击话题", as
   ).toMatchObject({ passed: true });
 
   await page.goto(`/results/${result.id}`);
+  await expect(page).toHaveTitle("VERIDIA");
   await expect(page.getByText("产品阶段话题", { exact: true })).toBeVisible();
   await expect(page.getByText("IFFO：2段", { exact: true })).toBeVisible();
-  await expect(page.getByText("正文段位校验", { exact: true })).toBeVisible();
-  await expect(page.getByText("不参与审核", { exact: true })).toBeVisible();
+  await expect(page.getByText("正文段位校验", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("不参与审核", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("15天留存", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("作者", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("发布时间", { exact: true })).toHaveCount(0);
   await expect(page.getByText("正文允许段位", { exact: true })).toHaveCount(0);
   await expect(
     page.getByText("#二段奶粉推荐", { exact: true }).first(),

@@ -1,6 +1,7 @@
 "use client";
 
 import { Alert, Card, Descriptions, Empty, Space, Tag, Typography } from "antd";
+import { classifyTopicClickability } from "@/lib/topic-clickability";
 
 interface Candidate {
   value?: string;
@@ -11,6 +12,8 @@ interface Candidate {
   href?: string | null;
   hasHref?: boolean;
   isLinkElement?: boolean;
+  isClickable?: boolean;
+  styleFeature?: boolean;
   domPath?: string | null;
 }
 
@@ -175,13 +178,28 @@ export default function ExtractionEvidencePanel({
           {topics.length ? (
             <Space wrap>
               {topics.slice(0, 100).map((item, index) => (
-                <Tag
-                  color={item.isLinkElement && item.hasHref ? "blue" : "default"}
-                  key={`${candidateText(item)}-${index}`}
-                >
-                  {candidateText(item)} · {item.source || "未知来源"}
-                  {item.isLinkElement && item.hasHref ? " · 可点击候选" : " · 文本候选"}
-                </Tag>
+                (() => {
+                  const clickability = classifyTopicClickability(item);
+                  return (
+                    <Tag
+                      color={
+                        clickability === "CLICKABLE"
+                          ? "blue"
+                          : clickability === "UNKNOWN"
+                            ? "orange"
+                            : "default"
+                      }
+                      key={`${candidateText(item)}-${index}`}
+                    >
+                      {candidateText(item)} · {item.source || "未知来源"}
+                      {clickability === "CLICKABLE"
+                        ? " · 可点击候选"
+                        : clickability === "UNKNOWN"
+                          ? " · 可点击状态待确认"
+                          : " · 普通文本候选"}
+                    </Tag>
+                  );
+                })()
               ))}
             </Space>
           ) : (

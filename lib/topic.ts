@@ -1,6 +1,11 @@
 export function normalizeTopic(input: string): string {
-  const trimmed = input.trim().replace(/^#+/, "").trim();
-  return trimmed ? `#${trimmed}` : "";
+  const normalized = String(input || "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200d\u2060\ufeff]/gu, "")
+    .trim()
+    .replace(/^[#＃]+\s*/u, "")
+    .replace(/\s+/gu, "");
+  return normalized ? `#${normalized}` : "";
 }
 
 export function compareTopic(

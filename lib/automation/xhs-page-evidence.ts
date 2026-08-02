@@ -1,5 +1,7 @@
 import type { Page, Response } from "playwright";
 import type { ExtractedTopic, PageStatus } from "@/lib/types";
+import { normalizeTopic } from "@/lib/topic";
+import { classifyTopicClickability } from "@/lib/topic-clickability";
 
 export interface TextCandidate {
   value: string;
@@ -49,9 +51,10 @@ export interface DomPageSnapshot extends XhsPageCandidates {
     id: string | null;
     className: string | null;
   }>;
+  domHasVideo: boolean;
 }
 
-const HASHTAG_PATTERN = /#[\p{L}\p{N}_+\-·]{1,60}/gu;
+const HASHTAG_PATTERN = /[#＃]\s*[\p{L}\p{N}_+\-·]{1,60}/gu;
 const NOTE_ID_PATTERN = /^[a-f0-9]{16,32}$/iu;
 
 function cleanText(value: unknown, maximum = 10_000) {
@@ -112,8 +115,8 @@ function addTopicsFromText(
 }
 
 function addTopicCandidate(target: TopicCandidate[], candidate: TopicCandidate) {
-  const displayText = cleanText(candidate.displayText, 100);
-  if (!displayText.startsWith("#")) return;
+  const displayText = normalizeTopic(cleanText(candidate.displayText, 100));
+  if (!displayText) return;
   const existing = target.find((item) => item.displayText === displayText);
   if (!existing) {
     target.push({
@@ -123,9 +126,14 @@ function addTopicCandidate(target: TopicCandidate[], candidate: TopicCandidate) 
     });
     return;
   }
-  const existingScore = Number(existing.isLinkElement) + Number(existing.hasHref);
-  const candidateScore =
-    Number(candidate.isLinkElement) + Number(candidate.hasHref);
+  const score = (item: TopicCandidate) =>
+    (classifyTopicClickability(item) === "CLICKABLE" ? 10 : 0) +
+    Number(item.isLinkElement) +
+    Number(item.hasHref) +
+    Number(Boolean(item.href)) +
+    Number(item.styleFeature);
+  const existingScore = score(existing);
+  const candidateScore = score(candidate);
   if (candidateScore > existingScore) {
     Object.assign(existing, candidate, {
       displayText,
@@ -564,7 +572,7 @@ export async function collectDomPageSnapshot(
       "[class*='topic']",
     ]);
     for (const anchor of document.querySelectorAll("a")) {
-      if ((anchor.textContent || "").includes("#")) topicElements.push(anchor);
+      if (/[#＃]/u.test(anchor.textContent || "")) topicElements.push(anchor);
     }
     const topicCandidates: Array<{
       displayText: string;
@@ -579,7 +587,8 @@ export async function collectDomPageSnapshot(
       .filter((element, index, all) => all.indexOf(element) === index)
       .flatMap((element) => {
         const elementText = (element.textContent || "").trim();
-        const topics = elementText.match(/#[\p{L}\p{N}_+\-·]{1,60}/gu) || [];
+        const topics =
+          elementText.match(/[#＃]\s*[\p{L}\p{N}_+\-·]{1,60}/gu) || [];
         const href = element.getAttribute("href");
         const style = getComputedStyle(element);
         return topics.map((displayText) => ({
@@ -601,7 +610,7 @@ export async function collectDomPageSnapshot(
       });
 
     const candidateText = bodyCandidates.map((item) => item.value).join("\n");
-    for (const displayText of candidateText.match(/#[\p{L}\p{N}_+\-·]{1,60}/gu) || []) {
+    for (const displayText of candidateText.match(/[#＃]\s*[\p{L}\p{N}_+\-·]{1,60}/gu) || []) {
       topicCandidates.push({
         displayText,
         isLinkElement: false,
@@ -614,7 +623,7 @@ export async function collectDomPageSnapshot(
       });
     }
     if (detailLikePage) {
-      for (const displayText of text.match(/#[\p{L}\p{N}_+\-·]{1,60}/gu) || []) {
+      for (const displayText of text.match(/[#＃]\s*[\p{L}\p{N}_+\-·]{1,60}/gu) || []) {
         topicCandidates.push({
           displayText,
           isLinkElement: false,
@@ -658,18 +667,33 @@ export async function collectDomPageSnapshot(
         "img,picture,source,[data-src],[data-original],[data-lazy-src],[srcset],[style*='background-image']",
       ),
     ]);
+    const stableMediaKey = (value: string) => {
+      if (
+        !value ||
+        /^(?:data:|blob:)/iu.test(value) ||
+        /(?:placeholder|loading|spacer|transparent|avatar|emoji|icon)/iu.test(
+          value,
+        )
+      ) {
+        return "";
+      }
+      try {
+        const parsed = new URL(value, location.href);
+        parsed.hash = "";
+        parsed.search = "";
+        parsed.pathname = parsed.pathname
+          .replace(/![^/]+$/u, "")
+          .replace(/(?:_|-)\d{2,4}x\d{1,4}(?=\.[a-z0-9]+$)/iu, "");
+        return `${parsed.host}${parsed.pathname}`;
+      } catch {
+        return value.split(/[?#]/u)[0];
+      }
+    };
     for (const element of imageNodes) {
       if (element.closest(excluded)) continue;
       const slide = element.closest(
         "[data-swiper-slide-index],[data-index],[class*='swiper-slide'],[class*='carousel-item'],[class*='slide-item']",
       );
-      const groupKey = slide
-        ? `slide:${
-            slide.getAttribute("data-swiper-slide-index") ||
-            slide.getAttribute("data-index") ||
-            elementPath(slide)
-          }`
-        : `node:${elementPath(element)}`;
       const values = [
         element.getAttribute("src"),
         element.getAttribute("data-src"),
@@ -681,10 +705,22 @@ export async function collectDomPageSnapshot(
       const background = getComputedStyle(element).backgroundImage;
       const backgroundMatch = background.match(/url\((['"]?)(.*?)\1\)/);
       if (backgroundMatch?.[2]) values.push(backgroundMatch[2]);
+      const mediaValue = values.find((value) => stableMediaKey(value));
+      if (!mediaValue) continue;
+      const picture = element.closest("picture");
+      const groupKey = slide
+        ? `slide:${
+            slide.getAttribute("data-swiper-slide-index") ||
+            slide.getAttribute("data-index") ||
+            elementPath(slide)
+          }`
+        : picture
+          ? `picture:${elementPath(picture)}`
+          : `media:${stableMediaKey(mediaValue)}`;
       imageCandidates.push({
         source: "DOM_MEDIA",
         groupKey,
-        url: values[0] ? absoluteUrl(values[0]) : null,
+        url: absoluteUrl(mediaValue),
         domPath: elementPath(element),
       });
     }
@@ -808,5 +844,6 @@ export async function collectDomPageSnapshot(
     pageStatus: snapshot.pageStatus,
     keyElementCount: snapshot.keyElementCount,
     domSummary: snapshot.domSummary,
+    domHasVideo: snapshot.hasVideo,
   };
 }

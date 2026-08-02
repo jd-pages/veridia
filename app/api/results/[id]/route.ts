@@ -1,5 +1,6 @@
+import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
+import { deleteAuditResults } from "@/lib/audit-result-deletion";
 import { prisma } from "@/lib/db";
-import { fail, ok, requireApiUser } from "@/lib/api";
 import { normalizeProductStageTopicValue } from "@/lib/product-stage";
 
 export async function GET(
@@ -56,3 +57,16 @@ export async function GET(
   });
   return ok({ ...result, currentStageGroup, operationLogs });
 }
+
+export const DELETE = withApiErrorBoundary(async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const user = await requireApiUser(["ADMIN"]);
+  if (user instanceof Response) return user;
+  const { id } = await params;
+  if (!id.trim()) return fail("审核结果 ID 格式不正确", 400);
+  return ok(
+    await deleteAuditResults({ ids: [id], userId: user.id, mode: "SINGLE" }),
+  );
+}, "删除审核结果");

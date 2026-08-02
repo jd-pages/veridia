@@ -14,6 +14,7 @@ import {
 } from "antd";
 import {
   CheckOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   EllipsisOutlined,
   ExportOutlined,
@@ -53,6 +54,7 @@ import {
   ResultExportError,
 } from "@/lib/result-export-client";
 import { productStageTopicLabel } from "@/lib/product-stage";
+import { pageAfterResultDeletion } from "@/components/results/deletion-state";
 import type { SessionUser } from "@/lib/auth";
 import styles from "@/components/results/results-workbench.module.css";
 
@@ -156,7 +158,7 @@ function ContentStatusCell({ row }: { row: ResultRow }) {
 
 export default function ResultsPage() {
   const router = useRouter();
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [data, setData] = useState<ResultPageData>({
     total: 0,
     page: 1,
@@ -184,6 +186,8 @@ export default function ResultsPage() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [exporting, setExporting] = useState(false);
   const exportLockRef = useRef(false);
+  const [deletingIds, setDeletingIds] = useState<React.Key[]>([]);
+  const deleteLockRef = useRef(false);
   const [drawerRow, setDrawerRow] = useState<ResultRow | null>(null);
   const [drawerDetail, setDrawerDetail] = useState<ResultDetail | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
@@ -191,6 +195,7 @@ export default function ResultsPage() {
     null,
   );
   const canOperate = currentRole === "ADMIN" || currentRole === "OPERATOR";
+  const canDelete = currentRole === "ADMIN";
 
   const loadSummary = useCallback(async (
     targetFilters: ResultFilters,
@@ -399,6 +404,74 @@ export default function ResultsPage() {
     }
   };
 
+  const deleteResults = async (
+    ids: React.Key[],
+    mode: "SINGLE" | "BULK",
+  ) => {
+    if (deleteLockRef.current || !ids.length) return;
+    deleteLockRef.current = true;
+    setDeletingIds(ids);
+    try {
+      const result =
+        mode === "SINGLE"
+          ? await apiFetch<{ deletedCount: number; deletedIds: string[] }>(
+              `/api/results/${encodeURIComponent(String(ids[0]))}`,
+              { method: "DELETE" },
+            )
+          : await apiFetch<{ deletedCount: number; deletedIds: string[] }>(
+              "/api/results/batch-delete",
+              {
+                method: "POST",
+                body: JSON.stringify({ ids: ids.map(String) }),
+              },
+            );
+
+      if (drawerRow && result.deletedIds.includes(drawerRow.id)) {
+        setDrawerRow(null);
+        setDrawerDetail(null);
+      }
+      setSelected([]);
+      const targetPage = pageAfterResultDeletion({
+        total: data.total,
+        page: data.page,
+        pageSize: data.pageSize,
+        deletedCount: result.deletedCount,
+      });
+      await load(
+        targetPage,
+        data.pageSize,
+        appliedFilters,
+        appliedAdvancedFilters,
+      );
+      message.success(`已成功删除 ${result.deletedCount} 条审核结果`);
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : "删除审核结果失败",
+      );
+      throw error;
+    } finally {
+      deleteLockRef.current = false;
+      setDeletingIds([]);
+    }
+  };
+
+  const confirmDelete = (ids: React.Key[], mode: "SINGLE" | "BULK") => {
+    if (!canDelete || !ids.length || deleteLockRef.current) return;
+    const count = ids.length;
+    modal.confirm({
+      title:
+        mode === "SINGLE" ? "确认删除该审核结果？" : "确认批量删除？",
+      content:
+        mode === "SINGLE"
+          ? "删除后，该审核结果及其关联审核明细将无法恢复，但不会删除原审核任务、导入记录、产品、活动或规则。"
+          : `即将删除已选择的 ${count} 条审核结果及其关联审核明细，删除后无法恢复。`,
+      cancelText: "取消",
+      okText: "确认删除",
+      okButtonProps: { danger: true },
+      onOk: () => deleteResults(ids, mode),
+    });
+  };
+
   const rowMenu = (row: ResultRow): MenuProps["items"] => {
     const readOnlyItems: MenuProps["items"] = [
       {
@@ -418,50 +491,63 @@ export default function ResultsPage() {
       },
     ];
     if (!canOperate) return readOnlyItems;
-    return [
-    {
-      key: "reaudit",
-      icon: <ReloadOutlined />,
-      label: "重新审核",
-      onClick: () => void bulk("RE_AUDIT", [row.id]),
-    },
-    {
-      key: "pass",
-      icon: <CheckOutlined />,
-      label: "人工通过",
-      onClick: () => void bulk("MANUAL_PASS", [row.id]),
-    },
-    {
-      key: "fail",
-      icon: <StopOutlined />,
-      danger: true,
-      label: "人工不通过",
-      onClick: () => void bulk("MANUAL_FAIL", [row.id]),
-    },
-    { type: "divider" },
-    {
-      key: "open",
-      icon: <ExportOutlined />,
-      label: (
-        <a href={row.note.url} target="_blank" rel="noreferrer">
-          打开原笔记
-        </a>
-      ),
-    },
-    {
-      key: "export",
-      icon: <DownloadOutlined />,
-      label: "导出单条",
-      onClick: () =>
-        void runExport(new URLSearchParams({ ids: row.id })),
-    },
-    {
-      key: "raw",
-      icon: <FileTextOutlined />,
-      label: "查看原始提取数据",
-      onClick: () => void openDrawer(row),
-    },
+    const items: MenuProps["items"] = [
+      {
+        key: "reaudit",
+        icon: <ReloadOutlined />,
+        label: "重新审核",
+        onClick: () => void bulk("RE_AUDIT", [row.id]),
+      },
+      {
+        key: "pass",
+        icon: <CheckOutlined />,
+        label: "人工通过",
+        onClick: () => void bulk("MANUAL_PASS", [row.id]),
+      },
+      {
+        key: "fail",
+        icon: <StopOutlined />,
+        danger: true,
+        label: "人工不通过",
+        onClick: () => void bulk("MANUAL_FAIL", [row.id]),
+      },
+      { type: "divider" },
+      {
+        key: "open",
+        icon: <ExportOutlined />,
+        label: (
+          <a href={row.note.url} target="_blank" rel="noreferrer">
+            打开原笔记
+          </a>
+        ),
+      },
+      {
+        key: "export",
+        icon: <DownloadOutlined />,
+        label: "导出单条",
+        onClick: () =>
+          void runExport(new URLSearchParams({ ids: row.id })),
+      },
+      {
+        key: "raw",
+        icon: <FileTextOutlined />,
+        label: "查看原始提取数据",
+        onClick: () => void openDrawer(row),
+      },
     ];
+    if (canDelete) {
+      items.push(
+        { type: "divider" },
+        {
+          key: "delete",
+          danger: true,
+          icon: <DeleteOutlined />,
+          label: "删除该结果",
+          onClick: () => confirmDelete([row.id], "SINGLE"),
+        },
+      );
+    }
+    return items;
   };
 
   const columns: TableColumnsType<ResultRow> = [
@@ -608,8 +694,11 @@ export default function ResultsPage() {
 
       {canOperate && <BatchActionBar
         selectedCount={selected.length}
+        canDelete={canDelete}
+        deleting={deletingIds.length > 0}
         onAction={(action) => void bulk(action)}
         onExport={exportSelected}
+        onDelete={() => confirmDelete(selected, "BULK")}
         onClear={() => setSelected([])}
       />}
 

@@ -30,6 +30,7 @@ export interface ExtractedTopic {
   textColor?: string | null;
   styleFeature: boolean;
   domPath?: string | null;
+  source?: string | null;
 }
 
 export interface ExtractedNote {

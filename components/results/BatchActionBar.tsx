@@ -4,6 +4,7 @@ import { Button, Tooltip } from "antd";
 import {
   CheckOutlined,
   CloseOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   ReloadOutlined,
   StopOutlined,
@@ -13,16 +14,22 @@ import styles from "./results-workbench.module.css";
 
 export default function BatchActionBar({
   selectedCount,
+  canDelete,
+  deleting,
   onAction,
   onExport,
+  onDelete,
   onClear,
 }: {
   selectedCount: number;
+  canDelete: boolean;
+  deleting: boolean;
   onAction: (action: BulkAction) => void;
   onExport: () => void;
+  onDelete: () => void;
   onClear: () => void;
 }) {
-  const disabled = selectedCount === 0;
+  const disabled = selectedCount === 0 || deleting;
   return (
     <section
       className={`${styles.batchBar} ${
@@ -66,6 +73,17 @@ export default function BatchActionBar({
             导出所选
           </Button>
         </Tooltip>
+        {canDelete && (
+          <Button
+            danger
+            disabled={selectedCount === 0 || deleting}
+            icon={<DeleteOutlined />}
+            loading={deleting}
+            onClick={onDelete}
+          >
+            批量删除（{selectedCount}）
+          </Button>
+        )}
         <Button
           type="text"
           disabled={disabled}

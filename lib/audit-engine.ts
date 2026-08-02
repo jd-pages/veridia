@@ -7,6 +7,10 @@ import type {
 } from "@/lib/types";
 import { compareTopic, normalizeTopic } from "@/lib/topic";
 import {
+  classifyTopicCandidates,
+  type TopicClickability,
+} from "@/lib/topic-clickability";
+import {
   detectBodyProductStages,
   productStageTopicLabel,
 } from "@/lib/product-stage";
@@ -21,17 +25,25 @@ const pageFailureLabels: Record<string, string> = {
   NEEDS_CONFIRMATION: "页面状态需要人工确认",
 };
 
-function topicIsClickable(topic: ExtractedTopic): boolean {
-  return Boolean(topic.isLinkElement && topic.hasHref && topic.href && topic.styleFeature);
-}
-
-function findExactTopic(
+function findExactTopics(
   topics: ExtractedTopic[],
   expected: string,
   caseSensitive: boolean,
-): ExtractedTopic | undefined {
-  return topics.find((topic) =>
+): ExtractedTopic[] {
+  return topics.filter((topic) =>
     compareTopic(topic.displayText, expected, caseSensitive),
+  );
+}
+
+function preferredTopicCandidate(
+  candidates: ExtractedTopic[],
+  clickability: TopicClickability,
+) {
+  return (
+    candidates.find(
+      (candidate) =>
+        classifyTopicCandidates([candidate]) === clickability,
+    ) || candidates[0]
   );
 }
 
@@ -51,6 +63,7 @@ export function evaluateAudit(
   const missingTopics: string[] = [];
   const forbiddenTopics: string[] = [];
   const clickableChecks: boolean[] = [];
+  let clickabilityNeedsReview = false;
   const technicalWarnings = new Set(note.technicalWarnings || []);
   const bodyReadIncomplete = technicalWarnings.has("BODY_NOT_RECOGNIZED");
   const topicsReadIncomplete = technicalWarnings.has("TOPICS_NOT_RECOGNIZED");
@@ -303,7 +316,13 @@ export function evaluateAudit(
   for (const rule of nonAnyRules) {
     if (rule.ruleType === "ALIAS") continue;
     const expected = normalizeTopic(rule.topic);
-    const match = findExactTopic(note.topics, expected, rule.caseSensitive);
+    const matches = findExactTopics(
+      note.topics,
+      expected,
+      rule.caseSensitive,
+    );
+    const clickability = classifyTopicCandidates(matches);
+    const match = preferredTopicCandidate(matches, clickability);
     const clickableRequired =
       rule.clickableRequired || context.clickableTopicRequired;
 
@@ -325,9 +344,13 @@ export function evaluateAudit(
       continue;
     }
 
-    const present = Boolean(match);
-    const clickable = match ? topicIsClickable(match) : false;
-    const passed = present && (!clickableRequired || clickable);
+    const present = matches.length > 0;
+    const clickable = clickability === "CLICKABLE";
+    const clickabilityUnknown =
+      present && clickableRequired && clickability === "UNKNOWN";
+    const passed =
+      present &&
+      (!clickableRequired || clickability !== "NOT_CLICKABLE");
     let failureReason: string | undefined;
     if (!present) {
       const expectedBody = expected.replace(/^#/u, "");
@@ -342,11 +365,17 @@ export function evaluateAudit(
       failureReason = nearMatch
         ? `话题文字不准确：要求 ${expected}，实际 ${normalizeTopic(nearMatch.displayText)}`
         : `缺少精确话题 ${expected}`;
-    } else if (clickableRequired && !clickable) {
+    } else if (
+      clickableRequired &&
+      clickability === "NOT_CLICKABLE"
+    ) {
       failureReason = `要求话题不可点击 ${expected}`;
     }
 
-    if (present && clickableRequired) clickableChecks.push(clickable);
+    if (present && clickableRequired) {
+      clickableChecks.push(clickability !== "NOT_CLICKABLE");
+      clickabilityNeedsReview ||= clickabilityUnknown;
+    }
 
     evaluations.push({
       ruleKey: `TOPIC_${rule.id}`,
@@ -365,7 +394,9 @@ export function evaluateAudit(
       actualValue: present
         ? clickable
           ? "精确出现，可点击"
-          : "精确出现，不可点击"
+          : clickabilityUnknown
+            ? "精确出现，可点击状态需人工确认"
+            : "精确出现，不可点击"
         : "未精确出现",
       passed,
       failureReason,
@@ -378,7 +409,8 @@ export function evaluateAudit(
               hasHref: match.hasHref,
               href: match.href,
               styleFeature: match.styleFeature,
-              finalClickable: clickable,
+              source: match.source || null,
+              finalClickability: clickability,
             }
           : null,
       },
@@ -391,21 +423,36 @@ export function evaluateAudit(
 
   if (anyRules.length) {
     for (const rule of anyRules) {
-      const topic = findExactTopic(note.topics, rule.topic, rule.caseSensitive);
-      if (topic && rule.clickableRequired) {
-        clickableChecks.push(topicIsClickable(topic));
+      const topics = findExactTopics(
+        note.topics,
+        rule.topic,
+        rule.caseSensitive,
+      );
+      const clickability = classifyTopicCandidates(topics);
+      if (topics.length && rule.clickableRequired) {
+        clickableChecks.push(clickability !== "NOT_CLICKABLE");
+        clickabilityNeedsReview ||= clickability === "UNKNOWN";
       }
     }
     const matches = anyRules
-      .map((rule) => ({
-        rule,
-        topic: findExactTopic(note.topics, rule.topic, rule.caseSensitive),
-      }))
+      .map((rule) => {
+        const topics = findExactTopics(
+          note.topics,
+          rule.topic,
+          rule.caseSensitive,
+        );
+        const clickability = classifyTopicCandidates(topics);
+        return {
+          rule,
+          topic: preferredTopicCandidate(topics, clickability),
+          clickability,
+        };
+      })
       .filter(
         (entry) =>
           Boolean(entry.topic) &&
           (!entry.rule.clickableRequired ||
-            (entry.topic ? topicIsClickable(entry.topic) : false)),
+            entry.clickability !== "NOT_CLICKABLE"),
       );
     const minCount = Math.max(...anyRules.map((rule) => rule.minCount), 1);
     const passed = matches.length >= minCount;
@@ -444,7 +491,7 @@ export function evaluateAudit(
   if (!pagePassed) {
     autoStatus =
       note.pageStatus === "READ_FAILED" ? "READ_FAILED" : "NEEDS_REVIEW";
-  } else if (technicalWarnings.size > 0) {
+  } else if (technicalWarnings.size > 0 || clickabilityNeedsReview) {
     autoStatus = "NEEDS_REVIEW";
   } else if (failures.length) {
     autoStatus = "FAILED";

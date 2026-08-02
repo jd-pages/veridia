@@ -112,7 +112,7 @@ export default function AuditFilterPanel({
           />
         </FilterField>
         <FilterField label="日期范围">
-          <Space.Compact block>
+          <Space.Compact block className={styles.dateRangeControl}>
             <DatePicker
               allowClear
               inputReadOnly

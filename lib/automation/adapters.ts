@@ -109,6 +109,7 @@ export class PlaywrightXiaohongshuAdapter
       textColor: topic.textColor,
       styleFeature: topic.styleFeature,
       domPath: topic.domPath,
+      source: topic.source,
     }));
     const title =
       candidates.titleCandidates.find(
@@ -117,14 +118,17 @@ export class PlaywrightXiaohongshuAdapter
     const body =
       candidates.bodyCandidates.find((item) => item.value.trim().length > 0)
         ?.value || null;
-    const noteType = candidates.hasVideo
+    const reliableImageCandidates = candidates.imageCandidates.filter(
+      (candidate) => candidate.source === "DOM_MEDIA",
+    );
+    const noteType = domSnapshot.domHasVideo
       ? "VIDEO_NOTE"
-      : candidates.imageCandidates.length > 0
+      : reliableImageCandidates.length > 0
         ? "IMAGE_TEXT"
         : "UNKNOWN";
-    const imageExtractionStatus = candidates.hasVideo
+    const imageExtractionStatus = domSnapshot.domHasVideo
       ? "VIDEO_NOTE"
-      : candidates.imageCandidates.length > 0
+      : reliableImageCandidates.length > 0
         ? "SUCCESS"
         : "IMAGES_READ_FAILED";
 
@@ -144,7 +148,7 @@ export class PlaywrightXiaohongshuAdapter
       imageExtractionStatus,
       imageCount:
         imageExtractionStatus === "SUCCESS"
-          ? candidates.imageCandidates.length
+          ? reliableImageCandidates.length
           : undefined,
       publishedAt: null,
       extractedAt: new Date().toISOString(),
