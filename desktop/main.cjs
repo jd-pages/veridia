@@ -35,6 +35,7 @@ const {
 } = require("./prisma-environment.cjs");
 
 const APP_NAME = "VERIDIA";
+const UPDATE_REPOSITORY = "jd-pages/veridia";
 const PORT = 3100;
 const HOST = "127.0.0.1";
 const HEALTH_PATH = "/api/health";
@@ -68,6 +69,7 @@ let serverLogStream;
 let quitting = false;
 let lastUpdateInfo = null;
 let lastUpdateStatus = { state: "idle" };
+let updateDownloadMode = "checking";
 let manualUpdateCheck = false;
 let updateCheckPromise;
 let updateDownloadPromise;
@@ -602,6 +604,29 @@ function sendUpdateStatus(payload) {
   }
 }
 
+function releaseDownloadBaseUrl(version) {
+  return `https://github.com/${UPDATE_REPOSITORY}/releases/download/v${version}/`;
+}
+
+function setUpdateDownloadMode(mode) {
+  updateDownloadMode = mode;
+  if (lastUpdateStatus.state === "downloading") {
+    sendUpdateStatus({ ...lastUpdateStatus, downloadMode: mode });
+  }
+}
+
+function writeUpdaterLog(level, value) {
+  const message = String(value || "");
+  writeLog(`自动更新[${level}] ${message}`);
+  if (/fallback to full download|full download/iu.test(message)) {
+    setUpdateDownloadMode("full");
+  } else if (
+    /download block maps|differential download|to download:/iu.test(message)
+  ) {
+    setUpdateDownloadMode("differential");
+  }
+}
+
 function normalizedReleaseNotes(value) {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
@@ -625,6 +650,15 @@ function setupUpdater() {
     // non-default drive and registry discovery is unavailable.
     autoUpdater.installDirectory = installDirectory();
   }
+  autoUpdater.previousBlockmapBaseUrlOverride = releaseDownloadBaseUrl(
+    app.getVersion(),
+  );
+  autoUpdater.logger = {
+    debug: (message) => writeUpdaterLog("debug", message),
+    info: (message) => writeUpdaterLog("info", message),
+    warn: (message) => writeUpdaterLog("warn", message),
+    error: (message) => writeUpdaterLog("error", message),
+  };
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowDowngrade = false;
@@ -656,6 +690,7 @@ function setupUpdater() {
       transferred: progress.transferred,
       total: progress.total,
       bytesPerSecond: progress.bytesPerSecond,
+      downloadMode: updateDownloadMode,
       info: lastUpdateInfo,
     }),
   );
@@ -875,6 +910,7 @@ function registerIpc() {
   );
   ipcMain.handle("veridia:check-update", () => checkForUpdates(true));
   ipcMain.handle("veridia:download-update", async () => {
+    updateDownloadMode = "checking";
     updateDownloadPromise ??= autoUpdater.downloadUpdate().finally(() => {
       updateDownloadPromise = undefined;
     });

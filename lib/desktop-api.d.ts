@@ -23,6 +23,7 @@ declare global {
     transferred?: number;
     total?: number;
     bytesPerSecond?: number;
+    downloadMode?: "checking" | "differential" | "full";
     message?: string;
     manual?: boolean;
   }

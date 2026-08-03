@@ -24,6 +24,30 @@ describe("Windows desktop automatic updates", () => {
     expect(desktopMain).toContain("path.dirname(process.execPath)");
   });
 
+  it("uses tag-specific GitHub blockmaps and keeps differential updates enabled", () => {
+    const desktopMain = source("desktop/main.cjs");
+    const afterPack = source("scripts/after-pack.mjs");
+    const packageJson = JSON.parse(source("package.json"));
+
+    expect(packageJson.build.publish).toEqual([
+      { provider: "github", owner: "jd-pages", repo: "veridia" },
+    ]);
+    expect(packageJson.build.nsis.differentialPackage).toBe(true);
+    expect(desktopMain).toContain("previousBlockmapBaseUrlOverride");
+    expect(desktopMain).toContain("releases/download/v${version}/");
+    expect(afterPack).toContain('"provider: github"');
+    expect(afterPack).not.toContain('"provider: generic"');
+  });
+
+  it("persists updater diagnostics and exposes the selected download mode", () => {
+    const desktopMain = source("desktop/main.cjs");
+
+    expect(desktopMain).toContain("autoUpdater.logger =");
+    expect(desktopMain).toContain("Download block maps".toLowerCase());
+    expect(desktopMain).toContain("fallback to full download");
+    expect(desktopMain).toContain("downloadMode: updateDownloadMode");
+  });
+
   it("keeps a stable installer identity and the existing install mode", () => {
     const packageJson = JSON.parse(source("package.json"));
 

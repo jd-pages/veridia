@@ -120,6 +120,9 @@
       "node_modules/@prisma/**/*",
       "node_modules/.prisma/**/*",
       "package.json",
+      "!**/*.map",
+      "!**/*.log",
+      "!**/{test,tests,__tests__,doc,docs,example,examples}/**/*",
       "!创建VERIDIA账号.bat",
       "!创建VERIDIA密码重置码.bat",
       "!创建VERIDIA账号更新码.bat",
@@ -149,8 +152,9 @@
     },
     "publish": [
       {
-        "provider": "generic",
-        "url": "${env.VERIDIA_UPDATE_URL}"
+        "provider": "github",
+        "owner": "jd-pages",
+        "repo": "veridia"
       }
     ],
     "nsis": {
@@ -160,6 +164,7 @@
       "perMachine": false,
       "allowElevation": true,
       "packElevateHelper": true,
+      "differentialPackage": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "VERIDIA",

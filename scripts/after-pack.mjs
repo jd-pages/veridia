@@ -96,21 +96,26 @@ export async function afterPack(context) {
       throw new Error(`Electron 产物缺少 Playwright 外部模块别名：${alias}`);
     }
   }
-  const updateUrl =
-    process.env.VERIDIA_UPDATE_URL ||
-    "https://github.com/jd-pages/veridia/releases/latest/download";
-  const parsedUpdateUrl = new URL(updateUrl);
-  if (
-    parsedUpdateUrl.protocol !== "https:" ||
-    parsedUpdateUrl.hostname !== "github.com"
-  ) {
-    throw new Error("VERIDIA 软件更新地址必须使用 GitHub HTTPS Release");
+  const configuredRepository = process.env.GITHUB_REPOSITORY || "";
+  const repositoryUrl =
+    typeof context.packager.appInfo.metadata.repository === "string"
+      ? context.packager.appInfo.metadata.repository
+      : context.packager.appInfo.metadata.repository?.url || "";
+  const updateUrl = process.env.VERIDIA_UPDATE_URL || repositoryUrl;
+  const updateRepository =
+    configuredRepository ||
+    updateUrl.match(/github\.com[/:]([^/]+\/[^/.]+)(?:\.git)?(?:\/|$)/i)?.[1] ||
+    "";
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(updateRepository)) {
+    throw new Error("VERIDIA 软件更新仓库必须是有效的 GitHub owner/repo");
   }
+  const [owner, repo] = updateRepository.split("/");
   fs.writeFileSync(
     path.join(context.appOutDir, "resources", "app-update.yml"),
     [
-      "provider: generic",
-      `url: ${updateUrl}`,
+      "provider: github",
+      `owner: ${owner}`,
+      `repo: ${repo}`,
       "updaterCacheDirName: veridia-updater",
       "",
     ].join("\n"),

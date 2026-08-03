@@ -42,10 +42,15 @@ Electron 主进程使用 `electron-updater`：
 - 下载完成后由用户决定何时重启安装。
 - 同一时间只允许一个检查请求和一个下载任务。
 - 更新程序仅覆盖安装目录；`%LOCALAPPDATA%\VERIDIA` 不在更新范围内。
+- GitHub provider 使用带版本 Tag 的 Release URL，并从当前版本 Release 读取旧
+  blockmap、从目标版本 Release 读取新 blockmap；差分失败时自动回退完整 EXE。
+- 下载界面显示已下载大小、总大小、速度、预计剩余时间和差分/完整更新状态。
+- updater 诊断信息写入本地数据目录的 `logs\desktop.log`，可搜索
+  `Download block maps`、`differential` 和 `fallback to full download`。
 
-`latest.yml` 中的更新地址由构建环境变量 `VERIDIA_UPDATE_URL` 写入。私有 GitHub
-仓库的 Release 附件不能被未登录客户端匿名下载，因此正式分发时需要提供一个客户端可读取的
-HTTPS 更新地址，或部署带企业身份验证的更新服务。禁止把 GitHub Token 写入桌面应用。
+每个软件 Release 必须同时上传 EXE、同名 `.exe.blockmap` 和 `latest.yml`。当前公开
+GitHub 仓库由客户端匿名读取；禁止把 GitHub Token 写入桌面应用。如果未来改为私有仓库，
+需要另行部署客户端可读取且能保留历史版本 blockmap 的 HTTPS 更新服务。
 
 ## 数据库迁移与回滚
 

@@ -3,6 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { App, Button, Modal, Progress, Space, Typography } from "antd";
 import { CloudDownloadOutlined, ReloadOutlined } from "@ant-design/icons";
+import {
+  estimateUpdateSeconds,
+  formatUpdateBytes,
+  formatUpdateSpeed,
+  updateModeLabel,
+} from "@/lib/update-download-progress";
 
 function notesAsLines(notes?: string) {
   return (notes || "本次更新包含稳定性改进与问题修复。")
@@ -20,6 +26,11 @@ export default function DesktopUpdateCenter() {
   const notes = useMemo(
     () => notesAsLines(status.info?.releaseNotes),
     [status.info?.releaseNotes],
+  );
+  const remainingSeconds = estimateUpdateSeconds(
+    status.transferred,
+    status.total,
+    status.bytesPerSecond,
   );
 
   useEffect(() => {
@@ -91,12 +102,24 @@ export default function DesktopUpdateCenter() {
       }
     >
       {status.state === "downloading" ? (
-        <>
+        <Space direction="vertical" size={6} style={{ width: "100%" }}>
           <Progress percent={status.percent || 0} status="active" />
+          <Typography.Text>
+            已下载：{formatUpdateBytes(status.transferred)} / {formatUpdateBytes(status.total)}
+          </Typography.Text>
+          <Typography.Text>
+            速度：{formatUpdateSpeed(status.bytesPerSecond)}
+          </Typography.Text>
+          <Typography.Text>
+            预计剩余：{remainingSeconds === null ? "计算中" : `${remainingSeconds} 秒`}
+          </Typography.Text>
+          <Typography.Text>
+            当前方式：{updateModeLabel(status.downloadMode)}
+          </Typography.Text>
           <Typography.Text type="secondary">
             下载完成后会询问是否重启安装，不会中断当前审核。
           </Typography.Text>
-        </>
+        </Space>
       ) : status.state === "downloaded" ? (
         <Typography.Paragraph>
           新版本已下载并校验完成。重启 VERIDIA 后将自动安装，用户数据库和小红书登录会话不会被覆盖。
