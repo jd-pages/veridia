@@ -146,7 +146,12 @@ try {
   run("桌面健康检查", "npm.cmd", ["run", "test:desktop-health"]);
 
   const e2eDatabasePath = path.join(root, "prisma", "release-e2e.db");
+  const e2eNextDistDir = path.join(".playwright", "next-release");
   fs.rmSync(e2eDatabasePath, { force: true });
+  fs.rmSync(path.join(root, e2eNextDistDir), {
+    recursive: true,
+    force: true,
+  });
   const e2eEnv = {
     DATABASE_URL: "file:./release-e2e.db",
     E2E_DATABASE_URL: `file:${e2eDatabasePath}`,
@@ -155,6 +160,7 @@ try {
     AI_ENABLED: "false",
     E2E_PORT: "3210",
     E2E_REUSE_SERVER: "false",
+    VERIDIA_NEXT_DIST_DIR: e2eNextDistDir,
     PLAYWRIGHT_BROWSER_CHANNEL: "",
     RUST_LOG: "info",
   };

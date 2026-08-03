@@ -37,6 +37,20 @@ describe("本地打包发布门禁", () => {
     expect(source).not.toContain("action-gh-release");
   });
 
+  it("本地打包验收为 E2E 使用独立且重置后的 Next.js 构建目录", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts", "release.mjs"),
+      "utf8",
+    );
+
+    expect(source).toContain(
+      'const e2eNextDistDir = path.join(".playwright", "next-release")',
+    );
+    expect(source).toContain("fs.rmSync(path.join(root, e2eNextDistDir)");
+    expect(source).toContain("VERIDIA_NEXT_DIST_DIR: e2eNextDistDir");
+    expect(source).toContain('E2E_REUSE_SERVER: "false"');
+  });
+
   it("云端发布安装完整开发依赖并在打包前检查 Electron 运行文件", () => {
     const workflow = fs.readFileSync(
       path.resolve(
