@@ -3,6 +3,7 @@
 import { Popover, Tag } from "antd";
 import { parseJsonArray } from "@/lib/client";
 import { productStageTopicLabel } from "@/lib/product-stage";
+import { auditResultListDisplay } from "@/lib/result-display";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicCandidates } from "@/lib/topic-clickability";
 import type { ResultRow } from "./types";
@@ -97,12 +98,12 @@ export function getTopicAuditSummary(row: ResultRow) {
 }
 
 export default function TopicAuditCell({ row }: { row: ResultRow }) {
-  if (["NOT_FOUND", "DELETED"].includes(row.pageStatus)) {
+  const unavailableDisplay = auditResultListDisplay(row);
+  if (unavailableDisplay) {
     return (
-      <div className={styles.stack}>
-        <span className={styles.cellPrimary}>页面失效</span>
-        <span className={styles.cellSecondary}>未执行话题审核</span>
-      </div>
+      <span className={styles.cellPrimary}>
+        {unavailableDisplay.topicAudit}
+      </span>
     );
   }
 

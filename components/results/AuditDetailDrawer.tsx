@@ -27,6 +27,10 @@ import {
   filterAuditDetailRules,
 } from "@/lib/audit-detail-visibility";
 import { productStageTopicLabel } from "@/lib/product-stage";
+import {
+  isUnavailableNoteResult,
+  unavailableNoteDetailReason,
+} from "@/lib/result-display";
 import AuditConclusionCell from "./AuditConclusionCell";
 import AuditStatusTag from "./AuditStatusTag";
 import ImageAuditCell from "./ImageAuditCell";
@@ -75,6 +79,10 @@ export default function AuditDetailDrawer({
   const visibleRuleResults = detail
     ? filterAuditDetailRules(detail.ruleResults)
     : [];
+  const pageUnavailable = row ? isUnavailableNoteResult(row) : false;
+  const pageUnavailableReason = row && pageUnavailable
+    ? unavailableNoteDetailReason(row)
+    : null;
 
   return (
     <Drawer
@@ -179,13 +187,22 @@ export default function AuditDetailDrawer({
 
           <DrawerSection title="页面与正文状态">
             <Space size={[6, 6]} wrap>
-              <AuditStatusTag value={row.pageStatus} label={auditDetailStatusLabel(row.pageStatus)} />
+              <AuditStatusTag
+                value={row.pageStatus}
+                label={
+                  pageUnavailable
+                    ? "笔记不存在"
+                    : auditDetailStatusLabel(row.pageStatus)
+                }
+              />
               <AuditStatusTag value={row.bodyStatus} label={auditDetailStatusLabel(row.bodyStatus)} />
               <AuditStatusTag value={row.noteType} label={auditDetailStatusLabel(row.noteType)} />
               <AuditStatusTag value={row.publicStatus} label={auditDetailStatusLabel(row.publicStatus)} />
             </Space>
             <div className={styles.cellSecondary}>
-              {row.bodyStatus === "UNKNOWN"
+              {pageUnavailable
+                ? "页面状态：笔记不存在"
+                : row.bodyStatus === "UNKNOWN"
                 ? "未提取到正文 / 待人工确认"
                 : `有效正文字数：${row.effectiveBodyLength ?? 0} 个字符`}
             </div>
@@ -230,6 +247,7 @@ export default function AuditDetailDrawer({
                   key: "failureMessage",
                   label: "失败原因",
                   children:
+                    pageUnavailableReason ||
                     visibleFailureReasons.join("；") ||
                     (row.task.failureMessage
                       ? auditDetailTextLabel(row.task.failureMessage)

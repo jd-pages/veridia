@@ -53,6 +53,10 @@ import {
   filterAuditDetailReasons,
   filterAuditDetailRules,
 } from "@/lib/audit-detail-visibility";
+import {
+  isUnavailableNoteResult,
+  unavailableNoteDetailReason,
+} from "@/lib/result-display";
 
 interface Product { id: string; name: string; code: string }
 interface Campaign { id: string; name: string; productId: string; month: string }
@@ -207,7 +211,10 @@ export default function ResultDetailPage() {
     ),
   );
   const productStageLabel = productStageTopicLabel(detail.task.productStage);
-  const pageUnavailable = ["NOT_FOUND", "DELETED"].includes(detail.pageStatus);
+  const pageUnavailable = isUnavailableNoteResult(detail);
+  const pageUnavailableReason = pageUnavailable
+    ? unavailableNoteDetailReason(detail)
+    : null;
   const snapshotStageTopics = stageTopicsFromRuleSnapshot(detail.ruleSnapshot);
   const requiredStageTopics = pageUnavailable
     ? []
@@ -253,7 +260,11 @@ export default function ResultDetailPage() {
             <StatusTag
               value={detail.autoStatus}
               domain="audit"
-              label={auditDetailStatusLabel(detail.autoStatus, "audit")}
+              label={
+                pageUnavailable
+                  ? "笔记不存在"
+                  : auditDetailStatusLabel(detail.autoStatus, "audit")
+              }
             />
             <Button
               type="primary"
@@ -276,7 +287,15 @@ export default function ResultDetailPage() {
           </Space>
         }
       />
-      {reasons.length && processingFailed ? (
+      {pageUnavailable ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="笔记不存在"
+          description={pageUnavailableReason}
+          style={{ marginBottom: 16 }}
+        />
+      ) : reasons.length && processingFailed ? (
         <Alert
           type="warning"
           showIcon
@@ -317,7 +336,7 @@ export default function ResultDetailPage() {
           <Card className="surface-card" title="笔记基础信息">
             <Descriptions column={2} bordered size="small">
               <Descriptions.Item label="笔记ID">{detail.note.platformNoteId || "-"}</Descriptions.Item>
-              <Descriptions.Item label="页面状态"><StatusTag value={detail.pageStatus} label={auditDetailStatusLabel(detail.pageStatus)} /></Descriptions.Item>
+              <Descriptions.Item label="页面状态"><StatusTag value={detail.pageStatus} label={pageUnavailable ? "笔记不存在" : auditDetailStatusLabel(detail.pageStatus)} /></Descriptions.Item>
               <Descriptions.Item label="产品">{detail.task.product.name}</Descriptions.Item>
               <Descriptions.Item label="活动">{detail.task.campaign.name}</Descriptions.Item>
               <Descriptions.Item label="产品阶段话题" span={2}>
@@ -347,8 +366,18 @@ export default function ResultDetailPage() {
               <Descriptions.Item label="处理状态">
                 <StatusTag value={detail.task.status} domain="process" label={auditDetailStatusLabel(detail.task.status, "process")} />
               </Descriptions.Item>
+              <Descriptions.Item label="页面状态">
+                <StatusTag
+                  value={detail.pageStatus}
+                  label={
+                    pageUnavailable
+                      ? "笔记不存在"
+                      : auditDetailStatusLabel(detail.pageStatus)
+                  }
+                />
+              </Descriptions.Item>
               <Descriptions.Item label="审核结论">
-                <StatusTag value={detail.autoStatus} domain="audit" label={auditDetailStatusLabel(detail.autoStatus, "audit")} />
+                <StatusTag value={detail.autoStatus} domain="audit" label={pageUnavailable ? "笔记不存在" : auditDetailStatusLabel(detail.autoStatus, "audit")} />
               </Descriptions.Item>
               <Descriptions.Item label="异常分类">
                 {detail.task.failureCode
@@ -356,7 +385,8 @@ export default function ResultDetailPage() {
                   : "无异常"}
               </Descriptions.Item>
               <Descriptions.Item label="失败原因">
-                {reasons.join("；") ||
+                {pageUnavailableReason ||
+                  reasons.join("；") ||
                   (detail.task.failureMessage
                     ? auditDetailTextLabel(detail.task.failureMessage)
                     : "无异常")}

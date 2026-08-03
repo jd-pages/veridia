@@ -10,6 +10,7 @@ import {
   auditDetailStatusLabel,
   filterAuditDetailReasons,
 } from "@/lib/audit-detail-visibility";
+import { auditResultListDisplay } from "@/lib/result-display";
 import AuditStatusTag from "./AuditStatusTag";
 import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
@@ -32,6 +33,21 @@ export default function AuditConclusionCell({
   row: ResultRow;
   detailView?: boolean;
 }) {
+  const unavailableDisplay = auditResultListDisplay(row);
+  if (unavailableDisplay) {
+    return (
+      <div className={styles.conclusionLine}>
+        <span
+          className={`${styles.conclusionDot} ${styles.dotDanger}`}
+          aria-hidden="true"
+        />
+        <strong className={styles.cellPrimary}>
+          {unavailableDisplay.auditConclusion}
+        </strong>
+      </div>
+    );
+  }
+
   const rawReasons = parseJsonArray(row.failureReasons).filter(
     (reason) =>
       !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(reason),

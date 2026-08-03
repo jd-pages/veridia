@@ -54,6 +54,7 @@ import {
   ResultExportError,
 } from "@/lib/result-export-client";
 import { productStageTopicLabel } from "@/lib/product-stage";
+import { auditResultListDisplay } from "@/lib/result-display";
 import { pageAfterResultDeletion } from "@/components/results/deletion-state";
 import type { SessionUser } from "@/lib/auth";
 import styles from "@/components/results/results-workbench.module.css";
@@ -120,6 +121,15 @@ function buildQuery(
 }
 
 function ContentStatusCell({ row }: { row: ResultRow }) {
+  const unavailableDisplay = auditResultListDisplay(row);
+  if (unavailableDisplay) {
+    return (
+      <span className={styles.cellPrimary}>
+        {unavailableDisplay.contentStatus}
+      </span>
+    );
+  }
+
   const pageLabel =
     row.pageStatus === "NORMAL"
       ? "页面正常"

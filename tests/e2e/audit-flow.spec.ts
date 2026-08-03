@@ -580,7 +580,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(unavailableResult.imageStatus).toBe("NOT_REQUIRED");
   expect(JSON.parse(unavailableResult.missingTopics)).toEqual([]);
   expect(unavailableResult.task.failureCode).toBe("PAGE_NOT_FOUND");
-  expect(unavailableResult.task.failureMessage).toContain("页面不存在");
+  expect(unavailableResult.task.failureMessage).toContain(
+    "你访问的页面不见了",
+  );
   expect(JSON.parse(unavailableResult.failureReasons).join("；")).not.toMatch(
     /未识别到话题|缺少精确话题|有效正文字数不足|图片数量不足/u,
   );
@@ -600,8 +602,49 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(unavailableEvidence.visibleTextPreview).toContain("页面不存在");
   expect(unavailableEvidence.unavailablePage).toMatchObject({
     status: "NOT_FOUND",
-    matchedText: "页面不存在",
+    matchedText: "你访问的页面不见了",
   });
+
+  await page.goto("/results");
+  await page.getByLabel("关键词搜索").fill(unavailableSuffix);
+  await page.getByRole("button", { name: "查询" }).click();
+  const unavailableRow = page.locator(".ant-table-tbody .ant-table-row").first();
+  await expect(unavailableRow).toBeVisible();
+  const unavailableCells = unavailableRow.locator("td");
+  await expect(unavailableCells.nth(3)).toHaveText("笔记不存在");
+  await expect(unavailableCells.nth(4)).toHaveText("无");
+  await expect(unavailableCells.nth(5)).toHaveText("无");
+  await expect(unavailableCells.nth(6)).toHaveText("笔记不存在");
+  await expect(unavailableRow).not.toContainText(
+    /ERROR_PAGE|APP_LAUNCH|页面失效|未提取到正文|暂无结论|未执行话题审核|未执行图片数量审核|处理失败|待人工复核|项异常|缺少精准话题|有效正文字符不足|图片数量不足/u,
+  );
+
+  await unavailableRow.getByRole("button", { name: /查看详情/u }).click();
+  const unavailableDrawer = page.locator(".ant-drawer-content");
+  await expect(unavailableDrawer).toBeVisible();
+  await expect(
+    unavailableDrawer.getByText("笔记不存在", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(unavailableDrawer).toContainText("页面状态：笔记不存在");
+  await expect(unavailableDrawer).toContainText(
+    "小红书页面提示“你访问的页面不见了”，疑似笔记已删除或链接失效。",
+  );
+
+  await unavailableDrawer
+    .getByRole("button", { name: "打开完整详情" })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/results/${unavailableResult.id}$`, "u"),
+  );
+  const comprehensiveJudgment = page
+    .locator(".ant-card")
+    .filter({ hasText: "综合判断" })
+    .first();
+  await expect(comprehensiveJudgment).toContainText("页面状态");
+  await expect(comprehensiveJudgment).toContainText("笔记不存在");
+  await expect(comprehensiveJudgment).toContainText(
+    "小红书页面提示“你访问的页面不见了”，疑似笔记已删除或链接失效。",
+  );
 
   const auditedDate = new Date(resultCoverage.items[0].auditedAt);
   const auditDay = [
