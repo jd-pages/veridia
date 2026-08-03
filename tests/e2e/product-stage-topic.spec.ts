@@ -13,7 +13,7 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   await expect(page.getByText("产品阶段话题", { exact: true })).toBeVisible();
   await expect(
     page.getByText(
-      "请选择对应的产品阶段话题。产品阶段仅用于匹配对应话题，不要求正文出现段位词。",
+      "请选择 IFFO 或 GUM。",
       { exact: true },
     ),
   ).toBeVisible();
@@ -21,7 +21,10 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   const stageSelect = page.getByRole("combobox", {
     name: "产品阶段话题",
   });
-  await stageSelect.click();
+  const stageSelectControl = page.locator(".ant-select").filter({
+    has: stageSelect,
+  });
+  await stageSelectControl.click();
   const options = page.locator(".ant-select-dropdown:visible .ant-select-item-option");
   await expect(options).toHaveCount(2);
   await expect(options.nth(0)).toHaveText("IFFO");
@@ -56,7 +59,36 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
     .locator(".ant-select-dropdown:visible .ant-select-item-option")
     .filter({ hasText: campaign!.name })
     .click();
-  await page.getByRole("combobox", { name: "产品阶段话题" }).click();
+  await stageSelectControl.click();
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: /^IFFO$/u })
+    .click();
+  await expect(
+    page.getByText(`当前规则集 · ${product.name} · IFFO`, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "要求阶段话题：#新生儿奶粉 / #二段奶粉推荐",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.getByText("正文段位校验", { exact: true })).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(/任一命中|任选其一/u);
+
+  await stageSelectControl.click();
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: /^GUM$/u })
+    .click();
+  await expect(
+    page.getByText(`当前规则集 · ${product.name} · GUM`, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("要求阶段话题：#三段奶粉推荐", { exact: true }),
+  ).toBeVisible();
+
+  await stageSelectControl.click();
   await page
     .locator(".ant-select-dropdown:visible .ant-select-item-option")
     .filter({ hasText: /^IFFO$/u })
@@ -227,7 +259,32 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
     ),
   ).toBeVisible();
   await expect(page.getByText("正文允许段位", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("不校验，仅匹配话题").first()).toBeVisible();
+  const stageSummaryCard = page.locator(".ant-card").filter({
+    has: page.getByText("产品阶段与要求话题", { exact: true }),
+  });
+  const stageSummaryRows = stageSummaryCard.locator(
+    ".ant-table-tbody .ant-table-row",
+  );
+  await expect(stageSummaryRows).toHaveCount(2);
+  const iffoSummaryRow = stageSummaryRows.filter({ hasText: "IFFO" });
+  const gumSummaryRow = stageSummaryRows.filter({ hasText: "GUM" });
+  await expect(iffoSummaryRow).toHaveCount(1);
+  await expect(iffoSummaryRow).toContainText(
+    "#新生儿奶粉 / #二段奶粉推荐",
+  );
+  await expect(gumSummaryRow).toHaveCount(1);
+  await expect(gumSummaryRow).toContainText("#三段奶粉推荐");
+  await expect(
+    stageSummaryCard.getByText("正文段位校验", { exact: true }),
+  ).toHaveCount(0);
+  await expect(stageSummaryCard).not.toContainText("不校验，仅匹配话题");
+  await expect(stageSummaryCard).not.toContainText(/任一命中|任选其一/u);
+  const standardTopicTable = page.locator(".ant-table").filter({
+    has: page.getByText("标准话题词", { exact: true }),
+  });
+  await expect(standardTopicTable).toContainText("#新生儿奶粉");
+  await expect(standardTopicTable).toContainText("#二段奶粉推荐");
+  await expect(standardTopicTable).toContainText("#三段奶粉推荐");
   await expect(page.locator("body")).not.toContainText("IFFO：P段/1段");
   await expect(page.locator("body")).not.toContainText("IFFO：2段");
   await expect(page.locator("body")).not.toContainText(

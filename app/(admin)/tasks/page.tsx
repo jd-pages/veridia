@@ -50,6 +50,7 @@ import {
 import {
   PRODUCT_STAGE_TOPIC_OPTIONS,
   productStageTopicLabel,
+  stageTopicsForProductStage,
 } from "@/lib/product-stage";
 import {
   businessPageTypeLabel,
@@ -359,6 +360,15 @@ export default function TasksPage() {
   const selectedBatch = useMemo(
     () => batches.find((batch) => batch.id === selectedBatchId) || batches[0],
     [batches, selectedBatchId],
+  );
+  const requiredStageTopics = useMemo(
+    () => requirements
+      ? stageTopicsForProductStage(
+          requirements.context.rules,
+          requirements.context.productStage,
+        )
+      : [],
+    [requirements],
   );
 
   const createBatch = async (values: {
@@ -674,7 +684,7 @@ export default function TasksPage() {
                         name="productStage"
                         label="产品阶段话题"
                         rules={[{ required: true }]}
-                        extra="请选择对应的产品阶段话题。产品阶段仅用于匹配对应话题，不要求正文出现段位词。"
+                        extra="请选择 IFFO 或 GUM。"
                       >
                         <Select
                           placeholder="选择产品阶段话题"
@@ -700,17 +710,10 @@ export default function TasksPage() {
                                   : "不要求公开"}
                               </span>
                               <span>
-                                正文段位校验：
-                                {requirements.context.bodyStageRequired
-                                  ? "按当前规则核验"
-                                  : "不参与审核，仅用于匹配阶段话题"}
-                              </span>
-                              <span>
                                 要求阶段话题：
-                                {requirements.context.rules.find(
-                                  (rule) =>
-                                    rule.topicCategory === "PRODUCT_STAGE",
-                                )?.topic || "未配置"}
+                                {requiredStageTopics.length
+                                  ? requiredStageTopics.join(" / ")
+                                  : "未配置"}
                               </span>
                               <span>
                                 可点击话题：

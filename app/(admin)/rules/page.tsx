@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   App,
   Button,
@@ -22,7 +22,11 @@ import StatusTag from "@/components/StatusTag";
 import { apiFetch } from "@/lib/client";
 import { ruleScopeLabels, ruleTypeLabels } from "@/lib/zh-CN";
 import type { SessionUser } from "@/lib/auth";
-import { productStageTopicLabel } from "@/lib/product-stage";
+import {
+  aggregateProductStageTopicRows,
+  productStageTopicLabel,
+  type ProductStageTopicDisplayRow,
+} from "@/lib/product-stage";
 
 interface Product {
   id: string;
@@ -85,6 +89,10 @@ export default function RulesPage() {
   const [stageForm] = Form.useForm();
   const scope = Form.useWatch("scope", form);
   const isAdmin = currentRole === "ADMIN";
+  const displayedStageGroups = useMemo(
+    () => aggregateProductStageTopicRows(stageGroups),
+    [stageGroups],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -150,9 +158,9 @@ export default function RulesPage() {
         title="产品阶段与要求话题"
         style={{ marginBottom: 16 }}
       >
-        <Table<StageGroup>
+        <Table<ProductStageTopicDisplayRow<StageGroup>>
           rowKey="key"
-          dataSource={stageGroups}
+          dataSource={displayedStageGroups}
           pagination={false}
           columns={[
             {
@@ -161,44 +169,44 @@ export default function RulesPage() {
               render: (_value, row) => productStageTopicLabel(row.key),
             },
             {
-              title: "正文段位校验",
-              width: 220,
-              render: (_value, row) =>
-                row.requireBodyStage ? (
-                  <Tag color="warning">需要校验正文段位</Tag>
-                ) : (
-                  <Tag>不校验，仅匹配话题</Tag>
-                ),
-            },
-            {
               title: "要求阶段话题",
-              dataIndex: "requiredTopic",
-              render: (value: string) => <Tag color="blue">{value}</Tag>,
+              dataIndex: "requiredTopics",
+              render: (value: string[]) => value.join(" / "),
             },
             {
               title: "规则来源",
-              dataIndex: "ruleSource",
+              dataIndex: "ruleSources",
               width: 120,
-              render: (value: string) =>
-                value === "LOCAL_DRAFT" ? "本地草稿" : "已发布规则",
+              render: (values: string[]) => [
+                ...new Set(
+                  values.map((value) =>
+                    value === "LOCAL_DRAFT" ? "本地草稿" : "已发布规则",
+                  ),
+                ),
+              ].join(" / "),
             },
             {
               title: "操作",
-              width: 100,
+              width: 280,
               render: (_value, row) => isAdmin ? (
-                <Button
-                  type="link"
-                  icon={<EditOutlined />}
-                  onClick={() => {
-                    setEditingStage(row);
-                    stageForm.setFieldsValue({
-                      requireBodyStage: row.requireBodyStage,
-                      requiredTopic: row.requiredTopic,
-                    });
-                  }}
-                >
-                  编辑
-                </Button>
+                <Space size={4} wrap>
+                  {row.members.map((member) => (
+                    <Button
+                      key={member.key}
+                      type="link"
+                      icon={<EditOutlined />}
+                      onClick={() => {
+                        setEditingStage(member);
+                        stageForm.setFieldsValue({
+                          requireBodyStage: member.requireBodyStage,
+                          requiredTopic: member.requiredTopic,
+                        });
+                      }}
+                    >
+                      编辑 {member.requiredTopic}
+                    </Button>
+                  ))}
+                </Space>
               ) : <Tag>只读</Tag>,
             },
           ]}

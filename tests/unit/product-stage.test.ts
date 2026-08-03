@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PRODUCT_STAGE_TOPIC_OPTIONS,
+  aggregateProductStageTopicRows,
   bodyStageRequiredFromRuleSnapshot,
   detectBodyProductStages,
   detectProductStage,
@@ -10,6 +11,7 @@ import {
   normalizeProductStageTopicValue,
   productStageTopicLabel,
   resolveConfiguredProductStage,
+  stageTopicsForProductStage,
   stageTopicFromRuleSnapshot,
 } from "@/lib/product-stage";
 
@@ -18,6 +20,56 @@ describe("product stage topic mapping", () => {
     expect(PRODUCT_STAGE_TOPIC_OPTIONS).toEqual([
       { value: "IFFO", label: "IFFO" },
       { value: "GUM", label: "GUM" },
+    ]);
+  });
+
+  it("展示层将底层阶段规则聚合为一行 IFFO 和一行 GUM", () => {
+    const rows = aggregateProductStageTopicRows([
+      { key: "IFFO_P1", requiredTopic: "#新生儿奶粉", ruleSource: "BUILTIN" },
+      { key: "IFFO_2", requiredTopic: "#二段奶粉推荐", ruleSource: "LOCAL_DRAFT" },
+      {
+        key: "GUM_3_4_1PLUS_2PLUS",
+        requiredTopic: "#三段奶粉推荐",
+        ruleSource: "BUILTIN",
+      },
+    ]);
+
+    expect(rows.map(({ key, requiredTopics }) => ({ key, requiredTopics }))).toEqual([
+      {
+        key: "IFFO",
+        requiredTopics: ["#新生儿奶粉", "#二段奶粉推荐"],
+      },
+      { key: "GUM", requiredTopics: ["#三段奶粉推荐"] },
+    ]);
+    expect(rows[0].members).toHaveLength(2);
+  });
+
+  it("任务规则提示收集所选阶段组全部候选话题", () => {
+    const rules = [
+      { topic: "#爱他美奇迹绿罐", topicCategory: "PRODUCT" },
+      {
+        topic: "#新生儿奶粉",
+        topicCategory: "PRODUCT_STAGE",
+        applicableStage: "IFFO_P1",
+      },
+      {
+        topic: "#二段奶粉推荐",
+        topicCategory: "PRODUCT_STAGE",
+        applicableStage: "IFFO_2",
+      },
+      {
+        topic: "#三段奶粉推荐",
+        topicCategory: "PRODUCT_STAGE",
+        applicableStage: "GUM_3_4_1PLUS_2PLUS",
+      },
+    ];
+
+    expect(stageTopicsForProductStage(rules, "IFFO")).toEqual([
+      "#新生儿奶粉",
+      "#二段奶粉推荐",
+    ]);
+    expect(stageTopicsForProductStage(rules, "GUM")).toEqual([
+      "#三段奶粉推荐",
     ]);
   });
 

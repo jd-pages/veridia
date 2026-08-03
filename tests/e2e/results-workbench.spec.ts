@@ -197,6 +197,7 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   ).toBeVisible();
   expect(exportRequests).toHaveLength(1);
   await page.getByRole("button", { name: "重置" }).click();
+  await expect(page.locator(".ant-spin-spinning")).toHaveCount(0);
   await expect(page.locator(".ant-table-row").first()).toBeVisible();
 
   const firstRowCheckbox = page

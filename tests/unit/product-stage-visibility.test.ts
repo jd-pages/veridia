@@ -24,17 +24,33 @@ describe("产品阶段话题用户可见口径", () => {
     ].join("\n");
 
     expect(taskPage).toContain("PRODUCT_STAGE_TOPIC_OPTIONS.map");
+    expect(taskPage).toContain("stageTopicsForProductStage");
     expect(resultPage).toContain("productStageTopicLabel(row.task.productStage)");
     expect(detailPage).toContain("productStageTopicLabel(detail.task.productStage)");
     expect(detailDrawer).toContain("productStageTopicLabel(row.task.productStage)");
     expect(campaignPage).toContain("productStageTopicLabel(row.applicableStage)");
     expect(rulesPage).toContain("productStageTopicLabel(row.key)");
+    expect(rulesPage).toContain("aggregateProductStageTopicRows");
     for (const hidden of [
       "IFFO：P段/1段",
       "IFFO：2段",
       "GUM：3段/4段/1+段/2+段",
     ]) {
       expect(visibleSources).not.toContain(hidden);
+    }
+  });
+
+  it("规则页和任务规则提示只展示聚合后的阶段话题", () => {
+    const taskPage = source("app/(admin)/tasks/page.tsx");
+    const rulesPage = source("app/(admin)/rules/page.tsx");
+
+    expect(rulesPage).not.toContain('title: "正文段位校验"');
+    expect(rulesPage).not.toContain("不校验，仅匹配话题");
+    expect(taskPage).not.toContain("不参与审核，仅用于匹配阶段话题");
+    expect(taskPage).not.toContain("requirements.context.rules.find");
+    for (const hidden of ["任一命中", "任选其一"]) {
+      expect(rulesPage).not.toContain(hidden);
+      expect(taskPage).not.toContain(hidden);
     }
   });
 

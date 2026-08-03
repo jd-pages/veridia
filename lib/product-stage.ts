@@ -89,6 +89,27 @@ export interface BodyProductStageEvaluation {
   passed: boolean;
 }
 
+export interface StageTopicDisplaySource {
+  key: string;
+  requiredTopic: string;
+  ruleSource?: string | null;
+}
+
+export interface ProductStageTopicDisplayRow<
+  T extends StageTopicDisplaySource = StageTopicDisplaySource,
+> {
+  key: ProductStageTopicValue;
+  requiredTopics: string[];
+  ruleSources: string[];
+  members: T[];
+}
+
+export interface ProductStageTopicRuleSource {
+  topic: string;
+  topicCategory?: string | null;
+  applicableStage?: string | null;
+}
+
 function normalizeCharacters(value: string) {
   return value
     .normalize("NFKC")
@@ -168,6 +189,55 @@ export function productStageTopicLabel(
 ): string {
   const normalized = normalizeProductStageTopicValue(value);
   return normalized ? GROUP_LABELS[normalized] : value || "段位未识别";
+}
+
+export function aggregateProductStageTopicRows<
+  T extends StageTopicDisplaySource,
+>(rows: T[]): ProductStageTopicDisplayRow<T>[] {
+  const grouped = new Map<ProductStageTopicValue, T[]>();
+  for (const row of rows) {
+    const key = normalizeProductStageTopicValue(row.key);
+    if (!key) continue;
+    grouped.set(key, [...(grouped.get(key) || []), row]);
+  }
+
+  return PRODUCT_STAGE_TOPIC_OPTIONS.flatMap(({ value }) => {
+    const members = grouped.get(value);
+    if (!members?.length) return [];
+    return [{
+      key: value,
+      requiredTopics: [
+        ...new Set(
+          members.map((member) => member.requiredTopic.trim()).filter(Boolean),
+        ),
+      ],
+      ruleSources: [
+        ...new Set(
+          members.map((member) => member.ruleSource || "").filter(Boolean),
+        ),
+      ],
+      members,
+    }];
+  });
+}
+
+export function stageTopicsForProductStage(
+  rules: ProductStageTopicRuleSource[],
+  productStage: string | null | undefined,
+): string[] {
+  const compatibleStages = new Set(compatibleStageRuleValues(productStage));
+  return [
+    ...new Set(
+      rules
+        .filter(
+          (rule) =>
+            rule.topicCategory === "PRODUCT_STAGE" &&
+            compatibleStages.has(rule.applicableStage || ""),
+        )
+        .map((rule) => rule.topic.trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 export function allowedBodyStageLabels(
