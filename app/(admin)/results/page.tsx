@@ -55,6 +55,7 @@ import { productStageTopicLabel } from "@/lib/product-stage";
 import { parseResultRiskType } from "@/lib/result-risk";
 import { pageAfterResultDeletion } from "@/components/results/deletion-state";
 import type { SessionUser } from "@/lib/auth";
+import { canAccessBusiness } from "@/lib/permissions";
 import styles from "@/components/results/results-workbench.module.css";
 
 const defaultFilters: ResultFilters = {
@@ -202,8 +203,8 @@ export default function ResultsPage() {
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
   );
-  const canOperate = currentRole === "ADMIN" || currentRole === "OPERATOR";
-  const canDeleteSingle = currentRole === "ADMIN";
+  const canOperate = canAccessBusiness(currentRole);
+  const canDeleteSingle = canOperate;
   const canDeleteBatch = canOperate;
 
   const loadSummary = useCallback(async (

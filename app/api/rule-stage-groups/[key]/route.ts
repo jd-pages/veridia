@@ -1,5 +1,6 @@
 import { fail, ok, requireApiUser } from "@/lib/api";
 import { prisma } from "@/lib/db";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 import { normalizeTopic } from "@/lib/topic";
 
 const ALLOWED_KEYS = new Set([
@@ -12,7 +13,7 @@ export async function PUT(
   request: Request,
   { params }: { params: Promise<{ key: string }> },
 ) {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const { key } = await params;
   if (!ALLOWED_KEYS.has(key)) return fail("产品阶段话题无效");

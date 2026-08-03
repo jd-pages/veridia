@@ -22,6 +22,7 @@ import StatusTag from "@/components/StatusTag";
 import { apiFetch } from "@/lib/client";
 import { ruleScopeLabels, ruleTypeLabels } from "@/lib/zh-CN";
 import type { SessionUser } from "@/lib/auth";
+import { canAccessBusiness } from "@/lib/permissions";
 import {
   aggregateProductStageTopicRows,
   productStageTopicLabel,
@@ -88,7 +89,7 @@ export default function RulesPage() {
   const [form] = Form.useForm();
   const [stageForm] = Form.useForm();
   const scope = Form.useWatch("scope", form);
-  const isAdmin = currentRole === "ADMIN";
+  const canManageBusiness = canAccessBusiness(currentRole);
   const displayedStageGroups = useMemo(
     () => aggregateProductStageTopicRows(stageGroups),
     [stageGroups],
@@ -128,7 +129,7 @@ export default function RulesPage() {
       <PageHeader
         title="话题规则"
         description="产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #"
-        actions={isAdmin ? (
+        actions={canManageBusiness ? (
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -188,7 +189,7 @@ export default function RulesPage() {
             {
               title: "操作",
               width: 280,
-              render: (_value, row) => isAdmin ? (
+              render: (_value, row) => canManageBusiness ? (
                 <Space size={4} wrap>
                   {row.members.map((member) => (
                     <Button
@@ -298,7 +299,7 @@ export default function RulesPage() {
               title: "操作",
               width: 150,
               fixed: "right",
-              render: (_value, row) => isAdmin ? (
+              render: (_value, row) => canManageBusiness ? (
                 <Space size={2}>
                   <Button
                     type="link"

@@ -36,6 +36,7 @@ import { apiFetch } from "@/lib/client";
 import { productStageTopicLabel } from "@/lib/product-stage";
 import { topicCategoryLabels } from "@/lib/zh-CN";
 import type { SessionUser } from "@/lib/auth";
+import { canAccessBusiness } from "@/lib/permissions";
 
 interface Product {
   id: string;
@@ -163,7 +164,7 @@ export default function CampaignsPage() {
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
   );
-  const isAdmin = currentRole === "ADMIN";
+  const canManageBusiness = canAccessBusiness(currentRole);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -243,7 +244,7 @@ export default function CampaignsPage() {
             >
               下载标准模板
             </Button>
-            {isAdmin && (
+            {canManageBusiness && (
               <Button
                 type="primary"
                 icon={<UploadOutlined />}

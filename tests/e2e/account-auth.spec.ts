@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import bcrypt from "bcryptjs";
+import ExcelJS from "exceljs";
 import { randomBytes, randomUUID, sign } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -190,7 +191,6 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
     "活动管理",
     "话题规则",
     "导入记录",
-    "系统设置",
   ]) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
@@ -207,7 +207,6 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
     "/api/automation/session",
     "/api/browser/status",
     "/api/imports",
-    "/api/settings",
   ]) {
     const response = await page.request.get(endpoint);
     expect(response.status(), endpoint).toBe(200);
@@ -217,14 +216,54 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
     expect((await response.json()).success, endpoint).toBe(true);
   }
 
-  const forbidden = await page.request.post("/api/products", {
-    data: { name: "审核员越权测试产品" },
+  const resultList = await page.request.get("/api/results?page=1&pageSize=1");
+  expect(resultList.ok()).toBeTruthy();
+  const firstResult = (await resultList.json()).data.items[0] as {
+    id: string;
+    task: { product: { id: string } };
+  };
+  for (const query of [
+    "",
+    `ids=${encodeURIComponent(firstResult.id)}`,
+    `productId=${encodeURIComponent(firstResult.task.product.id)}`,
+  ]) {
+    const exported = await page.request.get(`/api/results/export?${query}`);
+    expect(exported.status(), query || "current results").toBe(200);
+    expect(exported.headers()["content-type"]).toContain(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      (await exported.body()) as unknown as Parameters<
+        typeof workbook.xlsx.load
+      >[0],
+    );
+    const headers = workbook.worksheets[0]?.getRow(1).values as unknown[];
+    expect(headers.slice(1)).toEqual([
+      "平台",
+      "店铺名称",
+      "客户名",
+      "产品系列",
+      "阶段",
+      "订单编号",
+      "内容渠道",
+      "链接",
+      "发帖时间",
+      "自审",
+    ]);
+  }
+
+  const operatorProduct = await page.request.post("/api/products", {
+    data: {
+      name: `审核员权限测试产品-${Date.now()}`,
+      brandName: "VERIDIA E2E",
+    },
   });
-  expect(forbidden.status()).toBe(403);
-  expect(forbidden.headers()["content-type"]).toContain("application/json");
-  expect((await forbidden.json()).error).toBe(
-    "当前账号无此操作权限，请联系管理员。",
-  );
+  expect(operatorProduct.status()).toBe(201);
+  const operatorProductId = (await operatorProduct.json()).data.id as string;
+  expect(
+    (await page.request.delete(`/api/products/${operatorProductId}`)).ok(),
+  ).toBeTruthy();
 
   await page.goto("/tasks");
   await expect(page.getByText("审核任务", { exact: true }).first()).toBeVisible();
@@ -275,15 +314,25 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
   const operatorSingleDelete = await page.request.delete(
     `/api/results/missing-${Date.now()}`,
   );
-  expect(operatorSingleDelete.status()).toBe(403);
+  expect(operatorSingleDelete.status()).toBe(200);
 
   await page.goto("/products");
   await expect(page.getByRole("heading", { name: "产品管理" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "新增产品" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "新增产品" })).toBeVisible();
   await page.goto("/campaigns");
-  await expect(page.getByRole("button", { name: "导入活动规则" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "导入活动规则" })).toBeVisible();
   await page.goto("/rules");
-  await expect(page.getByRole("button", { name: "新增规则" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "新增规则" })).toBeVisible();
+
+  for (const endpoint of [
+    "/api/settings",
+    "/api/users",
+    "/api/rule-sync/status",
+  ]) {
+    expect((await page.request.get(endpoint)).status(), endpoint).toBe(403);
+  }
+  await page.goto("/settings");
+  await expect(page).toHaveURL(/\/dashboard$/u);
 });
 
 test("旧版 VRD1 激活码仍可使用原初始密码登录", async ({ page }) => {

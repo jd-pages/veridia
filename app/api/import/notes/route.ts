@@ -5,6 +5,7 @@ import {
   type NoteLinkPlatform,
 } from "@/lib/note-links";
 import { fail, ok, requireApiUser } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 import {
   createAutomaticBatchInTransaction,
   type AutomaticTaskInput,
@@ -60,7 +61,7 @@ interface CheckedRow {
 }
 
 export async function POST(request: Request) {
-  const user = await requireApiUser(["ADMIN", "OPERATOR"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const form = await request.formData();
   const file = form.get("file");

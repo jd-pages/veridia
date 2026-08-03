@@ -27,6 +27,7 @@ import PageHeader from "@/components/PageHeader";
 import StatusTag from "@/components/StatusTag";
 import { apiFetch } from "@/lib/client";
 import type { SessionUser } from "@/lib/auth";
+import { canAccessBusiness } from "@/lib/permissions";
 
 interface Product {
   id: string;
@@ -55,7 +56,7 @@ export default function ProductsPage() {
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
   );
-  const isAdmin = currentRole === "ADMIN";
+  const canManageBusiness = canAccessBusiness(currentRole);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -104,7 +105,7 @@ export default function ProductsPage() {
         description="产品主数据、品牌信息与运营常用别名统一维护"
         actions={
           <Space>
-            {isAdmin && (
+            {canManageBusiness && (
               <Upload {...uploadProps}>
                 <Button icon={<UploadOutlined />}>Excel 导入</Button>
               </Upload>
@@ -115,7 +116,7 @@ export default function ProductsPage() {
             >
               导出
             </Button>
-            {isAdmin && (
+            {canManageBusiness && (
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
@@ -191,7 +192,7 @@ export default function ProductsPage() {
               key: "actions",
               fixed: "right",
               width: 150,
-              render: (_value, row) => isAdmin ? (
+              render: (_value, row) => canManageBusiness ? (
                 <Space size={4}>
                   <Button
                     type="link"

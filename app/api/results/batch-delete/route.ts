@@ -1,4 +1,5 @@
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 import {
   AuditResultDeletionValidationError,
   deleteAuditResults,
@@ -6,7 +7,7 @@ import {
 } from "@/lib/audit-result-deletion";
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {
-  const user = await requireApiUser(["ADMIN", "OPERATOR"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
 
   const body = await request.json().catch(() => null);

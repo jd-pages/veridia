@@ -2,9 +2,10 @@ import { prisma } from "@/lib/db";
 import { runAuditTask } from "@/lib/audit-service";
 import type { ExtractedNote } from "@/lib/types";
 import { fail, ok, requireApiUser } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 
 export async function POST(request: Request) {
-  const user = await requireApiUser(["ADMIN", "OPERATOR"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
     ids?: string[];

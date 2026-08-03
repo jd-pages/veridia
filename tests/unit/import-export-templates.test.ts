@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import builtinTemplates from "@/rules/default-import-export-templates.json";
 import {
+  auditResultToCompactExportRecord,
   auditResultToExportRecord,
   buildConfiguredCsv,
   buildConfiguredWorkbook,
@@ -522,6 +523,26 @@ describe("模板驱动导出", () => {
       templates,
     );
     expect(otherFailure.selfReview).toBe("");
+
+    const compactSource: Parameters<
+      typeof auditResultToCompactExportRecord
+    >[0] = {
+      autoStatus: baseRow.autoStatus,
+      pageStatus: baseRow.pageStatus,
+      failureReasons: baseRow.failureReasons,
+      imageExtractionStatus: baseRow.imageExtractionStatus,
+      imageStatus: baseRow.imageStatus,
+      task: baseRow.task,
+      note: baseRow.note,
+      manualReviews: baseRow.manualReviews,
+    };
+    const compact = auditResultToCompactExportRecord(compactSource);
+    expect(Object.keys(compact)).toEqual(RESULT_EXPORT_FIELDS);
+    expect(compact).toMatchObject({
+      originalUrl: "https://xhslink.com/original",
+      orderNumber: "ORDER-1001",
+      selfReview: "Y",
+    });
   });
 
   it("18条当前筛选结果严格生成十列线下处理字段", async () => {

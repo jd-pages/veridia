@@ -3,12 +3,13 @@ import { runAuditTask } from "@/lib/audit-service";
 import { createMockNote, type MockCase } from "@/lib/mock-data";
 import { assertExtractorPayload } from "@/lib/extractor";
 import { fail, ok, requireApiUser } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser(["ADMIN", "OPERATOR"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const { id } = await params;
   const task = await prisma.auditTask.findUnique({ where: { id } });

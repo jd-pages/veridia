@@ -1,9 +1,10 @@
 import JSZip from "jszip";
 import { requireApiUser } from "@/lib/api";
 import { exportCurrentRulePayload } from "@/lib/rules/package";
+import { SYSTEM_ADMIN_ROLES } from "@/lib/permissions";
 
 export async function GET() {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser(SYSTEM_ADMIN_ROLES);
   if (user instanceof Response) return user;
   const payload = await exportCurrentRulePayload();
   const zip = new JSZip();

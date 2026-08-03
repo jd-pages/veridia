@@ -45,7 +45,7 @@ export function withApiErrorBoundary<TArgs extends unknown[]>(
 }
 
 export async function requireApiUser(
-  roles?: SessionUser["role"][],
+  roles?: readonly SessionUser["role"][],
 ): Promise<SessionUser | NextResponse> {
   const user = await getSession();
   if (!user) {

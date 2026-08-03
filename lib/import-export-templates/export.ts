@@ -21,6 +21,32 @@ import { utf8BomCsv } from "./tabular";
 
 export type ExportValueRecord = Partial<Record<StandardField, unknown>>;
 
+export interface CompactAuditResultExportSourceRow {
+  autoStatus: string;
+  pageStatus: string;
+  failureReasons: string;
+  imageExtractionStatus: string;
+  imageStatus: string;
+  task: {
+    url: string;
+    failureCode: string | null;
+    failureMessage: string | null;
+    pageTitle: string | null;
+    pageType: string | null;
+    notes: string | null;
+    productStage: string | null;
+    product: { name: string; seriesName?: string | null };
+  };
+  note: {
+    url: string;
+    finalUrl: string | null;
+    publishedAt: Date | null;
+    title: string | null;
+    body: string | null;
+  };
+  manualReviews: Array<{ result: string }>;
+}
+
 function importedDateLabel(value: Date) {
   const parts = [
     value.getUTCFullYear(),
@@ -69,6 +95,68 @@ function list(value: string, separator: string) {
   } catch {
     return String(value || "");
   }
+}
+
+function compactSelfReview(row: CompactAuditResultExportSourceRow) {
+  const unavailable = isUnavailableNoteResult({
+    pageStatus: row.pageStatus,
+    failureReasons: row.failureReasons,
+    pageTitle: row.task.pageTitle,
+    note: { title: row.note.title, body: row.note.body },
+    task: {
+      failureCode: row.task.failureCode,
+      failureMessage: row.task.failureMessage,
+      pageTitle: row.task.pageTitle,
+      pageType: row.task.pageType,
+    },
+  });
+  const failureReasonList = list(row.failureReasons, " ");
+  const imageProblem =
+    !unavailable &&
+    ([
+      row.imageExtractionStatus,
+      row.imageStatus,
+      row.task.failureCode,
+      row.task.failureMessage,
+      failureReasonList,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .match(
+        /IMAGES_READ_FAILED|IMAGE_COUNT_INSUFFICIENT|IMAGE_COUNT_INVALID|NON_COMPLIANT|图片读取失败|图片数量读取失败|图片数量不足|图片不足|图片数量不合规|看不到奶粉段数/iu,
+      ) !== null);
+
+  return (row.manualReviews[0]?.result || row.autoStatus) === "PASSED"
+    ? "Y"
+    : unavailable
+      ? "N-帖子无法查看"
+      : imageProblem
+        ? "N-图片看不到奶粉段数"
+        : "";
+}
+
+/**
+ * 审核结果下载固定为十列，只读取这十列实际需要的数据。
+ * 历史结果中的规则快照或技术审核字段即使不完整，也不应阻断人工导出。
+ */
+export function auditResultToCompactExportRecord(
+  row: CompactAuditResultExportSourceRow,
+): ExportValueRecord {
+  const importedMetadata = importedTaskMetadataFromNotes(row.task.notes);
+  return {
+    platform: importedMetadata.platform || "小红书",
+    shopName: importedMetadata.shopName,
+    customerName: importedMetadata.customerName,
+    productName: row.task.product.seriesName || row.task.product.name,
+    productStageTopic: productStageTopicLabel(row.task.productStage),
+    orderNumber: importedMetadata.orderNumber,
+    contentChannel: importedMetadata.contentChannel || "小红书",
+    originalUrl: row.task.url,
+    publishTime: importedMetadata.publishTime
+      ? importedPublishTimeValue(importedMetadata.publishTime)
+      : row.note.publishedAt,
+    selfReview: compactSelfReview(row),
+  };
 }
 
 export function auditResultToExportRecord(row: {

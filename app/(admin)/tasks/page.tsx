@@ -63,6 +63,7 @@ import {
 } from "@/lib/zh-CN";
 import styles from "./tasks.module.css";
 import type { SessionUser } from "@/lib/auth";
+import { canAccessBusiness } from "@/lib/permissions";
 import { extractNoteLinksFromText } from "@/lib/note-links";
 
 interface Product {
@@ -302,7 +303,7 @@ export default function TasksPage() {
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
   );
-  const canOperate = currentRole === "ADMIN" || currentRole === "OPERATOR";
+  const canOperate = canAccessBusiness(currentRole);
 
   const load = useCallback(async (quiet = false, targetBatchId?: string) => {
     if (!quiet) setLoading(true);

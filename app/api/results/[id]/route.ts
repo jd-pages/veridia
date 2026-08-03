@@ -2,6 +2,7 @@ import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { deleteAuditResults } from "@/lib/audit-result-deletion";
 import { prisma } from "@/lib/db";
 import { normalizeProductStageTopicValue } from "@/lib/product-stage";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 
 export async function GET(
   _request: Request,
@@ -62,7 +63,7 @@ export const DELETE = withApiErrorBoundary(async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const { id } = await params;
   if (!id.trim()) return fail("审核结果 ID 格式不正确", 400);

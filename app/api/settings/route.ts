@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
+import { SYSTEM_ADMIN_ROLES } from "@/lib/permissions";
 
 export const GET = withApiErrorBoundary(async function GET() {
-  const user = await requireApiUser();
+  const user = await requireApiUser(SYSTEM_ADMIN_ROLES);
   if (user instanceof Response) return user;
   const settings = await prisma.systemSetting.findMany({
     where: {
@@ -29,7 +30,7 @@ export const GET = withApiErrorBoundary(async function GET() {
 }, "读取系统基础设置");
 
 export const PUT = withApiErrorBoundary(async function PUT(request: Request) {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser(SYSTEM_ADMIN_ROLES);
   if (user instanceof Response) return user;
   const body = (await request.json()) as { key?: string; value?: string };
   if (!body.key || body.value === undefined) return fail("设置项无效");
