@@ -6,6 +6,63 @@ import {
   copyGeneratedPrismaClient,
 } from "./prisma-runtime.mjs";
 
+function repositoryFrom(value) {
+  if (typeof value === "string") {
+    const candidate = value.trim();
+    if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(candidate)) {
+      return candidate;
+    }
+    return (
+      candidate.match(
+        /github\.com[/:]([^/]+\/[^/.]+)(?:\.git)?(?:\/|$)/iu,
+      )?.[1] || ""
+    );
+  }
+  if (!value || typeof value !== "object") return "";
+  if (value.provider && value.provider !== "github") return "";
+  const owner = typeof value.owner === "string" ? value.owner.trim() : "";
+  const repo = typeof value.repo === "string" ? value.repo.trim() : "";
+  if (
+    /^[A-Za-z0-9_.-]+$/u.test(owner) &&
+    /^[A-Za-z0-9_.-]+$/u.test(repo)
+  ) {
+    return `${owner}/${repo}`;
+  }
+  return repositoryFrom(value.url);
+}
+
+function projectMetadata(projectRoot) {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
+    );
+  } catch {
+    return {};
+  }
+}
+
+export function resolveSoftwareUpdateRepository(
+  context,
+  environment = process.env,
+) {
+  const projectRoot = context?.packager?.projectDir || "";
+  const metadata = projectRoot ? projectMetadata(projectRoot) : {};
+  const configuredPublish = context?.packager?.config?.publish;
+  const packagePublish = metadata?.build?.publish;
+  const publishEntries = [configuredPublish, packagePublish].flatMap((value) =>
+    Array.isArray(value) ? value : value ? [value] : [],
+  );
+  const candidates = [
+    environment.GITHUB_REPOSITORY,
+    environment.VERIDIA_UPDATE_URL,
+    ...publishEntries,
+    context?.packager?.info?.metadata?.repository,
+    context?.packager?.appInfo?.metadata?.repository,
+    metadata?.repository,
+  ];
+  return candidates.map(repositoryFrom).find(Boolean) || "";
+}
+
 export async function afterPack(context) {
   if (context.electronPlatformName !== "win32") return;
 
@@ -96,31 +153,31 @@ export async function afterPack(context) {
       throw new Error(`Electron 产物缺少 Playwright 外部模块别名：${alias}`);
     }
   }
-  const configuredRepository = process.env.GITHUB_REPOSITORY || "";
-  const repositoryUrl =
-    typeof context.packager.appInfo.metadata.repository === "string"
-      ? context.packager.appInfo.metadata.repository
-      : context.packager.appInfo.metadata.repository?.url || "";
-  const updateUrl = process.env.VERIDIA_UPDATE_URL || repositoryUrl;
-  const updateRepository =
-    configuredRepository ||
-    updateUrl.match(/github\.com[/:]([^/]+\/[^/.]+)(?:\.git)?(?:\/|$)/i)?.[1] ||
-    "";
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(updateRepository)) {
-    throw new Error("VERIDIA 软件更新仓库必须是有效的 GitHub owner/repo");
-  }
-  const [owner, repo] = updateRepository.split("/");
-  fs.writeFileSync(
-    path.join(context.appOutDir, "resources", "app-update.yml"),
-    [
-      "provider: github",
-      `owner: ${owner}`,
-      `repo: ${repo}`,
-      "updaterCacheDirName: veridia-updater",
-      "",
-    ].join("\n"),
-    "utf8",
+  const updateRepository = resolveSoftwareUpdateRepository(context);
+  const appUpdatePath = path.join(
+    context.appOutDir,
+    "resources",
+    "app-update.yml",
   );
+  if (updateRepository) {
+    const [owner, repo] = updateRepository.split("/");
+    fs.writeFileSync(
+      appUpdatePath,
+      [
+        "provider: github",
+        `owner: ${owner}`,
+        `repo: ${repo}`,
+        "updaterCacheDirName: veridia-updater",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+  } else {
+    fs.rmSync(appUpdatePath, { force: true });
+    console.warn(
+      "未找到软件更新 GitHub 仓库配置；本地验收继续，但已跳过 app-update.yml。正式发布前请配置 package.json repository 或 build.publish。",
+    );
+  }
 
   console.log(
     `Electron 打包前运行资源检查通过：Prisma ${result.clientRoot}，Playwright 别名 ${[...playwrightAliases].join(", ") || "无"}`,
