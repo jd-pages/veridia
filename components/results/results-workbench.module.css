@@ -459,20 +459,51 @@
   background: #f0f2f5;
 }
 
-.noteLinkRow {
+.notePrimaryLink {
+  min-width: 0;
+}
+
+.notePrimaryLink .detailLink {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.noteFinalLinkRow {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.noteFinalLinkLabel {
+  flex: 0 0 auto;
+  color: #667085;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.noteFinalLinkValue {
+  min-width: 0;
+  flex: 1;
+}
+
+.noteFinalLinkRow .detailLink {
+  color: #667085;
+  font-size: 12px;
+}
+
+.detailLinkRow {
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 5px;
 }
 
-.noteLink {
+.detailLink {
   min-width: 0;
   flex: 1;
   overflow: hidden;
   color: #175cd3;
-  font-size: 13px;
-  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

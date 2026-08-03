@@ -571,6 +571,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     missingTopics: string;
     failureReasons: string;
     task: {
+      url: string;
+      finalUrl: string | null;
       failureCode: string;
       failureMessage: string;
     };
@@ -629,6 +631,16 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(unavailableDrawer).toContainText(
     "小红书页面提示“你访问的页面不见了”，疑似笔记已删除或链接失效。",
   );
+  await expect(unavailableDrawer.getByText("原笔记链接", { exact: true })).toBeVisible();
+  const unavailableDrawerOriginalLinkRow = unavailableDrawer
+    .locator(".ant-descriptions-row")
+    .filter({ hasText: "原笔记链接" });
+  await expect(
+    unavailableDrawerOriginalLinkRow.getByRole("link", {
+      name: unavailableResult.task.url,
+      exact: true,
+    }),
+  ).toHaveAttribute("href", unavailableResult.task.url);
 
   await unavailableDrawer
     .getByRole("button", { name: "打开完整详情" })
@@ -636,6 +648,20 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(page).toHaveURL(
     new RegExp(`/results/${unavailableResult.id}$`, "u"),
   );
+  const unavailableBasicInfo = page
+    .locator(".ant-card")
+    .filter({ hasText: "笔记基础信息" })
+    .first();
+  await expect(unavailableBasicInfo.getByText("原笔记链接", { exact: true })).toBeVisible();
+  const unavailableDetailOriginalLinkRow = unavailableBasicInfo
+    .locator(".ant-descriptions-row")
+    .filter({ hasText: "原笔记链接" });
+  await expect(
+    unavailableDetailOriginalLinkRow.getByRole("link", {
+      name: unavailableResult.task.url,
+      exact: true,
+    }),
+  ).toHaveAttribute("href", unavailableResult.task.url);
   const comprehensiveJudgment = page
     .locator(".ant-card")
     .filter({ hasText: "综合判断" })

@@ -47,6 +47,7 @@ export interface ResultRow {
   auditedAt: string;
   note: {
     url: string;
+    finalUrl: string | null;
     platformNoteId: string | null;
     title: string | null;
     body: string | null;

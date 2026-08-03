@@ -32,6 +32,7 @@ import { useParams, useRouter } from "next/navigation";
 import PageHeader from "@/components/PageHeader";
 import StatusTag from "@/components/StatusTag";
 import ExtractionEvidencePanel from "@/components/results/ExtractionEvidencePanel";
+import ResultDetailLink from "@/components/results/ResultDetailLink";
 import { apiFetch, parseJsonArray } from "@/lib/client";
 import {
   productStageTopicLabel,
@@ -57,6 +58,7 @@ import {
   isUnavailableNoteResult,
   unavailableNoteDetailReason,
 } from "@/lib/result-display";
+import { resultDetailLinks } from "@/lib/result-links";
 
 interface Product { id: string; name: string; code: string }
 interface Campaign { id: string; name: string; productId: string; month: string }
@@ -110,6 +112,7 @@ interface Detail {
     id: string;
     platformNoteId: string | null;
     url: string;
+    finalUrl: string | null;
     title: string | null;
     body: string | null;
     authorName: string | null;
@@ -212,6 +215,7 @@ export default function ResultDetailPage() {
   );
   const productStageLabel = productStageTopicLabel(detail.task.productStage);
   const pageUnavailable = isUnavailableNoteResult(detail);
+  const detailLinks = resultDetailLinks(detail);
   const pageUnavailableReason = pageUnavailable
     ? unavailableNoteDetailReason(detail)
     : null;
@@ -342,10 +346,11 @@ export default function ResultDetailPage() {
               <Descriptions.Item label="产品阶段话题" span={2}>
                 {productStageLabel}
               </Descriptions.Item>
-              <Descriptions.Item label="链接" span={2}>
-                <a href={detail.note.url} target="_blank" rel="noreferrer" style={{ color: "#175cd3" }}>
-                  {detail.note.url}
-                </a>
+              <Descriptions.Item label="原笔记链接" span={2}>
+                <ResultDetailLink label="原笔记链接" value={detailLinks.originalUrl} />
+              </Descriptions.Item>
+              <Descriptions.Item label="最终链接" span={2}>
+                <ResultDetailLink label="最终链接" value={detailLinks.finalUrl} />
               </Descriptions.Item>
               <Descriptions.Item label="标题" span={2}>{detail.note.title || "-"}</Descriptions.Item>
             </Descriptions>

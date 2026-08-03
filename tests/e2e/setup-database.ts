@@ -149,7 +149,9 @@ async function main() {
     for (let index = 0; index < 15; index += 1) {
       const payload = createMockNote("passed");
       payload.url = `${payload.url}&isolated-fixture=${index + 1}`;
-      payload.finalUrl = payload.url;
+      payload.finalUrl = index === 0
+        ? `${payload.url}&resolved=final`
+        : payload.url;
       payload.noteId = `isolated-fixture-${index + 1}`;
       payload.pageEvidence = {
         originalUrl: payload.url,

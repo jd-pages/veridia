@@ -31,11 +31,13 @@ import {
   isUnavailableNoteResult,
   unavailableNoteDetailReason,
 } from "@/lib/result-display";
+import { resultDetailLinks } from "@/lib/result-links";
 import AuditConclusionCell from "./AuditConclusionCell";
 import AuditStatusTag from "./AuditStatusTag";
 import ImageAuditCell from "./ImageAuditCell";
 import TopicAuditCell from "./TopicAuditCell";
 import ExtractionEvidencePanel from "./ExtractionEvidencePanel";
+import ResultDetailLink from "./ResultDetailLink";
 import type { BulkAction, ResultDetail, ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
 
@@ -83,6 +85,7 @@ export default function AuditDetailDrawer({
   const pageUnavailableReason = row && pageUnavailable
     ? unavailableNoteDetailReason(row)
     : null;
+  const detailLinks = row ? resultDetailLinks(row) : null;
 
   return (
     <Drawer
@@ -101,7 +104,7 @@ export default function AuditDetailDrawer({
           <div className={styles.drawerFooter}>
             <Button
               icon={<ExportOutlined />}
-              href={row.note.url}
+              href={row.task.url}
               target="_blank"
             >
               打开原笔记
@@ -157,9 +160,14 @@ export default function AuditDetailDrawer({
                   children: row.note.platformNoteId || "未识别",
                 },
                 {
-                  key: "ruleVersion",
-                  label: "规则版本",
-                  children: `v${row.ruleVersion}`,
+                  key: "pageStatus",
+                  label: "页面状态",
+                  children: (
+                    <AuditStatusTag
+                      value={row.pageStatus}
+                      label={pageUnavailable ? "笔记不存在" : auditDetailStatusLabel(row.pageStatus)}
+                    />
+                  ),
                 },
                 {
                   key: "product",
@@ -174,7 +182,35 @@ export default function AuditDetailDrawer({
                 {
                   key: "stage",
                   label: "产品阶段话题",
+                  span: 2,
                   children: productStageTopicLabel(row.task.productStage),
+                },
+                {
+                  key: "originalUrl",
+                  label: "原笔记链接",
+                  span: 2,
+                  children: (
+                    <ResultDetailLink label="原笔记链接" value={detailLinks?.originalUrl} />
+                  ),
+                },
+                {
+                  key: "finalUrl",
+                  label: "最终链接",
+                  span: 2,
+                  children: (
+                    <ResultDetailLink label="最终链接" value={detailLinks?.finalUrl} />
+                  ),
+                },
+                {
+                  key: "title",
+                  label: "标题",
+                  span: 2,
+                  children: row.note.title || "-",
+                },
+                {
+                  key: "ruleVersion",
+                  label: "规则版本",
+                  children: `v${row.ruleVersion}`,
                 },
                 {
                   key: "auditedAt",

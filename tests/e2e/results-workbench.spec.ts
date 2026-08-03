@@ -261,6 +261,92 @@ test("审核详情展示自动取证候选证据", async ({ page }) => {
   await expect(page.getByText(/carousel-img/u).first()).toBeVisible();
 });
 
+test("审核详情区分原笔记链接与最终链接并复制完整原始 URL", async ({
+  page,
+  context,
+}) => {
+  await login(page);
+  const listResponse = await page.request.get("/api/results?page=1&pageSize=100");
+  expect(listResponse.ok()).toBeTruthy();
+  const listPayload = (await listResponse.json()) as {
+    data: {
+      items: Array<{
+        id: string;
+        task: { url: string; finalUrl: string | null };
+        note: {
+          url: string;
+          finalUrl: string | null;
+          platformNoteId: string | null;
+        };
+      }>;
+    };
+  };
+  const fixture = listPayload.data.items.find(
+    (item) => item.note.platformNoteId === "isolated-fixture-1",
+  );
+  expect(fixture).toBeTruthy();
+  const originalUrl = fixture!.task.url;
+  const finalUrl = fixture!.task.finalUrl || fixture!.note.finalUrl || fixture!.note.url;
+  expect(finalUrl).not.toBe(originalUrl);
+
+  await page.goto(`/results/${fixture!.id}`);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: new URL(page.url()).origin,
+  });
+  const basicInfo = page
+    .locator(".ant-card")
+    .filter({ hasText: "笔记基础信息" })
+    .first();
+  await expect(basicInfo.getByText("原笔记链接", { exact: true })).toBeVisible();
+  await expect(basicInfo.getByText("最终链接", { exact: true })).toBeVisible();
+  await expect(
+    basicInfo.getByRole("link", { name: originalUrl, exact: true }),
+  ).toHaveAttribute("href", originalUrl);
+  await expect(
+    basicInfo.getByRole("link", { name: finalUrl, exact: true }),
+  ).toHaveAttribute("href", finalUrl);
+  await expect(
+    basicInfo.getByRole("link", { name: "打开原笔记链接", exact: true }),
+  ).toHaveAttribute("href", originalUrl);
+  await basicInfo
+    .getByRole("button", { name: "复制原笔记链接", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe(originalUrl);
+
+  await page.goto("/results");
+  await page.getByLabel("关键词搜索").fill("isolated-fixture-1");
+  await page.getByRole("button", { name: "查询" }).click();
+  const fixtureRow = page.locator(".ant-table-row").filter({
+    has: page.getByText("笔记ID：isolated-fixture-1", { exact: true }),
+  });
+  await expect(fixtureRow).toHaveCount(1);
+  await expect(fixtureRow.getByText("最终链接：", { exact: true })).toBeVisible();
+  await expect(
+    fixtureRow.getByRole("link", { name: originalUrl, exact: true }),
+  ).toHaveAttribute("href", originalUrl);
+  await expect(
+    fixtureRow.getByRole("link", { name: finalUrl, exact: true }),
+  ).toHaveAttribute("href", finalUrl);
+  await expect(
+    fixtureRow.getByRole("link", { name: "打开原笔记链接", exact: true }),
+  ).toHaveAttribute("href", originalUrl);
+  await expect(
+    fixtureRow.getByRole("link", { name: "打开最终链接", exact: true }),
+  ).toHaveAttribute("href", finalUrl);
+  await fixtureRow.getByRole("button", { name: /查看详情/u }).click();
+  const drawer = page.locator(".ant-drawer-content");
+  await expect(drawer.getByText("原笔记链接", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("最终链接", { exact: true })).toBeVisible();
+  await expect(
+    drawer.getByRole("link", { name: originalUrl, exact: true }),
+  ).toHaveAttribute("href", originalUrl);
+  await expect(
+    drawer.getByRole("link", { name: finalUrl, exact: true }),
+  ).toHaveAttribute("href", finalUrl);
+});
+
 test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) => {
   await login(page);
   await expect
