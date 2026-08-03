@@ -10,7 +10,9 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   expect(loginResponse.ok()).toBeTruthy();
 
   await page.goto("/tasks");
-  await expect(page.getByText("产品阶段话题", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("combobox", { name: "产品阶段话题" }),
+  ).toBeVisible();
   await expect(
     page.getByText(
       "请选择 IFFO 或 GUM。",

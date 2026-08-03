@@ -200,7 +200,7 @@ export const businessUiText = {
   manualEvidence: "人工补审证据",
   auditOperations: "审核进度",
   executionLog: "审核执行记录",
-  recentActivity: "最近全部任务",
+  recentActivity: "本次任务内容",
   remaining: "剩余数量",
   riskSummary: "风险摘要",
   auditTrend: "审核趋势",

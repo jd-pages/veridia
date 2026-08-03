@@ -813,9 +813,10 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     ].join(","),
   );
   expect(failureExportResponse.headers()["x-veridia-export-count"]).toBe("2");
+
   expect(failureExportCsv).toContain("待人工复核");
 
-  await page.goto("/tasks");
+  await page.goto(`/tasks?batchId=${resultCoverageBatchId}`);
   const failedResult = resultCoverage.items.find(
     (item) => item.task.status === "READ_FAILED",
   );

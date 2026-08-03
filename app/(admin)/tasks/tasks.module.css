@@ -460,6 +460,10 @@
   margin-top: 16px;
 }
 
+.currentTaskSummary {
+  margin-bottom: 16px;
+}
+
 .tableSectionHeader {
   display: flex;
   align-items: flex-end;

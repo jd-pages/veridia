@@ -90,9 +90,17 @@ export async function createAutomaticBatch(input: CreateAutomaticBatchInput) {
   });
 }
 
-export async function getAutomaticBatches(limit = 20) {
+export interface AutomaticBatchQuery {
+  batchId?: string;
+  limit?: number;
+}
+
+export async function getAutomaticBatches(
+  { batchId, limit = 20 }: AutomaticBatchQuery = {},
+) {
   await backfillMissingProcessingFailureResults();
   const batches = await prisma.auditBatch.findMany({
+    where: batchId ? { id: batchId } : undefined,
     include: {
       product: { select: { id: true, code: true, name: true } },
       campaign: { select: { id: true, name: true, month: true } },
@@ -116,7 +124,7 @@ export async function getAutomaticBatches(limit = 20) {
       },
     },
     orderBy: { createdAt: "desc" },
-    take: limit,
+    take: Math.min(Math.max(limit, 1), 50),
   });
 
   return batches.map((batch) => {

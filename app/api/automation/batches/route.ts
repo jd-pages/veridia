@@ -15,11 +15,15 @@ import {
   findBlockingAuditTask,
 } from "@/lib/audit-task-deduplication";
 
-export const GET = withApiErrorBoundary(async function GET() {
+export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
+  const { searchParams } = new URL(request.url);
+  const batchId = searchParams.get("batchId")?.trim() || undefined;
+  const requestedLimit = Number(searchParams.get("limit") || 20);
+  const limit = Number.isFinite(requestedLimit) ? requestedLimit : 20;
   kickAutomaticAuditQueue();
-  return ok(await getAutomaticBatches());
+  return ok(await getAutomaticBatches({ batchId, limit: batchId ? 1 : limit }));
 }, "读取自动审核批次");
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {

@@ -104,6 +104,7 @@ interface AuditRequirements {
 
 interface Task {
   id: string;
+  batchId: string | null;
   url: string;
   finalUrl: string | null;
   pageTitle: string | null;
@@ -111,11 +112,14 @@ interface Task {
   failureEvidence: string | null;
   source: string;
   status: string;
+  productStage: string | null;
+  queueOrder: number;
   attempts: number;
   failureCode: string | null;
   failureMessage: string | null;
   notes: string | null;
   createdAt: string;
+  finishedAt: string | null;
   product: Product;
   campaign: Campaign;
   auditResults: Array<{
@@ -147,7 +151,9 @@ interface AuditBatch {
   name: string | null;
   source: string;
   status: string;
+  productStage: string | null;
   createdAt: string;
+  finishedAt: string | null;
   product: Product | null;
   campaign: Campaign | null;
   stats: BatchStats;
@@ -247,6 +253,26 @@ function EvidencePill({ label }: { label: string }) {
   return <span className={styles.evidencePill}>{label}</span>;
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
+}
+
+function rememberCurrentBatch(batchId: string | undefined) {
+  const url = new URL(window.location.href);
+  if (batchId) url.searchParams.set("batchId", batchId);
+  else url.searchParams.delete("batchId");
+  window.history.replaceState(window.history.state, "", url);
+}
+
 export default function TasksPage() {
   const { message } = App.useApp();
   const [products, setProducts] = useState<Product[]>([]);
@@ -278,22 +304,44 @@ export default function TasksPage() {
   );
   const canOperate = currentRole === "ADMIN" || currentRole === "OPERATOR";
 
-  const load = useCallback(async (quiet = false) => {
+  const load = useCallback(async (quiet = false, targetBatchId?: string) => {
     if (!quiet) setLoading(true);
-    const [productResult, campaignResult, taskResult, batchResult, sessionResult] =
+    const batchQuery = targetBatchId
+      ? `?batchId=${encodeURIComponent(targetBatchId)}`
+      : "?limit=1";
+    const [productResult, campaignResult, batchResult, sessionResult] =
       await Promise.allSettled([
         apiFetch<Product[]>("/api/products"),
         apiFetch<Campaign[]>("/api/campaigns"),
-        apiFetch<Task[]>("/api/tasks"),
-        apiFetch<AuditBatch[]>("/api/automation/batches"),
+        apiFetch<AuditBatch[]>(`/api/automation/batches${batchQuery}`),
         apiFetch<AutomationSession>("/api/automation/session"),
       ]);
     if (productResult.status === "fulfilled") setProducts(productResult.value);
     if (campaignResult.status === "fulfilled") setCampaigns(campaignResult.value);
-    if (taskResult.status === "fulfilled") setTasks(taskResult.value);
     if (batchResult.status === "fulfilled") {
-      setBatches(batchResult.value);
-      setSelectedBatchId((current) => current || batchResult.value[0]?.id);
+      const currentBatch = batchResult.value[0];
+      setBatches(currentBatch ? [currentBatch] : []);
+      setSelectedBatchId(currentBatch?.id);
+      rememberCurrentBatch(currentBatch?.id);
+      if (currentBatch) {
+        try {
+          const currentTasks = await apiFetch<Task[]>(
+            `/api/tasks?batchId=${encodeURIComponent(currentBatch.id)}`,
+          );
+          setTasks(currentTasks);
+        } catch (error) {
+          setTasks([]);
+          if (!quiet) {
+            message.error(
+              error instanceof Error
+                ? error.message
+                : "读取本次任务内容失败，请刷新重试。",
+            );
+          }
+        }
+      } else {
+        setTasks([]);
+      }
     }
     if (sessionResult.status === "fulfilled") {
       setSession(sessionResult.value);
@@ -303,7 +351,6 @@ export default function TasksPage() {
     const dataFailure = [
       productResult,
       campaignResult,
-      taskResult,
       batchResult,
     ].find((result) => result.status === "rejected");
     if (!quiet && dataFailure?.status === "rejected") {
@@ -317,7 +364,9 @@ export default function TasksPage() {
   }, [message]);
 
   useEffect(() => {
-    void load();
+    const requestedBatchId =
+      new URLSearchParams(window.location.search).get("batchId") || undefined;
+    void load(false, requestedBatchId);
     void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
       setCurrentRole(user?.role || null),
     );
@@ -351,16 +400,26 @@ export default function TasksPage() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (batches.some((batch) => activeBatchStatuses.has(batch.status))) {
-        void load(true);
+        void load(true, selectedBatchId);
       }
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [batches, load]);
+  }, [batches, load, selectedBatchId]);
 
   const selectedBatch = useMemo(
     () => batches.find((batch) => batch.id === selectedBatchId) || batches[0],
     [batches, selectedBatchId],
   );
+  const currentTaskSummary = useMemo(() => {
+    const statuses = tasks.map((task) => task.auditResults[0]?.autoStatus);
+    return {
+      passed: statuses.filter((status) => status === "PASSED").length,
+      failed: statuses.filter((status) => status === "FAILED").length,
+      needsReview: statuses.filter(
+        (status) => status === "NEEDS_REVIEW" || status === "READ_FAILED",
+      ).length,
+    };
+  }, [tasks]);
   const requiredStageTopics = useMemo(
     () => requirements
       ? stageTopicsForProductStage(
@@ -405,7 +464,7 @@ export default function TasksPage() {
         );
       }
       form.setFieldValue("urls", "");
-      await load(true);
+      await load(true, result.batchId);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "创建批次失败");
     } finally {
@@ -433,7 +492,7 @@ export default function TasksPage() {
       if (commit) {
         if (result.batchId) setSelectedBatchId(result.batchId);
         message.success(`已导入 ${result.imported} 条，自动审核已开始`);
-        await load(true);
+        await load(true, result.batchId || undefined);
       } else {
         message.success("预检查完成");
       }
@@ -461,7 +520,7 @@ export default function TasksPage() {
           RETRY_FAILED: "失败任务已重新入队",
         }[action],
       );
-      await load(true);
+      await load(true, selectedBatch.id);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "队列操作失败");
     }
@@ -1037,17 +1096,10 @@ export default function TasksPage() {
             <h2>自动审核进度</h2>
             <p>实时观察队列执行、失败隔离和人工复核负载。</p>
           </div>
-          {batches.length ? (
-            <Select
-              aria-label="选择自动审核批次"
-              value={selectedBatch?.id}
-              className={styles.batchSelect}
-              options={batches.map((batch) => ({
-                value: batch.id,
-                label: `${batch.name || "未命名批次"} · ${batch.stats.completed}/${batch.stats.total}`,
-              }))}
-              onChange={setSelectedBatchId}
-            />
+          {selectedBatch ? (
+            <Tag color="blue">
+              当前批次 · {selectedBatch.name || "未命名批次"}
+            </Tag>
           ) : null}
         </div>
         {selectedBatch ? (
@@ -1209,14 +1261,16 @@ export default function TasksPage() {
                 <h3>审核执行记录</h3>
               </div>
               <span>
-                {selectedBatch.tasks.length} {businessUiText.records}
+                {tasks.length} {businessUiText.records}
               </span>
             </div>
             <Table<Task>
               className={styles.enterpriseTable}
               rowKey="id"
               size="small"
-              dataSource={selectedBatch.tasks}
+              dataSource={tasks}
+              loading={loading}
+              locale={{ emptyText: "本次任务暂无执行记录" }}
               sticky={{ offsetHeader: 64 }}
               scroll={{ x: 1180 }}
               columns={[
@@ -1358,16 +1412,62 @@ export default function TasksPage() {
             <span className={styles.eyebrow}>
               {businessUiText.recentActivity}
             </span>
-            <h2>最近全部任务</h2>
-            <p>查看跨批次任务的最新执行状态。</p>
+            <h2>本次任务内容</h2>
+            <p>查看本次审核任务中的全部笔记及最新执行状态。</p>
           </div>
           <FileSearchOutlined className={styles.headerIcon} />
         </div>
+        {selectedBatch ? (
+          <Descriptions
+            className={styles.currentTaskSummary}
+            size="small"
+            bordered
+            column={{ xs: 1, md: 2, xl: 4 }}
+          >
+            <Descriptions.Item label="批次名称">
+              {selectedBatch.name || "未命名批次"}
+            </Descriptions.Item>
+            <Descriptions.Item label="所属产品">
+              {selectedBatch.product?.name || "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="所属活动">
+              {selectedBatch.campaign?.name || "-"}
+            </Descriptions.Item>
+            <Descriptions.Item label="产品阶段话题">
+              {productStageTopicLabel(selectedBatch.productStage)}
+            </Descriptions.Item>
+            <Descriptions.Item label="任务来源">
+              {businessSourceLabel(selectedBatch.source)}
+            </Descriptions.Item>
+            <Descriptions.Item label="本次笔记数">
+              {tasks.length} 条
+            </Descriptions.Item>
+            <Descriptions.Item label="审核通过">
+              {currentTaskSummary.passed} 条
+            </Descriptions.Item>
+            <Descriptions.Item label="审核不通过">
+              {currentTaskSummary.failed} 条
+            </Descriptions.Item>
+            <Descriptions.Item label="待人工复核">
+              {currentTaskSummary.needsReview} 条
+            </Descriptions.Item>
+            <Descriptions.Item label="任务状态">
+              {businessStatusLabel(selectedBatch.status, "process")}
+            </Descriptions.Item>
+            <Descriptions.Item label="创建时间">
+              {formatDateTime(selectedBatch.createdAt)}
+            </Descriptions.Item>
+            <Descriptions.Item label="完成时间">
+              {formatDateTime(selectedBatch.finishedAt)}
+            </Descriptions.Item>
+          </Descriptions>
+        ) : null}
         <Table<Task>
           className={styles.enterpriseTable}
           rowKey="id"
           loading={loading}
           dataSource={tasks}
+          locale={{ emptyText: "本次任务暂无笔记" }}
           sticky={{ offsetHeader: 64 }}
           scroll={{ x: 980 }}
           columns={[
@@ -1396,6 +1496,12 @@ export default function TasksPage() {
               title: "活动",
               width: 260,
               render: (_value, row) => row.campaign.name,
+            },
+            {
+              title: "产品阶段话题",
+              dataIndex: "productStage",
+              width: 150,
+              render: (value: string | null) => productStageTopicLabel(value),
             },
             {
               title: "来源",

@@ -14,15 +14,16 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status") || undefined;
+  const batchId = searchParams.get("batchId")?.trim() || undefined;
   await backfillMissingProcessingFailureResults();
   const tasks = await prisma.auditTask.findMany({
-    where: { status },
+    where: { status, batchId },
     include: {
       product: true,
       campaign: true,
       auditResults: { orderBy: { auditedAt: "desc" }, take: 1 },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: batchId ? { queueOrder: "asc" } : { createdAt: "desc" },
     take: 100,
   });
   return ok(tasks);
