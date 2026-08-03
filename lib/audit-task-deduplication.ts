@@ -2,21 +2,39 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeUrl } from "@/lib/topic";
 
-export const ACTIVE_AUDIT_TASK_STATUSES = [
-  "PENDING",
-  "PROCESSING",
-  "LOGIN_EXPIRED",
-] as const;
-
-export type AuditTaskDuplicateReason = "ACTIVE_TASK" | "EXISTING_RESULT";
+export type AuditTaskDuplicateReason = "TODAY_DUPLICATE";
 
 export const auditTaskDuplicateMessages: Record<
   AuditTaskDuplicateReason,
   string
 > = {
-  ACTIVE_TASK: "该链接已有审核任务正在进行中",
-  EXISTING_RESULT: "该链接已有审核结果，可前往查看或重新审核",
+  TODAY_DUPLICATE: "该笔记今天已创建过审核任务，请勿重复创建。",
 };
+
+export const importedAuditTaskDuplicateMessage =
+  "今日已存在相同笔记链接，已跳过。";
+
+export function localNaturalDayRange(now = new Date()) {
+  const start = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    0,
+    0,
+    0,
+    0,
+  );
+  const end = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+    0,
+    0,
+    0,
+    0,
+  );
+  return { start, end };
+}
 
 function safeNormalizedUrl(value: string | null | undefined) {
   if (!value?.trim()) return "";
@@ -93,6 +111,11 @@ function candidateWhere(url: string): Prisma.AuditTaskWhereInput[] {
       { url: { contains: identityValue } },
       { normalizedUrl: { contains: identityValue } },
       { finalUrl: { contains: identityValue } },
+      {
+        auditResults: {
+          some: { note: { platformNoteId: identityValue } },
+        },
+      },
     );
   } else if (identity.startsWith("xhs-short:") && identityValue) {
     const path = new URL(normalizedUrl).pathname;
@@ -106,46 +129,65 @@ function candidateWhere(url: string): Prisma.AuditTaskWhereInput[] {
 
 export async function findBlockingAuditTask(input: {
   url: string;
-  campaignId: string;
+  now?: Date;
 }) {
+  const { start, end } = localNaturalDayRange(input.now);
   const candidates = await prisma.auditTask.findMany({
     where: {
-      campaignId: input.campaignId,
-      OR: candidateWhere(input.url),
+      AND: [
+        { OR: candidateWhere(input.url) },
+        {
+          OR: [
+            { createdAt: { gte: start, lt: end } },
+            {
+              auditResults: {
+                some: { auditedAt: { gte: start, lt: end } },
+              },
+            },
+          ],
+        },
+      ],
     },
     select: {
       id: true,
-      status: true,
       url: true,
       normalizedUrl: true,
       finalUrl: true,
-      auditResults: { select: { id: true }, take: 1 },
+      auditResults: {
+        select: {
+          note: {
+            select: { platformNoteId: true, url: true, finalUrl: true },
+          },
+        },
+        orderBy: { auditedAt: "desc" },
+        take: 5,
+      },
     },
     orderBy: { createdAt: "desc" },
   });
-  const matching = candidates.filter((task) =>
-    auditTaskLinksMatch(input.url, task),
+  const inputIdentity = auditNoteIdentity(input.url);
+  const matching = candidates.find(
+    (task) =>
+      auditTaskLinksMatch(input.url, task) ||
+      task.auditResults.some(({ note }) => {
+        const platformIdentity = note.platformNoteId
+          ? `xhs-note:${note.platformNoteId.toLocaleLowerCase()}`
+          : "";
+        return (
+          inputIdentity === platformIdentity ||
+          auditTaskLinksMatch(input.url, {
+            url: note.url,
+            normalizedUrl: note.url,
+            finalUrl: note.finalUrl,
+          })
+        );
+      }),
   );
-  const active = matching.find((task) =>
-    ACTIVE_AUDIT_TASK_STATUSES.includes(
-      task.status as (typeof ACTIVE_AUDIT_TASK_STATUSES)[number],
-    ),
-  );
-  if (active) {
+  if (matching) {
     return {
-      taskId: active.id,
-      reason: "ACTIVE_TASK" as const,
-      message: auditTaskDuplicateMessages.ACTIVE_TASK,
-    };
-  }
-  const completedWithResult = matching.find(
-    (task) => task.auditResults.length > 0,
-  );
-  if (completedWithResult) {
-    return {
-      taskId: completedWithResult.id,
-      reason: "EXISTING_RESULT" as const,
-      message: auditTaskDuplicateMessages.EXISTING_RESULT,
+      taskId: matching.id,
+      reason: "TODAY_DUPLICATE" as const,
+      message: auditTaskDuplicateMessages.TODAY_DUPLICATE,
     };
   }
   return null;

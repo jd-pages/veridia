@@ -527,24 +527,10 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
       productStage: detail.data.task.productStage,
     },
   });
-  expect(recreateResponse.ok()).toBeTruthy();
-  const recreated = (await recreateResponse.json()) as {
-    data: { batchId: string; created: number; skipped: unknown[] };
-  };
-  expect(recreated.data).toMatchObject({ created: 1, skipped: [] });
-  await expect
-    .poll(
-      async () => {
-        const payload = (await (
-          await page.request.get(
-            `/api/results?batchId=${recreated.data.batchId}&page=1&pageSize=10`,
-          )
-        ).json()) as { data: { total: number } };
-        return payload.data.total;
-      },
-      { timeout: 30_000 },
-    )
-    .toBe(1);
+  expect(recreateResponse.status()).toBe(400);
+  expect((await recreateResponse.json()).error).toBe(
+    "该笔记今天已创建过审核任务，请勿重复创建。",
+  );
 
   await page.reload();
   const beforeBatchDelete = (await (
@@ -613,7 +599,7 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
   ).toBeVisible();
   await expect(
     dialog.getByText(
-      "即将删除已选择的 2 条审核结果及其关联审核明细，删除后无法恢复。",
+      "确认删除已选择的 2 条审核结果？删除后不可恢复。",
       { exact: true },
     ),
   ).toBeVisible();
@@ -653,23 +639,10 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
       data?: { batchId?: string; created?: number };
       error?: string;
     };
-    expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
-    expect(payload.data?.created).toBe(1);
-    expect(payload.data?.batchId).toBeTruthy();
-    await expect
-      .poll(
-        async () => {
-          const resultResponse = await page.request.get(
-            `/api/results?batchId=${payload.data!.batchId}&page=1&pageSize=10`,
-          );
-          const resultPayload = (await resultResponse.json()) as {
-            data: { total: number };
-          };
-          return resultPayload.data.total;
-        },
-        { timeout: 30_000 },
-      )
-      .toBe(1);
+    expect(response.status(), JSON.stringify(payload)).toBe(400);
+    expect(payload.error).toBe(
+      "该笔记今天已创建过审核任务，请勿重复创建。",
+    );
   }
 
   const finalList = (await (

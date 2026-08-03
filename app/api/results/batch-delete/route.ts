@@ -6,7 +6,7 @@ import {
 } from "@/lib/audit-result-deletion";
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser(["ADMIN", "OPERATOR"]);
   if (user instanceof Response) return user;
 
   const body = await request.json().catch(() => null);

@@ -81,7 +81,7 @@ export default function BatchActionBar({
             loading={deleting}
             onClick={onDelete}
           >
-            批量删除（{selectedCount}）
+            {selectedCount ? `批量删除（${selectedCount}）` : "批量删除"}
           </Button>
         )}
         <Button

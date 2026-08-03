@@ -95,15 +95,24 @@ describe("审核结果删除接口权限与输入", () => {
     });
   });
 
-  it.each([users.OPERATOR, users.VIEWER])(
-    "$role 直接调用单条和批量接口均返回 403",
-    async (user) => {
-      mocks.getSession.mockResolvedValue(user);
-      expect((await singleDelete()).status).toBe(403);
-      expect((await batchDelete(["result-1"])).status).toBe(403);
-      expect(mocks.deleteAuditResults).not.toHaveBeenCalled();
-    },
-  );
+  it("OPERATOR 只能批量删除，不能调用管理员单条删除接口", async () => {
+    mocks.getSession.mockResolvedValue(users.OPERATOR);
+    expect((await singleDelete()).status).toBe(403);
+    expect((await batchDelete(["result-1"])).status).toBe(200);
+    expect(mocks.deleteAuditResults).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteAuditResults).toHaveBeenCalledWith({
+      ids: ["result-1"],
+      userId: "operator-1",
+      mode: "BULK",
+    });
+  });
+
+  it("VIEWER 直接调用单条和批量接口均返回 403", async () => {
+    mocks.getSession.mockResolvedValue(users.VIEWER);
+    expect((await singleDelete()).status).toBe(403);
+    expect((await batchDelete(["result-1"])).status).toBe(403);
+    expect(mocks.deleteAuditResults).not.toHaveBeenCalled();
+  });
 
   it("拒绝空数组和超过 200 个唯一 ID", async () => {
     expect((await batchDelete([])).status).toBe(400);

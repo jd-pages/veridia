@@ -240,6 +240,43 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
     "localhost:3100/mock",
   );
 
+  await page.goto("/results");
+  const batchDelete = page
+    .getByRole("region", { name: "批量操作" })
+    .getByRole("button", { name: /批量删除/u });
+  await expect(batchDelete).toBeVisible();
+  await expect(batchDelete).toBeDisabled();
+  const firstResultRow = page.locator(".ant-table-row").first();
+  await expect(firstResultRow).toBeVisible();
+  const selectionControl = firstResultRow.locator(
+    "td.ant-table-selection-column label.ant-checkbox-wrapper",
+  );
+  await selectionControl.click();
+  const selectedBatchDelete = page.getByRole("button", {
+    name: /批量删除（1）/u,
+  });
+  await expect(selectedBatchDelete).toBeEnabled();
+  await selectedBatchDelete.click();
+  const deleteDialog = page.getByRole("dialog");
+  await expect(
+    deleteDialog.getByText(
+      "确认删除已选择的 1 条审核结果？删除后不可恢复。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await deleteDialog.getByRole("button", { name: /取\s*消/u }).click();
+  await expect(deleteDialog).toBeHidden();
+
+  const operatorBatchDelete = await page.request.post(
+    "/api/results/batch-delete",
+    { data: { ids: [`missing-${Date.now()}`] } },
+  );
+  expect(operatorBatchDelete.status()).toBe(200);
+  const operatorSingleDelete = await page.request.delete(
+    `/api/results/missing-${Date.now()}`,
+  );
+  expect(operatorSingleDelete.status()).toBe(403);
+
   await page.goto("/products");
   await expect(page.getByRole("heading", { name: "产品管理" })).toBeVisible();
   await expect(page.getByRole("button", { name: "新增产品" })).toHaveCount(0);

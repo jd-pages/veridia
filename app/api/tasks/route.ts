@@ -7,7 +7,11 @@ import {
 } from "@/lib/product-stage";
 import packageJson from "@/package.json";
 import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
-import { findBlockingAuditTask } from "@/lib/audit-task-deduplication";
+import {
+  auditNoteIdentity,
+  auditTaskDuplicateMessages,
+  findBlockingAuditTask,
+} from "@/lib/audit-task-deduplication";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -84,16 +88,23 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     select: { currentVersion: true },
   });
   const errors: Array<{ url: string; reason: string }> = [];
+  const requestIdentities = new Set<string>();
   for (const url of uniqueUrls) {
     if (!isSupportedNoteUrl(url)) {
       errors.push({ url, reason: "链接格式不正确或不是支持的小红书/模拟链接" });
       continue;
     }
     const normalizedUrl = normalizeUrl(url);
-    const duplicate = await findBlockingAuditTask({
-      url,
-      campaignId: body.campaignId,
-    });
+    const identity = auditNoteIdentity(url);
+    if (requestIdentities.has(identity)) {
+      errors.push({
+        url,
+        reason: auditTaskDuplicateMessages.TODAY_DUPLICATE,
+      });
+      continue;
+    }
+    requestIdentities.add(identity);
+    const duplicate = await findBlockingAuditTask({ url });
     if (duplicate) {
       errors.push({ url, reason: duplicate.message });
       continue;

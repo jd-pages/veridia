@@ -203,7 +203,8 @@ export default function ResultsPage() {
     null,
   );
   const canOperate = currentRole === "ADMIN" || currentRole === "OPERATOR";
-  const canDelete = currentRole === "ADMIN";
+  const canDeleteSingle = currentRole === "ADMIN";
+  const canDeleteBatch = canOperate;
 
   const loadSummary = useCallback(async (
     targetFilters: ResultFilters,
@@ -473,7 +474,8 @@ export default function ResultsPage() {
   };
 
   const confirmDelete = (ids: React.Key[], mode: "SINGLE" | "BULK") => {
-    if (!canDelete || !ids.length || deleteLockRef.current) return;
+    const allowed = mode === "SINGLE" ? canDeleteSingle : canDeleteBatch;
+    if (!allowed || !ids.length || deleteLockRef.current) return;
     const count = ids.length;
     modal.confirm({
       title:
@@ -481,7 +483,7 @@ export default function ResultsPage() {
       content:
         mode === "SINGLE"
           ? "删除后，该审核结果及其关联审核明细将无法恢复，但不会删除原审核任务、导入记录、产品、活动或规则。"
-          : `即将删除已选择的 ${count} 条审核结果及其关联审核明细，删除后无法恢复。`,
+          : `确认删除已选择的 ${count} 条审核结果？删除后不可恢复。`,
       cancelText: "取消",
       okText: "确认删除",
       okButtonProps: { danger: true },
@@ -552,7 +554,7 @@ export default function ResultsPage() {
         onClick: () => void openDrawer(row),
       },
     ];
-    if (canDelete) {
+    if (canDeleteSingle) {
       items.push(
         { type: "divider" },
         {
@@ -710,7 +712,7 @@ export default function ResultsPage() {
 
       {canOperate && <BatchActionBar
         selectedCount={selected.length}
-        canDelete={canDelete}
+        canDelete={canDeleteBatch}
         deleting={deletingIds.length > 0}
         onAction={(action) => void bulk(action)}
         onExport={exportSelected}

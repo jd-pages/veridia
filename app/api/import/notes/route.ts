@@ -20,7 +20,11 @@ import {
   detectLocalSourceType,
   parseTabularPreview,
 } from "@/lib/import-export-templates/tabular";
-import { findBlockingAuditTask } from "@/lib/audit-task-deduplication";
+import {
+  auditNoteIdentity,
+  findBlockingAuditTask,
+  importedAuditTaskDuplicateMessage,
+} from "@/lib/audit-task-deduplication";
 import {
   productResolutionError,
   resolveProductReference,
@@ -140,8 +144,9 @@ export async function POST(request: Request) {
       let normalizedUrl = "";
       if (checked.url && checked.recognitionStatus === "RECOGNIZED") {
         normalizedUrl = normalizeUrl(checked.url);
-        if (seen.has(normalizedUrl)) checked.errors.push("文件内存在重复链接");
-        seen.add(normalizedUrl);
+        const identity = auditNoteIdentity(checked.url);
+        if (seen.has(identity)) checked.errors.push("文件内存在重复链接");
+        seen.add(identity);
       }
       const productResolution = resolveProductReference(activeProducts, {
         code: checked.productCode,
@@ -216,11 +221,10 @@ export async function POST(request: Request) {
       }
       checked.milkType = stageRule?.milkType || undefined;
       if (normalizedUrl && campaign?.id) {
-        const duplicate = await findBlockingAuditTask({
-          url: checked.url,
-          campaignId: campaign.id,
-        });
-        if (duplicate) checked.errors.push(duplicate.message);
+        const duplicate = await findBlockingAuditTask({ url: checked.url });
+        if (duplicate) {
+          checked.errors.push(importedAuditTaskDuplicateMessage);
+        }
       }
       checked.errors = [...new Set(checked.errors)];
       rows.push(checked);

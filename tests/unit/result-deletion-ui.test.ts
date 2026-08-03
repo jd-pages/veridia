@@ -7,14 +7,18 @@ function source(relativePath: string) {
 }
 
 describe("审核结果删除界面", () => {
-  it("删除控件仅向 ADMIN 渲染", () => {
+  it("管理员保留单条删除，管理员和审核员共享批量删除", () => {
     const page = source("app/(admin)/results/page.tsx");
     const batchBar = source("components/results/BatchActionBar.tsx");
-    expect(page).toContain('const canDelete = currentRole === "ADMIN"');
-    expect(page).toContain("if (canDelete)");
-    expect(page).toContain("canDelete={canDelete}");
+    expect(page).toContain('const canDeleteSingle = currentRole === "ADMIN"');
+    expect(page).toContain("const canDeleteBatch = canOperate");
+    expect(page).toContain("if (canDeleteSingle)");
+    expect(page).toContain("canDelete={canDeleteBatch}");
     expect(batchBar).toContain("{canDelete && (");
-    expect(batchBar).toContain("批量删除（{selectedCount}）");
+    expect(batchBar).toContain(
+      '{selectedCount ? `批量删除（${selectedCount}）` : "批量删除"}',
+    );
+    expect(batchBar).toContain("disabled={selectedCount === 0 || deleting}");
   });
 
   it("保留查看详情并提供规定的确认文案与危险按钮", () => {
@@ -23,6 +27,9 @@ describe("审核结果删除界面", () => {
     expect(page).toContain('label: "删除该结果"');
     expect(page).toContain("确认删除该审核结果？");
     expect(page).toContain("确认批量删除？");
+    expect(page).toContain(
+      "确认删除已选择的 ${count} 条审核结果？删除后不可恢复。",
+    );
     expect(page).toContain('okButtonProps: { danger: true }');
     expect(page).toContain('cancelText: "取消"');
     expect(page).toContain('okText: "确认删除"');

@@ -11,6 +11,7 @@ import {
   normalizeProductStageTopicValue,
 } from "@/lib/product-stage";
 import {
+  auditNoteIdentity,
   auditTaskDuplicateMessages,
   findBlockingAuditTask,
 } from "@/lib/audit-task-deduplication";
@@ -79,26 +80,25 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
 
   const accepted: string[] = [];
   const skipped: Array<{ url: string; reason: string }> = [];
+  const requestIdentities = new Set<string>();
   for (const url of urls) {
-    const duplicate = await findBlockingAuditTask({
-      url,
-      campaignId: body.campaignId,
-    });
+    const identity = auditNoteIdentity(url);
+    if (requestIdentities.has(identity)) {
+      skipped.push({
+        url,
+        reason: auditTaskDuplicateMessages.TODAY_DUPLICATE,
+      });
+      continue;
+    }
+    requestIdentities.add(identity);
+    const duplicate = await findBlockingAuditTask({ url });
     if (duplicate) skipped.push({ url, reason: duplicate.message });
     else accepted.push(url);
   }
   if (!accepted.length) {
     const reasons = new Set(skipped.map((item) => item.reason));
     if (reasons.size === 1) return fail([...reasons][0]);
-    const activeCount = skipped.filter(
-      (item) => item.reason === auditTaskDuplicateMessages.ACTIVE_TASK,
-    ).length;
-    const resultCount = skipped.filter(
-      (item) => item.reason === auditTaskDuplicateMessages.EXISTING_RESULT,
-    ).length;
-    return fail(
-      `没有可创建的链接：${activeCount} 条正在审核，${resultCount} 条已有审核结果`,
-    );
+    return fail(auditTaskDuplicateMessages.TODAY_DUPLICATE);
   }
 
   const batch = await createAutomaticBatch({
