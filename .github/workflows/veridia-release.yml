@@ -146,6 +146,25 @@ jobs:
         shell: pwsh
         run: npm run prisma:assert-packaged *>&1 | Tee-Object artifacts/release-logs/prisma-packaged.log
 
+      - name: 检查自动更新发布三件套
+        shell: pwsh
+        run: |
+          node scripts/validate-software-release.mjs --directory=dist-installer *>&1 |
+            Tee-Object artifacts/release-logs/software-release-assets.log
+          $notes = Get-Content CHANGELOG.md -Raw
+          $autoUpdate = @'
+
+          ## 自动更新文件
+
+          本次软件更新包含自动更新所需文件：
+          - 安装包 exe
+          - blockmap
+          - latest.yml
+
+          客户端将通过 latest.yml 检测版本，并优先使用 blockmap 进行差分更新。
+          '@
+          Set-Content artifacts/software-release-notes.md ($notes + $autoUpdate) -Encoding utf8
+
       - name: 确认签名状态
         shell: pwsh
         run: |
@@ -172,13 +191,17 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: VERIDIA ${{ steps.version.outputs.version }}
-          body_path: CHANGELOG.md
+          body_path: artifacts/software-release-notes.md
           draft: false
           prerelease: false
           files: |
             dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe
             dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe.blockmap
             dist-installer/latest.yml
+
+      - name: 校验 GitHub Release 自动更新文件
+        shell: pwsh
+        run: node scripts/finalize-release.mjs verify-remote --directory=dist-installer
 
       - name: 上传构建日志和安装产物
         if: always()

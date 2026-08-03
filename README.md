@@ -307,8 +307,13 @@ Codex 完成功能修改后不得直接发布，也不得直接上传安装包�
    在本机验收通过。
 3. 以上两步均通过后，最后双击 `发布新版.bat`。脚本会验证本地打包验收记录、
    当前源码指纹、版本、Git 状态、分支、最近提交、敏感信息及待上传文件。只有准确
-   输入“我确认发布”才会提交版本变更、创建 Tag 和 GitHub Release，并上传安装包、
-   `latest.yml` 和 blockmap。
+   输入“我确认发布”才会创建 Tag 和 GitHub Release，并上传安装包、`latest.yml` 和
+   blockmap。版本变更必须事先提交并同步到 `origin/main`，发布脚本不会代为提交源码。
+
+   软件 Release 的 EXE、同名 `.exe.blockmap` 和 `latest.yml` 缺一不可。发布脚本会在
+   本机和 GitHub Actions 中分别校验三件套，并在 Release 创建后再次核对远程文件大小、
+   SHA-256 与匿名下载状态。客户端通过 `latest.yml` 检测版本，并优先使用 blockmap
+   进行差分更新；该流程不会执行 `rules:publish`。
 
 本地打包后的任何源码变化都会使验收记录失效，必须重新运行
 `本地打包验收.bat`。普通代码保存、预览和测试不会触发正式发布。

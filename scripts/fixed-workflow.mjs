@@ -81,6 +81,36 @@ function git(args, allowFailure = false) {
   };
 }
 
+function assertSoftwarePublishGitState() {
+  const branch = git(["branch", "--show-current"]).stdout;
+  if (branch !== "main") {
+    throw new Error("软件正式发布只能从 main 分支执行。");
+  }
+  const status = git([
+    "-c",
+    "core.quotepath=false",
+    "status",
+    "--short",
+  ]).stdout;
+  if (status) {
+    throw new Error(
+      `软件发布要求工作区干净，请先提交或处理以下文件：\n${status}`,
+    );
+  }
+  git(["fetch", "--quiet", "origin", "main"]);
+  const [ahead, behind] = git([
+    "rev-list",
+    "--left-right",
+    "--count",
+    "main...origin/main",
+  ]).stdout.split(/\s+/u);
+  if (ahead !== "0" || behind !== "0") {
+    throw new Error(
+      `main 与 origin/main 未同步（ahead ${ahead || "?"} / behind ${behind || "?"}），发布已停止。`,
+    );
+  }
+}
+
 function sourceFingerprint() {
   const files = git([
     "-c",
@@ -615,6 +645,7 @@ function readAcceptance() {
 async function publish() {
   ensureLocalPrerequisites();
   const info = packageInfo();
+  if (!dryRun) assertSoftwarePublishGitState();
   const acceptance = dryRun
     ? {
         version: info.version,
@@ -645,9 +676,7 @@ async function publish() {
 
   const branch = git(["branch", "--show-current"]).stdout;
   const commit = git(["rev-parse", "--short=12", "HEAD"]).stdout;
-  const status =
-    git(["-c", "core.quotepath=false", "status", "--short"]).stdout ||
-    "工作区无未提交修改";
+  const status = "工作区干净，main 与 origin/main 已同步";
   process.stdout.write(
     [
       "",
@@ -665,8 +694,10 @@ async function publish() {
       `将创建 GitHub Release：VERIDIA v${info.version}`,
       "将上传文件：",
       `- VERIDIA-Setup-${info.version}.exe`,
-      "- latest.yml",
       `- VERIDIA-Setup-${info.version}.exe.blockmap`,
+      "- latest.yml",
+      "本次软件更新包含自动更新所需文件：安装包 exe、blockmap、latest.yml。",
+      "客户端将通过 latest.yml 检测版本，并优先使用 blockmap 进行差分更新。",
       "git status：",
       status,
       "",

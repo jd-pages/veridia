@@ -1,10 +1,15 @@
-import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import https from "node:https";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+
+import {
+  formatArtifactSize,
+  packageVersion,
+  validateSoftwareReleaseArtifacts,
+} from "./software-release-artifacts.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const owner = "jd-pages";
@@ -27,59 +32,16 @@ function git(args, options = {}) {
   return result;
 }
 
-function sha256(file) {
-  const hash = createHash("sha256");
-  const descriptor = fs.openSync(file, "r");
-  const buffer = Buffer.allocUnsafe(4 * 1024 * 1024);
-  try {
-    let bytesRead = 0;
-    do {
-      bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
-      if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead));
-    } while (bytesRead > 0);
-  } finally {
-    fs.closeSync(descriptor);
-  }
-  return hash.digest("hex");
-}
-
 function currentVersion() {
-  return JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
-    .version;
+  return packageVersion(root);
 }
 
 function validateLocalRelease(version = currentVersion()) {
-  const directory = path.join(root, "release", version);
-  const installerName = `VERIDIA-Setup-${version}.exe`;
-  const blockmapName = `${installerName}.blockmap`;
-  const latestName = "latest.yml";
-  const files = [installerName, latestName, blockmapName].map((name) => {
-    const filePath = path.join(directory, name);
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`Missing release file: ${filePath}`);
-    }
-    return {
-      name,
-      path: filePath,
-      size: fs.statSync(filePath).size,
-      sha256: sha256(filePath),
-    };
+  return validateSoftwareReleaseArtifacts({
+    projectRoot: root,
+    version,
+    directory: path.join(root, "release", version),
   });
-  const latest = fs.readFileSync(path.join(directory, latestName), "utf8");
-  const latestVersion = latest.match(/^version:\s*(.+)$/mu)?.[1]?.trim();
-  const latestPath = latest.match(/^path:\s*(.+)$/mu)?.[1]?.trim();
-  const latestSize = Number(
-    latest.match(/^\s+size:\s*(\d+)$/mu)?.[1] || Number.NaN,
-  );
-  const installer = files[0];
-  if (
-    latestVersion !== version ||
-    latestPath !== installerName ||
-    latestSize !== installer.size
-  ) {
-    throw new Error("latest.yml does not match the local installer");
-  }
-  return { version, directory, files, latestValid: true };
 }
 
 function printSummary(release) {
@@ -87,12 +49,16 @@ function printSummary(release) {
   process.stdout.write(
     [
       "",
-      "VERIDIA release artifact summary",
-      `Version: ${release.version}`,
-      `Installer: ${installer.path}`,
-      `Installer size: ${installer.size} bytes`,
-      `Installer SHA-256: ${installer.sha256}`,
-      `latest.yml validation: ${release.latestValid ? "PASS" : "FAILED"}`,
+      "VERIDIA 软件发布文件摘要",
+      `发布版本号：${release.version}`,
+      `GitHub Release Tag：v${release.version}`,
+      ...release.files.map(
+        (file) => `- ${file.name}：${formatArtifactSize(file.size)}`,
+      ),
+      `安装包 SHA-256：${installer.sha256}`,
+      `包含 blockmap：${release.blockmapValid ? "是" : "否"}`,
+      `包含 latest.yml：${release.latestValid ? "是" : "否"}`,
+      "未执行 rules:publish，未发布远程规则。",
       "",
     ].join("\n"),
   );
@@ -166,6 +132,9 @@ async function requestJsonWithRetry(options) {
 }
 
 function githubToken() {
+  const environmentToken =
+    process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim();
+  if (environmentToken) return environmentToken;
   const result = git(["credential", "fill"], {
     input: "protocol=https\nhost=github.com\n\n",
   });
@@ -332,22 +301,29 @@ async function verifyRemoteRelease(local, remote, token) {
     throw new Error("GitHub Latest Release does not point to this version");
   }
   const base = `https://github.com/${owner}/${repository}/releases/download/v${local.version}`;
-  const latestStatus = await headStatusWithRetry(`${base}/latest.yml`);
-  const installerStatus = await headStatusWithRetry(
-    `${base}/${encodeURIComponent(local.files[0].name)}`,
-  );
-  if (latestStatus !== 200 || installerStatus !== 200) {
+  const downloadStatuses = new Map();
+  for (const file of local.files) {
+    downloadStatuses.set(
+      file.name,
+      await headStatusWithRetry(`${base}/${encodeURIComponent(file.name)}`),
+    );
+  }
+  if ([...downloadStatuses.values()].some((status) => status !== 200)) {
     throw new Error(
-      `Anonymous download validation failed: latest=${latestStatus}, installer=${installerStatus}`,
+      `匿名下载校验失败：${[...downloadStatuses.entries()]
+        .map(([name, status]) => `${name}=${status}`)
+        .join("，")}`,
     );
   }
   process.stdout.write(
     [
       `GitHub Release: ${remote.html_url}`,
       `Latest Release: v${local.version}`,
-      "latest.yml anonymous HTTP: 200",
-      "Installer anonymous HTTP: 200",
-      `Remote installer SHA-256: ${local.files[0].sha256}`,
+      ...local.files.map((file) => `${file.name}：上传完成，匿名 HTTP 200`),
+      `远程安装包 SHA-256：${local.files[0].sha256}`,
+      "包含 blockmap：是",
+      "包含 latest.yml：是",
+      "未执行 rules:publish，未发布远程规则。",
       "",
     ].join("\n"),
   );
@@ -381,14 +357,8 @@ async function triggerActionsRelease() {
     .stdout.trim();
   if (remoteTag) throw new Error(`${tag} 已存在远程 Tag，拒绝重复发布。`);
 
-  git(["add", "-A"]);
-  git(["diff", "--cached", "--check"]);
-  const staged = git(["diff", "--cached", "--quiet"], {
-    allowFailure: true,
-  });
-  if (staged.status !== 0) {
-    git(["commit", "-m", `release: prepare VERIDIA v${local.version}`]);
-  }
+  const dirty = git(["status", "--short"]).stdout.trim();
+  if (dirty) throw new Error("软件发布要求 Git 工作区干净，拒绝自动提交文件。");
   const branch = git(["branch", "--show-current"]).stdout.trim();
   if (branch !== "main") {
     throw new Error("软件正式发布只能从 main 分支触发 GitHub Actions。");
@@ -444,7 +414,7 @@ async function publishRelease() {
         tag_name: `v${local.version}`,
         target_commitish: commit,
         name: `VERIDIA v${local.version}`,
-        body: `## VERIDIA ${local.version}\n\n通过自动检查、测试和 Windows 安装包校验。`,
+        body: `## VERIDIA ${local.version}\n\n通过自动检查、测试和 Windows 安装包校验。\n\n本次软件更新包含自动更新所需文件：\n- 安装包 exe\n- blockmap\n- latest.yml\n\n客户端将通过 latest.yml 检测版本，并优先使用 blockmap 进行差分更新。`,
         draft: false,
         prerelease: false,
         make_latest: "true",
@@ -496,6 +466,27 @@ async function publishRelease() {
   git(["fetch", "origin", "tag", `v${local.version}`]);
 }
 
+async function verifyPublishedRelease() {
+  const version = currentVersion();
+  const directoryArgument = process.argv
+    .find((value) => value.startsWith("--directory="))
+    ?.slice("--directory=".length);
+  const local = validateSoftwareReleaseArtifacts({
+    projectRoot: root,
+    version,
+    directory: directoryArgument
+      ? path.resolve(root, directoryArgument)
+      : path.join(root, "release", version),
+  });
+  printSummary(local);
+  const token = githubToken();
+  const lookup = await lookupRelease(version, token);
+  if (lookup.status !== 200) {
+    throw new Error(`GitHub Release v${version} 不存在或不可读取。`);
+  }
+  await verifyRemoteRelease(local, lookup.data, token);
+}
+
 try {
   if (command === "summary") {
     printSummary(validateLocalRelease());
@@ -505,8 +496,12 @@ try {
     await publishRelease();
   } else if (command === "trigger-actions") {
     await triggerActionsRelease();
+  } else if (command === "verify-remote") {
+    await verifyPublishedRelease();
   } else {
-    throw new Error("Expected summary, pending, publish or trigger-actions");
+    throw new Error(
+      "Expected summary, pending, publish, trigger-actions or verify-remote",
+    );
   }
 } catch (error) {
   process.stderr.write(

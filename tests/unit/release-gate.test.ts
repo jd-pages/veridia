@@ -78,12 +78,27 @@ describe("本地打包发布门禁", () => {
       path.resolve(process.cwd(), "scripts", "fixed-workflow.mjs"),
       "utf8",
     );
+    const releaseWorkflow = fs.readFileSync(
+      path.resolve(
+        process.cwd(),
+        ".github",
+        "workflows",
+        "veridia-release.yml",
+      ),
+      "utf8",
+    );
+    const finalizeRelease = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts", "finalize-release.mjs"),
+      "utf8",
+    );
     const gitignore = fs.readFileSync(
       path.resolve(process.cwd(), ".gitignore"),
       "utf8",
     );
 
     expect(softwareBat).toContain("fixed-workflow.mjs publish");
+    expect(softwareBat).toContain("validate-software-release.mjs");
+    expect(softwareBat).toContain("EXE、blockmap、latest.yml");
     expect(softwareBat).not.toContain("rules:publish");
     expect(rulesBat).toContain("rules:publish");
     expect(rulesBat).not.toContain("fixed-workflow.mjs publish");
@@ -112,6 +127,24 @@ describe("本地打包发布门禁", () => {
     expect(rulesBat.match(/exit \/b 1/gu)).toHaveLength(3);
     expect(rulesBat).toContain("exit /b 0");
     expect(workflow).toContain('"trigger-actions"');
+    expect(releaseWorkflow).toContain("检查自动更新发布三件套");
+    expect(releaseWorkflow).toContain(
+      "validate-software-release.mjs --directory=dist-installer",
+    );
+    expect(releaseWorkflow).toContain(
+      "finalize-release.mjs verify-remote --directory=dist-installer",
+    );
+    for (const asset of [
+      "dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe",
+      "dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe.blockmap",
+      "dist-installer/latest.yml",
+    ]) {
+      expect(releaseWorkflow).toContain(asset);
+    }
+    expect(releaseWorkflow).not.toContain("rules:publish");
+    expect(releaseWorkflow).toContain("客户端将通过 latest.yml 检测版本");
+    expect(releaseWorkflow).toContain("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}");
+    expect(finalizeRelease).toContain("process.env.GH_TOKEN");
     for (const ignored of [
       "/release/",
       "/dist-installer/",
