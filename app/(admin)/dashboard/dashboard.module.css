@@ -217,17 +217,17 @@
 .riskSummary {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 16px;
   margin-top: 14px;
-  padding: 14px 18px;
+  padding: 12px 16px;
 }
 
 .sectionLead {
   display: flex;
   align-items: center;
   gap: 14px;
-  flex: 0 0 190px;
-  padding-right: 18px;
+  flex: 0 0 150px;
+  padding-right: 14px;
   border-right: 1px solid #edf0f4;
 }
 
@@ -258,15 +258,16 @@
 }
 
 .riskItems {
-  display: grid;
+  display: flex;
   flex: 1;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
 
 .riskItem {
   display: grid;
+  flex: 0 1 190px;
   grid-template-columns: 28px minmax(0, 1fr) auto 10px;
   align-items: center;
   gap: 8px;
@@ -278,10 +279,14 @@
   color: #475467;
   text-align: left;
   cursor: pointer;
+  transition:
+    background 160ms ease,
+    transform 160ms ease;
 }
 
 .riskItem:hover {
   background: #f7f9fc;
+  transform: translateY(-1px);
 }
 
 .riskItem > span:nth-child(2) {
@@ -310,6 +315,12 @@
   border-radius: 8px;
   background: color-mix(in srgb, currentColor 10%, white);
   color: currentColor;
+}
+
+.riskEmpty {
+  padding: 8px 4px;
+  color: #98a2b3;
+  font-size: 13px;
 }
 
 .analyticsGrid,

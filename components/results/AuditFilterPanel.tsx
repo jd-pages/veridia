@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, DatePicker, Input, Select, Space } from "antd";
+import { Button, DatePicker, Input, Select, Space, Tag } from "antd";
 import dayjs from "dayjs";
 import {
   DownOutlined,
@@ -12,6 +12,10 @@ import {
   auditResultLabels,
   commonStatusLabels,
 } from "@/lib/zh-CN";
+import {
+  parseResultRiskType,
+  resultRiskLabels,
+} from "@/lib/result-risk";
 import type {
   AdvancedResultFilters,
   CampaignOption,
@@ -66,6 +70,7 @@ export default function AuditFilterPanel({
     key: K,
     value: AdvancedResultFilters[K],
   ) => onAdvancedFiltersChange({ ...advancedFilters, [key]: value });
+  const activeRiskType = parseResultRiskType(filters.riskType);
 
   return (
     <section className={styles.panel} aria-label="审核结果筛选">
@@ -76,6 +81,11 @@ export default function AuditFilterPanel({
             先使用常用条件定位范围，再按需展开高级筛选
           </div>
         </div>
+        {activeRiskType ? (
+          <Tag className={styles.activeRiskTag}>
+            风险类型：{resultRiskLabels[activeRiskType]}
+          </Tag>
+        ) : null}
       </div>
 
       <div className={styles.filterGrid}>

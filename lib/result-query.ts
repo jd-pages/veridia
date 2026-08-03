@@ -1,5 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { processingFailureTaskStatuses } from "@/lib/processing-failure";
+import {
+  buildResultRiskWhere,
+  parseResultRiskType,
+} from "@/lib/result-risk";
 
 export interface ResultQueryFilters {
   ids?: string[];
@@ -23,6 +27,7 @@ export interface ResultQueryFilters {
   ruleVersion?: string;
   publicStatus?: string;
   retentionStatus?: string;
+  riskType?: string;
 }
 
 export function readResultQueryFilters(
@@ -56,6 +61,7 @@ export function readResultQueryFilters(
     ruleVersion: value("ruleVersion"),
     publicStatus: value("publicStatus"),
     retentionStatus: value("retentionStatus"),
+    riskType: value("riskType"),
   };
 }
 
@@ -105,6 +111,12 @@ export function buildAuditResultWhere(
   filters: ResultQueryFilters,
 ): Prisma.AuditResultWhereInput {
   const and: Prisma.AuditResultWhereInput[] = [];
+
+  if (filters.riskType) {
+    const riskType = parseResultRiskType(filters.riskType);
+    if (!riskType) throw new Error("风险类型筛选不正确");
+    and.push(buildResultRiskWhere(riskType));
+  }
 
   if (filters.ids?.length) {
     and.push({ id: { in: [...new Set(filters.ids)] } });

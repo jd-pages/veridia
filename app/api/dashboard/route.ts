@@ -2,21 +2,67 @@ import dayjs from "dayjs";
 import { prisma } from "@/lib/db";
 import { ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { parseStoredStringArray } from "@/lib/stored-json";
+import { buildResultRiskWhere } from "@/lib/result-risk";
 
-export const GET = withApiErrorBoundary(async function GET() {
+export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   const start = dayjs().startOf("month").toDate();
-  const results = await prisma.auditResult.findMany({
-    where: { auditedAt: { gte: start } },
-    select: {
-      autoStatus: true,
-      topicsCompliant: true,
-      clickableCompliant: true,
-      failureReasons: true,
-      manualReviews: { orderBy: { createdAt: "desc" }, take: 1 },
-    },
-  });
+  const { searchParams } = new URL(request.url);
+  const requestedMonth = searchParams.get("month")?.trim();
+  const riskMonth = /^\d{4}-\d{2}$/u.test(requestedMonth || "")
+    ? dayjs(`${requestedMonth}-01`)
+    : dayjs();
+  const productId = searchParams.get("productId")?.trim() || undefined;
+  const campaignId = searchParams.get("campaignId")?.trim() || undefined;
+  const riskScope = {
+    AND: [
+      {
+        auditedAt: {
+          gte: riskMonth.startOf("month").toDate(),
+          lte: riskMonth.endOf("month").toDate(),
+        },
+      },
+      ...(productId || campaignId
+        ? [
+            {
+              task: {
+                ...(productId ? { productId } : {}),
+                ...(campaignId ? { campaignId } : {}),
+              },
+            },
+          ]
+        : []),
+    ],
+  };
+  const [results, noteUnavailable, topicMissing, imageInsufficient] =
+    await prisma.$transaction([
+      prisma.auditResult.findMany({
+        where: { auditedAt: { gte: start } },
+        select: {
+          autoStatus: true,
+          topicsCompliant: true,
+          clickableCompliant: true,
+          failureReasons: true,
+          manualReviews: { orderBy: { createdAt: "desc" }, take: 1 },
+        },
+      }),
+      prisma.auditResult.count({
+        where: {
+          AND: [riskScope, buildResultRiskWhere("NOTE_UNAVAILABLE")],
+        },
+      }),
+      prisma.auditResult.count({
+        where: {
+          AND: [riskScope, buildResultRiskWhere("TOPIC_MISSING")],
+        },
+      }),
+      prisma.auditResult.count({
+        where: {
+          AND: [riskScope, buildResultRiskWhere("IMAGE_INSUFFICIENT")],
+        },
+      }),
+    ]);
   const counts = {
     total: results.length,
     passed: results.filter((item) => item.autoStatus === "PASSED").length,
@@ -42,6 +88,9 @@ export const GET = withApiErrorBoundary(async function GET() {
     .slice(0, 8);
   return ok({
     ...counts,
+    noteUnavailable,
+    topicMissing,
+    imageInsufficient,
     passRate: counts.total ? Math.round((counts.passed / counts.total) * 1000) / 10 : 0,
     reasonRanking,
   });

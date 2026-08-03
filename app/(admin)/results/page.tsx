@@ -54,6 +54,7 @@ import {
 } from "@/lib/result-export-client";
 import { productStageTopicLabel } from "@/lib/product-stage";
 import { auditResultListDisplay } from "@/lib/result-display";
+import { parseResultRiskType } from "@/lib/result-risk";
 import { pageAfterResultDeletion } from "@/components/results/deletion-state";
 import type { SessionUser } from "@/lib/auth";
 import styles from "@/components/results/results-workbench.module.css";
@@ -69,6 +70,7 @@ const defaultFilters: ResultFilters = {
   keyword: "",
   reason: "",
   manualStatus: "",
+  riskType: "",
 };
 
 const emptyAdvancedFilters: AdvancedResultFilters = {
@@ -81,6 +83,50 @@ const emptyAdvancedFilters: AdvancedResultFilters = {
   publicStatus: "",
   retentionStatus: "",
 };
+
+function filtersFromSearchParams(searchParams: URLSearchParams) {
+  const value = (key: string) => searchParams.get(key)?.trim() || "";
+  const month = value("month");
+  const monthStart = /^\d{4}-\d{2}$/u.test(month)
+    ? dayjs(`${month}-01`)
+    : null;
+  const validMonth =
+    monthStart?.isValid() && monthStart.format("YYYY-MM") === month
+      ? monthStart
+      : null;
+  const filters: ResultFilters = {
+    ...defaultFilters,
+    productId: value("productId"),
+    campaignId: value("campaignId"),
+    startDate:
+      value("startDate") ||
+      validMonth?.startOf("month").format("YYYY-MM-DD") ||
+      defaultFilters.startDate,
+    endDate:
+      value("endDate") ||
+      validMonth?.endOf("month").format("YYYY-MM-DD") ||
+      defaultFilters.endDate,
+    dateType:
+      value("dateType") === "CREATED_AT" ? "CREATED_AT" : "AUDITED_AT",
+    status: value("status"),
+    imageStatus: value("imageStatus"),
+    keyword: value("keyword"),
+    reason: value("reason"),
+    manualStatus: value("manualStatus"),
+    riskType: parseResultRiskType(value("riskType")) || "",
+  };
+  const advanced: AdvancedResultFilters = {
+    pageStatus: value("pageStatus"),
+    bodyStatus: value("bodyStatus"),
+    topicsStatus: value("topicsStatus"),
+    clickableStatus: value("clickableStatus"),
+    noteType: value("noteType"),
+    ruleVersion: value("ruleVersion"),
+    publicStatus: value("publicStatus"),
+    retentionStatus: value("retentionStatus"),
+  };
+  return { filters, advanced };
+}
 
 function buildQuery(
   filters: ResultFilters,
@@ -104,6 +150,7 @@ function buildQuery(
     imageStatus: filters.imageStatus,
     keyword: filters.keyword,
     reason: filters.reason,
+    riskType: filters.riskType,
     pageStatus: advanced.pageStatus,
     bodyStatus: advanced.bodyStatus,
     topicsStatus: advanced.topicsStatus,
@@ -282,7 +329,15 @@ export default function ResultsPage() {
           error instanceof Error ? error.message : "加载筛选项失败",
         ),
       );
-    void load(1, 20, defaultFilters, emptyAdvancedFilters);
+    const initial = filtersFromSearchParams(
+      new URLSearchParams(window.location.search),
+    );
+    setFilters(initial.filters);
+    setAppliedFilters(initial.filters);
+    setAdvancedFilters(initial.advanced);
+    setAppliedAdvancedFilters(initial.advanced);
+    setAdvancedOpen(Object.values(initial.advanced).some(Boolean));
+    void load(1, 20, initial.filters, initial.advanced);
     // 页面首次加载一次；后续查询由用户操作显式触发。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -301,6 +356,7 @@ export default function ResultsPage() {
     setAdvancedFilters(emptyAdvancedFilters);
     setAppliedAdvancedFilters(emptyAdvancedFilters);
     setAdvancedOpen(false);
+    router.replace("/results", { scroll: false });
     void load(
       1,
       data.pageSize,

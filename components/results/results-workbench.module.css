@@ -367,6 +367,16 @@
   box-shadow: inset -8px 0 8px -8px rgb(15 23 42 / 13%) !important;
 }
 
+.activeRiskTag {
+  margin-inline-end: 0;
+  padding: 4px 10px;
+  color: #9f291f;
+  background: #fff3f2;
+  border-color: #ffd8d5;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
 .tableCard :global(.ant-table-thead > tr > th).actionsColumn {
   z-index: 4;
   padding-inline: 8px;

@@ -18,7 +18,6 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   FileSearchOutlined,
-  LinkOutlined,
   PictureOutlined,
   ReloadOutlined,
   RightOutlined,
@@ -39,7 +38,9 @@ interface DashboardData {
   failed: number;
   needsReview: number;
   readFailed: number;
+  noteUnavailable: number;
   topicMissing: number;
+  imageInsufficient: number;
   clickableAbnormal: number;
   passRate: number;
   reasonRanking: Array<{ reason: string; count: number }>;
@@ -139,9 +140,16 @@ export default function DashboardPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    const dashboardQuery = new URLSearchParams({
+      ...(month ? { month } : {}),
+      ...(productId ? { productId } : {}),
+      ...(campaignId ? { campaignId } : {}),
+    });
     const [dashboard, productItems, campaignItems, batchItems] =
       await Promise.allSettled([
-        apiFetch<DashboardData>("/api/dashboard"),
+        apiFetch<DashboardData>(
+          `/api/dashboard${dashboardQuery.size ? `?${dashboardQuery}` : ""}`,
+        ),
         apiFetch<Product[]>("/api/products"),
         apiFetch<Campaign[]>("/api/campaigns"),
         apiFetch<AuditBatch[]>("/api/automation/batches"),
@@ -163,7 +171,7 @@ export default function DashboardPage() {
       setUpdatedAt(new Date());
     }
     setLoading(false);
-  }, []);
+  }, [campaignId, month, productId]);
 
   useEffect(() => {
     void load();
@@ -208,14 +216,6 @@ export default function DashboardPage() {
     [filterParams, router],
   );
 
-  const imageInsufficient = useMemo(
-    () =>
-      data?.reasonRanking
-        .filter((item) => /图片数量不足|图片不足/u.test(item.reason))
-        .reduce((sum, item) => sum + item.count, 0) ?? 0,
-    [data],
-  );
-
   const incompleteCampaigns = campaigns.filter(
     (campaign) => campaign._count.topicRules === 0,
   ).length;
@@ -239,34 +239,27 @@ export default function DashboardPage() {
   const riskItems = data
     ? [
         {
-          label: "读取失败",
-          value: data.readFailed,
-          icon: <ReloadOutlined />,
+          label: "笔记不存在",
+          value: data.noteUnavailable,
+          icon: <FileSearchOutlined />,
           tone: "orange",
-          onClick: () => openResults({ status: "READ_FAILED" }),
+          onClick: () => openResults({ riskType: "NOTE_UNAVAILABLE" }),
         },
         {
           label: "话题缺失",
           value: data.topicMissing,
           icon: <WarningOutlined />,
           tone: "red",
-          onClick: () => openResults({ reason: "缺少" }),
-        },
-        {
-          label: "蓝色话题异常",
-          value: data.clickableAbnormal,
-          icon: <LinkOutlined />,
-          tone: "blue",
-          onClick: () => openResults({ reason: "可点击" }),
+          onClick: () => openResults({ riskType: "TOPIC_MISSING" }),
         },
         {
           label: "图片不足",
-          value: imageInsufficient,
+          value: data.imageInsufficient,
           icon: <PictureOutlined />,
           tone: "purple",
-          onClick: () => openResults({ reason: "图片数量不足" }),
+          onClick: () => openResults({ riskType: "IMAGE_INSUFFICIENT" }),
         },
-      ]
+      ].filter((item) => item.value > 0)
     : [];
 
   return (
@@ -386,19 +379,23 @@ export default function DashboardPage() {
               <span>点击指标查看对应审核明细</span>
             </div>
             <div className={styles.riskItems}>
-              {riskItems.map((item) => (
-                <button
-                  type="button"
-                  key={item.label}
-                  onClick={item.onClick}
-                  className={`${styles.riskItem} ${styles[item.tone]}`}
-                >
-                  <span className={styles.riskIcon}>{item.icon}</span>
-                  <span>{item.label}</span>
-                  <strong>{item.value}</strong>
-                  <RightOutlined />
-                </button>
-              ))}
+              {riskItems.length ? (
+                riskItems.map((item) => (
+                  <button
+                    type="button"
+                    key={item.label}
+                    onClick={item.onClick}
+                    className={`${styles.riskItem} ${styles[item.tone]}`}
+                  >
+                    <span className={styles.riskIcon}>{item.icon}</span>
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                    <RightOutlined />
+                  </button>
+                ))
+              ) : (
+                <span className={styles.riskEmpty}>暂无风险</span>
+              )}
             </div>
           </section>
 

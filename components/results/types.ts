@@ -92,6 +92,7 @@ export interface ResultFilters {
   keyword: string;
   reason: string;
   manualStatus: string;
+  riskType: string;
 }
 
 export interface AdvancedResultFilters {
