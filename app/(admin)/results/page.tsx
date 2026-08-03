@@ -29,7 +29,6 @@ import PageHeader from "@/components/PageHeader";
 import AuditConclusionCell from "@/components/results/AuditConclusionCell";
 import AuditDetailDrawer from "@/components/results/AuditDetailDrawer";
 import AuditFilterPanel from "@/components/results/AuditFilterPanel";
-import AuditStatusTag from "@/components/results/AuditStatusTag";
 import BatchActionBar from "@/components/results/BatchActionBar";
 import ImageAuditCell from "@/components/results/ImageAuditCell";
 import NoteObjectCell from "@/components/results/NoteObjectCell";
@@ -53,7 +52,6 @@ import {
   ResultExportError,
 } from "@/lib/result-export-client";
 import { productStageTopicLabel } from "@/lib/product-stage";
-import { auditResultListDisplay } from "@/lib/result-display";
 import { parseResultRiskType } from "@/lib/result-risk";
 import { pageAfterResultDeletion } from "@/components/results/deletion-state";
 import type { SessionUser } from "@/lib/auth";
@@ -164,56 +162,6 @@ function buildQuery(
     if (value) query.set(key, value);
   });
   return query;
-}
-
-function ContentStatusCell({ row }: { row: ResultRow }) {
-  const unavailableDisplay = auditResultListDisplay(row);
-  if (unavailableDisplay) {
-    return (
-      <span className={styles.cellPrimary}>
-        {unavailableDisplay.contentStatus}
-      </span>
-    );
-  }
-
-  const pageLabel =
-    row.pageStatus === "NORMAL"
-      ? "页面正常"
-      : row.pageStatus === "NOT_FOUND"
-        ? "页面失效"
-        : row.pageStatus === "DELETED"
-          ? "笔记已删除"
-      : row.pageStatus === "READ_FAILED"
-        ? "读取失败"
-        : row.pageStatus === "NO_PERMISSION"
-          ? "不可访问"
-          : undefined;
-  return (
-    <div className={styles.inlineMeta}>
-      <AuditStatusTag value={row.pageStatus} label={pageLabel} />
-      <AuditStatusTag
-        value={row.bodyStatus}
-        label={
-          row.bodyStatus === "PRESENT"
-            ? "正文存在"
-            : row.bodyStatus === "UNKNOWN"
-              ? "未提取到正文 / 待人工确认"
-              : "正文为空"
-        }
-      />
-      <AuditStatusTag value={row.noteType} />
-      <AuditStatusTag
-        value={row.publicStatus}
-        label={
-          row.publicStatus === "PUBLIC"
-            ? "公开"
-            : row.publicStatus === "NOT_PUBLIC"
-              ? "不公开"
-              : undefined
-        }
-      />
-    </div>
-  );
 }
 
 export default function ResultsPage() {
@@ -652,12 +600,6 @@ export default function ResultsPage() {
       ),
     },
     {
-      title: "内容状态",
-      key: "content",
-      width: 230,
-      render: (_value, row) => <ContentStatusCell row={row} />,
-    },
-    {
       title: "话题审核",
       key: "topics",
       width: 180,
@@ -801,7 +743,7 @@ export default function ResultsPage() {
             } : undefined}
             columns={columns}
             tableLayout="fixed"
-            scroll={{ x: 1500 }}
+            scroll={{ x: 1280 }}
             sticky={{ offsetHeader: 64, offsetScroll: 10 }}
             pagination={{
               current: data.page,

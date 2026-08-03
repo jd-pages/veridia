@@ -7,7 +7,6 @@ import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
 
 export default function NoteObjectCell({ row }: { row: ResultRow }) {
-  const noteId = row.note.platformNoteId || "未识别笔记ID";
   const links = resultDetailLinks(row);
 
   return (
@@ -21,7 +20,6 @@ export default function NoteObjectCell({ row }: { row: ResultRow }) {
           <ResultDetailLink label="最终链接" value={links.finalUrl} />
         </div>
       </div>
-      <div className={styles.cellSecondary}>笔记ID：{noteId}</div>
       {row.note.title ? (
         <Tooltip title={row.note.title}>
           <div className={styles.cellSecondary}>{row.note.title}</div>

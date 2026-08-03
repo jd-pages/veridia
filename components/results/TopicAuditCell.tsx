@@ -134,15 +134,15 @@ export default function TopicAuditCell({ row }: { row: ResultRow }) {
       {summary.stageCandidates.length ? (
         <div className={styles.topicDetailSection}>
           <div className={styles.topicDetailTitle}>
-            {productStageTopicLabel(row.task.productStage)} 阶段候选（任一命中）
+            {productStageTopicLabel(row.task.productStage)} 阶段话题
           </div>
-          <div>{summary.stageCandidates.join("、")}</div>
+          <div>{summary.stageCandidates.join(" / ")}</div>
         </div>
       ) : null}
       {summary.stageGroupMissing ? (
         <div className={styles.topicDetailSection}>
           <div className={styles.topicDetailTitle}>阶段话题未命中</div>
-          <div>{summary.stageCandidates.join("、")}</div>
+          <div>{summary.stageCandidates.join(" / ")}</div>
         </div>
       ) : null}
       {summary.missing.length ? (

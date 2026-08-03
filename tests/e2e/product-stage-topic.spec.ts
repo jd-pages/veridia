@@ -217,8 +217,9 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
 
   await page.goto(`/results/${result.id}`);
   await expect(page).toHaveTitle("VERIDIA");
-  await expect(page.getByText("产品阶段话题", { exact: true })).toBeVisible();
-  await expect(page.getByText("IFFO", { exact: true }).first()).toBeVisible();
+  const conclusionCard = page.getByRole("region", { name: "顶部结论" });
+  await expect(conclusionCard.getByText("阶段", { exact: true })).toBeVisible();
+  await expect(conclusionCard.getByText("IFFO", { exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("IFFO：P段/1段");
   await expect(page.locator("body")).not.toContainText("IFFO：2段");
   await expect(page.locator("body")).not.toContainText(
@@ -232,18 +233,18 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   await expect(page.getByText("留存计算", { exact: true })).toHaveCount(0);
   await expect(page.getByText("暂无结论", { exact: true })).toHaveCount(0);
   await expect(page.getByText("正文允许段位", { exact: true })).toHaveCount(0);
-  await page.getByText("本次使用的规则快照（内部技术字段）").click();
-  await expect(page.locator("body")).not.toContainText("发布时间");
-  await expect(page.locator("body")).not.toContainText("作者");
-  await expect(page.locator("body")).not.toContainText("15天留存");
-  await expect(page.locator("body")).not.toContainText("留存计算");
-  await expect(page.locator("body")).not.toContainText("暂无结论");
   await expect(
-    page.getByText("#二段奶粉推荐", { exact: true }).first(),
-  ).toBeVisible();
-  await expect(
-    page.getByText("阶段话题可点击", { exact: true }).locator("..").getByText("是", { exact: true }),
-  ).toBeVisible();
+    page.getByText("本次使用的规则快照（内部技术字段）", { exact: true }),
+  ).toHaveCount(0);
+  const topicAuditCard = page
+    .getByRole("heading", { name: "话题审核" })
+    .locator("..");
+  await expect(topicAuditCard).toContainText("3 / 3 合规");
+  await expect(topicAuditCard).toContainText("已命中 #二段奶粉推荐");
+  await expect(topicAuditCard).toContainText(
+    "#新生儿奶粉 / #二段奶粉推荐",
+  );
+  await expect(page.getByText("阶段话题可点击", { exact: true })).toHaveCount(0);
   await expect(
     page.getByText("存在需要人工确认的审核项", { exact: true }),
   ).toHaveCount(0);

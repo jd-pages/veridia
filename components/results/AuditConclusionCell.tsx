@@ -95,15 +95,9 @@ export default function AuditConclusionCell({
           自动结果：{autoMeta.label}
         </div>
       ) : reasons.length ? (
-        <>
-          <Tooltip title={reasons[0]}>
-            <div className={styles.reasonText}>{reasons[0]}</div>
-          </Tooltip>
-          <div className={styles.cellSecondary}>
-            {reasons.length} 项异常
-            {reasons.length > 1 ? `，另有 ${reasons.length - 1} 项` : ""}
-          </div>
-        </>
+        <Tooltip title={reasons.join("；")}>
+          <div className={styles.reasonText}>{reasons.join("；")}</div>
+        </Tooltip>
       ) : (
         <div className={styles.cellSecondary}>
           {mainValue === "PASSED" ? "无异常" : "暂无补充原因"}

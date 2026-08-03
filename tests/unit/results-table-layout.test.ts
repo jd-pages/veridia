@@ -29,7 +29,9 @@ describe("审核结果表格布局", () => {
     expect(page).toMatch(/title: "图片",[\s\S]*?width: 120/);
     expect(page).toMatch(/title: "审核结论",[\s\S]*?width: 250/);
     expect(page).toContain('tableLayout="fixed"');
-    expect(page).toContain("scroll={{ x: 1500 }}");
+    expect(page).toContain("scroll={{ x: 1280 }}");
+    expect(page).not.toContain('title: "内容状态"');
+    expect(page).not.toContain("<ContentStatusCell");
     expect(styles).toContain(".ownershipCampaign");
     expect(styles).toContain("text-overflow: ellipsis;");
   });
@@ -41,5 +43,14 @@ describe("审核结果表格布局", () => {
     expect(imageCell).toContain("`${row.imageCount} 张`");
     expect(imageCell).not.toContain('"2 张"');
     expect(imageCell).not.toContain('"2张"');
+  });
+
+  it("列表不展示笔记ID且审核结论直接展示具体原因", () => {
+    const noteCell = source("components/results/NoteObjectCell.tsx");
+    const conclusionCell = source("components/results/AuditConclusionCell.tsx");
+    expect(noteCell).not.toContain("platformNoteId");
+    expect(noteCell).not.toContain("笔记ID");
+    expect(conclusionCell).toContain('reasons.join("；")');
+    expect(conclusionCell).not.toContain("项异常");
   });
 });

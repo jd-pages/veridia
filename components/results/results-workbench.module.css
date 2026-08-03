@@ -549,6 +549,12 @@
   white-space: nowrap;
 }
 
+.detailLinkActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .iconButton {
   width: 26px;
   min-width: 26px;
@@ -645,6 +651,221 @@
   background: #f8fafc;
   border: 1px solid #e7ebf1;
   border-radius: 12px;
+}
+
+.decisionLayout {
+  display: grid;
+  gap: 14px;
+}
+
+.decisionHero,
+.decisionSection {
+  background: #fff;
+  border: 1px solid #e7ebf1;
+  border-radius: 14px;
+}
+
+.decisionHero {
+  position: relative;
+  overflow: hidden;
+  padding: 20px;
+}
+
+.decisionHero::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  content: "";
+}
+
+.decisionHero_success::before {
+  background: #17a563;
+}
+
+.decisionHero_danger::before {
+  background: #c72d36;
+}
+
+.decisionHero_warning::before {
+  background: #d98b21;
+}
+
+.decisionHeroTopline {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.decisionEyebrow {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.decisionTitle {
+  color: #182230;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.decisionOwnership {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.8fr) minmax(240px, 1.5fr) minmax(100px, 0.5fr);
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.decisionOwnership > div,
+.reviewItem > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.decisionOwnership span,
+.reviewItem span,
+.auditDetailList span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.decisionOwnership strong {
+  overflow: hidden;
+  color: #344054;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.decisionTitleField {
+  grid-column: 1 / -1;
+}
+
+.decisionMetrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin-top: 16px;
+  padding-top: 14px;
+  color: #475467;
+  border-top: 1px solid #edf0f4;
+  font-size: 13px;
+}
+
+.decisionSection {
+  padding: 16px 18px;
+}
+
+.decisionSection > h3 {
+  margin: 0 0 12px;
+  color: #273142;
+  font-size: 15px;
+}
+
+.failureReasonList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.failureReasonList li {
+  position: relative;
+  padding: 9px 12px 9px 30px;
+  color: #9f291f;
+  background: #fff5f4;
+  border: 1px solid #ffe0dd;
+  border-radius: 9px;
+  line-height: 1.55;
+}
+
+.failureReasonList li::before {
+  position: absolute;
+  top: 13px;
+  left: 13px;
+  width: 7px;
+  height: 7px;
+  background: #d92d20;
+  border-radius: 999px;
+  content: "";
+}
+
+.auditDetailCards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.auditDetailCard {
+  min-width: 0;
+  padding: 14px;
+  background: #f8fafc;
+  border: 1px solid #e9edf3;
+  border-radius: 10px;
+}
+
+.auditDetailCard h4 {
+  margin: 0 0 10px;
+  color: #344054;
+  font-size: 13px;
+}
+
+.auditDetailList {
+  display: grid;
+  gap: 8px;
+}
+
+.auditDetailList > div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.auditDetailList strong {
+  min-width: 0;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.linkActionGroups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+}
+
+.reviewList {
+  display: grid;
+  gap: 10px;
+}
+
+.reviewItem {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.7fr) minmax(120px, 0.8fr) minmax(180px, 1fr);
+  gap: 10px 16px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #e9edf3;
+  border-radius: 10px;
+}
+
+.reviewItem strong,
+.reviewResult {
+  color: #344054;
+  font-size: 13px;
+}
+
+.reviewComment {
+  grid-column: 1 / -1;
+}
+
+.decisionEmpty {
+  color: #98a2b3;
+  font-size: 13px;
 }
 
 .drawerSection {
@@ -792,5 +1013,18 @@
 
   .filterButtonGroup {
     justify-content: flex-start;
+  }
+
+  .decisionOwnership,
+  .reviewItem {
+    grid-template-columns: 1fr;
+  }
+
+  .reviewComment {
+    grid-column: auto;
+  }
+
+  .auditDetailCards {
+    grid-template-columns: 1fr;
   }
 }

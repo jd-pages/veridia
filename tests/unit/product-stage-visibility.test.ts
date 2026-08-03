@@ -12,6 +12,7 @@ describe("产品阶段话题用户可见口径", () => {
     const resultPage = source("app/(admin)/results/page.tsx");
     const detailPage = source("app/(admin)/results/[id]/page.tsx");
     const detailDrawer = source("components/results/AuditDetailDrawer.tsx");
+    const decision = source("components/results/AuditDecisionSummary.tsx");
     const campaignPage = source("app/(admin)/campaigns/page.tsx");
     const rulesPage = source("app/(admin)/rules/page.tsx");
     const visibleSources = [
@@ -19,6 +20,7 @@ describe("产品阶段话题用户可见口径", () => {
       resultPage,
       detailPage,
       detailDrawer,
+      decision,
       campaignPage,
       rulesPage,
     ].join("\n");
@@ -26,8 +28,10 @@ describe("产品阶段话题用户可见口径", () => {
     expect(taskPage).toContain("PRODUCT_STAGE_TOPIC_OPTIONS.map");
     expect(taskPage).toContain("stageTopicsForProductStage");
     expect(resultPage).toContain("productStageTopicLabel(row.task.productStage)");
-    expect(detailPage).toContain("productStageTopicLabel(detail.task.productStage)");
-    expect(detailDrawer).toContain("productStageTopicLabel(row.task.productStage)");
+    expect(detailPage).toContain("AuditDecisionSummary");
+    expect(detailDrawer).toContain("AuditDecisionSummary");
+    expect(decision).toContain("productStageTopicLabel(row.task.productStage)");
+    expect(decision).toContain('topicSummary.stageCandidates.join(" / ")');
     expect(campaignPage).toContain("productStageTopicLabel(row.applicableStage)");
     expect(rulesPage).toContain("productStageTopicLabel(row.key)");
     expect(rulesPage).toContain("aggregateProductStageTopicRows");

@@ -109,7 +109,6 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await expect(headers).toContainText([
     "笔记对象",
     "归属信息",
-    "内容状态",
     "话题审核",
     "图片",
     "审核结论",
@@ -227,12 +226,17 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
     .getByRole("button", { name: /查看详情/ })
     .first()
     .click();
-  await expect(page.getByText("笔记基础信息", { exact: true })).toBeVisible();
-  await expect(page.getByText("自动审核与人工复核", { exact: true })).toBeVisible();
+  const drawer = page.locator(".ant-drawer-content");
+  await expect(drawer.getByRole("region", { name: "顶部结论" })).toBeVisible();
+  await expect(drawer.getByRole("region", { name: "审核明细" })).toBeVisible();
+  await expect(drawer.getByRole("region", { name: "链接操作" })).toBeVisible();
+  await expect(drawer.getByRole("region", { name: "人工复核记录" })).toBeVisible();
+  await expect(drawer.getByText("笔记基础信息", { exact: true })).toHaveCount(0);
+  await expect(drawer.getByText(/笔记ID/u)).toHaveCount(0);
   await expect(page).toHaveURL(/\/results$/u);
 });
 
-test("审核详情展示自动取证候选证据", async ({ page }) => {
+test("审核详情只展示业务判断卡片并隐藏自动取证技术字段", async ({ page }) => {
   await login(page);
   const listResponse = await page.request.get("/api/results?page=1&pageSize=100");
   expect(listResponse.ok()).toBeTruthy();
@@ -250,16 +254,25 @@ test("审核详情展示自动取证候选证据", async ({ page }) => {
   expect(evidenceFixture).toBeTruthy();
 
   await page.goto(`/results/${evidenceFixture!.id}`);
-  await expect(page.getByText("自动取证证据", { exact: true })).toBeVisible();
-  await expect(page.getByText("最终 URL", { exact: true })).toBeVisible();
-  await expect(page.getByText("页面 title", { exact: true })).toBeVisible();
-  await expect(page.getByText("正文候选", { exact: true })).toBeVisible();
-  await expect(page.getByText("话题候选", { exact: true })).toBeVisible();
-  await expect(page.getByText("图片候选", { exact: true })).toBeVisible();
-  await expect(page.getByText("NOTE_DETAIL", { exact: true })).toBeVisible();
-  await expect(page.getByText(/dom-visible-text/u)).toBeVisible();
-  await expect(page.getByText(/dom-topic-link/u).first()).toBeVisible();
-  await expect(page.getByText(/carousel-img/u).first()).toBeVisible();
+  for (const section of [
+    "顶部结论",
+    "失败原因",
+    "审核明细",
+    "链接操作",
+    "人工复核记录",
+  ]) {
+    await expect(page.getByRole("region", { name: section })).toBeVisible();
+  }
+  for (const hidden of [
+    "笔记基础信息",
+    "笔记正文",
+    "自动取证证据",
+    "NOTE_DETAIL",
+    "异常或失败原因",
+  ]) {
+    await expect(page.getByText(hidden, { exact: true })).toHaveCount(0);
+  }
+  await expect(page.getByText(/笔记ID/u)).toHaveCount(0);
 });
 
 test("审核详情区分原笔记链接与最终链接并复制完整原始 URL", async ({
@@ -273,6 +286,7 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
     data: {
       items: Array<{
         id: string;
+        failureReasons: string;
         task: { url: string; finalUrl: string | null };
         note: {
           url: string;
@@ -288,29 +302,32 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
   expect(fixture).toBeTruthy();
   const originalUrl = fixture!.task.url;
   const finalUrl = fixture!.task.finalUrl || fixture!.note.finalUrl || fixture!.note.url;
+  const missingTopic = (JSON.parse(fixture!.failureReasons) as string[])
+    .find((reason) => reason.startsWith("缺少精确话题"))
+    ?.match(/#[^\s；，,]+/u)?.[0];
   expect(finalUrl).not.toBe(originalUrl);
+  expect(missingTopic).toBeTruthy();
 
   await page.goto(`/results/${fixture!.id}`);
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {
     origin: new URL(page.url()).origin,
   });
-  const basicInfo = page
-    .locator(".ant-card")
-    .filter({ hasText: "笔记基础信息" })
-    .first();
-  await expect(basicInfo.getByText("原笔记链接", { exact: true })).toBeVisible();
-  await expect(basicInfo.getByText("最终链接", { exact: true })).toBeVisible();
+  const linkActions = page.getByRole("region", { name: "链接操作" });
   await expect(
-    basicInfo.getByRole("link", { name: originalUrl, exact: true }),
+    linkActions.getByRole("link", { name: "打开原笔记", exact: true }),
   ).toHaveAttribute("href", originalUrl);
   await expect(
-    basicInfo.getByRole("link", { name: finalUrl, exact: true }),
+    linkActions.getByRole("link", { name: "打开最终链接", exact: true }),
   ).toHaveAttribute("href", finalUrl);
+  await expect(page.getByText(originalUrl, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(finalUrl, { exact: true })).toHaveCount(0);
   await expect(
-    basicInfo.getByRole("link", { name: "打开原笔记链接", exact: true }),
-  ).toHaveAttribute("href", originalUrl);
-  await basicInfo
-    .getByRole("button", { name: "复制原笔记链接", exact: true })
+    page
+      .getByRole("region", { name: "失败原因" })
+      .getByText(`缺少精准话题：${missingTopic}`, { exact: true }),
+  ).toBeVisible();
+  await linkActions
+    .getByRole("button", { name: "复制原链接", exact: true })
     .click();
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
@@ -320,7 +337,7 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
   await page.getByLabel("关键词搜索").fill("isolated-fixture-1");
   await page.getByRole("button", { name: "查询" }).click();
   const fixtureRow = page.locator(".ant-table-row").filter({
-    has: page.getByText("笔记ID：isolated-fixture-1", { exact: true }),
+    has: page.getByRole("link", { name: originalUrl, exact: true }),
   });
   await expect(fixtureRow).toHaveCount(1);
   await expect(fixtureRow.getByText("最终链接：", { exact: true })).toBeVisible();
@@ -338,14 +355,22 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
   ).toHaveAttribute("href", finalUrl);
   await fixtureRow.getByRole("button", { name: /查看详情/u }).click();
   const drawer = page.locator(".ant-drawer-content");
-  await expect(drawer.getByText("原笔记链接", { exact: true })).toBeVisible();
-  await expect(drawer.getByText("最终链接", { exact: true })).toBeVisible();
+  const drawerLinkActions = drawer.getByRole("region", { name: "链接操作" });
   await expect(
-    drawer.getByRole("link", { name: originalUrl, exact: true }),
+    drawerLinkActions.getByRole("link", { name: "打开原笔记", exact: true }),
   ).toHaveAttribute("href", originalUrl);
   await expect(
-    drawer.getByRole("link", { name: finalUrl, exact: true }),
+    drawerLinkActions.getByRole("link", { name: "打开最终链接", exact: true }),
   ).toHaveAttribute("href", finalUrl);
+  await expect(drawer.getByText(originalUrl, { exact: true })).toHaveCount(0);
+  await expect(drawer.getByText(finalUrl, { exact: true })).toHaveCount(0);
+  await expect(drawer.getByText(/笔记ID/u)).toHaveCount(0);
+  await expect(drawer.getByRole("heading", { name: "失败原因" })).toHaveCount(1);
+  await expect(
+    drawer
+      .getByRole("region", { name: "失败原因" })
+      .getByText(`缺少精准话题：${missingTopic}`, { exact: true }),
+  ).toBeVisible();
 });
 
 test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) => {

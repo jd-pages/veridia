@@ -62,18 +62,25 @@ describe("审核详情链接展示", () => {
     const resultList = source("components/results/NoteObjectCell.tsx");
     const fullDetail = source("app/(admin)/results/[id]/page.tsx");
     const drawer = source("components/results/AuditDetailDrawer.tsx");
+    const decision = source("components/results/AuditDecisionSummary.tsx");
     const linkComponent = source("components/results/ResultDetailLink.tsx");
 
-    for (const uiSource of [resultList, fullDetail, drawer]) {
+    for (const uiSource of [resultList, decision]) {
       expect(uiSource).toContain("resultDetailLinks");
-      expect(uiSource).toContain('label="原笔记链接"');
       expect(uiSource).toContain('label="最终链接"');
     }
+    expect(resultList).toContain('label="原笔记链接"');
+    expect(decision).toContain('openText="打开原笔记"');
+    expect(decision).toContain('copyText="复制原链接"');
+    expect(decision).toContain('openText="打开最终链接"');
+    expect(fullDetail).toContain("AuditDecisionSummary");
+    expect(drawer).toContain("AuditDecisionSummary");
     expect(resultList).toContain("links.originalUrl");
     expect(resultList).toContain("links.finalUrl");
     expect(resultList).not.toContain("row.note.url}");
     expect(linkComponent).toContain("navigator.clipboard.writeText(value)");
     expect(linkComponent).toContain("href={value}");
     expect(linkComponent).toContain("title={value}");
+    expect(linkComponent).toContain('variant === "actions"');
   });
 });

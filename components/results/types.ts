@@ -68,8 +68,10 @@ export interface ResultRow {
     campaign: CampaignOption;
   };
   manualReviews: Array<{
+    id?: string;
     result: string;
     comment: string | null;
+    createdAt?: string;
     reviewer?: { displayName: string };
   }>;
 }

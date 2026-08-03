@@ -156,8 +156,12 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const auditResponse = await page.request.post(`/api/tasks/${task.id}/audit`, {
     data: { mockCase: "passed" },
   });
-  expect(auditResponse.ok()).toBeTruthy();
-  const auditResult = (await auditResponse.json()).data as {
+  const auditPayload = await auditResponse.json();
+  expect(
+    auditResponse.ok(),
+    `审核接口失败 (${auditResponse.status()}): ${JSON.stringify(auditPayload)}`,
+  ).toBeTruthy();
+  const auditResult = auditPayload.data as {
     id: string;
     autoStatus: string;
     imageStatus: string;
@@ -613,10 +617,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const unavailableRow = page.locator(".ant-table-tbody .ant-table-row").first();
   await expect(unavailableRow).toBeVisible();
   const unavailableCells = unavailableRow.locator("td");
-  await expect(unavailableCells.nth(3)).toHaveText("笔记不存在");
+  await expect(unavailableCells.nth(3)).toHaveText("无");
   await expect(unavailableCells.nth(4)).toHaveText("无");
-  await expect(unavailableCells.nth(5)).toHaveText("无");
-  await expect(unavailableCells.nth(6)).toHaveText("笔记不存在");
+  await expect(unavailableCells.nth(5)).toHaveText("笔记不存在");
   await expect(unavailableRow).not.toContainText(
     /ERROR_PAGE|APP_LAUNCH|页面失效|未提取到正文|暂无结论|未执行话题审核|未执行图片数量审核|处理失败|待人工复核|项异常|缺少精准话题|有效正文字符不足|图片数量不足/u,
   );
@@ -627,20 +630,28 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(
     unavailableDrawer.getByText("笔记不存在", { exact: true }).first(),
   ).toBeVisible();
-  await expect(unavailableDrawer).toContainText("页面状态：笔记不存在");
-  await expect(unavailableDrawer).toContainText(
-    "小红书页面提示“你访问的页面不见了”，疑似笔记已删除或链接失效。",
-  );
-  await expect(unavailableDrawer.getByText("原笔记链接", { exact: true })).toBeVisible();
-  const unavailableDrawerOriginalLinkRow = unavailableDrawer
-    .locator(".ant-descriptions-row")
-    .filter({ hasText: "原笔记链接" });
+  const unavailableDrawerTopic = unavailableDrawer
+    .getByRole("heading", { name: "话题审核" })
+    .locator("..");
+  const unavailableDrawerImage = unavailableDrawer
+    .getByRole("heading", { name: "图片审核" })
+    .locator("..");
+  await expect(unavailableDrawerTopic).toContainText("无");
+  await expect(unavailableDrawerImage).toContainText("无");
+  await expect(unavailableDrawer.getByRole("heading", { name: "失败原因" })).toHaveCount(1);
   await expect(
-    unavailableDrawerOriginalLinkRow.getByRole("link", {
-      name: unavailableResult.task.url,
+    unavailableDrawer.getByRole("link", {
+      name: "打开原笔记",
       exact: true,
     }),
   ).toHaveAttribute("href", unavailableResult.task.url);
+  await expect(
+    unavailableDrawer.getByRole("link", { name: "打开最终链接", exact: true }),
+  ).toHaveCount(0);
+  await expect(unavailableDrawer.getByText(unavailableResult.task.url, { exact: true })).toHaveCount(0);
+  await expect(unavailableDrawer).not.toContainText(
+    /ERROR_PAGE|APP_LAUNCH|页面失效|未提取到正文|未识别到话题|图片数量不足|处理失败|待人工复核/u,
+  );
 
   await unavailableDrawer
     .getByRole("button", { name: "打开完整详情" })
@@ -648,29 +659,18 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(page).toHaveURL(
     new RegExp(`/results/${unavailableResult.id}$`, "u"),
   );
-  const unavailableBasicInfo = page
-    .locator(".ant-card")
-    .filter({ hasText: "笔记基础信息" })
-    .first();
-  await expect(unavailableBasicInfo.getByText("原笔记链接", { exact: true })).toBeVisible();
-  const unavailableDetailOriginalLinkRow = unavailableBasicInfo
-    .locator(".ant-descriptions-row")
-    .filter({ hasText: "原笔记链接" });
   await expect(
-    unavailableDetailOriginalLinkRow.getByRole("link", {
-      name: unavailableResult.task.url,
+    page.getByRole("link", {
+      name: "打开原笔记",
       exact: true,
     }),
   ).toHaveAttribute("href", unavailableResult.task.url);
-  const comprehensiveJudgment = page
-    .locator(".ant-card")
-    .filter({ hasText: "综合判断" })
-    .first();
-  await expect(comprehensiveJudgment).toContainText("页面状态");
-  await expect(comprehensiveJudgment).toContainText("笔记不存在");
-  await expect(comprehensiveJudgment).toContainText(
-    "小红书页面提示“你访问的页面不见了”，疑似笔记已删除或链接失效。",
-  );
+  await expect(page.getByRole("link", { name: "打开最终链接", exact: true })).toHaveCount(0);
+  await expect(page.getByText("笔记基础信息", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/笔记ID/u)).toHaveCount(0);
+  await expect(page.getByText(unavailableResult.task.url, { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "失败原因" })).toHaveCount(1);
+  await expect(page.getByText("笔记不存在", { exact: true })).toHaveCount(2);
 
   const auditedDate = new Date(resultCoverage.items[0].auditedAt);
   const auditDay = [
@@ -848,9 +848,13 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     ),
   ).toBe(true);
   await page.goto(`/results/${failedResult!.id}`);
+  const bodyAuditCard = page
+    .getByRole("heading", { name: "正文审核" })
+    .locator("..");
+  await expect(bodyAuditCard.getByText("待人工确认", { exact: true })).toBeVisible();
   await expect(
-    page.getByText("未提取到正文 / 待人工确认").first(),
-  ).toBeVisible();
+    page.getByText("未提取到正文 / 待人工确认", { exact: true }),
+  ).toHaveCount(0);
   await expect(page.getByText("正文段位校验", { exact: true })).toHaveCount(0);
   await expect(page.getByText("不参与审核", { exact: true })).toHaveCount(0);
   await expect(page.locator("body")).not.toContainText("IFFO：P段/1段");
@@ -918,17 +922,15 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const livePhotoRow = page.locator(
     `.ant-table-row[data-row-key="${livePhotoResult!.id}"]`,
   );
-  await expect(livePhotoRow).toContainText("图文笔记");
   await expect(livePhotoRow).toContainText("3 张");
   await expect(livePhotoRow).toContainText("数量合规");
   await expect(livePhotoRow).not.toContainText("视频笔记");
   await expect(livePhotoRow).not.toContainText("不参与图片数量判断");
 
   await page.goto(`/results/${livePhotoResult!.id}`);
-  await expect(page.getByText("图文笔记", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("3 张", { exact: true }).first()).toBeVisible();
   await expect(
-    page.getByText("图片数量合规", { exact: true }).first(),
+    page.getByText("数量合规", { exact: true }).first(),
   ).toBeVisible();
   await expect(page.getByText("视频笔记", { exact: true })).toHaveCount(0);
   await expect(

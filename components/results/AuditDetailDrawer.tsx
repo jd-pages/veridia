@@ -1,60 +1,15 @@
 "use client";
 
-import {
-  Button,
-  Collapse,
-  Descriptions,
-  Drawer,
-  Empty,
-  Space,
-  Spin,
-  Timeline,
-} from "antd";
+import { Button, Drawer, Empty, Space, Spin } from "antd";
 import {
   CheckOutlined,
-  ExportOutlined,
   FileSearchOutlined,
   ReloadOutlined,
   StopOutlined,
 } from "@ant-design/icons";
-import { parseJsonArray } from "@/lib/client";
-import {
-  auditDetailEvidenceLabel,
-  auditDetailFailureReasonLabel,
-  auditDetailStatusLabel,
-  auditDetailTextLabel,
-  filterAuditDetailReasons,
-  filterAuditDetailRules,
-} from "@/lib/audit-detail-visibility";
-import { productStageTopicLabel } from "@/lib/product-stage";
-import {
-  isUnavailableNoteResult,
-  unavailableNoteDetailReason,
-} from "@/lib/result-display";
-import { resultDetailLinks } from "@/lib/result-links";
-import AuditConclusionCell from "./AuditConclusionCell";
-import AuditStatusTag from "./AuditStatusTag";
-import ImageAuditCell from "./ImageAuditCell";
-import TopicAuditCell from "./TopicAuditCell";
-import ExtractionEvidencePanel from "./ExtractionEvidencePanel";
-import ResultDetailLink from "./ResultDetailLink";
+import AuditDecisionSummary from "./AuditDecisionSummary";
 import type { BulkAction, ResultDetail, ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
-
-function DrawerSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className={styles.drawerSection}>
-      <h3 className={styles.drawerSectionTitle}>{title}</h3>
-      {children}
-    </section>
-  );
-}
 
 export default function AuditDetailDrawer({
   open,
@@ -75,22 +30,10 @@ export default function AuditDetailDrawer({
   onAction: (row: ResultRow, action: BulkAction) => void;
   canOperate?: boolean;
 }) {
-  const visibleFailureReasons = row
-    ? filterAuditDetailReasons(parseJsonArray(row.failureReasons))
-    : [];
-  const visibleRuleResults = detail
-    ? filterAuditDetailRules(detail.ruleResults)
-    : [];
-  const pageUnavailable = row ? isUnavailableNoteResult(row) : false;
-  const pageUnavailableReason = row && pageUnavailable
-    ? unavailableNoteDetailReason(row)
-    : null;
-  const detailLinks = row ? resultDetailLinks(row) : null;
-
   return (
     <Drawer
       open={open}
-      width={680}
+      width={720}
       title={
         <Space>
           <FileSearchOutlined />
@@ -102,14 +45,7 @@ export default function AuditDetailDrawer({
       footer={
         row ? (
           <div className={styles.drawerFooter}>
-            <Button
-              icon={<ExportOutlined />}
-              href={row.task.url}
-              target="_blank"
-            >
-              打开原笔记
-            </Button>
-            {canOperate && (
+            {canOperate ? (
               <>
                 <Button
                   icon={<ReloadOutlined />}
@@ -132,7 +68,7 @@ export default function AuditDetailDrawer({
                   人工不通过
                 </Button>
               </>
-            )}
+            ) : null}
             <Button type="primary" onClick={() => onOpenFullDetail(row)}>
               打开完整详情
             </Button>
@@ -144,240 +80,7 @@ export default function AuditDetailDrawer({
         <Empty description="未选择审核结果" />
       ) : (
         <Spin spinning={loading}>
-          <div className={styles.drawerHeaderResult}>
-            <AuditConclusionCell row={row} detailView />
-          </div>
-
-          <DrawerSection title="笔记基础信息">
-            <Descriptions
-              size="small"
-              bordered
-              column={2}
-              items={[
-                {
-                  key: "noteId",
-                  label: "笔记ID",
-                  children: row.note.platformNoteId || "未识别",
-                },
-                {
-                  key: "pageStatus",
-                  label: "页面状态",
-                  children: (
-                    <AuditStatusTag
-                      value={row.pageStatus}
-                      label={pageUnavailable ? "笔记不存在" : auditDetailStatusLabel(row.pageStatus)}
-                    />
-                  ),
-                },
-                {
-                  key: "product",
-                  label: "产品",
-                  children: row.task.product.name,
-                },
-                {
-                  key: "campaign",
-                  label: "活动",
-                  children: row.task.campaign.name,
-                },
-                {
-                  key: "stage",
-                  label: "产品阶段话题",
-                  span: 2,
-                  children: productStageTopicLabel(row.task.productStage),
-                },
-                {
-                  key: "originalUrl",
-                  label: "原笔记链接",
-                  span: 2,
-                  children: (
-                    <ResultDetailLink label="原笔记链接" value={detailLinks?.originalUrl} />
-                  ),
-                },
-                {
-                  key: "finalUrl",
-                  label: "最终链接",
-                  span: 2,
-                  children: (
-                    <ResultDetailLink label="最终链接" value={detailLinks?.finalUrl} />
-                  ),
-                },
-                {
-                  key: "title",
-                  label: "标题",
-                  span: 2,
-                  children: row.note.title || "-",
-                },
-                {
-                  key: "ruleVersion",
-                  label: "规则版本",
-                  children: `v${row.ruleVersion}`,
-                },
-                {
-                  key: "auditedAt",
-                  label: "审核时间",
-                  children: new Date(row.auditedAt).toLocaleString("zh-CN"),
-                },
-              ]}
-            />
-          </DrawerSection>
-
-          <DrawerSection title="页面与正文状态">
-            <Space size={[6, 6]} wrap>
-              <AuditStatusTag
-                value={row.pageStatus}
-                label={
-                  pageUnavailable
-                    ? "笔记不存在"
-                    : auditDetailStatusLabel(row.pageStatus)
-                }
-              />
-              <AuditStatusTag value={row.bodyStatus} label={auditDetailStatusLabel(row.bodyStatus)} />
-              <AuditStatusTag value={row.noteType} label={auditDetailStatusLabel(row.noteType)} />
-              <AuditStatusTag value={row.publicStatus} label={auditDetailStatusLabel(row.publicStatus)} />
-            </Space>
-            <div className={styles.cellSecondary}>
-              {pageUnavailable
-                ? "页面状态：笔记不存在"
-                : row.bodyStatus === "UNKNOWN"
-                ? "未提取到正文 / 待人工确认"
-                : `有效正文字数：${row.effectiveBodyLength ?? 0} 个字符`}
-            </div>
-          </DrawerSection>
-
-          <DrawerSection title="话题审核详情">
-            <TopicAuditCell row={row} />
-          </DrawerSection>
-
-          <DrawerSection title="图片数量状态">
-            <ImageAuditCell row={row} />
-          </DrawerSection>
-
-          <DrawerSection title="自动审核与人工复核">
-            <Descriptions
-              size="small"
-              bordered
-              column={1}
-              items={[
-                {
-                  key: "process",
-                  label: "处理状态",
-                  children: (
-                    <AuditStatusTag value={row.task.status} domain="process" label={auditDetailStatusLabel(row.task.status, "process")} />
-                  ),
-                },
-                {
-                  key: "auto",
-                  label: "自动审核结果",
-                  children: (
-                    <AuditStatusTag value={row.autoStatus} domain="audit" label={auditDetailStatusLabel(row.autoStatus, "audit")} />
-                  ),
-                },
-                {
-                  key: "exception",
-                  label: "异常分类",
-                  children: row.task.failureCode
-                    ? auditDetailFailureReasonLabel(row.task.failureCode)
-                    : "无异常",
-                },
-                {
-                  key: "failureMessage",
-                  label: "失败原因",
-                  children:
-                    pageUnavailableReason ||
-                    visibleFailureReasons.join("；") ||
-                    (row.task.failureMessage
-                      ? auditDetailTextLabel(row.task.failureMessage)
-                      : "无异常"),
-                },
-                {
-                  key: "attempts",
-                  label: "尝试次数",
-                  children: row.task.attempts,
-                },
-                {
-                  key: "manual",
-                  label: "人工复核结果",
-                  children: row.manualReviews[0] ? (
-                    <AuditStatusTag
-                      value={row.manualReviews[0].result}
-                      domain="audit"
-                      label={
-                        row.manualReviews[0].result === "PASSED"
-                          ? "人工通过"
-                          : "人工不通过"
-                      }
-                    />
-                  ) : (
-                    "尚未复核"
-                  ),
-                },
-                {
-                  key: "reasons",
-                  label: "异常或失败原因",
-                  children:
-                    visibleFailureReasons.join("；") || "无异常",
-                },
-              ]}
-            />
-          </DrawerSection>
-
-          <DrawerSection title="操作记录">
-            {detail?.operationLogs.length ? (
-              <Timeline
-                items={detail.operationLogs.slice(0, 8).map((log) => ({
-                  children: (
-                    <>
-                      <strong>{auditDetailTextLabel(log.summary)}</strong>
-                      <div className={styles.cellSecondary}>
-                        {log.user?.displayName || "系统"} ·{" "}
-                        {new Date(log.createdAt).toLocaleString("zh-CN")}
-                      </div>
-                    </>
-                  ),
-                }))}
-              />
-            ) : (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="暂无操作记录"
-              />
-            )}
-          </DrawerSection>
-
-          {detail ? (
-            <Collapse
-              size="small"
-              items={[
-                {
-                  key: "rules",
-                  label: "逐条规则审核证据",
-                  children: (
-                    <div className={styles.stack}>
-                      {visibleRuleResults.map((rule) => (
-                        <div key={rule.id}>
-                          <strong>{rule.ruleName}</strong>
-                          <div className={styles.cellSecondary}>
-                            {rule.passed ? "通过" : "不通过"} ·{" "}
-                            {auditDetailEvidenceLabel(rule.evidence)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ),
-                },
-                {
-                  key: "raw",
-                  label: "原始 JSON 与页面证据（默认折叠）",
-                  children: (
-                    <ExtractionEvidencePanel
-                      rawData={detail.note.extractions[0]?.rawData}
-                      failureEvidence={detail.task.failureEvidence}
-                    />
-                  ),
-                },
-              ]}
-            />
-          ) : null}
+          <AuditDecisionSummary row={row} detail={detail} />
         </Spin>
       )}
     </Drawer>

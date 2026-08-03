@@ -64,7 +64,7 @@ export default function BatchActionBar({
         >
           人工不通过
         </Button>
-        <Tooltip title="按所选笔记ID使用现有导出接口生成结果">
+        <Tooltip title="按所选笔记使用现有导出接口生成结果">
           <Button
             disabled={disabled}
             icon={<DownloadOutlined />}

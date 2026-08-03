@@ -1,0 +1,300 @@
+"use client";
+
+import { productStageTopicLabel } from "@/lib/product-stage";
+import {
+  auditConclusionCardLabel,
+  auditConclusionCardTone,
+  auditConclusionFailureReasons,
+  minimumImageCountFromRuleSnapshot,
+} from "@/lib/result-detail-presentation";
+import { isUnavailableNoteResult } from "@/lib/result-display";
+import { resultDetailLinks } from "@/lib/result-links";
+import { getTopicAuditSummary } from "./TopicAuditCell";
+import ResultDetailLink from "./ResultDetailLink";
+import type { ResultDetail, ResultRow } from "./types";
+import styles from "./results-workbench.module.css";
+
+function ReviewResult({ value }: { value: string }) {
+  return (
+    <span className={styles.reviewResult}>
+      {value === "PASSED"
+        ? "人工通过"
+        : value === "FAILED"
+          ? "人工不通过"
+          : "待人工复核"}
+    </span>
+  );
+}
+
+export default function AuditDecisionSummary({
+  row,
+  detail,
+}: {
+  row: ResultRow;
+  detail?: ResultDetail | null;
+}) {
+  const unavailable = isUnavailableNoteResult(row);
+  const conclusion = auditConclusionCardLabel(row);
+  const conclusionTone = auditConclusionCardTone(row);
+  const failureReasons = auditConclusionFailureReasons(row);
+  const topicSummary = getTopicAuditSummary(row);
+  const expectedTopicCount =
+    topicSummary.required.length +
+    (topicSummary.stageCandidates.length ? 1 : 0);
+  const matchedTopicCount =
+    topicSummary.matched.length +
+    (topicSummary.matchedStageCandidates.length ? 1 : 0);
+  const topicNeedsReview =
+    topicSummary.uncertain.length > 0 || topicSummary.stageGroupUncertain;
+  const topicCompliant =
+    row.topicsCompliant &&
+    row.clickableCompliant &&
+    !topicSummary.missing.length &&
+    !topicSummary.forbidden.length &&
+    !topicSummary.stageGroupMissing &&
+    !topicSummary.stageGroupUnclickable &&
+    !topicNeedsReview;
+  const links = resultDetailLinks(row);
+  const minimumImageCount = minimumImageCountFromRuleSnapshot(
+    row.ruleSnapshot,
+  );
+  const reviews = detail?.manualReviews || row.manualReviews;
+
+  return (
+    <div className={styles.decisionLayout}>
+      <section
+        className={`${styles.decisionHero} ${styles[`decisionHero_${conclusionTone}`]}`}
+        aria-label="顶部结论"
+      >
+        <div className={styles.decisionHeroTopline}>
+          <span className={styles.decisionEyebrow}>审核结论</span>
+          <strong className={styles.decisionTitle}>{conclusion}</strong>
+        </div>
+        {!unavailable ? (
+          <div className={styles.decisionOwnership}>
+            <div>
+              <span>产品</span>
+              <strong>{row.task.product.name}</strong>
+            </div>
+            <div>
+              <span>活动</span>
+              <strong>{row.task.campaign.name}</strong>
+            </div>
+            <div>
+              <span>阶段</span>
+              <strong>{productStageTopicLabel(row.task.productStage)}</strong>
+            </div>
+            <div className={styles.decisionTitleField}>
+              <span>标题</span>
+              <strong>{row.note.title || "未获取标题"}</strong>
+            </div>
+          </div>
+        ) : null}
+        {!unavailable ? (
+          <div className={styles.decisionMetrics}>
+            <span>有效正文：{row.effectiveBodyLength ?? 0} 个字符</span>
+            <span>
+              图片数量：{row.imageCount === null ? "未能确认" : `${row.imageCount} 张`}
+            </span>
+            <span>
+              公开状态：{row.publicStatus === "PUBLIC"
+                ? "当前公开"
+                : row.publicStatus === "NOT_PUBLIC"
+                  ? "当前不公开"
+                  : "待确认"}
+            </span>
+          </div>
+        ) : null}
+      </section>
+
+      <section className={styles.decisionSection} aria-label="失败原因">
+        <h3>失败原因</h3>
+        {failureReasons.length ? (
+          <ul className={styles.failureReasonList}>
+            {failureReasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        ) : (
+          <div className={styles.decisionEmpty}>无异常</div>
+        )}
+      </section>
+
+      <section className={styles.decisionSection} aria-label="审核明细">
+        <h3>审核明细</h3>
+        <div className={styles.auditDetailCards}>
+          <article className={styles.auditDetailCard}>
+            <h4>话题审核</h4>
+            {unavailable ? (
+              <strong>无</strong>
+            ) : (
+              <div className={styles.auditDetailList}>
+                <div>
+                  <span>结果</span>
+                  <strong>
+                    {matchedTopicCount} / {expectedTopicCount}{" "}
+                    {topicNeedsReview
+                      ? "待复核"
+                      : topicCompliant
+                        ? "合规"
+                        : "异常"}
+                  </strong>
+                </div>
+                {topicSummary.missing.length ? (
+                  <div>
+                    <span>缺少</span>
+                    <strong>{topicSummary.missing.join(" / ")}</strong>
+                  </div>
+                ) : null}
+                {topicSummary.stageCandidates.length ? (
+                  <>
+                    <div>
+                      <span>阶段话题</span>
+                      <strong>
+                        {topicSummary.stageGroupMissing
+                          ? "未命中"
+                          : `已命中 ${topicSummary.matchedStageCandidates.join(" / ")}`}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>要求阶段话题</span>
+                      <strong>{topicSummary.stageCandidates.join(" / ")}</strong>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            )}
+          </article>
+
+          <article className={styles.auditDetailCard}>
+            <h4>图片审核</h4>
+            {unavailable ? (
+              <strong>无</strong>
+            ) : (
+              <div className={styles.auditDetailList}>
+                <div>
+                  <span>结果</span>
+                  <strong>
+                    {row.imageCount === null ? "未能确认" : `${row.imageCount} 张`}
+                  </strong>
+                </div>
+                <div>
+                  <span>状态</span>
+                  <strong>
+                    {row.noteType === "VIDEO_NOTE" || row.imageStatus === "VIDEO_NOTE"
+                      ? "视频笔记，不参与图片数量审核"
+                      : row.imageStatus === "COMPLIANT"
+                        ? "数量合规"
+                        : row.imageStatus === "NON_COMPLIANT"
+                          ? minimumImageCount === null
+                            ? "数量不足"
+                            : `数量不足，要求至少 ${minimumImageCount} 张`
+                          : "待人工复核"}
+                  </strong>
+                </div>
+              </div>
+            )}
+          </article>
+
+          {!unavailable ? (
+            <>
+              <article className={styles.auditDetailCard}>
+                <h4>正文审核</h4>
+                <div className={styles.auditDetailList}>
+                  <div>
+                    <span>有效正文</span>
+                    <strong>{row.effectiveBodyLength ?? 0} 个字符</strong>
+                  </div>
+                  <div>
+                    <span>状态</span>
+                    <strong>
+                      {row.bodyStatus === "UNKNOWN"
+                        ? "待人工确认"
+                        : row.bodyCompliant
+                          ? "合规"
+                          : "不合规"}
+                    </strong>
+                  </div>
+                </div>
+              </article>
+              <article className={styles.auditDetailCard}>
+                <h4>公开状态</h4>
+                <div className={styles.auditDetailList}>
+                  <div>
+                    <span>状态</span>
+                    <strong>
+                      {row.publicStatus === "PUBLIC"
+                        ? "当前公开"
+                        : row.publicStatus === "NOT_PUBLIC"
+                          ? "当前不公开"
+                          : "待确认"}
+                    </strong>
+                  </div>
+                </div>
+              </article>
+            </>
+          ) : null}
+        </div>
+      </section>
+
+      <section className={styles.decisionSection} aria-label="链接操作">
+        <h3>链接操作</h3>
+        <div className={styles.linkActionGroups}>
+          <ResultDetailLink
+            label="原链接"
+            value={links.originalUrl}
+            variant="actions"
+            openText="打开原笔记"
+            copyText="复制原链接"
+          />
+          {!unavailable ? (
+            <ResultDetailLink
+              label="最终链接"
+              value={links.finalUrl}
+              variant="actions"
+              openText="打开最终链接"
+              copyText="复制最终链接"
+            />
+          ) : null}
+        </div>
+      </section>
+
+      <section className={styles.decisionSection} aria-label="人工复核记录">
+        <h3>人工复核记录</h3>
+        {reviews.length ? (
+          <div className={styles.reviewList}>
+            {reviews.map((review, index) => (
+              <article
+                className={styles.reviewItem}
+                key={review.id || `${review.result}-${review.createdAt || index}`}
+              >
+                <div>
+                  <span>复核人</span>
+                  <strong>{review.reviewer?.displayName || "管理员"}</strong>
+                </div>
+                <div>
+                  <span>复核结果</span>
+                  <ReviewResult value={review.result} />
+                </div>
+                <div>
+                  <span>复核时间</span>
+                  <strong>
+                    {review.createdAt
+                      ? new Date(review.createdAt).toLocaleString("zh-CN")
+                      : "-"}
+                  </strong>
+                </div>
+                <div className={styles.reviewComment}>
+                  <span>复核备注</span>
+                  <strong>{review.comment || "无"}</strong>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className={styles.decisionEmpty}>暂无人工复核记录</div>
+        )}
+      </section>
+    </div>
+  );
+}

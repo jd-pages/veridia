@@ -222,7 +222,7 @@ export default function AuditFilterPanel({
             prefix={<SearchOutlined />}
             allowClear
             aria-label="关键词搜索"
-            placeholder="笔记链接、笔记ID、标题或正文"
+            placeholder="笔记链接、标题或正文"
             value={filters.keyword}
             onChange={(event) => update("keyword", event.target.value)}
             onPressEnter={onSearch}

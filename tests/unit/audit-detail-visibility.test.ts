@@ -27,6 +27,7 @@ describe("审核详情展示过滤", () => {
   it("完整详情页和抽屉不直接渲染已隐藏字段或留存操作", () => {
     const detailPage = source("app/(admin)/results/[id]/page.tsx");
     const drawer = source("components/results/AuditDetailDrawer.tsx");
+    const decision = source("components/results/AuditDecisionSummary.tsx");
 
     for (const text of [
       'label="作者"',
@@ -37,13 +38,21 @@ describe("审核详情展示过滤", () => {
       "产品阶段仅用于匹配对应话题",
       "重新检查留存",
       "retention/recheck",
+      "笔记基础信息",
+      "笔记正文",
+      "异常或失败原因",
+      "自动取证证据",
     ]) {
       expect(detailPage).not.toContain(text);
+      expect(drawer).not.toContain(text);
     }
-    expect(drawer).not.toContain("row.retentionStatus");
-    expect(detailPage).toContain("filterAuditDetailRules");
-    expect(drawer).toContain("filterAuditDetailRules");
-    expect(drawer).toContain("visibleRuleResults.map");
+    expect(detailPage).toContain("AuditDecisionSummary");
+    expect(drawer).toContain("AuditDecisionSummary");
+    expect(decision).toContain('aria-label="顶部结论"');
+    expect(decision).toContain('aria-label="失败原因"');
+    expect(decision).toContain('aria-label="审核明细"');
+    expect(decision).toContain('aria-label="链接操作"');
+    expect(decision).toContain('aria-label="人工复核记录"');
   });
 
   it("从逐条规则证据和失败原因中过滤隐藏项并保留真实审核项", () => {
