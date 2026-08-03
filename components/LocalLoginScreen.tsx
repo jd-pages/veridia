@@ -11,7 +11,6 @@ import {
   Input,
   Modal,
   Space,
-  Typography,
 } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { LockOutlined, UserOutlined } from "@ant-design/icons";
@@ -155,7 +154,7 @@ export default function LocalLoginScreen() {
           >
             登录
           </Button>
-          <Space wrap size={4}>
+          <Space wrap size={4} className="login-help-actions">
             <Button type="link" href="/activate">
               激活账号
             </Button>
@@ -166,9 +165,6 @@ export default function LocalLoginScreen() {
               导入账号更新码
             </Button>
           </Space>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            账号与登录凭证仅保存在本机，不提供在线注册或在线找回密码。
-          </Typography.Text>
         </Form>
       </section>
     </main>

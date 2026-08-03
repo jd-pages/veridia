@@ -593,6 +593,21 @@ a {
   font-synthesis: none;
 }
 
+.login-help-actions {
+  width: 100%;
+  margin-top: 8px;
+  justify-content: center;
+}
+
+.login-form .login-help-actions .ant-btn {
+  min-height: 32px;
+  margin-top: 0;
+  padding-inline: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
 .mock-page {
   max-width: 640px;
   margin: 0 auto;

@@ -367,6 +367,26 @@
   box-shadow: inset -8px 0 8px -8px rgb(15 23 42 / 13%) !important;
 }
 
+.tableCard :global(.ant-table-thead > tr > th).actionsColumn {
+  z-index: 4;
+  padding-inline: 8px;
+  background: #f8fafc;
+  box-shadow: -8px 0 14px -14px rgb(15 23 42 / 45%);
+  white-space: nowrap;
+}
+
+.tableCard :global(.ant-table-tbody > tr > td).actionsColumn {
+  z-index: 3;
+  padding-inline: 8px;
+  background: #fff;
+  box-shadow: -8px 0 14px -14px rgb(15 23 42 / 45%);
+  white-space: nowrap;
+}
+
+.tableCard :global(.ant-table-tbody > tr:hover > td).actionsColumn {
+  background: #f8fafd !important;
+}
+
 .tableCard :global(.ant-pagination) {
   margin: 18px 20px;
 }
@@ -389,6 +409,17 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
+}
+
+.ownershipProduct {
+  overflow-wrap: anywhere;
+}
+
+.ownershipCampaign {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inlineMeta {
@@ -572,19 +603,30 @@
 }
 
 .reasonText {
-  max-width: 245px;
+  max-width: 100%;
   overflow: hidden;
   color: #667085;
+  display: -webkit-box;
   font-size: 12px;
   line-height: 1.45;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .primaryAction {
-  padding-inline: 4px;
+  padding-inline: 0;
   color: #344054;
   font-weight: 600;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.moreAction {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
 }
 
 .drawerHeaderResult {

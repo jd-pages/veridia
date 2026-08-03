@@ -18,7 +18,6 @@ import {
   DownloadOutlined,
   EllipsisOutlined,
   ExportOutlined,
-  EyeOutlined,
   FileTextOutlined,
   ReloadOutlined,
   RightOutlined,
@@ -568,19 +567,23 @@ export default function ResultsPage() {
     {
       title: "笔记对象",
       key: "note",
-      width: 275,
+      width: 280,
       fixed: "left",
       render: (_value, row) => <NoteObjectCell row={row} />,
     },
     {
       title: "归属信息",
       key: "ownership",
-      width: 260,
+      width: 240,
       render: (_value, row) => (
         <div className={styles.stack}>
-          <div className={styles.cellPrimary}>{row.task.product.name}</div>
+          <div className={`${styles.cellPrimary} ${styles.ownershipProduct}`}>
+            {row.task.product.name}
+          </div>
           <Tooltip title={row.task.campaign.name}>
-            <div className={styles.cellSecondary}>
+            <div
+              className={`${styles.cellSecondary} ${styles.ownershipCampaign}`}
+            >
               {row.task.campaign.name}
             </div>
           </Tooltip>
@@ -595,38 +598,38 @@ export default function ResultsPage() {
     {
       title: "内容状态",
       key: "content",
-      width: 255,
+      width: 230,
       render: (_value, row) => <ContentStatusCell row={row} />,
     },
     {
       title: "话题审核",
       key: "topics",
-      width: 220,
+      width: 180,
       render: (_value, row) => <TopicAuditCell row={row} />,
     },
     {
       title: "图片",
       key: "images",
-      width: 155,
+      width: 120,
       render: (_value, row) => <ImageAuditCell row={row} />,
     },
     {
       title: "审核结论",
       key: "conclusion",
-      width: 265,
+      width: 250,
       render: (_value, row) => <AuditConclusionCell row={row} />,
     },
     {
       title: "操作",
       key: "actions",
-      width: 150,
+      width: 160,
       fixed: "right",
+      className: styles.actionsColumn,
       render: (_value, row) => (
         <Space size={4}>
           <Button
             type="text"
             className={styles.primaryAction}
-            icon={<EyeOutlined />}
             onClick={() => void openDrawer(row)}
           >
             查看详情 <RightOutlined />
@@ -638,6 +641,7 @@ export default function ResultsPage() {
           >
             <Button
               type="text"
+              className={styles.moreAction}
               aria-label="更多操作"
               icon={<EllipsisOutlined />}
             />
@@ -740,7 +744,8 @@ export default function ResultsPage() {
               columnWidth: 48,
             } : undefined}
             columns={columns}
-            scroll={{ x: 1740 }}
+            tableLayout="fixed"
+            scroll={{ x: 1500 }}
             sticky={{ offsetHeader: 64, offsetScroll: 10 }}
             pagination={{
               current: data.page,
