@@ -154,9 +154,12 @@
       }
     ],
     "nsis": {
+      "guid": "0a65335e-5c72-5806-ae48-67dc954a5513",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
+      "allowElevation": true,
+      "packElevateHelper": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "VERIDIA",

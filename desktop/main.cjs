@@ -619,6 +619,12 @@ function normalizedReleaseNotes(value) {
 function setupUpdater() {
   if (updaterConfigured) return;
   updaterConfigured = true;
+  if (process.platform === "win32" && app.isPackaged) {
+    // Pass the running installation directory to NSIS explicitly. This keeps
+    // updates in the same location even when the user originally chose a
+    // non-default drive and registry discovery is unavailable.
+    autoUpdater.installDirectory = installDirectory();
+  }
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowDowngrade = false;
@@ -877,7 +883,9 @@ function registerIpc() {
   });
   ipcMain.handle("veridia:install-update", () => {
     quitting = true;
-    autoUpdater.quitAndInstall(false, true);
+    // Silent NSIS update: do not reopen the assisted installer wizard. The
+    // second flag starts VERIDIA again after installation completes.
+    autoUpdater.quitAndInstall(true, true);
     return true;
   });
   ipcMain.handle("veridia:set-auto-update", (_event, enabled) => {
