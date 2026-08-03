@@ -148,6 +148,11 @@ test("激活码签名、重复和过期校验不会产生残缺账号", async ({
 });
 
 test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => {
+  // This scenario cold-loads several protected pages and API routes in the
+  // Next.js dev server. Windows CI can legitimately exceed the global 45s
+  // timeout while compiling those routes, even though each assertion passes.
+  test.setTimeout(90_000);
+
   const account = activationCode({
     username: `compact_ui_${Date.now()}`,
     role: "OPERATOR",
