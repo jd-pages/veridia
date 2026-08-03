@@ -66,10 +66,10 @@ describe("本地打包发布门禁", () => {
   });
 
   it("软件和规则 BAT 保持独立，软件发布通过 Tag 触发 Actions", () => {
-    const softwareBat = fs.readFileSync(
+    const softwareBatBytes = fs.readFileSync(
       path.resolve(process.cwd(), "发布新版.bat"),
-      "utf8",
     );
+    const softwareBat = new TextDecoder("gbk").decode(softwareBatBytes);
     const rulesBatBytes = fs.readFileSync(
       path.resolve(process.cwd(), "发布规则新版.bat"),
     );
@@ -100,6 +100,15 @@ describe("本地打包发布门禁", () => {
     expect(softwareBat).toContain("validate-software-release.mjs");
     expect(softwareBat).toContain("EXE、blockmap、latest.yml");
     expect(softwareBat).not.toContain("rules:publish");
+    expect([...softwareBatBytes.subarray(0, 3)]).not.toEqual([
+      0xef, 0xbb, 0xbf,
+    ]);
+    expect(softwareBat).toContain("chcp 936 >nul");
+    expect(softwareBat).not.toContain("chcp 65001 >nul");
+    expect(softwareBat).toContain("software-release-bat.log");
+    expect(softwareBat.match(/^pause$/gmu)).toHaveLength(4);
+    expect(softwareBat).toContain("exit /b 0");
+    expect(softwareBat).not.toMatch(/^\s*exit(?:\s|$)(?!\/b)/gmu);
     expect(rulesBat).toContain("rules:publish");
     expect(rulesBat).not.toContain("fixed-workflow.mjs publish");
     expect([...rulesBatBytes.subarray(0, 3)]).not.toEqual([0xef, 0xbb, 0xbf]);
