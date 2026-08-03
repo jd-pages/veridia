@@ -12,7 +12,7 @@ import {
 
 const temporaryDirectories: string[] = [];
 
-function fixture(version = "1.0.9") {
+function fixture(version = "1.1.0") {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "veridia-release-"));
   temporaryDirectories.push(projectRoot);
   const directory = path.join(projectRoot, "release", version);
