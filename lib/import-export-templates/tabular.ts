@@ -133,7 +133,12 @@ function legacyExcelMatrix(bytes: Uint8Array): ParsedMatrix {
 
 function aliasIndex(templates: ImportExportTemplates) {
   const aliases = new Map<string, StandardField>();
-  for (const field of templates.columnOrder.import) {
+  const fields = new Set<StandardField>([
+    ...templates.columnOrder.import,
+    // 兼容旧版四列表格；新模板不再要求活动列，但已有文件仍可指定活动。
+    "activityName",
+  ]);
+  for (const field of fields) {
     const definition = templates.fieldDefinitions[field];
     for (const alias of [
       field,
@@ -231,7 +236,13 @@ export async function parseTabularPreview(input: {
       field,
     });
   });
-  const missingRequiredFields = templates.requiredFields.filter(
+  const legacyLayout = !["platform", "shopName", "customerName"].some(
+    (field) => occupied.has(field as StandardField),
+  );
+  const requiredFields = legacyLayout
+    ? (["noteUrl", "productName", "productStage"] as StandardField[])
+    : templates.requiredFields;
+  const missingRequiredFields = requiredFields.filter(
     (field) => !occupied.has(field),
   );
   const structuralErrors = [
@@ -262,7 +273,7 @@ export async function parseTabularPreview(input: {
         match.field === "noteUrl" && hyperlink ? hyperlink : rawValue;
     }
     const errors = [...structuralErrors];
-    for (const field of templates.requiredFields) {
+    for (const field of requiredFields) {
       if (!values[field]) {
         errors.push(`缺少必填字段：${displayName(templates, field)}`);
       }

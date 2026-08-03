@@ -193,32 +193,29 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   );
   const exportHeaders = worksheetHeaders(exportWorkbook.worksheets[0]);
   expect(exportHeaders).toEqual([
-    "产品",
-    "活动",
-    "产品阶段话题",
-    "要求阶段话题",
-    "最终审核结论",
-    "人工复核状态",
-    "失败原因",
-    "正文有效字数",
-    "图片数量",
-    "话题审核结果",
-    "当前公开状态",
-    "正文内容",
+    "平台",
+    "店铺名称",
+    "客户名",
+    "产品系列",
+    "阶段",
+    "订单编号",
+    "内容渠道",
+    "链接",
+    "发帖时间",
+    "自审",
   ]);
   const exportSheet = exportWorkbook.worksheets[0];
   expect(exportSheet.rowCount - 1).toBe(
     Number(exportResponse.headers()["x-veridia-export-count"]),
   );
   expect(exportSheet.rowCount).toBeGreaterThan(1);
-  const resultColumn = exportHeaders.indexOf("最终审核结论") + 1;
-  const exportedStatuses = exportSheet
-    .getColumn(resultColumn)
-    .values.slice(2)
-    .map(String);
-  expect(exportedStatuses).not.toContain("PASSED");
-  expect(exportedStatuses).toHaveLength(1);
-  expect(exportedStatuses[0]).toMatch(/审核通过|审核不通过|待人工复核/u);
+  const selfReviewColumn = exportHeaders.indexOf("自审") + 1;
+  const exportedSelfReview = exportSheet
+    .getRow(2)
+    .getCell(selfReviewColumn).text;
+  expect(["Y", "N-帖子无法查看", "N-图片看不到奶粉段数", ""]).toContain(
+    exportedSelfReview,
+  );
 
   const emptyExportResponse = await page.request.get(
     `/api/results/export?keyword=no-export-${suffix}`,
@@ -242,7 +239,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(csvExport[0]).toBe(0xef);
   expect(csvExport[1]).toBe(0xbb);
   expect(csvExport[2]).toBe(0xbf);
-  expect(csvExport.toString("utf8")).toContain("审核结果");
+  expect(csvExport.toString("utf8")).toContain("平台,店铺名称,客户名");
+  expect(csvExport.toString("utf8")).toContain("自审");
+  expect(csvExport.toString("utf8")).not.toContain("正文内容");
 
   const taskExportResponse = await page.request.get(
     "/api/tasks/export?format=xlsx",
@@ -262,7 +261,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     );
   }
   expect(page.context().pages()).toHaveLength(pageCountBeforeTemplateDownloads);
-  await expect(page).toHaveURL(/\/tasks$/u);
+  await expect(page).toHaveURL(/\/tasks(?:\?batchId=[^#]+)?$/u);
 
   const noteTemplateResponse = await page.request.get("/api/import/template");
   expect(noteTemplateResponse.ok()).toBeTruthy();
@@ -274,17 +273,27 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     noteTemplateWorkbook.worksheets[0],
   );
   expect(noteTemplateHeaders).toEqual([
-    "笔记链接 *",
-    "产品 *",
-    "活动 *",
-    "产品阶段话题 *",
+    "平台（必填）",
+    "店铺名称（必填）",
+    "客户名（必填）",
+    "产品系列（必填）",
+    "阶段（IFFO/GUM）",
+    "订单编号（必填）",
+    "内容渠道（必填）",
+    "链接（必填）",
+    "发帖时间（必填）",
   ]);
   const downloadedTemplateSheet = noteTemplateWorkbook.worksheets[0];
   downloadedTemplateSheet.getRow(2).values = [
-    `${E2E_ORIGIN}/mock/xhs?case=passed&minimal-template=${suffix}`,
+    "小红书",
+    "E2E 店铺",
+    "E2E 客户",
     product.name,
-    campaign.name,
     "IFFO",
+    `E2E-${suffix}`,
+    "小红书",
+    `${E2E_ORIGIN}/mock/xhs?case=passed&minimal-template=${suffix}`,
+    "2026-08-03 12:00:00",
   ];
   const minimalTemplateImport = await page.request.post("/api/import/notes", {
     multipart: {
@@ -390,18 +399,15 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       url: string;
       recognitionStatus: string;
       failureReason: string;
+      errors: string[];
     }>;
   };
-  expect(importPreview.validCount).toBe(3);
-  expect(importPreview.invalidCount).toBe(1);
+  expect(importPreview.validCount).toBe(2);
+  expect(importPreview.invalidCount).toBe(2);
   expect(importPreview.unknownHeaders).toEqual(
-    expect.arrayContaining([
-      "产品编码",
-      "活动月份",
-      "内容渠道",
-      "备注",
-    ]),
+    expect.arrayContaining(["产品编码", "活动月份", "备注"]),
   );
+  expect(importPreview.unknownHeaders).not.toContain("内容渠道");
   expect(importPreview.rows[0].url).toContain("case=no-images");
   expect(importPreview.rows[0].originalLinkContent).toContain("标题 +");
   expect(importPreview.rows[1]).toMatchObject({
@@ -409,6 +415,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     recognitionStatus: "RECOGNIZED",
   });
   expect(importPreview.rows[1].url).toContain("case=read-failed");
+  expect(importPreview.rows[2].errors).toContain("内容渠道不能为空");
   expect(importPreview.rows[3]).toMatchObject({
     recognitionStatus: "UNSUPPORTED",
     failureReason: "内容渠道为抖音，暂不支持小红书自动审核",
@@ -431,11 +438,11 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     imported: number;
     batchId: string;
   };
-  expect(committedImport.imported).toBe(3);
+  expect(committedImport.imported).toBe(2);
   const excelBatch = await waitForBatch(page, committedImport.batchId, [
     "COMPLETED_WITH_ERRORS",
   ]);
-  expect(excelBatch.stats.succeeded).toBe(2);
+  expect(excelBatch.stats.succeeded).toBe(1);
   expect(excelBatch.stats.failed).toBe(1);
   expect(excelBatch.stats.progress).toBe(100);
 
@@ -798,23 +805,21 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const failureExportCsv = await failureExportResponse.text();
   expect(failureExportCsv.replace(/^\uFEFF/u, "").split("\r\n")[0]).toBe(
     [
-      "产品",
-      "活动",
-      "产品阶段话题",
-      "要求阶段话题",
-      "最终审核结论",
-      "人工复核状态",
-      "失败原因",
-      "正文有效字数",
-      "图片数量",
-      "话题审核结果",
-      "当前公开状态",
-      "正文内容",
+      "平台",
+      "店铺名称",
+      "客户名",
+      "产品系列",
+      "阶段",
+      "订单编号",
+      "内容渠道",
+      "链接",
+      "发帖时间",
+      "自审",
     ].join(","),
   );
   expect(failureExportResponse.headers()["x-veridia-export-count"]).toBe("2");
 
-  expect(failureExportCsv).toContain("待人工复核");
+  expect(failureExportCsv).not.toContain("正文内容");
 
   await page.goto(`/tasks?batchId=${resultCoverageBatchId}`);
   const failedResult = resultCoverage.items.find(

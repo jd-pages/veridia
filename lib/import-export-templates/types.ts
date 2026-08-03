@@ -17,6 +17,10 @@ export type TabularSourceType =
 export type StandardField =
   | "noteUrl"
   | "noteId"
+  | "platform"
+  | "shopName"
+  | "customerName"
+  | "orderNumber"
   | "productName"
   | "activityName"
   | "influencerName"
@@ -67,7 +71,8 @@ export type StandardField =
   | "manualAuditResult"
   | "finalAuditConclusion"
   | "manualReviewComment"
-  | "auditTime";
+  | "auditTime"
+  | "selfReview";
 
 export interface ImportExportTemplates {
   schemaVersion: number;

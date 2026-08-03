@@ -6,13 +6,19 @@ import { productStageTopicLabel } from "../lib/product-stage";
 
 const prisma = new PrismaClient();
 
-function styleSheet(sheet: ExcelJS.Worksheet) {
+function styleSheet(
+  sheet: ExcelJS.Worksheet,
+  options: { fill?: string; font?: string } = {},
+) {
   const header = sheet.getRow(1);
-  header.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  header.font = {
+    bold: true,
+    color: { argb: options.font || "FFFFFFFF" },
+  };
   header.fill = {
     type: "pattern",
     pattern: "solid",
-    fgColor: { argb: "FFB4232A" },
+    fgColor: { argb: options.fill || "FFB4232A" },
   };
   header.alignment = { vertical: "middle", wrapText: true };
   sheet.views = [{ state: "frozen", ySplit: 1 }];
@@ -27,19 +33,29 @@ async function main() {
   workbook.creator = "小红书笔记合规审核系统";
   const sheet = workbook.addWorksheet("笔记导入模板");
   sheet.columns = [
-    { header: "笔记链接 *", key: "url", width: 48 },
-    { header: "产品 *", key: "productName", width: 28 },
-    { header: "活动 *", key: "campaignName", width: 32 },
-    { header: "产品阶段话题 *", key: "productStage", width: 24 },
+    { header: "平台（必填）", key: "platform", width: 16 },
+    { header: "店铺名称（必填）", key: "shopName", width: 24 },
+    { header: "客户名（必填）", key: "customerName", width: 20 },
+    { header: "产品系列（必填）", key: "productName", width: 26 },
+    { header: "阶段（IFFO/GUM）", key: "productStage", width: 18 },
+    { header: "订单编号（必填）", key: "orderNumber", width: 22 },
+    { header: "内容渠道（必填）", key: "contentChannel", width: 18 },
+    { header: "链接（必填）", key: "url", width: 52 },
+    { header: "发帖时间（必填）", key: "publishTime", width: 22 },
   ];
   sheet.addRow({
-    url: "http://localhost:3100/mock/xhs?case=passed",
-    productName: "爱他美澳洲白金版",
-    campaignName: "爱他美2026年7月小红书种草审核",
+    platform: "小红书",
+    shopName: "示例店铺",
+    customerName: "示例客户",
+    productName: "爱他美奇迹绿罐",
     productStage: "IFFO",
+    orderNumber: "JD202608030001",
+    contentChannel: "小红书",
+    url: "https://xhslink.com/示例短链",
+    publishTime: new Date(Date.UTC(2026, 7, 3, 12, 0, 0)),
   });
   for (let row = 2; row <= 5001; row += 1) {
-    sheet.getCell(row, 4).dataValidation = {
+    sheet.getCell(row, 5).dataValidation = {
       type: "list",
       allowBlank: false,
       formulae: ['"IFFO,GUM"'],
@@ -48,7 +64,9 @@ async function main() {
       error: "产品阶段话题请填写 IFFO 或 GUM。",
     };
   }
-  styleSheet(sheet);
+  sheet.getColumn(8).alignment = { vertical: "top", wrapText: true };
+  sheet.getColumn(9).numFmt = "yyyy-mm-dd hh:mm:ss";
+  styleSheet(sheet, { fill: "FFFFFF00", font: "FF000000" });
 
   const outputDir = path.join(process.cwd(), "templates");
   await mkdir(outputDir, { recursive: true });

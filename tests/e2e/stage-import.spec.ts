@@ -267,6 +267,66 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
   ).find((task) => task.url === gumCommitUrl);
   expect(committedGumTask?.productStage).toBe("GUM");
 
+  const newTemplateWorkbook = new ExcelJS.Workbook();
+  const newTemplateSheet = newTemplateWorkbook.addWorksheet("笔记导入模板");
+  newTemplateSheet.addRow([
+    "平台（必填）",
+    "店铺名称（必填）",
+    "客户名（必填）",
+    "产品系列（必填）",
+    "阶段（IFFO/GUM）",
+    "订单编号（必填）",
+    "内容渠道（必填）",
+    "链接（必填）",
+    "发帖时间（必填）",
+  ]);
+  const newTemplateUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&new-template=${suffix}`;
+  newTemplateSheet.addRow([
+    "小红书",
+    "E2E 店铺",
+    "E2E 客户",
+    product.name,
+    "IFFO",
+    `ORDER-${suffix}`,
+    "小红书",
+    newTemplateUrl,
+    "2026-08-03 12:00:00",
+  ]);
+  const newTemplateResponse = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: "note-import-new-template.xlsx",
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await newTemplateWorkbook.xlsx.writeBuffer()),
+      },
+      commit: "true",
+      skipDuplicates: "true",
+    },
+  });
+  expect(newTemplateResponse.ok()).toBeTruthy();
+  expect((await newTemplateResponse.json()).data.imported).toBe(1);
+  const committedNewTemplateTask = (
+    (await (await page.request.get("/api/tasks")).json()).data as Array<{
+      url: string;
+      notes: string | null;
+      campaignId: string;
+    }>
+  ).find((task) => task.url === newTemplateUrl);
+  expect(committedNewTemplateTask).toMatchObject({
+    campaignId: campaign.id,
+  });
+  expect(committedNewTemplateTask?.notes).toContain("平台：小红书");
+  expect(committedNewTemplateTask?.notes).toContain("店铺名称：E2E 店铺");
+  expect(committedNewTemplateTask?.notes).toContain("客户名：E2E 客户");
+  expect(committedNewTemplateTask?.notes).toContain(
+    `订单编号：ORDER-${suffix}`,
+  );
+  expect(committedNewTemplateTask?.notes).toContain("内容渠道：小红书");
+  expect(committedNewTemplateTask?.notes).toContain(
+    "发帖时间：2026-08-03 12:00:00",
+  );
+
   const csv = [
     "\uFEFF活动名称,段位,小红书链接,商品,额外登记列",
     `${campaign.name},IFFO,${E2E_ORIGIN}/mock/xhs?case=passed&csv=${suffix},${product.name},忽略`,

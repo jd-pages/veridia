@@ -14,6 +14,7 @@ const products: MatchableProduct[] = [
   {
     id: "au",
     name: "爱他美澳洲白金版",
+    seriesName: "爱他美澳洲白金系列",
     aliases: [{ alias: "澳白" }, { alias: "澳洲白金" }],
   },
   {
@@ -58,6 +59,15 @@ describe("产品名称与简称标准化", () => {
     expect(normalizeProductMatchKey("　ＡＵＳ　白　")).toBe("aus白");
     expect(
       resolveProductReference(products, { name: "  澳　白  " }),
+    ).toMatchObject({
+      status: "MATCHED",
+      product: { name: "爱他美澳洲白金版" },
+    });
+  });
+
+  it("笔记导入的产品系列列可匹配产品 seriesName", () => {
+    expect(
+      resolveProductReference(products, { name: "爱他美澳洲白金系列" }),
     ).toMatchObject({
       status: "MATCHED",
       product: { name: "爱他美澳洲白金版" },

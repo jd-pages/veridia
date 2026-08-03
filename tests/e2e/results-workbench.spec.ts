@@ -2,18 +2,16 @@ import { expect, test, type Page } from "@playwright/test";
 import ExcelJS from "exceljs";
 
 const resultExportHeaders = [
-  "产品",
-  "活动",
-  "产品阶段话题",
-  "要求阶段话题",
-  "最终审核结论",
-  "人工复核状态",
-  "失败原因",
-  "正文有效字数",
-  "图片数量",
-  "话题审核结果",
-  "当前公开状态",
-  "正文内容",
+  "平台",
+  "店铺名称",
+  "客户名",
+  "产品系列",
+  "阶段",
+  "订单编号",
+  "内容渠道",
+  "链接",
+  "发帖时间",
+  "自审",
 ];
 
 const removedResultExportHeaders = [
@@ -26,15 +24,27 @@ const removedResultExportHeaders = [
   "正文实际识别段位",
   "达人昵称",
   "发布时间",
-  "标题",
   "图片数量合规",
   "图片提取状态",
   "规则版本",
   "命中规则",
   "审核创建时间",
   "审核完成时间",
-  "审核时间",
   "页面状态",
+  "笔记状态",
+  "话题审核",
+  "图片",
+  "审核结论",
+  "失败原因",
+  "客服修改留言 日期-已留言",
+  "审核时间",
+  "正文",
+  "笔记正文",
+  "原文正文",
+  "提取正文",
+  "正文内容",
+  "noteContent",
+  "contentText",
 ];
 
 async function login(page: Page) {

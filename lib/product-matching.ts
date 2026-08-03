@@ -93,6 +93,14 @@ export function resolveProductReference<T extends MatchableProduct>(
   );
   if (nameResult.status !== "NOT_FOUND") return nameResult;
 
+  const seriesResult = fromCandidates(
+    products.filter(
+      (product) => normalizeProductMatchKey(product.seriesName) === nameKey,
+    ),
+    "NAME",
+  );
+  if (seriesResult.status !== "NOT_FOUND") return seriesResult;
+
   const configuredAliasResult = fromCandidates(
     products.filter((product) =>
       aliasValues(product).some(

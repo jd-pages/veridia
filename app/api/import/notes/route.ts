@@ -25,12 +25,18 @@ import {
   productResolutionError,
   resolveProductReference,
 } from "@/lib/product-matching";
+import { buildImportedTaskNotes } from "@/lib/import-task-metadata";
 
 interface CheckedRow {
   rowNumber: number;
   url: string;
   originalLinkContent: string;
+  importedPlatform: string;
+  shopName: string;
+  customerName: string;
   contentChannel: string;
+  orderNumber: string;
+  publishTime: string;
   platform: NoteLinkPlatform;
   recognitionStatus: "RECOGNIZED" | "UNRECOGNIZED" | "UNSUPPORTED";
   failureReason: string;
@@ -74,6 +80,9 @@ export async function POST(request: Request) {
     });
     const rows: CheckedRow[] = [];
     const seen = new Set<string>();
+    const hasContentChannelColumn = tabular.recognizedFields.some(
+      (field) => field.field === "contentChannel",
+    );
     const activeProducts = await prisma.product.findMany({
       where: { status: "ACTIVE", deletedAt: null },
       include: { aliases: { select: { alias: true } } },
@@ -94,7 +103,12 @@ export async function POST(request: Request) {
         rowNumber: parsed.rowNumber,
         url: linkResolution.url,
         originalLinkContent: linkResolution.originalContent,
+        importedPlatform: values.platform || "",
+        shopName: values.shopName || "",
+        customerName: values.customerName || "",
         contentChannel: declaredChannel,
+        orderNumber: values.orderNumber || "",
+        publishTime: values.publishTime || "",
         platform: linkResolution.platform,
         recognitionStatus: linkResolution.status,
         failureReason: linkResolution.failureReason,
@@ -106,9 +120,20 @@ export async function POST(request: Request) {
         stageInput: values.productStage || "",
         productStage: "",
         stageGroup: "",
-        notes: values.remark || "",
+        notes: buildImportedTaskNotes({
+          platform: values.platform,
+          shopName: values.shopName,
+          customerName: values.customerName,
+          orderNumber: values.orderNumber,
+          contentChannel: values.contentChannel,
+          publishTime: values.publishTime,
+          notes: values.remark,
+        }),
         errors: [...parsed.errors],
       };
+      if (hasContentChannelColumn && !declaredChannel) {
+        checked.errors.push("内容渠道不能为空");
+      }
       if (checked.failureReason) {
         checked.errors.push(checked.failureReason);
       }
@@ -137,7 +162,9 @@ export async function POST(request: Request) {
       const campaign = product
         ? await prisma.campaign.findFirst({
             where: {
-              name: checked.campaignName,
+              ...(checked.campaignName
+                ? { name: checked.campaignName }
+                : {}),
               ...(checked.month ? { month: checked.month } : {}),
               status: "ACTIVE",
               OR: [
@@ -145,12 +172,14 @@ export async function POST(request: Request) {
                 { products: { some: { productId: product.id } } },
               ],
             },
+            orderBy: [{ endDate: "desc" }, { updatedAt: "desc" }],
           })
         : null;
       if (!campaign) {
         checked.errors.push("活动不存在或与产品不匹配");
       } else {
         checked.campaignId = campaign.id;
+        checked.campaignName = campaign.name;
         checked.month = campaign.month;
       }
 
