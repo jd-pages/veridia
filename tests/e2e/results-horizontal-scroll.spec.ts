@@ -7,6 +7,30 @@ async function login(page: Page) {
   expect(response.ok()).toBeTruthy();
 }
 
+async function floatingScrollbarLayout(page: Page) {
+  return page.evaluate(() => {
+    const table = document.querySelector<HTMLElement>(".ant-table-body");
+    const floating = document.querySelector<HTMLElement>(
+      '[data-testid="results-floating-scrollbar"]',
+    );
+    if (!table) {
+      return { matches: false, overflows: false, shouldFloat: false };
+    }
+    const rect = table.getBoundingClientRect();
+    const overflows = table.scrollWidth - table.clientWidth > 1;
+    const nativeScrollbarInView = rect.bottom <= window.innerHeight + 12;
+    const intersectsViewport =
+      rect.top < window.innerHeight - 8 && rect.bottom > 72;
+    const shouldFloat =
+      overflows && intersectsViewport && !nativeScrollbarInView;
+    return {
+      matches: Boolean(floating) === shouldFloat,
+      overflows,
+      shouldFloat,
+    };
+  });
+}
+
 test("审核结果表格悬浮横向滚动、固定列和重算", async ({ page }) => {
   await login(page);
   await page.setViewportSize({ width: 1366, height: 768 });
@@ -139,7 +163,10 @@ test("审核结果表格悬浮横向滚动、固定列和重算", async ({ page 
   await page.evaluate(() =>
     window.scrollTo(0, document.documentElement.scrollHeight),
   );
-  await expect(stickyScroll).toHaveCount(0);
+  await expect
+    .poll(async () => (await floatingScrollbarLayout(page)).matches)
+    .toBe(true);
+  expect((await floatingScrollbarLayout(page)).shouldFloat).toBe(false);
 
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.getByRole("button", { name: /高级筛选/ }).click();
@@ -155,16 +182,11 @@ test("审核结果表格悬浮横向滚动、固定列和重算", async ({ page 
   await tableBody.evaluate((element) =>
     element.scrollIntoView({ block: "center" }),
   );
-  // 过滤后只剩少量行，原生横向滚动条已经位于视口内；此时悬浮条必须隐藏，
-  // 避免与原生滚动条重复叠加。
-  await expect(stickyScroll).toHaveCount(0);
+  // 行数和 CI 视口会影响原生滚动条是否进入视口；只验证悬浮条与实时布局规则一致。
   await expect
-    .poll(() =>
-      tableBody.evaluate(
-        (element) => element.scrollWidth - element.clientWidth,
-      ),
-    )
-    .toBeGreaterThan(0);
+    .poll(async () => (await floatingScrollbarLayout(page)).matches)
+    .toBe(true);
+  expect((await floatingScrollbarLayout(page)).overflows).toBe(true);
 
   await reasonFilter
     .locator("xpath=..")
@@ -179,19 +201,10 @@ test("审核结果表格悬浮横向滚动、固定列和重算", async ({ page 
   await tableBody.evaluate((element) =>
     element.scrollIntoView({ block: "center" }),
   );
-  const pageTwoLayout = await tableBody.evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    return {
-      overflows: element.scrollWidth - element.clientWidth > 1,
-      nativeScrollbarInView: rect.bottom <= window.innerHeight + 12,
-    };
-  });
-  expect(pageTwoLayout.overflows).toBe(true);
-  if (pageTwoLayout.nativeScrollbarInView) {
-    await expect(stickyScroll).toHaveCount(0);
-  } else {
-    await expect(stickyScroll).toBeVisible();
-  }
+  await expect
+    .poll(async () => (await floatingScrollbarLayout(page)).matches)
+    .toBe(true);
+  expect((await floatingScrollbarLayout(page)).overflows).toBe(true);
 
   await page.setViewportSize({ width: 1920, height: 1080 });
   const wideLayout = await page.evaluate(() => ({

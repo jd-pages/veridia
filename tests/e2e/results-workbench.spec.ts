@@ -571,7 +571,14 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
       `.ant-table-row[data-row-key="${candidate.resultId}"]`,
     );
     await expect(keyedRow).toBeVisible();
-    await keyedRow.getByRole("checkbox").check({ force: true });
+    const selectionControl = keyedRow.locator(
+      "td.ant-table-selection-column label.ant-checkbox-wrapper",
+    );
+    const checkbox = selectionControl.getByRole("checkbox");
+    await selectionControl.scrollIntoViewIfNeeded();
+    await expect(checkbox).not.toBeChecked();
+    await selectionControl.click();
+    await expect(checkbox).toBeChecked();
   }
   const batchDeleteButton = page.getByRole("button", {
     name: "批量删除（2）",
