@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   countEffectiveBodyCharacters,
   evaluateAudit,
+  extractEffectiveBodyText,
 } from "@/lib/audit-engine";
 import { createMockNote } from "@/lib/mock-data";
 import type { AuditContext } from "@/lib/types";
@@ -320,6 +321,39 @@ describe("audit engine", () => {
     );
     expect(bodyRulePassed(30)).toMatchObject({ passed: true });
     expect(bodyRulePassed(31)).toMatchObject({ passed: true });
+  });
+
+  it("按已识别话题精确清洗开头、中间和结尾话题并保留普通正文", () => {
+    const topics = ["#话题A", "#话题B"];
+    expect(
+      extractEffectiveBodyText("#话题A#话题B这是正文内容", topics),
+    ).toBe("这是正文内容");
+    expect(
+      extractEffectiveBodyText(
+        "前面的正文#话题A中间的正文#话题B后面的正文",
+        topics,
+      ),
+    ).toBe("前面的正文 中间的正文 后面的正文");
+    expect(
+      extractEffectiveBodyText("这是正文内容#话题A#话题B", topics),
+    ).toBe("这是正文内容");
+    expect(countEffectiveBodyCharacters("#话题A#话题B", topics)).toBe(0);
+  });
+
+  it("开头连续真实话题后正文不再被计为0且话题审核保持通过", () => {
+    const note = createMockNote("passed");
+    const ordinaryBody = "好".repeat(30);
+    const topicTexts = note.topics.map((topic) => topic.displayText);
+    note.body = `${topicTexts.join("")}${ordinaryBody}`;
+
+    const result = evaluateAudit(note, context);
+    expect(result.effectiveBodyLength).toBe(30);
+    expect(result.bodyCompliant).toBe(true);
+    expect(result.missingTopics).toEqual([]);
+    expect(result.autoStatus).toBe("PASSED");
+    expect(
+      result.ruleResults.find((rule) => rule.ruleKey === "GLOBAL_BODY"),
+    ).toMatchObject({ passed: true, actualValue: "30 个有效正文字符" });
   });
 
   it("达能保持 30 字，佳贝艾特活动独立使用 50 字", () => {

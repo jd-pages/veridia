@@ -129,6 +129,7 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
     productStage: string;
   };
   expect(task.productStage).toBe("IFFO");
+  const ordinaryBody = "这是一次真实的小红书喂养体验记录".repeat(5);
 
   const auditResponse = await page.request.post(
     `/api/tasks/${task.id}/audit`,
@@ -141,7 +142,7 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
           pageType: "NOTE_DETAIL",
           noteId: `stage-topic-body-${suffix}`,
           title: "爱他美澳洲白金版2段真实体验",
-          body: `${"这是一次真实的小红书喂养体验记录".repeat(5)} #爱他美新手爸妈日记 #爱他美澳洲白金版 #二段奶粉推荐`,
+          body: `#爱他美新手爸妈日记#爱他美澳洲白金版#二段奶粉推荐#健康官方进口超市${ordinaryBody}`,
           noteType: "IMAGE_TEXT",
           imageExtractionStatus: "SUCCESS",
           imageCount: 2,
@@ -149,6 +150,7 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
             "#爱他美新手爸妈日记",
             "#爱他美澳洲白金版",
             "#二段奶粉推荐",
+            "#健康官方进口超市",
           ].map((displayText) => ({
             displayText,
             isLinkElement: false,
@@ -179,6 +181,7 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   const detailResponse = await page.request.get(`/api/results/${result.id}`);
   expect(detailResponse.ok()).toBeTruthy();
   const detail = (await detailResponse.json()).data as {
+    effectiveBodyLength: number;
     task: { productStage: string };
     failureReasons: string;
     missingTopics: string;
@@ -189,6 +192,7 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
       passed: boolean;
     }>;
   };
+  expect(detail.effectiveBodyLength).toBe(ordinaryBody.length);
   expect(detail.task.productStage).toBe("IFFO");
   expect(JSON.parse(detail.failureReasons)).not.toContain(
     "缺少精确话题 #新生儿奶粉",
@@ -197,6 +201,12 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   expect(
     detail.ruleResults.find((item) => item.ruleKey === "PRODUCT_STAGE_BODY"),
   ).toBeUndefined();
+  expect(
+    detail.ruleResults.find((item) => item.ruleKey === "GLOBAL_BODY"),
+  ).toMatchObject({
+    passed: true,
+    actualValue: `${ordinaryBody.length} 个有效正文字符`,
+  });
   expect(
     detail.ruleResults.find((item) =>
       item.ruleName.includes("产品阶段话题 IFFO"),

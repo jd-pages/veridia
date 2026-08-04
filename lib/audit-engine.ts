@@ -49,10 +49,41 @@ function preferredTopicCandidate(
   );
 }
 
-export function countEffectiveBodyCharacters(input: string | null | undefined) {
-  return String(input || "")
-    .replace(/https?:\/\/\S+|www\.\S+/giu, "")
-    .replace(/#[^\s#]+/gu, "")
+function escapeRegularExpression(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+export function extractEffectiveBodyText(
+  input: string | null | undefined,
+  detectedTopics: readonly string[] = [],
+) {
+  let body = String(input || "").replace(
+    /https?:\/\/\S+|www\.\S+/giu,
+    " ",
+  );
+  const topics = [
+    ...new Set(
+      detectedTopics
+        .map(normalizeTopic)
+        .filter(Boolean)
+        .sort((left, right) => right.length - left.length),
+    ),
+  ];
+  for (const topic of topics) {
+    const topicText = escapeRegularExpression(topic.slice(1));
+    body = body.replace(new RegExp(`[#＃]\\s*${topicText}`, "giu"), " ");
+  }
+  if (!topics.length) {
+    body = body.replace(/(^|\s)[#＃][^\s#＃]+(?=\s|$)/gu, "$1");
+  }
+  return body.replace(/\s+/gu, " ").trim();
+}
+
+export function countEffectiveBodyCharacters(
+  input: string | null | undefined,
+  detectedTopics: readonly string[] = [],
+) {
+  return extractEffectiveBodyText(input, detectedTopics)
     .replace(/[\p{P}\p{S}\s]/gu, "").length;
 }
 
@@ -193,7 +224,10 @@ export function evaluateAudit(
   }
 
   const bodyPresent = Boolean(note.body && note.body.trim().length > 0);
-  const effectiveBodyLength = countEffectiveBodyCharacters(note.body);
+  const effectiveBodyLength = countEffectiveBodyCharacters(
+    note.body,
+    note.topics.map((topic) => topic.displayText),
+  );
   const minBodyLength = context.minBodyLength;
   const bodyPassed =
     bodyReadIncomplete ||
