@@ -25,9 +25,23 @@ export async function GET(
       },
     },
   });
-  return campaign
-    ? ok({ ...campaign, minBodyLength: MIN_BODY_LENGTH })
-    : fail("活动不存在", 404);
+  if (!campaign) return fail("活动不存在", 404);
+  const brandNames = [
+    ...new Set(
+      [
+        campaign.product?.brandName,
+        ...campaign.products.map(({ product }) => product.brandName),
+      ].filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  return ok({
+    ...campaign,
+    brandNames,
+    topicRules: campaign.topicRules.filter(
+      (rule) => rule.brandName && brandNames.includes(rule.brandName),
+    ),
+    minBodyLength: MIN_BODY_LENGTH,
+  });
 }
 
 export async function PUT(

@@ -103,6 +103,7 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
     "/api/rule-stage-groups/IFFO_2",
     {
       data: {
+        brandName: "达能",
         bodyTerms: ["2段"],
         requireBodyStage: false,
         requiredTopic: "#二段奶粉推荐",
@@ -255,6 +256,8 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   ).toHaveCount(0);
 
   await page.goto("/rules");
+  await expect(page.getByRole("heading", { name: "话题规则" })).toBeVisible();
+  await page.getByRole("button", { name: "进入规则" }).click();
   await expect(
     page.getByText(
       "产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #",

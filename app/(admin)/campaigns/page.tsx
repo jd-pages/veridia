@@ -42,6 +42,7 @@ interface Product {
   id: string;
   code: string | null;
   name: string;
+  brandName: string;
   seriesName: string | null;
   contentDirection?: string | null;
   aliases?: Array<{ id: string; alias: string }>;
@@ -77,6 +78,7 @@ interface Campaign {
   product: Product | null;
   products: Array<{ product: Product }>;
   topicRules?: TopicRule[];
+  brandNames?: string[];
   _count: { topicRules: number };
 }
 
@@ -512,6 +514,17 @@ export default function CampaignsPage() {
         {detail ? (
           <>
             <Descriptions bordered size="small" column={2}>
+              <Descriptions.Item label="品牌" span={2}>
+                {detail.brandNames?.join("、") ||
+                  [
+                    detail.product?.brandName,
+                    ...detail.products.map(({ product }) => product.brandName),
+                  ]
+                    .filter(Boolean)
+                    .filter((value, index, values) => values.indexOf(value) === index)
+                    .join("、") ||
+                  "未配置"}
+              </Descriptions.Item>
               <Descriptions.Item label="活动周期" span={2}>
                 {dayjs(detail.startDate).format("YYYY-MM-DD")} 至{" "}
                 {dayjs(detail.endDate).format("YYYY-MM-DD")}

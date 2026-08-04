@@ -47,6 +47,7 @@ export interface RulePackageStageGroup {
 
 export interface RulePackageTopicRule {
   key: string;
+  brand?: string | null;
   campaignKey: string | null;
   productKey: string | null;
   scope: string;

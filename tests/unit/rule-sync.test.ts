@@ -26,6 +26,42 @@ describe("GitHub 规则同步", () => {
       payload.stageGroups.every((item) => item.requireBodyStage === false),
     ).toBe(true);
     expect(payload.topicRules.length).toBe(9);
+    expect(payload.products.every((item) => item.brand === "达能")).toBe(true);
+    expect(payload.topicRules.every((item) => item.brand === "达能")).toBe(
+      true,
+    );
+  });
+
+  it("旧规则包品牌字段可缺省，同名阶段话题可按品牌分别存在", () => {
+    const legacy = structuredClone(builtinRules) as unknown as {
+      topicRules: Array<Record<string, unknown>>;
+    };
+    for (const rule of legacy.topicRules) delete rule.brand;
+    expect(validateRulePayload(legacy).topicRules).toHaveLength(9);
+
+    const multiBrand = structuredClone(builtinRules);
+    multiBrand.products.push({
+      ...multiBrand.products[0],
+      key: "product_kabrita",
+      name: "佳贝艾特示例产品",
+      brand: "佳贝艾特",
+      series: "佳贝艾特示例产品",
+      aliases: ["佳贝艾特示例"],
+    });
+    multiBrand.campaigns.push({
+      ...multiBrand.campaigns[0],
+      key: "activity_kabrita",
+      name: "佳贝艾特示例活动",
+      productKeys: ["product_kabrita"],
+    });
+    multiBrand.topicRules.push({
+      ...multiBrand.topicRules[6],
+      key: "topic_kabrita_stage",
+      brand: "佳贝艾特",
+      campaignKey: "activity_kabrita",
+      productKey: null,
+    });
+    expect(validateRulePayload(multiBrand).topicRules).toHaveLength(10);
   });
 
   it("旧规则包缺少正文段位开关时保持原校验语义", () => {

@@ -123,6 +123,7 @@ function inferSharedBrandName(products: NormalizedProductRule[]) {
   for (const name of names.slice(1)) {
     while (prefix && !name.startsWith(prefix)) prefix = prefix.slice(0, -1);
   }
+  if (prefix === "爱他美") return "达能";
   return prefix.length >= 2 ? prefix : null;
 }
 
@@ -881,6 +882,7 @@ export async function commitCampaignRuleImport(
     await tx.topicRule.createMany({
       data: data.topicRules.map((rule) => ({
         ruleSource: "LOCAL_DRAFT",
+        brandName: inferredBrandName,
         campaignId: campaign.id,
         productId: rule.productName
           ? productByName.get(rule.productName) || null

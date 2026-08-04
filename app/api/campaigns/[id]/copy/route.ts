@@ -55,6 +55,7 @@ export async function POST(
         topicRules: {
           create: source.topicRules.map((rule) => ({
             ruleSource: "LOCAL_DRAFT",
+            brandName: rule.brandName,
             productId: rule.productId,
             scope: "CAMPAIGN",
             ruleType: rule.ruleType,

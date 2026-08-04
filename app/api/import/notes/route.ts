@@ -163,6 +163,9 @@ export async function POST(request: Request) {
         checked.productId = product.id;
         checked.productName = product.name;
         checked.productCode = product.code || checked.productCode;
+        if (!product.brandName.trim()) {
+          checked.errors.push("产品未配置品牌，无法加载话题规则");
+        }
       }
 
       const campaign = product
@@ -199,9 +202,10 @@ export async function POST(request: Request) {
       if (!importedStage) {
         checked.errors.push("产品阶段话题请填写 IFFO 或 GUM。");
       }
-      const stageRules = campaign
+      const stageRules = campaign && product?.brandName.trim()
         ? await prisma.topicRule.findMany({
             where: {
+              brandName: product.brandName,
               campaignId: campaign.id,
               topicCategory: "PRODUCT_STAGE",
               status: "ACTIVE",

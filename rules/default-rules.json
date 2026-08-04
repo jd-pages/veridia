@@ -8,7 +8,7 @@
       "key": "product_9585d8c15b88f4b20d14",
       "code": null,
       "name": "爱他美澳洲白金版",
-      "brand": "爱他美",
+      "brand": "达能",
       "series": "爱他美澳洲白金版",
       "category": null,
       "aliases": [
@@ -23,7 +23,7 @@
       "key": "product_36c5d818b2a904e2efac",
       "code": null,
       "name": "爱他美德国白金版",
-      "brand": "爱他美",
+      "brand": "达能",
       "series": "爱他美德国白金版",
       "category": null,
       "aliases": [
@@ -38,7 +38,7 @@
       "key": "product_fecb35f46a60e43258f9",
       "code": null,
       "name": "爱他美至熠",
-      "brand": "爱他美",
+      "brand": "达能",
       "series": "爱他美至熠",
       "category": null,
       "aliases": [
@@ -51,7 +51,7 @@
       "key": "product_90c618af52dbe265bbc1",
       "code": null,
       "name": "爱他美亲熠5HMO",
-      "brand": "爱他美",
+      "brand": "达能",
       "series": "爱他美亲熠5HMO",
       "category": null,
       "aliases": [
@@ -66,7 +66,7 @@
       "key": "product_7b0465db66b172ee22cf",
       "code": null,
       "name": "爱他美奇迹绿罐",
-      "brand": "爱他美",
+      "brand": "达能",
       "series": "爱他美奇迹绿罐",
       "category": null,
       "aliases": [
@@ -161,6 +161,7 @@
   "topicRules": [
     {
       "key": "topic_68bf4fb0f818d4c63575",
+      "brand": "达能",
       "campaignKey": "activity_bd673ea91f342c12a819",
       "productKey": null,
       "scope": "CAMPAIGN",
@@ -179,6 +180,7 @@
     },
     {
       "key": "topic_a8ffb3ebe1803a16f620",
+      "brand": "达能",
       "campaignKey": "activity_bd673ea91f342c12a819",
       "productKey": "product_9585d8c15b88f4b20d14",
       "scope": "CAMPAIGN",
@@ -197,6 +199,7 @@
     },
     {
       "key": "topic_ed9a224647e90c6b73ce",
+      "brand": "达能",
       "campaignKey": "activity_bd673ea91f342c12a819",
       "productKey": "product_36c5d818b2a904e2efac",
       "scope": "CAMPAIGN",
@@ -215,6 +218,7 @@
     },
     {
       "key": "topic_e8b46695f853d8c76327",
+      "brand": "达能",
       "campaignKey": "activity_bd673ea91f342c12a819",
       "productKey": "product_fecb35f46a60e43258f9",
       "scope": "CAMPAIGN",
@@ -233,6 +237,7 @@
     },
     {
       "key": "topic_ae52012170dcee50bdce",
+      "brand": "达能",
       "campaignKey": "activity_bd673ea91f342c12a819",
       "productKey": "product_90c618af52dbe265bbc1",
       "scope": "CAMPAIGN",
@@ -251,6 +256,7 @@
     },
     {
       "key": "topic_b675e11ca4bd1de67ab0",
+      "brand": "达能",
       "campaignKey": "activity_bd673ea91f342c12a819",
       "productKey": "product_7b0465db66b172ee22cf",
       "scope": "CAMPAIGN",
@@ -269,6 +275,7 @@
     },
     {
       "key": "topic_2ab331404159505c04e1",
+      "brand": "达能",
       "campaignKey": "activity_bd673ea91f342c12a819",
       "productKey": null,
       "scope": "CAMPAIGN",
@@ -287,6 +294,7 @@
     },
     {
       "key": "topic_6691a4d4d31c7582d73c",
+      "brand": "达能",
       "campaignKey": "activity_bd673ea91f342c12a819",
       "productKey": null,
       "scope": "CAMPAIGN",
@@ -305,6 +313,7 @@
     },
     {
       "key": "topic_ee487e2bd6f51cf5714b",
+      "brand": "达能",
       "campaignKey": "activity_bd673ea91f342c12a819",
       "productKey": null,
       "scope": "CAMPAIGN",

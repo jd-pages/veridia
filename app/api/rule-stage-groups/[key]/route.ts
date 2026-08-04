@@ -18,10 +18,13 @@ export async function PUT(
   const { key } = await params;
   if (!ALLOWED_KEYS.has(key)) return fail("产品阶段话题无效");
   const body = (await request.json()) as {
+    brandName?: string;
     bodyTerms?: string[];
     requireBodyStage?: boolean;
     requiredTopic?: string;
   };
+  const brandName = body.brandName?.trim();
+  if (!brandName) return fail("产品阶段话题必须归属品牌");
   const bodyTerms = [
     ...new Set(
       (body.bodyTerms || []).map((item) => item.trim()).filter(Boolean),
@@ -47,13 +50,13 @@ export async function PUT(
       data: {
         bodyTerms: JSON.stringify(bodyTerms),
         requireBodyStage: body.requireBodyStage === true,
-        requiredTopic,
         ruleSource: "LOCAL_DRAFT",
         ruleVersion: `${currentVersion?.currentVersion || "local"}-draft`,
       },
     });
     await tx.topicRule.updateMany({
       where: {
+        brandName,
         topicCategory: "PRODUCT_STAGE",
         applicableStage: { in: [key, ...canonicalStages] },
       },
