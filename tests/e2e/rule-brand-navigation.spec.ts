@@ -22,7 +22,11 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   await expect(page.getByText("达能", { exact: true })).toBeVisible();
   await expect(page.getByText("#爱他美新手爸妈日记")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "进入规则" }).click();
+  const danoneBrandCard = page.locator(".ant-card").filter({
+    has: page.getByText("达能", { exact: true }),
+  });
+  await expect(danoneBrandCard).toHaveCount(1);
+  await danoneBrandCard.getByRole("button", { name: "进入规则" }).click();
   await expect(
     page.getByRole("heading", { name: "达能话题规则" }),
   ).toBeVisible();

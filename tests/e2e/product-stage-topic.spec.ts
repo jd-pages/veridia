@@ -257,7 +257,11 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
 
   await page.goto("/rules");
   await expect(page.getByRole("heading", { name: "话题规则" })).toBeVisible();
-  await page.getByRole("button", { name: "进入规则" }).click();
+  const danoneBrandCard = page.locator(".ant-card").filter({
+    has: page.getByText("达能", { exact: true }),
+  });
+  await expect(danoneBrandCard).toHaveCount(1);
+  await danoneBrandCard.getByRole("button", { name: "进入规则" }).click();
   await expect(
     page.getByText(
       "产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #",

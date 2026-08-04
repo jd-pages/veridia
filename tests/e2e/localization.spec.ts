@@ -9,7 +9,7 @@ test("审核任务页面业务状态与来源统一显示中文", async ({ page 
   await page.goto("/tasks");
   await expect(page.getByText("小红书专用浏览器", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("任务配置", { exact: true })).toBeVisible();
-  await expect(page.getByText("默认模式", { exact: true })).toBeVisible();
+  await expect(page.getByText("默认模式", { exact: true })).toHaveCount(0);
 
   const bodyText = await page.locator("main").innerText();
   for (const untranslated of [

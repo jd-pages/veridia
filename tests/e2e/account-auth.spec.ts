@@ -322,6 +322,11 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
   await page.goto("/campaigns");
   await expect(page.getByRole("button", { name: "导入活动规则" })).toBeVisible();
   await page.goto("/rules");
+  const e2eBrandCard = page.locator(".ant-card").filter({
+    has: page.getByText("VERIDIA E2E", { exact: true }),
+  });
+  await expect(e2eBrandCard).toHaveCount(1);
+  await e2eBrandCard.getByRole("button", { name: "进入规则" }).click();
   await expect(page.getByRole("button", { name: "新增规则" })).toBeVisible();
 
   for (const endpoint of [

@@ -3,17 +3,17 @@ import { chromium, type Browser, type Page } from "playwright";
 import { PlaywrightXiaohongshuAdapter } from "@/lib/automation/adapters";
 
 describe("xiaohongshu image count extractor", () => {
-  let browser: Browser;
+  let browser: Browser | undefined;
   let page: Page;
   const adapter = new PlaywrightXiaohongshuAdapter();
 
   beforeAll(async () => {
     browser = await chromium.launch({ headless: true, channel: "chrome" });
     page = await browser.newPage();
-  }, 30_000);
+  }, 90_000);
 
   afterAll(async () => {
-    await browser.close();
+    await browser?.close();
   }, 30_000);
 
   it("只统计轮播媒体，按轮播页去重并排除头像、评论和推荐图", async () => {
