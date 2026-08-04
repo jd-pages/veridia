@@ -675,18 +675,13 @@ export default function TasksPage() {
                     <h2>创建审核任务</h2>
                     <p>选择治理规则并提交链接，系统将按队列逐条完成审核。</p>
                   </div>
-                  <span className={styles.defaultBadge}>
-                    {businessUiText.defaultMode}
-                  </span>
                 </div>
-                <Row gutter={[36, 28]}>
-                  <Col xs={24} xl={16}>
-                    <Form
-                      form={form}
-                      className={styles.configForm}
-                      layout="vertical"
-                      onFinish={(values) => void createBatch(values)}
-                    >
+                <Form
+                  form={form}
+                  className={styles.configForm}
+                  layout="vertical"
+                  onFinish={(values) => void createBatch(values)}
+                >
                       <Form.Item name="name" label="批次名称">
                         <Input placeholder="例如：7月达人笔记第一批" />
                       </Form.Item>
@@ -833,36 +828,7 @@ export default function TasksPage() {
                       >
                         创建审核任务
                       </Button>
-                    </Form>
-                  </Col>
-                  <Col xs={24} xl={8}>
-                    <aside className={styles.workflowPanel}>
-                      <span className={styles.eyebrow}>
-                        {businessUiText.controlFlow}
-                      </span>
-                      <h3>自动治理流程</h3>
-                      <p>
-                        真实链接复用专用浏览器会话；登录失效或安全验证会暂停队列。
-                      </p>
-                      <div className={styles.workflowSteps}>
-                        {[
-                          ["01", "队列登记", "创建任务并进入等待队列"],
-                          ["02", "页面取证", "自动打开链接并提取审核证据"],
-                          ["03", "规则执行", "按产品、活动及段位规则判定"],
-                          ["04", "异常隔离", "单条失败留痕并继续下一条"],
-                        ].map(([index, title, description]) => (
-                          <div key={index}>
-                            <span>{index}</span>
-                            <div>
-                              <strong>{title}</strong>
-                              <p>{description}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </aside>
-                  </Col>
-                </Row>
+                </Form>
               </Card>
             ),
           },

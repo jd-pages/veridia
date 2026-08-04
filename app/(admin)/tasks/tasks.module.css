@@ -98,7 +98,6 @@
 .eyebrow,
 .statCode,
 .sourceCode,
-.defaultBadge,
 .remainingCount,
 .tableSectionHeader > span {
   font-family: var(--font-inter), Inter, Arial, sans-serif;
@@ -163,15 +162,9 @@
   line-height: 1.7;
 }
 
-.defaultBadge {
-  padding: 6px 9px;
-  border: 1px solid #d9e2ec;
-  border-radius: 7px;
-  background: #f6f8fb;
-  color: #667085;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+.configForm {
+  width: 100%;
+  min-width: 0;
 }
 
 .configForm :global(.ant-form-item-label > label) {
@@ -220,81 +213,6 @@
   border-radius: 8px;
   font-weight: 650;
   box-shadow: 0 5px 12px rgb(180 35 42 / 16%);
-}
-
-.workflowPanel {
-  height: 100%;
-  min-height: 420px;
-  padding: 24px;
-  border: 1px solid #e3e8ef;
-  border-radius: 11px;
-  background: #f8fafc;
-}
-
-.workflowPanel h3 {
-  margin: 6px 0 6px;
-  color: #172033;
-  font-size: 17px;
-}
-
-.workflowPanel > p {
-  margin: 0;
-  color: #7a8495;
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.workflowSteps {
-  display: grid;
-  gap: 0;
-  margin-top: 24px;
-}
-
-.workflowSteps > div {
-  position: relative;
-  display: grid;
-  grid-template-columns: 34px 1fr;
-  gap: 12px;
-  padding-bottom: 22px;
-}
-
-.workflowSteps > div:not(:last-child)::after {
-  position: absolute;
-  top: 30px;
-  bottom: 4px;
-  left: 14px;
-  width: 1px;
-  background: #dfe5ec;
-  content: "";
-}
-
-.workflowSteps > div > span {
-  z-index: 1;
-  display: grid;
-  width: 29px;
-  height: 29px;
-  place-items: center;
-  border: 1px solid #d9e0e9;
-  border-radius: 8px;
-  background: #fff;
-  color: #667085;
-  font-family: var(--font-inter), Inter, Arial, sans-serif;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.workflowSteps strong {
-  display: block;
-  margin: 1px 0 3px;
-  color: #344054;
-  font-size: 13px;
-}
-
-.workflowSteps p {
-  margin: 0;
-  color: #8a94a6;
-  font-size: 12px;
-  line-height: 1.55;
 }
 
 .uploadArea :global(.ant-upload-drag) {
@@ -782,7 +700,4 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .workflowPanel {
-    min-height: auto;
-  }
 }

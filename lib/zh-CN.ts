@@ -194,8 +194,6 @@ export const evidenceFieldLabels: Record<string, string> = {
 export const businessUiText = {
   secureBrowserSession: "小红书专用浏览器",
   taskConfiguration: "任务配置",
-  defaultMode: "默认模式",
-  controlFlow: "自动审核流程",
   bulkIngestion: "批量导入",
   manualEvidence: "人工补审证据",
   auditOperations: "审核进度",
