@@ -207,11 +207,11 @@ export default function RulesPage() {
           title="话题规则"
           description="按品牌维护产品话题与阶段话题，审核任务将根据产品品牌自动匹配对应规则。"
         />
-        <Row gutter={[16, 16]}>
+        <Row className="rule-brand-grid" gutter={[16, 16]}>
           {brands.map((brand) => (
-            <Col key={brand.brandName} xs={24} md={12} xl={8}>
+            <Col key={brand.brandName} xs={24} md={12}>
               <Card
-                className="surface-card"
+                className="surface-card rule-brand-card"
                 loading={loading}
                 title={brand.brandName}
                 extra={<StatusTag value={brand.status} />}
@@ -238,9 +238,8 @@ export default function RulesPage() {
                   </Col>
                 </Row>
                 <Typography.Paragraph
+                  className="rule-brand-products"
                   type="secondary"
-                  ellipsis={{ rows: 2, expandable: true, symbol: "展开" }}
-                  style={{ marginTop: 16, marginBottom: 0 }}
                 >
                   包含产品：{brand.productNames.join("、") || "暂无产品"}
                 </Typography.Paragraph>

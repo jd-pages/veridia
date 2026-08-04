@@ -363,6 +363,34 @@ a {
   box-shadow: 0 4px 16px rgb(16 24 40 / 4%);
 }
 
+.rule-brand-grid > .ant-col {
+  display: flex;
+}
+
+.rule-brand-card {
+  width: 100%;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+}
+
+.rule-brand-card > .ant-card-body {
+  flex: 1 1 auto;
+}
+
+.rule-brand-card > .ant-card-actions {
+  flex: 0 0 auto;
+}
+
+.rule-brand-products {
+  min-height: 72px;
+  margin-top: 16px;
+  margin-bottom: 0 !important;
+  line-height: 1.7;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .metric-card {
   min-height: 128px;
   overflow: hidden;

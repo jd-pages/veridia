@@ -22,10 +22,63 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   await expect(page.getByText("达能", { exact: true })).toBeVisible();
   await expect(page.getByText("#爱他美新手爸妈日记")).toHaveCount(0);
 
-  const danoneBrandCard = page.locator(".ant-card").filter({
+  const danoneBrandCard = page.locator(".rule-brand-card").filter({
     has: page.getByText("达能", { exact: true }),
   });
+  const kabritaBrandCard = page.locator(".rule-brand-card").filter({
+    has: page.getByText("佳贝艾特", { exact: true }),
+  });
   await expect(danoneBrandCard).toHaveCount(1);
+  await expect(kabritaBrandCard).toHaveCount(1);
+  for (const productName of [
+    "爱他美亲熠5HMO",
+    "爱他美奇迹绿罐",
+    "爱他美德国白金版",
+    "爱他美澳洲白金版",
+    "爱他美至熠",
+  ]) {
+    await expect(danoneBrandCard).toContainText(productName);
+  }
+  await expect(kabritaBrandCard).toContainText("佳贝艾特荷兰版");
+  await expect(kabritaBrandCard).toContainText("佳贝艾特港版");
+  await expect(page.getByText("展开", { exact: true })).toHaveCount(0);
+
+  const [danoneBox, kabritaBox, danoneButtonBox, kabritaButtonBox] =
+    await Promise.all([
+      danoneBrandCard.boundingBox(),
+      kabritaBrandCard.boundingBox(),
+      danoneBrandCard.getByRole("button", { name: "进入规则" }).boundingBox(),
+      kabritaBrandCard.getByRole("button", { name: "进入规则" }).boundingBox(),
+    ]);
+  expect(danoneBox).not.toBeNull();
+  expect(kabritaBox).not.toBeNull();
+  expect(danoneButtonBox).not.toBeNull();
+  expect(kabritaButtonBox).not.toBeNull();
+  expect(Math.abs(danoneBox!.width - kabritaBox!.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(danoneBox!.height - kabritaBox!.height)).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(
+      danoneButtonBox!.y + danoneButtonBox!.height -
+        (kabritaButtonBox!.y + kabritaButtonBox!.height),
+    ),
+  ).toBeLessThanOrEqual(1);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const [mobileDanoneBox, mobileKabritaBox, hasHorizontalOverflow] =
+    await Promise.all([
+      danoneBrandCard.boundingBox(),
+      kabritaBrandCard.boundingBox(),
+      page.evaluate(
+        () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      ),
+    ]);
+  expect(mobileDanoneBox).not.toBeNull();
+  expect(mobileKabritaBox).not.toBeNull();
+  expect(
+    Math.abs(mobileDanoneBox!.width - mobileKabritaBox!.width),
+  ).toBeLessThanOrEqual(1);
+  expect(hasHorizontalOverflow).toBe(false);
+
   await danoneBrandCard.getByRole("button", { name: "进入规则" }).click();
   await expect(
     page.getByRole("heading", { name: "达能话题规则" }),
