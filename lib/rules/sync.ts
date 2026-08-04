@@ -28,6 +28,50 @@ const ALLOWED_DOWNLOAD_HOSTS = new Set([
 
 let builtinInitializationPromise: Promise<RuleSyncState> | null = null;
 
+const BUNDLED_LOCAL_PRODUCT_KEYS = [
+  "product_kabrita_netherlands",
+  "product_kabrita_hongkong",
+];
+const BUNDLED_LOCAL_CAMPAIGN_KEYS = ["activity_kabrita_2026_08"];
+const BUNDLED_LOCAL_TOPIC_KEYS = [
+  "topic_kabrita_required_campaign",
+  "topic_kabrita_product_netherlands",
+  "topic_kabrita_product_hongkong",
+  "topic_kabrita_popular_infant",
+  "topic_kabrita_popular_digest",
+  "topic_kabrita_popular_sensitivity",
+  "topic_kabrita_popular_brand",
+  "topic_kabrita_stage_iffo_p1",
+  "topic_kabrita_stage_iffo_2",
+  "topic_kabrita_stage_gum",
+];
+
+async function retainBundledLocalRules() {
+  await prisma.$transaction([
+    prisma.product.updateMany({
+      where: {
+        publishedKey: { in: BUNDLED_LOCAL_PRODUCT_KEYS },
+        ruleSource: "BUILTIN",
+      },
+      data: { ruleSource: "LOCAL_DRAFT" },
+    }),
+    prisma.campaign.updateMany({
+      where: {
+        publishedKey: { in: BUNDLED_LOCAL_CAMPAIGN_KEYS },
+        ruleSource: "BUILTIN",
+      },
+      data: { ruleSource: "LOCAL_DRAFT" },
+    }),
+    prisma.topicRule.updateMany({
+      where: {
+        publishedKey: { in: BUNDLED_LOCAL_TOPIC_KEYS },
+        ruleSource: "BUILTIN",
+      },
+      data: { ruleSource: "LOCAL_DRAFT" },
+    }),
+  ]);
+}
+
 function countsFromState(value: string | null | undefined): RuleCounts {
   try {
     return JSON.parse(value || "{}") as RuleCounts;
@@ -288,7 +332,10 @@ async function initializeBuiltinRules() {
   const current = await prisma.ruleSyncState.findUnique({
     where: { id: "active" },
   });
-  if (current) return current;
+  if (current) {
+    if (current.source === "BUILTIN") await retainBundledLocalRules();
+    return current;
+  }
 
   const existingRuleCount = await prisma.topicRule.count();
   if (existingRuleCount > 0) {
@@ -338,6 +385,7 @@ async function initializeBuiltinRules() {
     });
   } else {
     await applyRulePayload(validateRulePayload(builtinRules), "BUILTIN");
+    await retainBundledLocalRules();
   }
   return prisma.ruleSyncState.findUniqueOrThrow({ where: { id: "active" } });
 }

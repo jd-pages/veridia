@@ -850,7 +850,7 @@ export async function commitCampaignRuleImport(
       firstImageRequirement: null,
       prohibitedImageGuidance: null,
       bodyRequired: true,
-      minBodyLength: MIN_BODY_LENGTH,
+      minBodyLength: data.campaign.minBodyLength,
       publicRequired: data.campaign.publicRequired,
       retentionDays: data.campaign.retentionDays,
       rewardDescription: data.campaign.rewardDescription,

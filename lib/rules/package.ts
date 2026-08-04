@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 import { normalizeTopic } from "@/lib/topic";
 import {
   DEFAULT_PAGE_STATUS_RULES,
@@ -291,7 +290,7 @@ export async function exportCurrentRulePayload(options?: {
             : [],
       minImageCount: campaign.minImageCount,
       bodyRequired: campaign.bodyRequired,
-      minBodyLength: MIN_BODY_LENGTH,
+      minBodyLength: campaign.minBodyLength,
       publicRequired: campaign.publicRequired,
       retentionDays: campaign.retentionDays,
       rewardDescription: campaign.rewardDescription,
@@ -479,7 +478,7 @@ export async function applyRulePayload(
         endDate: new Date(item.endDate),
         minImageCount: item.minImageCount,
         bodyRequired: item.bodyRequired,
-        minBodyLength: MIN_BODY_LENGTH,
+        minBodyLength: item.minBodyLength,
         publicRequired: item.publicRequired,
         retentionDays: item.retentionDays,
         rewardDescription: item.rewardDescription,

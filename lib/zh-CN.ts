@@ -136,6 +136,7 @@ export const topicCategoryLabels: Record<string, string> = {
   BRAND_COMMON: "品牌通用话题",
   PRODUCT_COMMON: "产品话题",
   PRODUCT_STAGE: "产品阶段话题",
+  POPULAR: "热门话题",
   GENERAL: "通用话题",
   ALIAS: "话题别名",
 };

@@ -15,8 +15,8 @@ import {
 describe("GitHub 规则同步", () => {
   it("内置规则快照包含产品、活动、阶段组和话题规则", () => {
     const payload = validateRulePayload(builtinRules);
-    expect(payload.products.length).toBe(5);
-    expect(payload.campaigns.length).toBe(1);
+    expect(payload.products.length).toBe(7);
+    expect(payload.campaigns.length).toBe(2);
     expect(payload.stageGroups.map((item) => item.key)).toEqual([
       "IFFO_P1",
       "IFFO_2",
@@ -25,11 +25,11 @@ describe("GitHub 规则同步", () => {
     expect(
       payload.stageGroups.every((item) => item.requireBodyStage === false),
     ).toBe(true);
-    expect(payload.topicRules.length).toBe(9);
-    expect(payload.products.every((item) => item.brand === "达能")).toBe(true);
-    expect(payload.topicRules.every((item) => item.brand === "达能")).toBe(
-      true,
-    );
+    expect(payload.topicRules.length).toBe(19);
+    expect(payload.products.filter((item) => item.brand === "达能")).toHaveLength(5);
+    expect(payload.products.filter((item) => item.brand === "佳贝艾特")).toHaveLength(2);
+    expect(payload.topicRules.filter((item) => item.brand === "达能")).toHaveLength(9);
+    expect(payload.topicRules.filter((item) => item.brand === "佳贝艾特")).toHaveLength(10);
   });
 
   it("旧规则包品牌字段可缺省，同名阶段话题可按品牌分别存在", () => {
@@ -37,7 +37,7 @@ describe("GitHub 规则同步", () => {
       topicRules: Array<Record<string, unknown>>;
     };
     for (const rule of legacy.topicRules) delete rule.brand;
-    expect(validateRulePayload(legacy).topicRules).toHaveLength(9);
+    expect(validateRulePayload(legacy).topicRules).toHaveLength(19);
 
     const multiBrand = structuredClone(builtinRules);
     multiBrand.products.push({
@@ -61,7 +61,7 @@ describe("GitHub 规则同步", () => {
       campaignKey: "activity_kabrita",
       productKey: null,
     });
-    expect(validateRulePayload(multiBrand).topicRules).toHaveLength(10);
+    expect(validateRulePayload(multiBrand).topicRules).toHaveLength(20);
   });
 
   it("旧规则包缺少正文段位开关时保持原校验语义", () => {

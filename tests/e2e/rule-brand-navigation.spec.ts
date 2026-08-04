@@ -33,3 +33,126 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   await expect(page.getByText("#爱他美新手爸妈日记")).toBeVisible();
   await expect(page.getByRole("button", { name: "返回品牌列表" })).toBeVisible();
 });
+
+test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({ page }) => {
+  const login = await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  });
+  expect(login.ok()).toBeTruthy();
+
+  const productsResponse = await page.request.get("/api/products");
+  const products = (await productsResponse.json()).data as Array<{
+    id: string;
+    name: string;
+    brandName: string;
+    aliases: Array<{ alias: string }>;
+  }>;
+  const kabritaProducts = products.filter(
+    (product) => product.brandName === "佳贝艾特",
+  );
+  expect(kabritaProducts.map((product) => product.name).sort()).toEqual([
+    "佳贝艾特港版",
+    "佳贝艾特荷兰版",
+  ]);
+  expect(
+    kabritaProducts.find((product) => product.name === "佳贝艾特荷兰版")
+      ?.aliases.map((item) => item.alias),
+  ).toEqual(expect.arrayContaining(["荷兰版", "佳贝艾特荷兰", "Kabrita荷兰版"]));
+  expect(
+    kabritaProducts.find((product) => product.name === "佳贝艾特港版")
+      ?.aliases.map((item) => item.alias),
+  ).toEqual(expect.arrayContaining(["港版", "佳贝艾特港版", "Kabrita港版"]));
+
+  const campaignsResponse = await page.request.get("/api/campaigns");
+  const campaigns = (await campaignsResponse.json()).data as Array<{
+    id: string;
+    name: string;
+    minBodyLength: number;
+    minImageCount: number;
+    products: Array<{ product: { id: string; brandName: string } }>;
+  }>;
+  const campaign = campaigns.find(
+    (item) => item.name === "佳贝艾特2026年8月小红书种草审核",
+  );
+  expect(campaign).toMatchObject({ minBodyLength: 50, minImageCount: 3 });
+  expect(
+    campaign?.products.every(({ product }) => product.brandName === "佳贝艾特"),
+  ).toBe(true);
+
+  const netherlandsProduct = kabritaProducts.find(
+    (product) => product.name === "佳贝艾特荷兰版",
+  )!;
+  const requirementsResponse = await page.request.get(
+    `/api/campaigns/${campaign!.id}/requirements?productId=${netherlandsProduct.id}&stage=IFFO_2`,
+  );
+  const requirementsPayload = await requirementsResponse.json();
+  expect(
+    requirementsResponse.ok(),
+    `加载佳贝艾特审核要求失败：${JSON.stringify(requirementsPayload)}`,
+  ).toBeTruthy();
+  const requirements = requirementsPayload.data.context as {
+    minBodyLength: number;
+    minImageCount: number;
+    rules: Array<{
+      topic: string;
+      ruleType: string;
+      minCount: number;
+      topicCategory: string;
+    }>;
+  };
+  expect(requirements).toMatchObject({ minBodyLength: 50, minImageCount: 3 });
+  expect(requirements.rules.map((rule) => rule.topic)).toEqual(
+    expect.arrayContaining([
+      "#佳贝艾特荷兰版",
+      "#初见小温柔成长更友好",
+      "#羊奶粉推荐婴儿",
+      "#好消化吸收的奶粉",
+      "#不易敏敏",
+      "#佳贝艾特羊奶粉",
+    ]),
+  );
+  expect(
+    requirements.rules.filter((rule) => rule.ruleType === "ANY"),
+  ).toHaveLength(4);
+  expect(
+    requirements.rules
+      .filter((rule) => rule.ruleType === "ANY")
+      .every((rule) => rule.minCount === 2),
+  ).toBe(true);
+  expect(requirements.rules.map((rule) => rule.topic).join("、")).not.toMatch(
+    /爱他美|新生儿奶粉|二段奶粉推荐|三段奶粉推荐/u,
+  );
+
+  await page.goto("/rules");
+  const kabritaBrandCard = page.locator(".ant-card").filter({
+    has: page.getByText("佳贝艾特", { exact: true }),
+  });
+  await expect(kabritaBrandCard).toHaveCount(1);
+  await expect(kabritaBrandCard).toContainText("2个");
+  await expect(kabritaBrandCard).toContainText("10条");
+  await kabritaBrandCard.getByRole("button", { name: "进入规则" }).click();
+  await expect(
+    page.getByRole("heading", { name: "佳贝艾特话题规则" }),
+  ).toBeVisible();
+  const breadcrumb = page.locator(".ant-breadcrumb");
+  await expect(breadcrumb.getByText("笔记合规中心", { exact: true })).toBeVisible();
+  await expect(breadcrumb.getByText("话题规则", { exact: true })).toBeVisible();
+  await expect(breadcrumb.getByText("佳贝艾特", { exact: true })).toBeVisible();
+  await expect(page.getByText("#佳贝艾特荷兰版", { exact: true })).toBeVisible();
+  await expect(page.getByText("#佳贝艾特港版", { exact: true })).toBeVisible();
+  await expect(page.getByText("#爱他美新手爸妈日记")).toHaveCount(0);
+
+  await page.goto("/campaigns");
+  const campaignRow = page.locator(".ant-table-row").filter({
+    has: page.getByText("佳贝艾特2026年8月小红书种草审核", {
+      exact: true,
+    }),
+  });
+  await campaignRow.getByRole("button", { name: "查看规则" }).click();
+  const detailDrawer = page.locator(".ant-drawer-content");
+  await expect(detailDrawer).toContainText("佳贝艾特荷兰版");
+  await expect(detailDrawer).toContainText("佳贝艾特港版");
+  await expect(detailDrawer).toContainText("至少 50 个有效正文字符");
+  await expect(detailDrawer).toContainText("图文笔记至少 3 张");
+  await expect(detailDrawer.getByText("至少 2 个", { exact: true })).toHaveCount(4);
+});

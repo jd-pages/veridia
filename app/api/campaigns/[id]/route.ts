@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
-import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 
 export async function GET(
   _request: Request,
@@ -40,7 +39,6 @@ export async function GET(
     topicRules: campaign.topicRules.filter(
       (rule) => rule.brandName && brandNames.includes(rule.brandName),
     ),
-    minBodyLength: MIN_BODY_LENGTH,
   });
 }
 
@@ -68,7 +66,9 @@ export async function PUT(
         ...(typeof body.minImageCount === "number"
           ? { minImageCount: Math.max(0, Math.floor(body.minImageCount)) }
           : {}),
-        minBodyLength: MIN_BODY_LENGTH,
+        ...(typeof body.minBodyLength === "number"
+          ? { minBodyLength: Math.max(0, Math.floor(body.minBodyLength)) }
+          : {}),
         productImageRequired: false,
         firstImageRequirement: null,
         prohibitedImageGuidance: null,

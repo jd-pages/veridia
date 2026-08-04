@@ -322,11 +322,106 @@ describe("audit engine", () => {
     expect(bodyRulePassed(31)).toMatchObject({ passed: true });
   });
 
-  it("内置活动规则正文最低字数统一为 30", () => {
+  it("达能保持 30 字，佳贝艾特活动独立使用 50 字", () => {
     expect(MIN_BODY_LENGTH).toBe(30);
-    expect(defaultRules.campaigns.every(
-      (campaign) => campaign.minBodyLength === MIN_BODY_LENGTH,
-    )).toBe(true);
+    expect(
+      defaultRules.campaigns.find((campaign) => campaign.key === "activity_bd673ea91f342c12a819")
+        ?.minBodyLength,
+    ).toBe(30);
+    expect(
+      defaultRules.campaigns.find((campaign) => campaign.key === "activity_kabrita_2026_08")
+        ?.minBodyLength,
+    ).toBe(50);
+  });
+
+  it("佳贝艾特执行 50 字、3 图、对应产品标签和热门话题 4 选 2", () => {
+    const campaign = defaultRules.campaigns.find(
+      (item) => item.key === "activity_kabrita_2026_08",
+    )!;
+    const productKey = "product_kabrita_netherlands";
+    const applicableRules = defaultRules.topicRules.filter(
+      (rule) =>
+        rule.campaignKey === campaign.key &&
+        (!rule.productKey || rule.productKey === productKey) &&
+        (!rule.applicableStage || rule.applicableStage === "IFFO_2"),
+    );
+    const kabritaContext: AuditContext = {
+      productId: productKey,
+      campaignId: campaign.key,
+      campaignName: campaign.name,
+      productStage: "IFFO_2",
+      milkType: "IFFO",
+      ruleVersion: campaign.ruleRevision,
+      minImageCount: campaign.minImageCount,
+      minBodyLength: campaign.minBodyLength,
+      publicRequired: campaign.publicRequired,
+      retentionDays: campaign.retentionDays,
+      bodyRequired: campaign.bodyRequired,
+      bodyStageRequired: false,
+      clickableTopicRequired: campaign.clickableTopicRequired,
+      rules: applicableRules.map((rule) => ({
+        id: rule.key,
+        scope: rule.scope,
+        ruleType: rule.ruleType,
+        topic: rule.topic,
+        exactMatch: rule.exactMatch,
+        clickableRequired: rule.clickableRequired,
+        caseSensitive: rule.caseSensitive,
+        minCount: rule.minCount,
+        sortOrder: rule.sortOrder,
+        version: rule.revision,
+        topicCategory: rule.topicCategory,
+        applicableStage: rule.applicableStage,
+        milkType: rule.milkType,
+      })),
+    };
+    const compliantNote = createMockNote("passed");
+    compliantNote.body = "好".repeat(50);
+    compliantNote.imageCount = 3;
+    compliantNote.topics = [
+      "#初见小温柔成长更友好",
+      "#佳贝艾特荷兰版",
+      "#羊奶粉推荐婴儿",
+      "#好消化吸收的奶粉",
+    ].map((topic) => ({
+      displayText: topic,
+      isLinkElement: true,
+      hasHref: true,
+      href: `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(topic)}`,
+      styleFeature: true,
+    }));
+
+    expect(evaluateAudit(compliantNote, kabritaContext).autoStatus).toBe("PASSED");
+
+    const shortBody = structuredClone(compliantNote);
+    shortBody.body = "好".repeat(49);
+    expect(evaluateAudit(shortBody, kabritaContext).failureReasons).toContain(
+      "有效正文字数不足（49/50）",
+    );
+
+    const fewImages = structuredClone(compliantNote);
+    fewImages.imageCount = 2;
+    expect(evaluateAudit(fewImages, kabritaContext).failureReasons).toContain(
+      "图片数量不足（2/3）",
+    );
+
+    const onePopularTopic = structuredClone(compliantNote);
+    onePopularTopic.topics = onePopularTopic.topics.filter(
+      (topic) => topic.displayText !== "#好消化吸收的奶粉",
+    );
+    expect(
+      evaluateAudit(onePopularTopic, kabritaContext).failureReasons,
+    ).toContain("任意话题命中不足 2 个");
+
+    const wrongProductTopic = structuredClone(compliantNote);
+    wrongProductTopic.topics = wrongProductTopic.topics.map((topic) =>
+      topic.displayText === "#佳贝艾特荷兰版"
+        ? { ...topic, displayText: "#佳贝艾特港版" }
+        : topic,
+    );
+    expect(evaluateAudit(wrongProductTopic, kabritaContext).missingTopics).toContain(
+      "#佳贝艾特荷兰版",
+    );
   });
 
   it("只审核当前段位话题，且同名普通文本不能代替可点击话题", () => {

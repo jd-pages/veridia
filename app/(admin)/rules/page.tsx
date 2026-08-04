@@ -244,6 +244,7 @@ export default function RulesPage() {
     <>
       <PageHeader
         title={`${selectedBrand}话题规则`}
+        breadcrumbItems={["话题规则", selectedBrand]}
         description="产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #"
         actions={(
           <Space wrap>

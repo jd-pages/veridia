@@ -5,7 +5,6 @@ import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
 import type { AuditContext, ExtractedNote } from "@/lib/types";
-import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 import {
   compatibleStageRuleValues,
   normalizeProductStageTopicValue,
@@ -136,7 +135,7 @@ export async function getAuditContext(
     ruleVersion: campaign.ruleVersion,
     rulePackageVersion: syncState?.currentVersion || null,
     bodyRequired: campaign.bodyRequired,
-    minBodyLength: MIN_BODY_LENGTH,
+    minBodyLength: campaign.minBodyLength,
     minImageCount: campaign.minImageCount,
     publicRequired: campaign.publicRequired,
     retentionDays: campaign.retentionDays,

@@ -15,7 +15,6 @@ import {
   detectBodyProductStages,
   productStageTopicLabel,
 } from "@/lib/product-stage";
-import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 
 const pageFailureLabels: Record<string, string> = {
   NOT_FOUND: "笔记页面不存在",
@@ -195,7 +194,7 @@ export function evaluateAudit(
 
   const bodyPresent = Boolean(note.body && note.body.trim().length > 0);
   const effectiveBodyLength = countEffectiveBodyCharacters(note.body);
-  const minBodyLength = MIN_BODY_LENGTH;
+  const minBodyLength = context.minBodyLength;
   const bodyPassed =
     bodyReadIncomplete ||
     !context.bodyRequired ||

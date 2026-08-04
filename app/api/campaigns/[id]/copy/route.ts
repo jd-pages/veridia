@@ -2,7 +2,6 @@ import dayjs from "dayjs";
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
-import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 
 export async function POST(
   request: Request,
@@ -39,7 +38,7 @@ export async function POST(
         firstImageRequirement: null,
         prohibitedImageGuidance: null,
         bodyRequired: source.bodyRequired,
-        minBodyLength: MIN_BODY_LENGTH,
+        minBodyLength: source.minBodyLength,
         publicRequired: source.publicRequired,
         retentionDays: source.retentionDays,
         rewardDescription: source.rewardDescription,

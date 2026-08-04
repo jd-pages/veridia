@@ -33,6 +33,20 @@ const products: MatchableProduct[] = [
     name: "爱他美亲熠5HMO",
     aliases: [{ alias: "白罐" }],
   },
+  {
+    id: "kabrita-nl",
+    name: "佳贝艾特荷兰版",
+    aliases: [
+      { alias: "荷兰版" },
+      { alias: "佳贝艾特荷兰" },
+      { alias: "Kabrita荷兰版" },
+    ],
+  },
+  {
+    id: "kabrita-hk",
+    name: "佳贝艾特港版",
+    aliases: [{ alias: "港版" }, { alias: "Kabrita港版" }],
+  },
 ];
 
 describe("产品名称与简称标准化", () => {
@@ -48,6 +62,12 @@ describe("产品名称与简称标准化", () => {
     ["奇迹绿", "爱他美奇迹绿罐"],
     ["绿罐", "爱他美奇迹绿罐"],
     ["白罐", "爱他美亲熠5HMO"],
+    ["佳贝艾特荷兰版", "佳贝艾特荷兰版"],
+    ["荷兰版", "佳贝艾特荷兰版"],
+    ["Kabrita荷兰版", "佳贝艾特荷兰版"],
+    ["佳贝艾特港版", "佳贝艾特港版"],
+    ["港版", "佳贝艾特港版"],
+    ["Kabrita港版", "佳贝艾特港版"],
   ])("%s 识别为正式产品 %s", (input, expectedName) => {
     expect(resolveProductReference(products, { name: input })).toMatchObject({
       status: "MATCHED",

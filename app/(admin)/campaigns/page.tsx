@@ -58,6 +58,8 @@ interface TopicRule {
   milkType: string | null;
   exactMatch: boolean;
   clickableRequired: boolean;
+  ruleType: string;
+  minCount: number;
 }
 
 interface Campaign {
@@ -608,6 +610,9 @@ export default function CampaignsPage() {
                       {row.exactMatch ? <Tag color="blue">精确</Tag> : null}
                       {row.clickableRequired ? (
                         <Tag color="green">可点击</Tag>
+                      ) : null}
+                      {row.ruleType === "ANY" ? (
+                        <Tag color="purple">至少 {row.minCount} 个</Tag>
                       ) : null}
                     </Space>
                   ),
