@@ -15,9 +15,22 @@ import { isUnavailableNoteResult } from "@/lib/result-display";
 import {
   importedPublishTimeValue,
   importedTaskMetadataFromNotes,
+  importedTemplateMetadataFromNotes,
 } from "@/lib/import-task-metadata";
-import type { ImportExportTemplates, StandardField } from "./types";
+import type {
+  ImportExportTemplates,
+  ImportTemplateBrand,
+  StandardField,
+} from "./types";
 import { utf8BomCsv } from "./tabular";
+import {
+  KABRITA_BRAND_NAME,
+  KABRITA_FIELD_DEFINITIONS,
+  KABRITA_REQUIRED_FIELDS,
+  KABRITA_TEMPLATE_EXAMPLES,
+  KABRITA_TEMPLATE_FIELDS,
+  kabritaFieldDefinition,
+} from "./kabrita";
 
 export type ExportValueRecord = Partial<Record<StandardField, unknown>>;
 
@@ -37,7 +50,11 @@ export interface CompactAuditResultExportSourceRow {
     pageType: string | null;
     notes: string | null;
     productStage: string | null;
-    product: { name: string; seriesName?: string | null };
+    product: {
+      name: string;
+      seriesName?: string | null;
+      brandName?: string | null;
+    };
   };
   note: {
     url: string;
@@ -80,7 +97,14 @@ function auditResultExcelProductSeriesName(value: unknown) {
 function columns(
   templates: ImportExportTemplates,
   kind: keyof ImportExportTemplates["columnOrder"],
+  templateBrand?: ImportTemplateBrand,
 ) {
+  if (kind === "auditResults" && templateBrand === KABRITA_BRAND_NAME) {
+    return KABRITA_TEMPLATE_FIELDS.map((field) => ({
+      field,
+      displayName: KABRITA_FIELD_DEFINITIONS[field].displayName,
+    }));
+  }
   const auditResultDisplayNames: Partial<Record<StandardField, string>> = {
     platform: "平台",
     shopName: "店铺名称",
@@ -100,6 +124,16 @@ function columns(
         ? auditResultDisplayNames[field]!
         : templates.fieldDefinitions[field].displayName,
   }));
+}
+
+function fieldDefinition(
+  templates: ImportExportTemplates,
+  field: StandardField,
+  templateBrand?: ImportTemplateBrand,
+) {
+  return templateBrand === KABRITA_BRAND_NAME
+    ? kabritaFieldDefinition(field) || templates.fieldDefinitions[field]
+    : templates.fieldDefinitions[field];
 }
 
 function list(value: string, separator: string) {
@@ -216,6 +250,33 @@ export function auditResultToCompactExportRecord(
       ? importedPublishTimeValue(importedMetadata.publishTime)
       : row.note.publishedAt,
     selfReview: compactSelfReview(row),
+  };
+}
+
+export function auditResultToKabritaExportRecord(
+  row: CompactAuditResultExportSourceRow,
+): ExportValueRecord {
+  const raw = importedTemplateMetadataFromNotes(row.task.notes)?.rawValues || {};
+  const imported = importedTaskMetadataFromNotes(row.task.notes);
+  return {
+    registrationTime: raw.registrationTime || "",
+    channel: raw.channel || "",
+    shopName: raw.shopName || imported.shopName,
+    customerRemark: raw.customerRemark || "",
+    buyerPurchaseId: raw.buyerPurchaseId || "",
+    purchaseOrderNumber:
+      raw.purchaseOrderNumber || imported.orderNumber,
+    purchaseTime: raw.purchaseTime || "",
+    purchaseCanCount: raw.purchaseCanCount || "",
+    participationCount: raw.participationCount || "",
+    xiaohongshuAccount: raw.xiaohongshuAccount || "",
+    xiaohongshuPublishLink:
+      raw.xiaohongshuPublishLink || row.task.url,
+    purchaseProductLine:
+      raw.purchaseProductLine ||
+      row.task.product.seriesName ||
+      row.task.product.name,
+    complianceResult: compactSelfReview(row),
   };
 }
 
@@ -410,8 +471,9 @@ export async function buildConfiguredWorkbook(input: {
   templates: ImportExportTemplates;
   kind: "auditResults" | "auditTasks";
   records: ExportValueRecord[];
+  templateBrand?: ImportTemplateBrand;
 }) {
-  const { templates, kind, records } = input;
+  const { templates, kind, records, templateBrand } = input;
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "VERIDIA";
   workbook.created = new Date();
@@ -419,7 +481,7 @@ export async function buildConfiguredWorkbook(input: {
     templates.exportTemplates[kind]?.sheetName ||
     (kind === "auditResults" ? "审核结果" : "审核任务");
   const sheet = workbook.addWorksheet(sheetName);
-  const selected = columns(templates, kind);
+  const selected = columns(templates, kind, templateBrand);
   const widths: Partial<Record<StandardField, number>> = {
     platform: 16,
     shopName: 24,
@@ -431,6 +493,18 @@ export async function buildConfiguredWorkbook(input: {
     originalUrl: 48,
     publishTime: 22,
     selfReview: 28,
+    registrationTime: 22,
+    channel: 16,
+    customerRemark: 28,
+    buyerPurchaseId: 22,
+    purchaseOrderNumber: 22,
+    purchaseTime: 22,
+    purchaseCanCount: 14,
+    participationCount: 14,
+    xiaohongshuAccount: 22,
+    xiaohongshuPublishLink: 52,
+    purchaseProductLine: 22,
+    complianceResult: 28,
   };
   sheet.columns = selected.map(({ field, displayName }) => ({
     header: displayName,
@@ -442,7 +516,9 @@ export async function buildConfiguredWorkbook(input: {
       Object.fromEntries(
         selected.map(({ field }) => {
           const value =
-            kind === "auditResults" && field === "productName"
+            kind === "auditResults" &&
+            templateBrand !== KABRITA_BRAND_NAME &&
+            field === "productName"
               ? auditResultExcelProductSeriesName(record[field])
               : record[field];
           return [
@@ -469,7 +545,7 @@ export async function buildConfiguredWorkbook(input: {
       row.alignment = { vertical: "top", wrapText: true };
     }
   });
-  for (const field of ["originalUrl"] as const) {
+  for (const field of ["originalUrl", "xiaohongshuPublishLink"] as const) {
     const columnIndex = selected.findIndex((column) => column.field === field) + 1;
     if (columnIndex > 0) {
       sheet.getColumn(columnIndex).alignment = {
@@ -479,12 +555,15 @@ export async function buildConfiguredWorkbook(input: {
     }
   }
   for (const { field } of selected) {
-    if (templates.fieldDefinitions[field].type === "datetime") {
+    if (fieldDefinition(templates, field, templateBrand)?.type === "datetime") {
       sheet.getColumn(field).numFmt = "yyyy-mm-dd hh:mm:ss";
     }
   }
+  const resultField = templateBrand === KABRITA_BRAND_NAME
+    ? "complianceResult"
+    : "selfReview";
   const selfReviewColumn =
-    selected.findIndex((column) => column.field === "selfReview") + 1;
+    selected.findIndex((column) => column.field === resultField) + 1;
   if (selfReviewColumn > 0) {
     for (let row = 2; row <= Math.max(sheet.rowCount, 2); row += 1) {
       sheet.getCell(row, selfReviewColumn).dataValidation = {
@@ -494,7 +573,10 @@ export async function buildConfiguredWorkbook(input: {
           '"Y,N-帖子无法查看,N-内容渠道不支持,N-缺少话题,N-字数不够,N-图片不足,N-阶段不符,N-其他不合规"',
         ],
         showErrorMessage: true,
-        errorTitle: "自审值无效",
+        errorTitle:
+          templateBrand === KABRITA_BRAND_NAME
+            ? "是否符合值无效"
+            : "自审值无效",
         error:
           "请选择 Y 或一个预设的 N 类原因，也可以留空。",
       };
@@ -512,8 +594,13 @@ export function buildConfiguredCsv(input: {
   templates: ImportExportTemplates;
   kind: "auditResults" | "auditTasks";
   records: ExportValueRecord[];
+  templateBrand?: ImportTemplateBrand;
 }) {
-  const selected = columns(input.templates, input.kind);
+  const selected = columns(
+    input.templates,
+    input.kind,
+    input.templateBrand,
+  );
   return utf8BomCsv(
     selected.map((column) => column.displayName),
     input.records.map((record) =>
@@ -531,13 +618,19 @@ export function buildConfiguredCsv(input: {
 
 export async function buildImportTemplateWorkbook(
   templates: ImportExportTemplates,
+  options?: { templateBrand?: ImportTemplateBrand },
 ) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "VERIDIA";
   const sheet = workbook.addWorksheet(
-    templates.importTemplates.default.sheetName,
+    options?.templateBrand === KABRITA_BRAND_NAME
+      ? "佳贝艾特导入"
+      : templates.importTemplates.default.sheetName,
   );
-  const fields = templates.columnOrder.import;
+  const fields: readonly StandardField[] =
+    options?.templateBrand === KABRITA_BRAND_NAME
+      ? KABRITA_TEMPLATE_FIELDS
+      : templates.columnOrder.import;
   const widths: Partial<Record<StandardField, number>> = {
     platform: 16,
     shopName: 24,
@@ -548,15 +641,31 @@ export async function buildImportTemplateWorkbook(
     contentChannel: 18,
     noteUrl: 52,
     publishTime: 22,
+    registrationTime: 22,
+    channel: 16,
+    customerRemark: 28,
+    buyerPurchaseId: 22,
+    purchaseOrderNumber: 22,
+    purchaseTime: 22,
+    purchaseCanCount: 14,
+    participationCount: 14,
+    xiaohongshuAccount: 22,
+    xiaohongshuPublishLink: 52,
+    purchaseProductLine: 22,
+    complianceResult: 18,
   };
   sheet.columns = fields.map((field) => ({
-    header: templates.fieldDefinitions[field].displayName,
+    header: fieldDefinition(templates, field, options?.templateBrand).displayName,
     key: field,
     width:
       widths[field] ||
       Math.min(
         52,
-        Math.max(14, templates.fieldDefinitions[field].displayName.length * 3),
+        Math.max(
+          14,
+          fieldDefinition(templates, field, options?.templateBrand).displayName
+            .length * 3,
+        ),
       ),
   }));
   sheet.addRow(
@@ -564,6 +673,14 @@ export async function buildImportTemplateWorkbook(
       fields.map((field) => [field, templates.examples[field] || ""]),
     ),
   );
+  if (options?.templateBrand === KABRITA_BRAND_NAME) {
+    for (const field of fields) {
+      sheet.getCell(2, fields.indexOf(field) + 1).value =
+        KABRITA_TEMPLATE_EXAMPLES[
+          field as keyof typeof KABRITA_TEMPLATE_EXAMPLES
+        ] || "";
+    }
+  }
   const publishTimeColumn = fields.indexOf("publishTime") + 1;
   if (publishTimeColumn > 0) {
     sheet.getCell(2, publishTimeColumn).value = importedPublishTimeValue(
@@ -602,7 +719,12 @@ export async function buildImportTemplateWorkbook(
     from: { row: 1, column: 1 },
     to: { row: Math.max(sheet.rowCount, 1), column: sheet.columnCount },
   };
-  const linkColumn = fields.indexOf("noteUrl") + 1;
+  const linkColumn =
+    fields.indexOf(
+      options?.templateBrand === KABRITA_BRAND_NAME
+        ? "xiaohongshuPublishLink"
+        : "noteUrl",
+    ) + 1;
   if (linkColumn > 0) {
     sheet.getColumn(linkColumn).alignment = {
       vertical: "top",
@@ -628,20 +750,55 @@ export async function buildImportTemplateWorkbook(
   for (const field of fields) {
     instructions.addRow({
       field,
-      displayName: templates.fieldDefinitions[field].displayName,
-      required: templates.requiredFields.includes(field) ? "是" : "否",
-      description: templates.fieldDefinitions[field].description,
-      aliases: (templates.fieldAliases[field] || []).join("、"),
+      displayName: fieldDefinition(
+        templates,
+        field,
+        options?.templateBrand,
+      ).displayName,
+      required:
+        options?.templateBrand === KABRITA_BRAND_NAME
+          ? KABRITA_REQUIRED_FIELDS.includes(field as never)
+            ? "是"
+            : "否"
+          : templates.requiredFields.includes(field)
+            ? "是"
+            : "否",
+      description: fieldDefinition(
+        templates,
+        field,
+        options?.templateBrand,
+      ).description,
+      aliases:
+        options?.templateBrand === KABRITA_BRAND_NAME
+          ? ""
+          : (templates.fieldAliases[field] || []).join("、"),
     });
   }
   instructions.getRow(1).font = { bold: true };
   return workbook.xlsx.writeBuffer();
 }
 
-export function buildImportTemplateCsv(templates: ImportExportTemplates) {
-  const fields = templates.columnOrder.import;
+export function buildImportTemplateCsv(
+  templates: ImportExportTemplates,
+  options?: { templateBrand?: ImportTemplateBrand },
+) {
+  const fields: readonly StandardField[] =
+    options?.templateBrand === KABRITA_BRAND_NAME
+      ? KABRITA_TEMPLATE_FIELDS
+      : templates.columnOrder.import;
   return utf8BomCsv(
-    fields.map((field) => templates.fieldDefinitions[field].displayName),
-    [fields.map((field) => templates.examples[field] || "")],
+    fields.map(
+      (field) =>
+        fieldDefinition(templates, field, options?.templateBrand).displayName,
+    ),
+    [
+      fields.map((field) =>
+        options?.templateBrand === KABRITA_BRAND_NAME
+          ? KABRITA_TEMPLATE_EXAMPLES[
+              field as keyof typeof KABRITA_TEMPLATE_EXAMPLES
+            ] || ""
+          : templates.examples[field] || "",
+      ),
+    ],
   );
 }

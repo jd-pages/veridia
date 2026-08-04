@@ -54,13 +54,15 @@ describe("桌面端导入模板下载", () => {
     const tasksPage = source("app/(admin)/tasks/page.tsx");
     const downloadClient = source("lib/import-template-download-client.ts");
 
-    expect(tasksPage).toContain('downloadTemplate("xlsx")');
-    expect(tasksPage).toContain('downloadTemplate("csv")');
+    expect(tasksPage).toContain('downloadTemplate("xlsx", "danone")');
+    expect(tasksPage).toContain('downloadTemplate("csv", "danone")');
+    expect(tasksPage).toContain('downloadTemplate("xlsx", "kabrita")');
+    expect(tasksPage).toContain('downloadTemplate("csv", "kabrita")');
     expect(tasksPage).not.toMatch(
       /window\.open\(\s*["']\/api\/import\/template/iu,
     );
     expect(downloadClient).toContain(
-      "fetch(`/api/import/template?format=${format}`",
+      "`/api/import/template?format=${format}&brand=${brand}`",
     );
     expect(downloadClient).toContain("link.download = fileName");
     expect(downloadClient).not.toContain("window.open");

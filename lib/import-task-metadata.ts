@@ -1,3 +1,7 @@
+import type {
+  KabritaRawValues,
+} from "@/lib/import-export-templates/kabrita";
+
 export interface ImportedTaskMetadata {
   platform: string;
   shopName: string;
@@ -6,6 +10,13 @@ export interface ImportedTaskMetadata {
   contentChannel: string;
   publishTime: string;
 }
+
+export interface ImportedTemplateMetadata {
+  templateBrand: "佳贝艾特";
+  rawValues: KabritaRawValues;
+}
+
+const STRUCTURED_METADATA_PREFIX = "VERIDIA_IMPORT_METADATA_JSON：";
 
 const LABELS: Record<keyof ImportedTaskMetadata, string> = {
   platform: "平台：",
@@ -23,7 +34,10 @@ function singleLine(value: unknown) {
 }
 
 export function buildImportedTaskNotes(
-  input: Partial<ImportedTaskMetadata> & { notes?: unknown },
+  input: Partial<ImportedTaskMetadata> & {
+    notes?: unknown;
+    templateMetadata?: ImportedTemplateMetadata;
+  },
 ) {
   const metadataLines = (Object.keys(LABELS) as Array<keyof ImportedTaskMetadata>)
     .map((field) => {
@@ -32,7 +46,10 @@ export function buildImportedTaskNotes(
     })
     .filter(Boolean);
   const notes = String(input.notes ?? "").trim();
-  return [...metadataLines, notes].filter(Boolean).join("\n");
+  const structured = input.templateMetadata
+    ? `${STRUCTURED_METADATA_PREFIX}${JSON.stringify(input.templateMetadata)}`
+    : "";
+  return [...metadataLines, structured, notes].filter(Boolean).join("\n");
 }
 
 export function importedTaskMetadataFromNotes(
@@ -48,6 +65,30 @@ export function importedTaskMetadataFromNotes(
       return [field, line?.trim().slice(prefix.length).trim() || ""];
     }),
   ) as unknown as ImportedTaskMetadata;
+}
+
+export function importedTemplateMetadataFromNotes(
+  notes: unknown,
+): ImportedTemplateMetadata | null {
+  const line = String(notes ?? "")
+    .split(/\r?\n/gu)
+    .find((candidate) => candidate.trim().startsWith(STRUCTURED_METADATA_PREFIX));
+  if (!line) return null;
+  try {
+    const parsed = JSON.parse(
+      line.trim().slice(STRUCTURED_METADATA_PREFIX.length),
+    ) as ImportedTemplateMetadata;
+    if (
+      parsed?.templateBrand !== "佳贝艾特" ||
+      !parsed.rawValues ||
+      typeof parsed.rawValues !== "object"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 export function importedPublishTimeValue(value: unknown): Date | string {

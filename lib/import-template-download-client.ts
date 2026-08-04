@@ -1,6 +1,7 @@
 "use client";
 
 export type ImportTemplateFormat = "xlsx" | "csv";
+export type ImportTemplateBrand = "danone" | "kabrita";
 
 export interface ImportTemplateDownloadOutcome {
   saved: boolean;
@@ -39,12 +40,16 @@ function browserSave(bytes: Uint8Array, fileName: string, contentType: string) {
 
 export async function downloadImportTemplate(
   format: ImportTemplateFormat,
+  brand: ImportTemplateBrand = "danone",
 ): Promise<ImportTemplateDownloadOutcome> {
-  const response = await fetch(`/api/import/template?format=${format}`, {
+  const response = await fetch(
+    `/api/import/template?format=${format}&brand=${brand}`,
+    {
     method: "GET",
     credentials: "same-origin",
     cache: "no-store",
-  });
+    },
+  );
   if (!response.ok) {
     throw new Error(`下载导入模板失败（HTTP ${response.status}）`);
   }

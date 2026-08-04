@@ -8,6 +8,15 @@ import {
   type TabularPreviewRow,
 } from "./types";
 import { normalizeTemplateHeader } from "./validation";
+import {
+  DANONE_BRAND_NAME,
+  KABRITA_BRAND_NAME,
+  KABRITA_FIELD_DEFINITIONS,
+  KABRITA_REQUIRED_FIELDS,
+  KABRITA_TEMPLATE_FIELDS,
+  isKabritaTemplateHeader,
+  kabritaDisplayName,
+} from "./kabrita";
 
 type Matrix = string[][];
 type ParsedMatrix = {
@@ -135,11 +144,16 @@ function aliasIndex(templates: ImportExportTemplates) {
   const aliases = new Map<string, StandardField>();
   const fields = new Set<StandardField>([
     ...templates.columnOrder.import,
+    ...KABRITA_TEMPLATE_FIELDS,
     // 兼容旧版四列表格；新模板不再要求活动列，但已有文件仍可指定活动。
     "activityName",
   ]);
   for (const field of fields) {
-    const definition = templates.fieldDefinitions[field];
+    const definition =
+      KABRITA_FIELD_DEFINITIONS[
+        field as keyof typeof KABRITA_FIELD_DEFINITIONS
+      ] || templates.fieldDefinitions[field];
+    if (!definition) continue;
     for (const alias of [
       field,
       definition.displayName,
@@ -176,7 +190,9 @@ function locateHeader(
 function displayName(
   templates: ImportExportTemplates,
   field: string,
+  kabritaTemplate = false,
 ) {
+  if (kabritaTemplate) return kabritaDisplayName(field as StandardField);
   return templates.fieldDefinitions[field]?.displayName || field;
 }
 
@@ -213,6 +229,7 @@ export async function parseTabularPreview(input: {
   const { matrix, hyperlinks: cellHyperlinks } = parsedMatrix;
   const { rowIndex, aliases } = locateHeader(matrix, templates);
   const header = matrix[rowIndex];
+  const kabritaTemplate = isKabritaTemplateHeader(header);
   const recognizedFields: TabularPreview["recognizedFields"] = [];
   const unknownHeaders: string[] = [];
   const duplicateHeaders: string[] = [];
@@ -226,7 +243,7 @@ export async function parseTabularPreview(input: {
       return;
     }
     if (occupied.has(field)) {
-      duplicateHeaders.push(displayName(templates, field));
+      duplicateHeaders.push(displayName(templates, field, kabritaTemplate));
       return;
     }
     occupied.set(field, value);
@@ -234,21 +251,24 @@ export async function parseTabularPreview(input: {
       column: columnIndex + 1,
       header: value,
       field,
-      displayName: displayName(templates, field),
+      displayName: displayName(templates, field, kabritaTemplate),
     });
   });
-  const legacyLayout = !["platform", "shopName", "customerName"].some(
+  const legacyLayout = !kabritaTemplate && !["platform", "shopName", "customerName"].some(
     (field) => occupied.has(field as StandardField),
   );
-  const requiredFields = legacyLayout
-    ? (["noteUrl", "productName", "productStage"] as StandardField[])
-    : templates.requiredFields;
+  const requiredFields: StandardField[] = kabritaTemplate
+    ? [...KABRITA_REQUIRED_FIELDS]
+    : legacyLayout
+      ? ["noteUrl", "productName", "productStage"]
+      : templates.requiredFields;
   const missingRequiredFields = requiredFields.filter(
     (field) => !occupied.has(field),
   );
   const structuralErrors = [
     ...missingRequiredFields.map(
-      (field) => `缺少必填字段：${displayName(templates, field)}`,
+      (field) =>
+        `缺少必填字段：${displayName(templates, field, kabritaTemplate)}`,
     ),
     ...duplicateHeaders.map((field) => `表头重复：${field}`),
   ];
@@ -271,12 +291,18 @@ export async function parseTabularPreview(input: {
       rawValues[match.field] = rawValue;
       if (hyperlink) hyperlinks[match.field] = hyperlink;
       values[match.field] =
-        match.field === "noteUrl" && hyperlink ? hyperlink : rawValue;
+        (match.field === "noteUrl" ||
+          match.field === "xiaohongshuPublishLink") &&
+        hyperlink
+          ? hyperlink
+          : rawValue;
     }
     const errors = [...structuralErrors];
     for (const field of requiredFields) {
       if (!values[field]) {
-        errors.push(`缺少必填字段：${displayName(templates, field)}`);
+        errors.push(
+          `缺少必填字段：${displayName(templates, field, kabritaTemplate)}`,
+        );
       }
     }
     rows.push({
@@ -291,6 +317,12 @@ export async function parseTabularPreview(input: {
   const validCount = rows.filter((row) => row.errors.length === 0).length;
   return {
     templateVersion: templates.templateVersion,
+    templateBrand: kabritaTemplate
+      ? KABRITA_BRAND_NAME
+      : DANONE_BRAND_NAME,
+    sourceLabel: kabritaTemplate
+      ? `${KABRITA_BRAND_NAME} Excel`
+      : sourceType,
     sourceType,
     headerRowNumber: rowIndex + 1,
     recognizedFields,

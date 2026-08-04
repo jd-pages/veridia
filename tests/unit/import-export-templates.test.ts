@@ -6,8 +6,10 @@ import builtinTemplates from "@/rules/default-import-export-templates.json";
 import {
   auditResultToCompactExportRecord,
   auditResultToExportRecord,
+  auditResultToKabritaExportRecord,
   buildConfiguredCsv,
   buildConfiguredWorkbook,
+  buildImportTemplateCsv,
   buildImportTemplateWorkbook,
 } from "@/lib/import-export-templates/export";
 import {
@@ -22,9 +24,30 @@ import {
 import {
   buildImportedTaskNotes,
   importedTaskMetadataFromNotes,
+  importedTemplateMetadataFromNotes,
 } from "@/lib/import-task-metadata";
+import {
+  KABRITA_BRAND_NAME,
+  KABRITA_TEMPLATE_FIELDS,
+} from "@/lib/import-export-templates/kabrita";
 
 const templates = validateImportExportTemplates(builtinTemplates);
+
+const kabritaHeaders = [
+  "登记时间",
+  "渠道",
+  "店铺名称",
+  "客户备注",
+  "买家购买ID",
+  "购买订单号",
+  "购买时间",
+  "购买罐数",
+  "参与次数",
+  "发布小红书账号",
+  "小红书发布链接",
+  "购买产品线",
+  "是否符合",
+];
 
 describe("远程表格模板配置", () => {
   it("内置模板包含必填字段、标准别名和本地数据源", () => {
@@ -67,6 +90,187 @@ describe("远程表格模板配置", () => {
     expect(() => validateImportExportTemplates(conflict)).toThrow(
       /字段别名冲突/u,
     );
+  });
+});
+
+describe("佳贝艾特专属导入导出模板", () => {
+  it("严格生成指定13列表头并可识别模板品牌", async () => {
+    const bytes = await buildImportTemplateWorkbook(templates, {
+      templateBrand: KABRITA_BRAND_NAME,
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    expect(
+      (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
+    ).toEqual(kabritaHeaders);
+    expect(KABRITA_TEMPLATE_FIELDS).toHaveLength(13);
+
+    const csv = buildImportTemplateCsv(templates, {
+      templateBrand: KABRITA_BRAND_NAME,
+    });
+    expect(csv.slice(1).split("\r\n")[0].split(",")).toEqual(kabritaHeaders);
+
+    const preview = await parseTabularPreview({
+      bytes: Buffer.from([
+        kabritaHeaders.join(","),
+        [
+          "2026-08-04 10:00:00",
+          "小红书",
+          "佳贝艾特店铺",
+          "历史备注",
+          "BUYER-1",
+          "ORDER-1",
+          "2026-08-03 12:00:00",
+          "2",
+          "1",
+          "kabrita-user",
+          "97【示例笔记】https://www.xiaohongshu.com/explore/kabrita-1",
+          "荷兰佳贝1",
+          "",
+        ].join(","),
+      ].join("\r\n")),
+      fileName: "佳贝艾特.csv",
+      sourceType: "CSV",
+      templates,
+    });
+    expect(preview.templateBrand).toBe("佳贝艾特");
+    expect(preview.sourceLabel).toBe("佳贝艾特 Excel");
+    expect(preview.recognizedFields.map((field) => field.header)).toEqual(
+      kabritaHeaders,
+    );
+    expect(preview.missingRequiredFields).toEqual([]);
+    expect(preview.validCount).toBe(1);
+    expect(preview.previewRows[0].values).toMatchObject({
+      xiaohongshuPublishLink:
+        "97【示例笔记】https://www.xiaohongshu.com/explore/kabrita-1",
+      purchaseProductLine: "荷兰佳贝1",
+    });
+    expect(preview.recognizedFields.map((field) => field.field)).not.toEqual(
+      expect.arrayContaining(["productStage", "productName"]),
+    );
+  });
+
+  it("只把小红书发布链接和购买产品线作为必填字段", async () => {
+    const withoutLink = kabritaHeaders.filter(
+      (header) => header !== "小红书发布链接",
+    );
+    const linkMissing = await parseTabularPreview({
+      bytes: Buffer.from(
+        `${withoutLink.join(",")}\r\n${withoutLink
+          .map((header) => (header === "购买产品线" ? "荷兰佳贝1" : ""))
+          .join(",")}`,
+      ),
+      fileName: "缺少链接.csv",
+      sourceType: "CSV",
+      templates,
+    });
+    expect(linkMissing.templateBrand).toBe("佳贝艾特");
+    expect(linkMissing.missingRequiredFields).toEqual([
+      "xiaohongshuPublishLink",
+    ]);
+
+    const blankProductLine = await parseTabularPreview({
+      bytes: Buffer.from(
+        `${kabritaHeaders.join(",")}\r\n${kabritaHeaders
+          .map((header) =>
+            header === "小红书发布链接"
+              ? "https://www.xiaohongshu.com/explore/kabrita-blank"
+              : "",
+          )
+          .join(",")}`,
+      ),
+      fileName: "产品线为空.csv",
+      sourceType: "CSV",
+      templates,
+    });
+    expect(blankProductLine.previewRows[0].errors).toContain(
+      "缺少必填字段：购买产品线",
+    );
+    expect(blankProductLine.previewRows[0].errors.join("、")).not.toMatch(
+      /阶段|产品系列|订单号/u,
+    );
+  });
+
+  it("保存13列原值并用系统审核结论生成13列佳贝艾特导出", async () => {
+    const rawValues = Object.fromEntries(
+      KABRITA_TEMPLATE_FIELDS.map((field, index) => [
+        field,
+        field === "xiaohongshuPublishLink"
+          ? "标题 https://www.xiaohongshu.com/explore/kabrita-export"
+          : field === "purchaseProductLine"
+            ? "港版佳贝3"
+            : field === "complianceResult"
+              ? "历史值"
+              : `原值-${index + 1}`,
+      ]),
+    );
+    const notes = buildImportedTaskNotes({
+      platform: "小红书",
+      templateMetadata: {
+        templateBrand: "佳贝艾特",
+        rawValues,
+      },
+    });
+    expect(importedTemplateMetadataFromNotes(notes)?.rawValues).toEqual(
+      rawValues,
+    );
+
+    const row: Parameters<typeof auditResultToKabritaExportRecord>[0] = {
+      autoStatus: "FAILED",
+      pageStatus: "NORMAL",
+      bodyStatus: "PRESENT",
+      topicsCompliant: true,
+      failureReasons: '["图片数量不足（2/3）"]',
+      imageExtractionStatus: "SUCCESS",
+      imageStatus: "NON_COMPLIANT",
+      task: {
+        url: "https://www.xiaohongshu.com/explore/kabrita-export",
+        failureCode: null,
+        failureMessage: null,
+        pageTitle: "佳贝艾特笔记",
+        pageType: "NOTE_DETAIL",
+        notes,
+        productStage: "GUM",
+        product: {
+          name: "佳贝艾特港版",
+          seriesName: "佳贝艾特港版",
+          brandName: "佳贝艾特",
+        },
+      },
+      note: {
+        url: "https://www.xiaohongshu.com/explore/kabrita-export",
+        finalUrl: null,
+        publishedAt: null,
+        title: "佳贝艾特笔记",
+        body: "正文",
+      },
+      manualReviews: [],
+    };
+    const record = auditResultToKabritaExportRecord(row);
+    expect(Object.keys(record)).toEqual(KABRITA_TEMPLATE_FIELDS);
+    expect(record.purchaseProductLine).toBe("港版佳贝3");
+    expect(record.xiaohongshuPublishLink).toBe(
+      "标题 https://www.xiaohongshu.com/explore/kabrita-export",
+    );
+    expect(record.complianceResult).toBe("N-图片不足");
+
+    const exportBytes = await buildConfiguredWorkbook({
+      templates,
+      kind: "auditResults",
+      records: [record],
+      templateBrand: "佳贝艾特",
+    });
+    const exportWorkbook = new ExcelJS.Workbook();
+    await exportWorkbook.xlsx.load(exportBytes);
+    const sheet = exportWorkbook.worksheets[0];
+    const headers = (sheet.getRow(1).values as unknown[]).slice(1);
+    expect(headers).toEqual(kabritaHeaders);
+    expect(headers).not.toEqual(
+      expect.arrayContaining(["自审", "阶段", "内容渠道"]),
+    );
+    expect(sheet.getCell("M2").text).toBe("N-图片不足");
+    expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
+    expect(sheet.autoFilter).toBeTruthy();
   });
 });
 

@@ -22,6 +22,11 @@ import {
   parseTabularPreview,
 } from "@/lib/import-export-templates/tabular";
 import {
+  KABRITA_BRAND_NAME,
+  inferKabritaProductStage,
+  kabritaRawValues,
+} from "@/lib/import-export-templates/kabrita";
+import {
   auditNoteIdentity,
   findBlockingAuditTask,
   importedAuditTaskDuplicateMessage,
@@ -47,6 +52,7 @@ interface CheckedRow {
   failureReason: string;
   productCode: string;
   productName: string;
+  purchaseProductLine: string;
   campaignName: string;
   month: string;
   specification: string;
@@ -85,6 +91,7 @@ export async function POST(request: Request) {
     });
     const rows: CheckedRow[] = [];
     const seen = new Set<string>();
+    const isKabritaTemplate = tabular.templateBrand === KABRITA_BRAND_NAME;
     const hasContentChannelColumn = tabular.recognizedFields.some(
       (field) => field.field === "contentChannel",
     );
@@ -96,9 +103,19 @@ export async function POST(request: Request) {
     for (const parsed of tabular.rows) {
       const values = parsed.values;
       const originalLinkContent =
-        parsed.rawValues?.noteUrl || values.noteUrl || "";
-      const hyperlinkTarget = parsed.hyperlinks?.noteUrl || "";
-      const declaredChannel = (values.contentChannel || "").trim();
+        (isKabritaTemplate
+          ? parsed.rawValues?.xiaohongshuPublishLink ||
+            values.xiaohongshuPublishLink
+          : parsed.rawValues?.noteUrl || values.noteUrl) || "";
+      const hyperlinkTarget = isKabritaTemplate
+        ? parsed.hyperlinks?.xiaohongshuPublishLink || ""
+        : parsed.hyperlinks?.noteUrl || "";
+      const declaredChannel = isKabritaTemplate
+        ? ""
+        : (values.contentChannel || "").trim();
+      const purchaseProductLine = isKabritaTemplate
+        ? values.purchaseProductLine || ""
+        : "";
       const linkResolution = resolveImportedNoteLink({
         rawContent: originalLinkContent,
         hyperlinkTarget,
@@ -108,35 +125,62 @@ export async function POST(request: Request) {
         rowNumber: parsed.rowNumber,
         url: linkResolution.url,
         originalLinkContent: linkResolution.originalContent,
-        importedPlatform: values.platform || "",
+        importedPlatform: isKabritaTemplate ? "小红书" : values.platform || "",
         shopName: values.shopName || "",
-        customerName: values.customerName || "",
-        contentChannel: declaredChannel,
-        orderNumber: values.orderNumber || "",
-        publishTime: values.publishTime || "",
+        customerName: isKabritaTemplate
+          ? values.customerRemark || ""
+          : values.customerName || "",
+        contentChannel: isKabritaTemplate ? "小红书" : declaredChannel,
+        orderNumber: isKabritaTemplate
+          ? values.purchaseOrderNumber || ""
+          : values.orderNumber || "",
+        publishTime: isKabritaTemplate
+          ? values.purchaseTime || ""
+          : values.publishTime || "",
         platform: linkResolution.platform,
         recognitionStatus: linkResolution.status,
         failureReason: linkResolution.failureReason,
         productCode: values.productCode || "",
-        productName: values.productName || "",
+        productName: isKabritaTemplate
+          ? purchaseProductLine
+          : values.productName || "",
+        purchaseProductLine,
         campaignName: values.activityName || "",
         month: values.activityMonth || "",
         specification: values.specification || "",
-        stageInput: values.productStage || "",
+        stageInput: isKabritaTemplate
+          ? inferKabritaProductStage(purchaseProductLine)
+          : values.productStage || "",
         productStage: "",
         stageGroup: "",
         notes: buildImportedTaskNotes({
-          platform: values.platform,
+          platform: isKabritaTemplate ? "小红书" : values.platform,
           shopName: values.shopName,
-          customerName: values.customerName,
-          orderNumber: values.orderNumber,
-          contentChannel: values.contentChannel,
-          publishTime: values.publishTime,
+          customerName: isKabritaTemplate
+            ? values.customerRemark
+            : values.customerName,
+          orderNumber: isKabritaTemplate
+            ? values.purchaseOrderNumber
+            : values.orderNumber,
+          contentChannel: isKabritaTemplate
+            ? "小红书"
+            : values.contentChannel,
+          publishTime: isKabritaTemplate
+            ? values.purchaseTime
+            : values.publishTime,
           notes: values.remark,
+          ...(isKabritaTemplate
+            ? {
+                templateMetadata: {
+                  templateBrand: KABRITA_BRAND_NAME,
+                  rawValues: kabritaRawValues(parsed.rawValues || values),
+                },
+              }
+            : {}),
         }),
         errors: [...parsed.errors],
       };
-      if (hasContentChannelColumn && !declaredChannel) {
+      if (!isKabritaTemplate && hasContentChannelColumn && !declaredChannel) {
         checked.errors.push("内容渠道不能为空");
       }
       if (checked.failureReason) {
@@ -149,7 +193,12 @@ export async function POST(request: Request) {
         if (seen.has(identity)) checked.errors.push("文件内存在重复链接");
         seen.add(identity);
       }
-      const productResolution = resolveProductReference(activeProducts, {
+      const matchingProducts = isKabritaTemplate
+        ? activeProducts.filter(
+            (product) => product.brandName.trim() === KABRITA_BRAND_NAME,
+          )
+        : activeProducts;
+      const productResolution = resolveProductReference(matchingProducts, {
         code: checked.productCode,
         name: checked.productName,
       });
@@ -199,7 +248,7 @@ export async function POST(request: Request) {
       checked.stageGroup = importedStage
         ? productStageTopicLabel(importedStage)
         : "";
-      if (!importedStage) {
+      if (!isKabritaTemplate && !importedStage) {
         checked.errors.push("产品阶段话题请填写 IFFO 或 GUM。");
       }
       const stageRules = campaign && product?.brandName.trim()
@@ -284,6 +333,7 @@ export async function POST(request: Request) {
             status: "COMPLETED",
             summary: JSON.stringify({
               templateVersion: tabular.templateVersion,
+              templateBrand: tabular.templateBrand,
               sourceType,
               errors: rows
                 .filter((row) => row.errors.length)

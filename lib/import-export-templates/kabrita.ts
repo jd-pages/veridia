@@ -1,0 +1,164 @@
+import type { ImportExportTemplates, StandardField } from "./types";
+import { normalizeTemplateHeader } from "./validation";
+
+export const KABRITA_BRAND_NAME = "佳贝艾特" as const;
+export const DANONE_BRAND_NAME = "达能" as const;
+
+export const KABRITA_TEMPLATE_FIELDS = [
+  "registrationTime",
+  "channel",
+  "shopName",
+  "customerRemark",
+  "buyerPurchaseId",
+  "purchaseOrderNumber",
+  "purchaseTime",
+  "purchaseCanCount",
+  "participationCount",
+  "xiaohongshuAccount",
+  "xiaohongshuPublishLink",
+  "purchaseProductLine",
+  "complianceResult",
+] as const satisfies readonly StandardField[];
+
+export type KabritaTemplateField = (typeof KABRITA_TEMPLATE_FIELDS)[number];
+export type KabritaRawValues = Partial<Record<KabritaTemplateField, string>>;
+
+export const KABRITA_REQUIRED_FIELDS = [
+  "xiaohongshuPublishLink",
+  "purchaseProductLine",
+] as const satisfies readonly KabritaTemplateField[];
+
+export const KABRITA_FIELD_DEFINITIONS: Record<
+  KabritaTemplateField,
+  ImportExportTemplates["fieldDefinitions"][string]
+> = {
+  registrationTime: {
+    displayName: "登记时间",
+    type: "datetime",
+    description: "原始登记时间，可留空",
+  },
+  channel: {
+    displayName: "渠道",
+    type: "string",
+    description: "原始渠道，可留空",
+  },
+  shopName: {
+    displayName: "店铺名称",
+    type: "string",
+    description: "原始店铺名称，可留空",
+  },
+  customerRemark: {
+    displayName: "客户备注",
+    type: "string",
+    description: "原始客户备注，可留空",
+  },
+  buyerPurchaseId: {
+    displayName: "买家购买ID",
+    type: "string",
+    description: "原始买家购买ID，可留空",
+  },
+  purchaseOrderNumber: {
+    displayName: "购买订单号",
+    type: "string",
+    description: "原始购买订单号，可留空",
+  },
+  purchaseTime: {
+    displayName: "购买时间",
+    type: "datetime",
+    description: "原始购买时间，可留空",
+  },
+  purchaseCanCount: {
+    displayName: "购买罐数",
+    type: "string",
+    description: "原始购买罐数，可留空",
+  },
+  participationCount: {
+    displayName: "参与次数",
+    type: "string",
+    description: "原始参与次数，可留空",
+  },
+  xiaohongshuAccount: {
+    displayName: "发布小红书账号",
+    type: "string",
+    description: "原始发布账号，可留空",
+  },
+  xiaohongshuPublishLink: {
+    displayName: "小红书发布链接",
+    type: "url",
+    description: "小红书完整链接、短链或包含链接的文本",
+  },
+  purchaseProductLine: {
+    displayName: "购买产品线",
+    type: "string",
+    description: "用于匹配佳贝艾特荷兰版或港版产品",
+  },
+  complianceResult: {
+    displayName: "是否符合",
+    type: "string",
+    description: "导入值仅作历史记录，导出使用系统最新审核结论",
+  },
+};
+
+export const KABRITA_TEMPLATE_EXAMPLES: KabritaRawValues = {
+  registrationTime: "2026-08-04 10:00:00",
+  channel: "小红书",
+  shopName: "示例店铺",
+  customerRemark: "",
+  buyerPurchaseId: "BUYER-001",
+  purchaseOrderNumber: "ORDER-001",
+  purchaseTime: "2026-08-03 12:00:00",
+  purchaseCanCount: "1",
+  participationCount: "1",
+  xiaohongshuAccount: "示例账号",
+  xiaohongshuPublishLink: "https://xhslink.com/示例短链",
+  purchaseProductLine: "荷兰佳贝1",
+  complianceResult: "",
+};
+
+const KABRITA_CORE_HEADERS = [
+  "购买产品线",
+  "小红书发布链接",
+  "是否符合",
+].map(normalizeTemplateHeader);
+
+const KABRITA_ALL_HEADERS = KABRITA_TEMPLATE_FIELDS.map(
+  (field) => normalizeTemplateHeader(KABRITA_FIELD_DEFINITIONS[field].displayName),
+);
+
+const DANONE_CORE_HEADERS = ["阶段", "阶段（IFFO/GUM）", "产品系列", "产品系列（必填）"]
+  .map(normalizeTemplateHeader);
+
+export function isKabritaTemplateHeader(headers: readonly string[]) {
+  const normalized = new Set(headers.map(normalizeTemplateHeader));
+  const coreMatches = KABRITA_CORE_HEADERS.filter((header) =>
+    normalized.has(header),
+  ).length;
+  const fieldMatches = KABRITA_ALL_HEADERS.filter((header) =>
+    normalized.has(header),
+  ).length;
+  return coreMatches >= 2 && fieldMatches >= 5 &&
+    !DANONE_CORE_HEADERS.some((header) => normalized.has(header));
+}
+
+export function kabritaFieldDefinition(field: StandardField) {
+  return KABRITA_FIELD_DEFINITIONS[field as KabritaTemplateField];
+}
+
+export function kabritaDisplayName(field: StandardField) {
+  return kabritaFieldDefinition(field)?.displayName || field;
+}
+
+export function kabritaRawValues(
+  values: Partial<Record<StandardField, string>>,
+): KabritaRawValues {
+  return Object.fromEntries(
+    KABRITA_TEMPLATE_FIELDS.map((field) => [field, values[field] || ""]),
+  ) as KabritaRawValues;
+}
+
+export function inferKabritaProductStage(productLine: unknown) {
+  const normalized = String(productLine ?? "")
+    .normalize("NFKC")
+    .replace(/[\s\u00a0\u3000]+/gu, "");
+  return /(?:3|三)(?:段)?$/u.test(normalized) ? "GUM" : "IFFO";
+}

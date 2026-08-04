@@ -45,6 +45,7 @@ import PageHeader from "@/components/PageHeader";
 import { apiFetch } from "@/lib/client";
 import {
   downloadImportTemplate,
+  type ImportTemplateBrand,
   type ImportTemplateFormat,
 } from "@/lib/import-template-download-client";
 import {
@@ -177,6 +178,8 @@ interface ImportPreview {
   imported: number;
   batchId?: string | null;
   templateVersion: string;
+  templateBrand: "达能" | "佳贝艾特";
+  sourceLabel: string;
   sourceType: string;
   recognizedFields: Array<{
     header: string;
@@ -200,6 +203,7 @@ interface ImportPreview {
     recognitionStatus: string;
     failureReason: string;
     productName: string;
+    purchaseProductLine: string;
     campaignName: string;
     productStage: string;
     stageGroup: string;
@@ -550,11 +554,14 @@ export default function TasksPage() {
     }
   };
 
-  const downloadTemplate = async (format: ImportTemplateFormat) => {
+  const downloadTemplate = async (
+    format: ImportTemplateFormat,
+    brand: ImportTemplateBrand,
+  ) => {
     if (templateDownloading) return;
     setTemplateDownloading(true);
     try {
-      const result = await downloadImportTemplate(format);
+      const result = await downloadImportTemplate(format, brand);
       if (result.saved) message.success(`导入模板已保存：${result.fileName}`);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "下载导入模板失败");
@@ -851,14 +858,27 @@ export default function TasksPage() {
                     menu={{
                       items: [
                         {
-                          key: "xlsx",
-                          label: "下载 Excel 模板",
-                          onClick: () => void downloadTemplate("xlsx"),
+                          key: "danone-xlsx",
+                          label: "下载达能 Excel 模板",
+                          onClick: () => void downloadTemplate("xlsx", "danone"),
                         },
                         {
-                          key: "csv",
-                          label: "下载 CSV 模板",
-                          onClick: () => void downloadTemplate("csv"),
+                          key: "danone-csv",
+                          label: "下载达能 CSV 模板",
+                          onClick: () => void downloadTemplate("csv", "danone"),
+                        },
+                        { type: "divider" },
+                        {
+                          key: "kabrita-xlsx",
+                          label: "下载佳贝艾特 Excel 模板",
+                          onClick: () =>
+                            void downloadTemplate("xlsx", "kabrita"),
+                        },
+                        {
+                          key: "kabrita-csv",
+                          label: "下载佳贝艾特 CSV 模板",
+                          onClick: () =>
+                            void downloadTemplate("csv", "kabrita"),
                         },
                       ],
                     }}
@@ -930,8 +950,11 @@ export default function TasksPage() {
                         <Descriptions.Item label="模板版本">
                           {preview.templateVersion}
                         </Descriptions.Item>
+                        <Descriptions.Item label="模板品牌">
+                          {preview.templateBrand}
+                        </Descriptions.Item>
                         <Descriptions.Item label="数据源类型">
-                          {preview.sourceType}
+                          {preview.sourceLabel || preview.sourceType}
                         </Descriptions.Item>
                         <Descriptions.Item label="识别字段">
                           {preview.recognizedFields
@@ -947,6 +970,9 @@ export default function TasksPage() {
                         <Descriptions.Item label="重复表头">
                           {preview.duplicateHeaders.join("、") || "无"}
                         </Descriptions.Item>
+                        <Descriptions.Item label="数据行">
+                          {preview.total} 条
+                        </Descriptions.Item>
                       </Descriptions>
                       <div className={styles.previewTableShell}>
                         <Table<ImportPreview["rows"][number]>
@@ -959,7 +985,10 @@ export default function TasksPage() {
                         columns={[
                           { title: "行", dataIndex: "rowNumber", width: 70 },
                           {
-                            title: "原始链接内容",
+                            title:
+                              preview.templateBrand === "佳贝艾特"
+                                ? "小红书发布链接"
+                                : "原始链接内容",
                             dataIndex: "originalLinkContent",
                             width: 210,
                             render: (value: string) => (
@@ -1023,6 +1052,23 @@ export default function TasksPage() {
                               </span>
                             ),
                           },
+                          ...(preview.templateBrand === "佳贝艾特"
+                            ? [
+                                {
+                                  title: "购买产品线",
+                                  dataIndex: "purchaseProductLine",
+                                  width: 160,
+                                  render: (value: string) => (
+                                    <span
+                                      className={styles.previewEllipsis}
+                                      title={value}
+                                    >
+                                      {value || "-"}
+                                    </span>
+                                  ),
+                                },
+                              ]
+                            : []),
                           {
                             title: "活动",
                             dataIndex: "campaignName",
@@ -1033,26 +1079,35 @@ export default function TasksPage() {
                               </span>
                             ),
                           },
-                          {
-                            title: (
-                              <span className={styles.previewHeaderWrap}>
-                                产品阶段话题
-                              </span>
-                            ),
-                            width: 130,
-                            align: "center",
-                            render: (_value, row) =>
-                              row.productStage ? (
-                                <span className={styles.stageTopicCell}>
-                                  <Tag>
-                                    {row.stageGroup ||
-                                      productStageTopicLabel(row.productStage)}
-                                  </Tag>
-                                </span>
-                              ) : (
-                                "-"
-                              ),
-                          },
+                          ...(preview.templateBrand === "佳贝艾特"
+                            ? []
+                            : [
+                                {
+                                  title: (
+                                    <span className={styles.previewHeaderWrap}>
+                                      产品阶段话题
+                                    </span>
+                                  ),
+                                  width: 130,
+                                  align: "center" as const,
+                                  render: (
+                                    _value: unknown,
+                                    row: ImportPreview["rows"][number],
+                                  ) =>
+                                    row.productStage ? (
+                                      <span className={styles.stageTopicCell}>
+                                        <Tag>
+                                          {row.stageGroup ||
+                                            productStageTopicLabel(
+                                              row.productStage,
+                                            )}
+                                        </Tag>
+                                      </span>
+                                    ) : (
+                                      "-"
+                                    ),
+                                },
+                              ]),
                           {
                             title: "预检结果",
                             dataIndex: "errors",

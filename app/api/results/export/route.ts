@@ -8,9 +8,11 @@ import { BUSINESS_ROLES } from "@/lib/permissions";
 import { getActiveImportExportTemplates } from "@/lib/import-export-templates/config";
 import {
   auditResultToCompactExportRecord,
+  auditResultToKabritaExportRecord,
   buildConfiguredCsv,
   buildConfiguredWorkbook,
 } from "@/lib/import-export-templates/export";
+import { KABRITA_BRAND_NAME } from "@/lib/import-export-templates/kabrita";
 import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
 import {
   buildAuditResultWhere,
@@ -62,7 +64,15 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     );
   }
   const { templates } = await getActiveImportExportTemplates();
-  const records = rows.map(auditResultToCompactExportRecord);
+  const useKabritaTemplate = rows.every(
+    (row) => row.task.product.brandName?.trim() === KABRITA_BRAND_NAME,
+  );
+  const templateBrand = useKabritaTemplate
+    ? KABRITA_BRAND_NAME
+    : undefined;
+  const records = useKabritaTemplate
+    ? rows.map(auditResultToKabritaExportRecord)
+    : rows.map(auditResultToCompactExportRecord);
   const format = searchParams.get("format") === "csv" ? "csv" : "xlsx";
   const now = new Date();
   const dateStamp = [
@@ -70,7 +80,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     String(now.getMonth() + 1).padStart(2, "0"),
     String(now.getDate()).padStart(2, "0"),
   ].join("-");
-  const baseName = `VERIDIA审核结果_当前筛选_${dateStamp}`;
+  const baseName = `VERIDIA${useKabritaTemplate ? "佳贝艾特" : ""}审核结果_当前筛选_${dateStamp}`;
   const exportLog = (format: "csv" | "xlsx", bytes: number) =>
     console.info(
       "[审核结果导出] 文件生成完成",
@@ -90,6 +100,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       templates,
       kind: "auditResults",
       records,
+      templateBrand,
     });
     const byteLength = new TextEncoder().encode(csv).byteLength;
     if (byteLength < 1) {
@@ -112,6 +123,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     templates,
     kind: "auditResults",
     records,
+    templateBrand,
   });
   const bytes = new Uint8Array(buffer as ArrayBuffer);
   if (bytes.byteLength < 1_024) {

@@ -72,7 +72,21 @@ export type StandardField =
   | "finalAuditConclusion"
   | "manualReviewComment"
   | "auditTime"
-  | "selfReview";
+  | "selfReview"
+  | "registrationTime"
+  | "channel"
+  | "customerRemark"
+  | "buyerPurchaseId"
+  | "purchaseOrderNumber"
+  | "purchaseTime"
+  | "purchaseCanCount"
+  | "participationCount"
+  | "xiaohongshuAccount"
+  | "xiaohongshuPublishLink"
+  | "purchaseProductLine"
+  | "complianceResult";
+
+export type ImportTemplateBrand = "达能" | "佳贝艾特";
 
 export interface ImportExportTemplates {
   schemaVersion: number;
@@ -135,6 +149,8 @@ export interface TabularPreviewRow {
 
 export interface TabularPreview {
   templateVersion: string;
+  templateBrand: ImportTemplateBrand;
+  sourceLabel: string;
   sourceType: LocalTabularSourceType;
   headerRowNumber: number;
   recognizedFields: TemplateFieldMatch[];
