@@ -21,6 +21,10 @@ export type ImageAuditStatus =
   | "VIDEO_NOTE"
   | "IMAGES_READ_FAILED"
   | "NOT_REQUIRED";
+export type InteractionExtractionStatus =
+  | "SUCCESS"
+  | "UNAVAILABLE"
+  | "NOT_CHECKED";
 
 export interface ExtractedTopic {
   displayText: string;
@@ -45,6 +49,11 @@ export interface ExtractedNote {
   noteType?: NoteType;
   imageExtractionStatus?: ImageExtractionStatus;
   imageCount?: number;
+  likeCount?: number | null;
+  favoriteCount?: number | null;
+  commentCount?: number | null;
+  interactionExtractionStatus?: InteractionExtractionStatus;
+  interactionTechnicalMessage?: string | null;
   // 仅兼容旧提取负载；服务端会在持久化前移除 URL。
   imageUrls?: string[];
   topics: ExtractedTopic[];
@@ -79,6 +88,8 @@ export interface AuditContext {
   productId: string;
   campaignId: string;
   campaignName: string;
+  brandName?: string;
+  basicRewardRequired?: boolean;
   productStage?: string | null;
   productStageLabel?: string | null;
   bodyStageRequired?: boolean;

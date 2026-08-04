@@ -383,6 +383,8 @@ describe("audit engine", () => {
       productId: productKey,
       campaignId: campaign.key,
       campaignName: campaign.name,
+      brandName: "佳贝艾特",
+      basicRewardRequired: true,
       productStage: "IFFO_2",
       milkType: "IFFO",
       ruleVersion: campaign.ruleRevision,
@@ -412,6 +414,10 @@ describe("audit engine", () => {
     const compliantNote = createMockNote("passed");
     compliantNote.body = "好".repeat(50);
     compliantNote.imageCount = 3;
+    compliantNote.likeCount = 176;
+    compliantNote.favoriteCount = 94;
+    compliantNote.commentCount = 4;
+    compliantNote.interactionExtractionStatus = "SUCCESS";
     compliantNote.topics = [
       "#初见小温柔成长更友好",
       "#佳贝艾特荷兰版",
@@ -425,12 +431,56 @@ describe("audit engine", () => {
       styleFeature: true,
     }));
 
-    expect(evaluateAudit(compliantNote, kabritaContext).autoStatus).toBe("PASSED");
+    const rewardPassed = evaluateAudit(compliantNote, kabritaContext);
+    expect(rewardPassed.autoStatus).toBe("PASSED");
+    expect(
+      rewardPassed.ruleResults.find(
+        (rule) => rule.ruleKey === "KABRITA_BASIC_REWARD",
+      ),
+    ).toMatchObject({
+      passed: true,
+      actualValue: "点赞 176 + 收藏 94 + 评论 4 = 274",
+    });
+
+    const belowReward = structuredClone(compliantNote);
+    belowReward.likeCount = 3;
+    belowReward.favoriteCount = 3;
+    belowReward.commentCount = 3;
+    const belowRewardResult = evaluateAudit(belowReward, kabritaContext);
+    expect(belowRewardResult.autoStatus).toBe("FAILED");
+    expect(belowRewardResult.failureReasons).toContain(
+      "基础奖励未达成：互动合计 9",
+    );
+
+    const thresholdReward = structuredClone(compliantNote);
+    thresholdReward.likeCount = 5;
+    thresholdReward.favoriteCount = 4;
+    thresholdReward.commentCount = 1;
+    expect(evaluateAudit(thresholdReward, kabritaContext).autoStatus).toBe(
+      "PASSED",
+    );
+
+    const interactionUnavailable = structuredClone(compliantNote);
+    interactionUnavailable.likeCount = null;
+    interactionUnavailable.favoriteCount = null;
+    interactionUnavailable.commentCount = null;
+    interactionUnavailable.interactionExtractionStatus = "UNAVAILABLE";
+    expect(
+      evaluateAudit(interactionUnavailable, kabritaContext),
+    ).toMatchObject({
+      autoStatus: "NEEDS_REVIEW",
+      failureReasons: ["基础奖励互动数据无法确认，需人工复核"],
+    });
 
     const shortBody = structuredClone(compliantNote);
     shortBody.body = "好".repeat(49);
-    expect(evaluateAudit(shortBody, kabritaContext).failureReasons).toContain(
+    const shortBodyResult = evaluateAudit(shortBody, kabritaContext);
+    expect(shortBodyResult.autoStatus).toBe("FAILED");
+    expect(shortBodyResult.failureReasons).toContain(
       "有效正文字数不足（49/50）",
+    );
+    expect(shortBodyResult.failureReasons.join("；")).not.toContain(
+      "基础奖励未达成",
     );
 
     const fewImages = structuredClone(compliantNote);
@@ -455,6 +505,12 @@ describe("audit engine", () => {
     );
     expect(evaluateAudit(wrongProductTopic, kabritaContext).missingTopics).toContain(
       "#佳贝艾特荷兰版",
+    );
+
+    const unavailablePage = structuredClone(compliantNote);
+    unavailablePage.pageStatus = "NOT_FOUND";
+    expect(evaluateAudit(unavailablePage, kabritaContext).autoStatus).toBe(
+      "FAILED",
     );
   });
 

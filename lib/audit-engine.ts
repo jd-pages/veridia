@@ -15,6 +15,7 @@ import {
   detectBodyProductStages,
   productStageTopicLabel,
 } from "@/lib/product-stage";
+import { BASIC_REWARD_MIN_INTERACTIONS } from "@/lib/interaction-metrics";
 
 const pageFailureLabels: Record<string, string> = {
   NOT_FOUND: "笔记页面不存在",
@@ -130,6 +131,11 @@ export function evaluateAudit(
   if (!pagePassed) failures.push(pageFailureLabels[note.pageStatus] ?? "页面状态异常");
 
   if (!pagePassed) {
+    const unavailableForKabritaReward =
+      context.basicRewardRequired === true &&
+      ["NOT_FOUND", "DELETED", "NO_PERMISSION", "READ_FAILED"].includes(
+        note.pageStatus,
+      );
     return {
       pageStatus: note.pageStatus,
       bodyStatus: "UNKNOWN",
@@ -147,8 +153,11 @@ export function evaluateAudit(
       retentionDueAt: null,
       missingTopics: [],
       forbiddenTopics: [],
-      autoStatus:
-        note.pageStatus === "READ_FAILED" ? "READ_FAILED" : "NEEDS_REVIEW",
+      autoStatus: unavailableForKabritaReward
+        ? "FAILED"
+        : note.pageStatus === "READ_FAILED"
+          ? "READ_FAILED"
+          : "NEEDS_REVIEW",
       failureReasons: [...new Set(failures)],
       ruleResults: evaluations,
     };
@@ -705,6 +714,7 @@ export function evaluateAudit(
   if (bodyReadIncomplete) failures.push("未提取到正文，需人工复核");
   if (topicsReadIncomplete) failures.push("未识别到话题内容，需人工复核");
 
+  const contentRuleFailed = evaluations.some((item) => !item.passed);
   let autoStatus: AuditEvaluation["autoStatus"] = "PASSED";
   if (!pagePassed) {
     autoStatus =
@@ -718,6 +728,78 @@ export function evaluateAudit(
     imageStatus === "IMAGES_READ_FAILED"
   ) {
     autoStatus = "NEEDS_REVIEW";
+  }
+
+  if (context.basicRewardRequired) {
+    const counts = {
+      likeCount: Number.isInteger(note.likeCount)
+        ? Math.max(0, Number(note.likeCount))
+        : null,
+      favoriteCount: Number.isInteger(note.favoriteCount)
+        ? Math.max(0, Number(note.favoriteCount))
+        : null,
+      commentCount: Number.isInteger(note.commentCount)
+        ? Math.max(0, Number(note.commentCount))
+        : null,
+    };
+    const interactionReadable =
+      note.interactionExtractionStatus === "SUCCESS" &&
+      Object.values(counts).every((count) => count !== null);
+    const totalCount = interactionReadable
+      ? Number(counts.likeCount) +
+        Number(counts.favoriteCount) +
+        Number(counts.commentCount)
+      : null;
+    const rewardPassed =
+      totalCount !== null && totalCount >= BASIC_REWARD_MIN_INTERACTIONS;
+    const contentStatus: AuditEvaluation["autoStatus"] = contentRuleFailed
+      ? "FAILED"
+      : autoStatus;
+
+    if (contentRuleFailed) {
+      autoStatus = "FAILED";
+    } else if (contentStatus !== "PASSED") {
+      autoStatus = "NEEDS_REVIEW";
+    } else if (!interactionReadable) {
+      autoStatus = "NEEDS_REVIEW";
+      failures.push("基础奖励互动数据无法确认，需人工复核");
+    } else if (!rewardPassed) {
+      autoStatus = "FAILED";
+      failures.push(`基础奖励未达成：互动合计 ${totalCount}`);
+    } else {
+      autoStatus = "PASSED";
+    }
+
+    evaluations.push({
+      ruleKey: "KABRITA_BASIC_REWARD",
+      ruleName: "佳贝艾特基础奖励",
+      expectedValue: `点赞数 + 收藏数 + 评论数 ≥ ${BASIC_REWARD_MIN_INTERACTIONS}`,
+      actualValue: interactionReadable
+        ? `点赞 ${counts.likeCount} + 收藏 ${counts.favoriteCount} + 评论 ${counts.commentCount} = ${totalCount}`
+        : "互动数据无法完整读取",
+      passed: rewardPassed,
+      failureReason: interactionReadable
+        ? rewardPassed
+          ? undefined
+          : `基础奖励未达成：互动合计 ${totalCount}`
+        : "基础奖励互动数据无法确认，需人工复核",
+      evidence: {
+        likeCount: counts.likeCount,
+        favoriteCount: counts.favoriteCount,
+        commentCount: counts.commentCount,
+        totalCount,
+        minimumTotal: BASIC_REWARD_MIN_INTERACTIONS,
+        interactionReadable,
+        interactionExtractionStatus:
+          note.interactionExtractionStatus || "NOT_CHECKED",
+        interactionTechnicalMessage:
+          note.interactionTechnicalMessage || null,
+        contentCompliant: contentStatus === "PASSED",
+        contentStatus,
+        rewardPassed: interactionReadable ? rewardPassed : null,
+        finalStatus: autoStatus,
+      },
+    });
   }
 
   return {

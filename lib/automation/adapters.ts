@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import type { ExtractedNote, PageStatus } from "@/lib/types";
+import { collectXhsInteractionMetrics } from "@/lib/interaction-metrics";
 import {
   collectDomPageSnapshot,
   createEmptyCandidates,
@@ -91,6 +92,18 @@ export class PlaywrightXiaohongshuAdapter
     context: PlaywrightExtractionContext = {},
   ): Promise<ExtractedNote> {
     const domSnapshot = await collectDomPageSnapshot(page);
+    const interactionMetrics = await collectXhsInteractionMetrics(page).catch(
+      (error) => ({
+        likeCount: null,
+        favoriteCount: null,
+        commentCount: null,
+        totalCount: null,
+        status: "UNAVAILABLE" as const,
+        technicalMessage:
+          error instanceof Error ? error.message : "互动区域读取失败",
+        candidates: [],
+      }),
+    );
     const urlCandidates = createEmptyCandidates();
     urlCandidates.noteIdCandidates = noteIdCandidatesFromUrls([
       originalUrl,
@@ -150,6 +163,11 @@ export class PlaywrightXiaohongshuAdapter
       noteType,
       imageExtractionStatus,
       imageCount,
+      likeCount: interactionMetrics.likeCount,
+      favoriteCount: interactionMetrics.favoriteCount,
+      commentCount: interactionMetrics.commentCount,
+      interactionExtractionStatus: interactionMetrics.status,
+      interactionTechnicalMessage: interactionMetrics.technicalMessage,
       publishedAt: null,
       extractedAt: new Date().toISOString(),
       adapterName: this.name,
@@ -185,6 +203,7 @@ export class PlaywrightXiaohongshuAdapter
           noteTypeReason: mediaDecision.reason,
           resolvedImageCount: imageCount ?? null,
         },
+        interactionEvidence: interactionMetrics,
         loginEvidence: candidates.loginEvidence,
         responseSummaries: candidates.responseSummaries,
         keyElementCount: domSnapshot.keyElementCount,

@@ -118,3 +118,179 @@ test("佳贝艾特13列模板下载、识别和六种购买产品线预检", asy
   ]);
   expect(preview.rows.flatMap((row) => row.errors)).toEqual([]);
 });
+
+test("佳贝艾特内容合规与基础奖励共同决定最终结论和13列导出", async ({
+  page,
+}) => {
+  const login = await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  });
+  expect(login.ok()).toBeTruthy();
+
+  const products = (await (await page.request.get("/api/products")).json())
+    .data as Array<{ id: string; name: string; brandName: string }>;
+  const product = products.find(
+    (item) => item.name === "佳贝艾特荷兰版" && item.brandName === "佳贝艾特",
+  )!;
+  const campaigns = (await (await page.request.get("/api/campaigns")).json())
+    .data as Array<{ id: string; name: string }>;
+  const campaign = campaigns.find(
+    (item) => item.name === "佳贝艾特2026年8月小红书种草审核",
+  )!;
+  expect(product).toBeTruthy();
+  expect(campaign).toBeTruthy();
+
+  const audit = async ({
+    marker,
+    likeCount,
+    favoriteCount,
+    commentCount,
+    interactionExtractionStatus = "SUCCESS",
+    topics = [
+      "#初见小温柔成长更友好",
+      "#佳贝艾特荷兰版",
+      "#羊奶粉推荐婴儿",
+      "#好消化吸收的奶粉",
+    ],
+    pageStatus = "NORMAL",
+  }: {
+    marker: string;
+    likeCount?: number | null;
+    favoriteCount?: number | null;
+    commentCount?: number | null;
+    interactionExtractionStatus?: "SUCCESS" | "UNAVAILABLE";
+    topics?: string[];
+    pageStatus?: "NORMAL" | "NOT_FOUND";
+  }) => {
+    const url = `${E2E_ORIGIN}/mock/xhs?case=passed&kabrita-reward=${marker}-${Date.now()}`;
+    const createResponse = await page.request.post("/api/tasks", {
+      data: {
+        urls: url,
+        productId: product.id,
+        campaignId: campaign.id,
+        productStage: "IFFO_2",
+        skipDuplicates: true,
+      },
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    const task = (await createResponse.json()).data.created[0] as { id: string };
+    const auditResponse = await page.request.post(`/api/tasks/${task.id}/audit`, {
+      data: {
+        extraction: {
+          url,
+          finalUrl: url,
+          noteId: `kabrita-reward-${marker}-${Date.now()}`,
+          title: "佳贝艾特基础奖励审核",
+          body: `宝宝目前喝2段奶粉，${"这是一段真实的佳贝艾特喂养体验记录".repeat(5)}`,
+          noteType: "IMAGE_TEXT",
+          imageExtractionStatus: "SUCCESS",
+          imageCount: 3,
+          likeCount,
+          favoriteCount,
+          commentCount,
+          interactionExtractionStatus,
+          topics: topics.map((displayText) => ({
+            displayText,
+            isLinkElement: true,
+            hasHref: true,
+            href: `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(displayText)}`,
+            styleFeature: true,
+          })),
+          pageStatus,
+          isPublic: pageStatus === "NORMAL",
+          extractedAt: new Date().toISOString(),
+          adapterName: "playwright-xiaohongshu",
+          adapterVersion: "1.5.0",
+        },
+      },
+    });
+    expect(auditResponse.ok()).toBeTruthy();
+    return (await auditResponse.json()).data as {
+      id: string;
+      autoStatus: string;
+      failureReasons: string;
+    };
+  };
+
+  const passed = await audit({
+    marker: "passed",
+    likeCount: 176,
+    favoriteCount: 94,
+    commentCount: 4,
+  });
+  expect(passed.autoStatus).toBe("PASSED");
+
+  const below = await audit({
+    marker: "below",
+    likeCount: 3,
+    favoriteCount: 3,
+    commentCount: 3,
+  });
+  expect(below.autoStatus).toBe("FAILED");
+  expect(JSON.parse(below.failureReasons)).toContain(
+    "基础奖励未达成：互动合计 9",
+  );
+
+  const contentFailed = await audit({
+    marker: "content-failed",
+    likeCount: 176,
+    favoriteCount: 94,
+    commentCount: 4,
+    topics: [
+      "#初见小温柔成长更友好",
+      "#羊奶粉推荐婴儿",
+      "#好消化吸收的奶粉",
+    ],
+  });
+  expect(contentFailed.autoStatus).toBe("FAILED");
+  expect(JSON.parse(contentFailed.failureReasons).join("；")).toContain(
+    "缺少精确话题 #佳贝艾特荷兰版",
+  );
+
+  const unreadable = await audit({
+    marker: "unreadable",
+    likeCount: null,
+    favoriteCount: null,
+    commentCount: null,
+    interactionExtractionStatus: "UNAVAILABLE",
+  });
+  expect(unreadable.autoStatus).toBe("NEEDS_REVIEW");
+
+  const unavailable = await audit({
+    marker: "not-found",
+    pageStatus: "NOT_FOUND",
+    interactionExtractionStatus: "UNAVAILABLE",
+  });
+  expect(unavailable.autoStatus).toBe("FAILED");
+
+  const expectedExports = [
+    [passed.id, "Y"],
+    [below.id, "N-其他不合规"],
+    [contentFailed.id, "N-缺少话题"],
+    [unreadable.id, ""],
+    [unavailable.id, "N-帖子无法查看"],
+  ] as const;
+  for (const [id, expected] of expectedExports) {
+    const exportResponse = await page.request.get(`/api/results/export?ids=${id}`);
+    expect(exportResponse.ok()).toBeTruthy();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      (await exportResponse.body()) as unknown as ExcelJS.Buffer,
+    );
+    expect(
+      (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
+    ).toEqual(headers);
+    expect(workbook.worksheets[0].getCell("M2").text).toBe(expected);
+  }
+
+  await page.goto(`/results/${passed.id}`);
+  const rewardCard = page.locator("article", {
+    has: page.getByRole("heading", { name: "基础奖励" }),
+  });
+  await expect(rewardCard).toContainText("点赞数176");
+  await expect(rewardCard).toContainText("收藏数94");
+  await expect(rewardCard).toContainText("评论数4");
+  await expect(rewardCard).toContainText("合计互动数274");
+  await expect(rewardCard).toContainText("基础奖励已达成");
+  await expect(rewardCard).toContainText("最终审核结论通过");
+});

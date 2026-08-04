@@ -108,6 +108,10 @@ export async function getAuditContext(
     productId,
     campaignId,
     campaignName: campaign.name,
+    brandName,
+    basicRewardRequired:
+      brandName === "佳贝艾特" &&
+      campaign.name === "佳贝艾特2026年8月小红书种草审核",
     productStage: normalizedProductStage || null,
     productStageLabel: normalizedProductStage
       ? productStageTopicLabel(normalizedProductStage)

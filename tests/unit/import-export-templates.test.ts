@@ -254,6 +254,39 @@ describe("佳贝艾特专属导入导出模板", () => {
     );
     expect(record.complianceResult).toBe("N-图片不足");
 
+    expect(
+      auditResultToKabritaExportRecord({
+        ...row,
+        autoStatus: "PASSED",
+        imageStatus: "COMPLIANT",
+        failureReasons: "[]",
+      }).complianceResult,
+    ).toBe("Y");
+    expect(
+      auditResultToKabritaExportRecord({
+        ...row,
+        autoStatus: "FAILED",
+        imageStatus: "COMPLIANT",
+        failureReasons: '["基础奖励未达成：互动合计 9"]',
+      }).complianceResult,
+    ).toBe("N-其他不合规");
+    expect(
+      auditResultToKabritaExportRecord({
+        ...row,
+        autoStatus: "NEEDS_REVIEW",
+        imageStatus: "COMPLIANT",
+        failureReasons: '["基础奖励互动数据无法确认，需人工复核"]',
+      }).complianceResult,
+    ).toBe("");
+    expect(
+      auditResultToKabritaExportRecord({
+        ...row,
+        autoStatus: "FAILED",
+        pageStatus: "NO_PERMISSION",
+        failureReasons: '["当前账号无权访问笔记"]',
+      }).complianceResult,
+    ).toBe("N-帖子无法查看");
+
     const exportBytes = await buildConfiguredWorkbook({
       templates,
       kind: "auditResults",

@@ -26,6 +26,33 @@ function ReviewResult({ value }: { value: string }) {
   );
 }
 
+interface BasicRewardEvidence {
+  likeCount?: number | null;
+  favoriteCount?: number | null;
+  commentCount?: number | null;
+  totalCount?: number | null;
+  minimumTotal?: number;
+  interactionReadable?: boolean;
+  contentStatus?: string;
+  rewardPassed?: boolean | null;
+  finalStatus?: string;
+}
+
+function parseBasicRewardEvidence(value?: string | null) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as BasicRewardEvidence;
+  } catch {
+    return null;
+  }
+}
+
+function auditStatusText(value?: string) {
+  if (value === "PASSED") return "通过";
+  if (value === "FAILED" || value === "READ_FAILED") return "不通过";
+  return "待人工复核";
+}
+
 export default function AuditDecisionSummary({
   row,
   detail,
@@ -59,6 +86,10 @@ export default function AuditDecisionSummary({
     row.ruleSnapshot,
   );
   const reviews = detail?.manualReviews || row.manualReviews;
+  const basicRewardRule = detail?.ruleResults.find(
+    (item) => item.ruleKey === "KABRITA_BASIC_REWARD",
+  );
+  const basicReward = parseBasicRewardEvidence(basicRewardRule?.evidence);
 
   return (
     <div className={styles.decisionLayout}>
@@ -232,6 +263,59 @@ export default function AuditDecisionSummary({
                   </div>
                 </div>
               </article>
+              {basicRewardRule && basicReward ? (
+                <article className={styles.auditDetailCard}>
+                  <h4>基础奖励</h4>
+                  <div className={styles.auditDetailList}>
+                    <div>
+                      <span>内容合规</span>
+                      <strong>{auditStatusText(basicReward.contentStatus)}</strong>
+                    </div>
+                    <div>
+                      <span>点赞数</span>
+                      <strong>
+                        {basicReward.likeCount ?? "无法确认"}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>收藏数</span>
+                      <strong>
+                        {basicReward.favoriteCount ?? "无法确认"}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>评论数</span>
+                      <strong>
+                        {basicReward.commentCount ?? "无法确认"}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>合计互动数</span>
+                      <strong>
+                        {basicReward.totalCount ?? "无法确认"}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>达成条件</span>
+                      <strong>≥ {basicReward.minimumTotal ?? 10}</strong>
+                    </div>
+                    <div>
+                      <span>基础奖励</span>
+                      <strong>
+                        {basicReward.interactionReadable === false
+                          ? "待人工复核"
+                          : basicReward.rewardPassed
+                            ? "已达成"
+                            : "未达成"}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>最终审核结论</span>
+                      <strong>{auditStatusText(basicReward.finalStatus)}</strong>
+                    </div>
+                  </div>
+                </article>
+              ) : null}
             </>
           ) : null}
         </div>

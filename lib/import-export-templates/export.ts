@@ -276,7 +276,11 @@ export function auditResultToKabritaExportRecord(
       raw.purchaseProductLine ||
       row.task.product.seriesName ||
       row.task.product.name,
-    complianceResult: compactSelfReview(row),
+    complianceResult: ["NOT_FOUND", "DELETED", "NO_PERMISSION", "READ_FAILED"].includes(
+      row.pageStatus,
+    )
+      ? "N-帖子无法查看"
+      : compactSelfReview(row),
   };
 }
 
