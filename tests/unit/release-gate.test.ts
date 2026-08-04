@@ -131,14 +131,17 @@ describe("本地打包发布门禁", () => {
     expect(rulesBat).toContain(
       'set "VERIDIA_RULES_REPOSITORY=jd-pages/veridia-rules"',
     );
-    for (const message of [
-      "数据库检查或迁移失败，规则发布已停止。",
-      "远程旧规则未被覆盖，也没有上传新的规则包。",
-      "本地规则数据读取失败，规则发布已停止。",
-      "规则发布失败。上一版远程规则未被覆盖。",
-    ]) {
-      expect(rulesBat).toContain(`echo ${message}`);
-    }
+    expect(rulesBat).toContain('cd /d "%~dp0"');
+    expect(rulesBat).toContain("规则来源：项目内 rules/default-rules.json");
+    expect(rulesBat).toContain("if defined VERIDIA_RULE_DATABASE_PATH (");
+    expect(rulesBat).not.toContain("E:\\veridi\\shuju\\data\\veridia.db");
+    expect(rulesBat).not.toContain("E:\\v-preview\\data\\veridia.db");
+    expect(rulesBat).not.toContain("rules:db:preflight");
+    expect(rulesBat).not.toContain("rules:validate-local");
+    expect(rulesBat).toContain("call npm.cmd run rules:publish");
+    expect(rulesBat).toContain('set "VERIDIA_EXIT_CODE=%ERRORLEVEL%"');
+    expect(rulesBat).toContain("pause");
+    expect(rulesBat).toContain("exit /b %VERIDIA_EXIT_CODE%");
     const executableLines = rulesBat
       .split(/\r?\n/u)
       .map((line) => line.trim())
@@ -146,9 +149,6 @@ describe("本地打包发布门禁", () => {
     expect(
       executableLines.filter((line) => /^[\u3400-\u9fff]/u.test(line)),
     ).toEqual([]);
-    expect(rulesBat.match(/if errorlevel 1 \(/gu)).toHaveLength(3);
-    expect(rulesBat.match(/exit \/b 1/gu)).toHaveLength(3);
-    expect(rulesBat).toContain("exit /b 0");
     expect(workflow).toContain('"trigger-actions"');
     expect(releaseWorkflow).toContain("检查自动更新发布三件套");
     expect(releaseWorkflow).toContain(
