@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
 
@@ -76,41 +75,6 @@ function databaseUrlForPath(databasePath: string) {
   return `file:${path.resolve(databasePath)}`;
 }
 
-function databasePathFromUrl(databaseUrl: string) {
-  const normalized = databaseUrl.trim().replace(/^['"]|['"]$/gu, "");
-  if (!normalized.startsWith("file:")) {
-    throw new Error("规则发布仅支持本地 SQLite 数据库，DATABASE_URL 必须使用 file: 地址。");
-  }
-  const withoutQuery = normalized.slice("file:".length).split("?", 1)[0];
-  const decoded = decodeURIComponent(withoutQuery).replace(
-    /^\/([A-Za-z]:[\\/])/u,
-    "$1",
-  );
-  return path.isAbsolute(decoded)
-    ? path.normalize(decoded)
-    : path.resolve(process.cwd(), "prisma", decoded);
-}
-
-function configuredDesktopDatabasePath(localAppData: string) {
-  const controlRoot = path.join(localAppData, "VERIDIA");
-  const pointerPath = path.join(
-    controlRoot,
-    "config",
-    "data-location.json",
-  );
-  try {
-    const pointer = JSON.parse(fs.readFileSync(pointerPath, "utf8")) as {
-      dataDirectory?: unknown;
-    };
-    if (typeof pointer.dataDirectory === "string") {
-      return path.join(path.resolve(pointer.dataDirectory), "data", "veridia.db");
-    }
-  } catch {
-    // Fall through to the default desktop data location.
-  }
-  return path.join(controlRoot, "data", "veridia.db");
-}
-
 function assertUsableDatabase(databasePath: string) {
   if (!fs.existsSync(databasePath) || !fs.statSync(databasePath).isFile()) {
     throw new Error(`规则数据库不存在：${databasePath}`);
@@ -130,67 +94,22 @@ function assertUsableDatabase(databasePath: string) {
 }
 
 export function resolveRuleDatabaseLocation(): RuleDatabaseLocation {
-  const explicitDatabaseUrl = process.env.DATABASE_URL?.trim();
-  if (explicitDatabaseUrl) {
-    const databasePath = databasePathFromUrl(explicitDatabaseUrl);
-    assertUsableDatabase(databasePath);
-    return {
-      databasePath,
-      databaseUrl: databaseUrlForPath(databasePath),
-      source: "DATABASE_URL",
-    };
-  }
-
   const explicitDatabasePath = process.env.VERIDIA_RULE_DATABASE_PATH?.trim();
-  if (explicitDatabasePath) {
-    const databasePath = path.resolve(explicitDatabasePath);
-    assertUsableDatabase(databasePath);
-    const databaseUrl = databaseUrlForPath(databasePath);
-    process.env.DATABASE_URL = databaseUrl;
-    return {
-      databasePath,
-      databaseUrl,
-      source: "VERIDIA_RULE_DATABASE_PATH",
-    };
-  }
-
-  const localAppData =
-    process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
-  const candidates = [
-    configuredDesktopDatabasePath(localAppData),
-    path.join(
-      process.env.VERIDIA_PRODUCTION_DATA_DIR || "E:\\v",
-      "data",
-      "veridia.db",
-    ),
-    path.join(
-      process.env.VERIDIA_PREVIEW_DATA_DIR || "E:\\v-preview",
-      "data",
-      "veridia.db",
-    ),
-  ]
-    .map((candidate) => path.resolve(candidate))
-    .filter((candidate, index, values) => values.indexOf(candidate) === index)
-    .filter((candidate) => fs.existsSync(candidate));
-
-  if (candidates.length === 0) {
+  if (!explicitDatabasePath) {
     throw new Error(
-      "未找到可用的本地规则数据库。请设置 DATABASE_URL 或 VERIDIA_RULE_DATABASE_PATH 后重试。",
-    );
-  }
-  if (candidates.length > 1) {
-    throw new Error(
-      `检测到多个本地规则数据库，无法安全判断发布来源：\n${candidates.join(
-        "\n",
-      )}\n请设置 VERIDIA_RULE_DATABASE_PATH 明确指定后重试。`,
+      "未设置 VERIDIA_RULE_DATABASE_PATH，不会自动扫描本机 VERIDIA 数据库。",
     );
   }
 
-  const databasePath = candidates[0];
+  const databasePath = path.resolve(explicitDatabasePath);
   assertUsableDatabase(databasePath);
   const databaseUrl = databaseUrlForPath(databasePath);
   process.env.DATABASE_URL = databaseUrl;
-  return { databasePath, databaseUrl, source: "自动定位" };
+  return {
+    databasePath,
+    databaseUrl,
+    source: "VERIDIA_RULE_DATABASE_PATH",
+  };
 }
 
 function localTimestamp() {

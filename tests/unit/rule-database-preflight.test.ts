@@ -136,6 +136,15 @@ describe("规则发布数据库前置检查", () => {
     }
   });
 
+  it("未显式设置规则数据库路径时不会使用 DATABASE_URL 或扫描本机目录", () => {
+    process.env.DATABASE_URL = "file:E:\\v-preview\\data\\veridia.db";
+    delete process.env.VERIDIA_RULE_DATABASE_PATH;
+
+    expect(() => resolveRuleDatabaseLocation()).toThrow(
+      "未设置 VERIDIA_RULE_DATABASE_PATH，不会自动扫描本机 VERIDIA 数据库。",
+    );
+  });
+
   it("P2022 不会把英文 Prisma 堆栈直接显示给用户", () => {
     const message = formatRulePublishError({
       code: "P2022",
@@ -168,9 +177,9 @@ describe("规则发布数据库前置检查", () => {
       path.join(process.cwd(), "scripts", "publish-rules.ts"),
       "utf8",
     );
-    const preflightIndex = source.indexOf("await ensureRuleDatabaseReady()");
+    const preflightIndex = source.indexOf("await prepareRulePublishSource()");
     const firstGithubIndex = source.indexOf('gh(["--version"])');
-    const payloadIndex = source.indexOf("await exportCurrentRulePayload");
+    const payloadIndex = source.indexOf("await publishSource.createPayload");
     const releaseCreateIndex = source.indexOf('    "create",', payloadIndex);
 
     expect(preflightIndex).toBeGreaterThan(-1);

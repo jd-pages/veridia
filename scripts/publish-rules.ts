@@ -4,8 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import JSZip from "jszip";
 import packageJson from "@/package.json";
-import { ensureRuleDatabaseReady } from "@/lib/rules/database-preflight";
-import { exportCurrentRulePayload } from "@/lib/rules/package";
+import { prepareRulePublishSource } from "@/lib/rules/publish-source";
 import type { RulePackageManifest } from "@/lib/rules/types";
 
 function required(name: string) {
@@ -42,16 +41,8 @@ const privateKeyPath = path.resolve(
 );
 if (!fs.existsSync(privateKeyPath)) throw new Error("规则签名私钥文件不存在");
 
-try {
-  await ensureRuleDatabaseReady();
-} catch (error) {
-  console.error(
-    error instanceof Error
-      ? error.message
-      : "数据库结构检查失败，规则发布已停止。",
-  );
-  process.exit(1);
-}
+const publishSource = await prepareRulePublishSource();
+console.log(`规则发布来源：${publishSource.sourcePath}`);
 
 gh(["--version"]);
 gh(["auth", "status"]);
@@ -88,7 +79,7 @@ if (existing.some((item) => item.tagName === ruleVersion)) {
   throw new Error(`远程规则版本已存在：${ruleVersion}`);
 }
 
-const payload = await exportCurrentRulePayload({
+const payload = await publishSource.createPayload({
   ruleVersion,
   minimumAppVersion: packageJson.version,
 });
