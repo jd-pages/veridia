@@ -7,6 +7,7 @@ import {
   normalizeProductStageTopicValue,
 } from "@/lib/product-stage";
 import packageJson from "@/package.json";
+import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
 import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
 import {
   auditNoteIdentity,
@@ -90,28 +91,32 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     },
   });
   if (!campaign) return fail("活动不存在或与产品不匹配");
-  const stageRule = await prisma.topicRule.findFirst({
+  const campaignRules = await prisma.topicRule.findMany({
     where: {
       campaignId: body.campaignId,
-      topicCategory: "PRODUCT_STAGE",
-      applicableStage: productStage
-        ? { in: compatibleStageRuleValues(productStage) }
-        : undefined,
       status: "ACTIVE",
     },
+    select: {
+      topicCategory: true,
+      applicableStage: true,
+      topic: true,
+      milkType: true,
+    },
   });
-  if (
-    (await prisma.topicRule.count({
-      where: {
-        campaignId: body.campaignId,
-        topicCategory: "PRODUCT_STAGE",
-        status: "ACTIVE",
-      },
-    })) > 0 &&
-    (!productStage || !stageRule)
-  ) {
+  const requiresProductStage = campaignRequiresProductStage(campaignRules);
+  const stageRule = requiresProductStage && productStage
+    ? campaignRules.find(
+        (rule) =>
+          rule.topicCategory === "PRODUCT_STAGE" &&
+          compatibleStageRuleValues(productStage).includes(
+            rule.applicableStage || "",
+          ),
+      )
+    : null;
+  if (requiresProductStage && (!productStage || !stageRule)) {
     return fail("请选择活动支持的产品阶段话题");
   }
+  const effectiveProductStage = requiresProductStage ? productStage : null;
 
   const uniqueUrls = extractSupportedNoteUrls(body.urls || []);
   const created = [];
@@ -148,7 +153,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
           normalizedUrl,
           productId: body.productId,
           campaignId: body.campaignId,
-          productStage,
+          productStage: effectiveProductStage,
           milkType: stageRule?.milkType || null,
           notes: body.notes?.trim() || null,
           createdBy: user.id,

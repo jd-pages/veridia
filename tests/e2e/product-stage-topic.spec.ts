@@ -11,30 +11,13 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
 
   await page.goto("/tasks");
   await expect(
-    page.getByRole("combobox", { name: "产品阶段话题" }),
+    page.getByRole("combobox", { name: "所属活动" }),
   ).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "所属产品" })).toBeDisabled();
   await expect(
-    page.getByText(
-      "请选择 IFFO 或 GUM。",
-      { exact: true },
-    ),
-  ).toBeVisible();
-
-  const stageSelect = page.getByRole("combobox", {
-    name: "产品阶段话题",
-  });
-  const stageSelectControl = page.locator(".ant-select").filter({
-    has: stageSelect,
-  });
-  await stageSelectControl.click();
-  const options = page.locator(".ant-select-dropdown:visible .ant-select-item-option");
-  await expect(options).toHaveCount(2);
-  await expect(options.nth(0)).toHaveText("IFFO");
-  await expect(options.nth(1)).toHaveText("GUM");
-  await expect(page.getByText("新生儿阶段", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("二段阶段", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("成长阶段", { exact: true })).toHaveCount(0);
-  await page.keyboard.press("Escape");
+    page.getByRole("combobox", { name: "产品阶段话题" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("请选择 IFFO 或 GUM。", { exact: true })).toHaveCount(0);
 
   const products = (
     await (await page.request.get("/api/products")).json()
@@ -51,16 +34,41 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   );
   expect(campaign).toBeTruthy();
 
-  await page.getByRole("combobox", { name: "所属产品" }).click();
-  await page
-    .locator(".ant-select-dropdown:visible .ant-select-item-option")
-    .filter({ hasText: product.name })
-    .click();
   await page.getByRole("combobox", { name: "所属活动" }).click();
   await page
     .locator(".ant-select-dropdown:visible .ant-select-item-option")
     .filter({ hasText: campaign!.name })
     .click();
+  await expect(
+    page.getByRole("combobox", { name: "产品阶段话题" }),
+  ).toBeVisible();
+  await expect(page.getByText("请选择 IFFO 或 GUM。", { exact: true })).toBeVisible();
+
+  await page.getByRole("combobox", { name: "所属产品" }).click();
+  const productOptions = page.locator(
+    ".ant-select-dropdown:visible .ant-select-item-option",
+  );
+  await expect(productOptions.filter({ hasText: "佳贝艾特" })).toHaveCount(0);
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: product.name })
+    .click();
+
+  const stageSelect = page.getByRole("combobox", {
+    name: "产品阶段话题",
+  });
+  const stageSelectControl = page.locator(".ant-select").filter({
+    has: stageSelect,
+  });
+  await stageSelectControl.click();
+  const options = page.locator(".ant-select-dropdown:visible .ant-select-item-option");
+  await expect(options).toHaveCount(2);
+  await expect(options.nth(0)).toHaveText("IFFO");
+  await expect(options.nth(1)).toHaveText("GUM");
+  await expect(page.getByText("新生儿阶段", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("二段阶段", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("成长阶段", { exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await stageSelectControl.click();
   await page
     .locator(".ant-select-dropdown:visible .ant-select-item-option")
@@ -310,4 +318,111 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   await expect(page.locator("body")).not.toContainText(
     "GUM：3段/4段/1+段/2+段",
   );
+});
+
+test("佳贝艾特活动过滤产品、隐藏阶段并允许无阶段创建任务", async ({
+  page,
+}) => {
+  const loginResponse = await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  });
+  expect(loginResponse.ok()).toBeTruthy();
+
+  const products = (await (await page.request.get("/api/products")).json())
+    .data as Array<{ id: string; name: string; brandName: string }>;
+  const campaigns = (await (await page.request.get("/api/campaigns")).json())
+    .data as Array<{
+      id: string;
+      name: string;
+      requiresProductStage: boolean;
+    }>;
+  const kabritaCampaign = campaigns.find(
+    (item) => item.name === "佳贝艾特2026年8月小红书种草审核",
+  )!;
+  const danoneCampaign = campaigns.find((item) =>
+    item.name.includes("爱他美2026年7月"),
+  )!;
+  const danoneProduct = products.find((item) =>
+    item.name.includes("澳洲白金版"),
+  )!;
+  const kabritaProduct = products.find(
+    (item) => item.name === "佳贝艾特荷兰版",
+  )!;
+  expect(kabritaCampaign.requiresProductStage).toBe(false);
+  expect(danoneCampaign.requiresProductStage).toBe(true);
+
+  await page.goto("/tasks");
+  const activitySelect = page.getByRole("combobox", { name: "所属活动" });
+  const productSelect = page.getByRole("combobox", { name: "所属产品" });
+  const activitySelectControl = page.locator(".ant-select").filter({
+    has: activitySelect,
+  });
+  await activitySelectControl.click();
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: danoneCampaign.name })
+    .click();
+  await productSelect.click();
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: danoneProduct.name })
+    .click();
+  await page.getByRole("combobox", { name: "产品阶段话题" }).click();
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: /^IFFO$/u })
+    .click();
+
+  await activitySelectControl.click();
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: kabritaCampaign.name })
+    .click();
+  await expect(
+    page.getByRole("combobox", { name: "产品阶段话题" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("请选择 IFFO 或 GUM。", { exact: true })).toHaveCount(0);
+
+  const productSelectControl = page.locator(".ant-select").filter({
+    has: productSelect,
+  });
+  await expect(productSelectControl).not.toContainText(danoneProduct.name);
+  await productSelect.click();
+  const kabritaOptions = page.locator(
+    ".ant-select-dropdown:visible .ant-select-item-option",
+  );
+  await expect(kabritaOptions).toHaveCount(2);
+  await expect(kabritaOptions.filter({ hasText: "爱他美" })).toHaveCount(0);
+  await expect(kabritaOptions.filter({ hasText: "佳贝艾特荷兰版" })).toHaveCount(1);
+  await expect(kabritaOptions.filter({ hasText: "佳贝艾特港版" })).toHaveCount(1);
+  await kabritaOptions.filter({ hasText: kabritaProduct.name }).click();
+  await expect(
+    page.getByText(`当前规则集 · ${kabritaProduct.name}`, { exact: true }),
+  ).toBeVisible();
+
+  const uniqueUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&kabrita-no-stage=${Date.now()}`;
+  const createResponse = await page.request.post("/api/automation/batches", {
+    data: {
+      urls: uniqueUrl,
+      productId: kabritaProduct.id,
+      campaignId: kabritaCampaign.id,
+      name: "佳贝艾特无阶段任务验证",
+    },
+  });
+  const createPayload = await createResponse.json();
+  expect(
+    createResponse.ok(),
+    `佳贝艾特无阶段任务创建失败：${JSON.stringify(createPayload)}`,
+  ).toBeTruthy();
+  expect(createPayload.data.created).toBe(1);
+
+  const batchesResponse = await page.request.get(
+    `/api/automation/batches?batchId=${createPayload.data.batchId}`,
+  );
+  const batch = (await batchesResponse.json()).data[0] as {
+    productStage: string | null;
+    tasks: Array<{ productStage: string | null }>;
+  };
+  expect(batch.productStage).toBeNull();
+  expect(batch.tasks[0].productStage).toBeNull();
 });

@@ -5,6 +5,7 @@ import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
 import type { AuditContext, ExtractedNote } from "@/lib/types";
+import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
 import {
   compatibleStageRuleValues,
   normalizeProductStageTopicValue,
@@ -65,16 +66,23 @@ export async function getAuditContext(
     },
     orderBy: [{ scope: "asc" }, { sortOrder: "asc" }],
   });
-  const hasStageRules = await prisma.topicRule.count({
+  const campaignStageRequirementRules = await prisma.topicRule.findMany({
     where: {
       brandName,
       campaignId,
       status: "ACTIVE",
-      topicCategory: "PRODUCT_STAGE",
-      applicableStage: { not: null },
+    },
+    select: {
+      campaignId: true,
+      topicCategory: true,
+      applicableStage: true,
+      topic: true,
     },
   });
-  if (hasStageRules > 0 && !normalizedProductStage) {
+  const requiresProductStage = campaignRequiresProductStage(
+    campaignStageRequirementRules,
+  );
+  if (requiresProductStage && !normalizedProductStage) {
     throw new Error("该活动要求选择产品阶段话题");
   }
   const selectedStageRule = rules.find(
@@ -112,6 +120,7 @@ export async function getAuditContext(
     basicRewardRequired:
       brandName === "佳贝艾特" &&
       campaign.name === "佳贝艾特2026年8月小红书种草审核",
+    requiresProductStage,
     productStage: normalizedProductStage || null,
     productStageLabel: normalizedProductStage
       ? productStageTopicLabel(normalizedProductStage)

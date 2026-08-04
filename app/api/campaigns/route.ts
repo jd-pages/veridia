@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
+import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -25,11 +26,25 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     include: {
       product: true,
       products: { include: { product: true }, orderBy: { sortOrder: "asc" } },
+      topicRules: {
+        where: { status: "ACTIVE" },
+        select: {
+          campaignId: true,
+          topicCategory: true,
+          applicableStage: true,
+          topic: true,
+        },
+      },
       _count: { select: { topicRules: true } },
     },
     orderBy: [{ month: "desc" }, { updatedAt: "desc" }],
   });
-  return ok(campaigns);
+  return ok(
+    campaigns.map(({ topicRules, ...campaign }) => ({
+      ...campaign,
+      requiresProductStage: campaignRequiresProductStage(topicRules),
+    })),
+  );
 }, "读取活动列表");
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {

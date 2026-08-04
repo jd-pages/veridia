@@ -38,6 +38,7 @@ import {
   productStageTopicLabel,
   type ProductStageTopicDisplayRow,
 } from "@/lib/product-stage";
+import { rulesRequireAnyProductStage } from "@/lib/campaign-stage-requirement";
 
 interface Product {
   id: string;
@@ -116,6 +117,17 @@ export default function RulesPage() {
   const [stageForm] = Form.useForm();
   const scope = Form.useWatch("scope", form);
   const canManageBusiness = canAccessBusiness(currentRole);
+  const showProductStageModule = useMemo(
+    () => rulesRequireAnyProductStage(rules),
+    [rules],
+  );
+  const displayedRules = useMemo(
+    () =>
+      showProductStageModule
+        ? rules
+        : rules.filter((rule) => rule.topicCategory !== "PRODUCT_STAGE"),
+    [rules, showProductStageModule],
+  );
   const displayedStageGroups = useMemo(
     () =>
       aggregateProductStageTopicRows(
@@ -245,7 +257,11 @@ export default function RulesPage() {
       <PageHeader
         title={`${selectedBrand}话题规则`}
         breadcrumbItems={["话题规则", selectedBrand]}
-        description="产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #"
+        description={
+          showProductStageModule
+            ? "产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #"
+            : "标准话题会自动去空格并统一补充 #"
+        }
         actions={(
           <Space wrap>
             <Button
@@ -285,16 +301,17 @@ export default function RulesPage() {
           </Space>
         )}
       />
-      <Card
-        className="surface-card"
-        title="产品阶段与要求话题"
-        style={{ marginBottom: 16 }}
-      >
-        <Table<ProductStageTopicDisplayRow<StageGroup>>
-          rowKey="key"
-          dataSource={displayedStageGroups}
-          pagination={false}
-          columns={[
+      {showProductStageModule ? (
+        <Card
+          className="surface-card"
+          title="产品阶段与要求话题"
+          style={{ marginBottom: 16 }}
+        >
+          <Table<ProductStageTopicDisplayRow<StageGroup>>
+            rowKey="key"
+            dataSource={displayedStageGroups}
+            pagination={false}
+            columns={[
             {
               title: "产品阶段话题",
               width: 180,
@@ -341,9 +358,10 @@ export default function RulesPage() {
                 </Space>
               ) : <Tag>只读</Tag>,
             },
-          ]}
-        />
-      </Card>
+            ]}
+          />
+        </Card>
+      ) : null}
       <Card className="surface-card">
         <div className="filter-bar">
           <Select
@@ -364,7 +382,7 @@ export default function RulesPage() {
         <Table<Rule>
           rowKey="id"
           loading={loading}
-          dataSource={rules}
+          dataSource={displayedRules}
           scroll={{ x: 1300 }}
           columns={[
             {

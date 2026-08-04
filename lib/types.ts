@@ -90,6 +90,7 @@ export interface AuditContext {
   campaignName: string;
   brandName?: string;
   basicRewardRequired?: boolean;
+  requiresProductStage?: boolean;
   productStage?: string | null;
   productStageLabel?: string | null;
   bodyStageRequired?: boolean;

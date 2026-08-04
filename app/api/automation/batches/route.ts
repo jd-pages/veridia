@@ -16,6 +16,7 @@ import {
   auditTaskDuplicateMessages,
   findBlockingAuditTasks,
 } from "@/lib/audit-task-deduplication";
+import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -67,26 +68,32 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     },
   });
   if (!campaign) return fail("活动不存在或与产品不匹配");
-  const stageRule = await prisma.topicRule.findFirst({
+  const campaignRules = await prisma.topicRule.findMany({
     where: {
       campaignId: body.campaignId,
-      topicCategory: "PRODUCT_STAGE",
-      applicableStage: productStage
-        ? { in: compatibleStageRuleValues(productStage) }
-        : undefined,
       status: "ACTIVE",
     },
-  });
-  const campaignHasStageRules = await prisma.topicRule.count({
-    where: {
-      campaignId: body.campaignId,
-      topicCategory: "PRODUCT_STAGE",
-      status: "ACTIVE",
+    select: {
+      topicCategory: true,
+      applicableStage: true,
+      topic: true,
+      milkType: true,
     },
   });
-  if (campaignHasStageRules && (!productStage || !stageRule)) {
+  const requiresProductStage = campaignRequiresProductStage(campaignRules);
+  const stageRule = requiresProductStage && productStage
+    ? campaignRules.find(
+        (rule) =>
+          rule.topicCategory === "PRODUCT_STAGE" &&
+          compatibleStageRuleValues(productStage).includes(
+            rule.applicableStage || "",
+          ),
+      )
+    : null;
+  if (requiresProductStage && (!productStage || !stageRule)) {
     return fail("请选择活动支持的产品阶段话题");
   }
+  const effectiveProductStage = requiresProductStage ? productStage : null;
 
   const extraction = extractNoteLinksFromText(body.urls || []);
   const urls = extraction.links.map((item) => item.url);
@@ -122,14 +129,14 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     createdBy: user.id,
     productId: body.productId,
     campaignId: body.campaignId,
-    productStage: productStage || undefined,
+    productStage: effectiveProductStage || undefined,
     intervalMs: body.intervalMs,
     tasks: accepted.map((url) => ({
       url,
       originalInput: extraction.rawInput,
       productId: body.productId!,
       campaignId: body.campaignId!,
-      productStage,
+      productStage: effectiveProductStage,
       milkType: stageRule?.milkType || null,
       notes: body.notes,
       source: "MANUAL",

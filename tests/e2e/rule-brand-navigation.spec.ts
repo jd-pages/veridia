@@ -31,6 +31,11 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
     page.getByRole("heading", { name: "达能话题规则" }),
   ).toBeVisible();
   await expect(page.getByText("#爱他美新手爸妈日记")).toBeVisible();
+  await expect(
+    page.getByText("产品阶段与要求话题", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("IFFO", { exact: true })).toBeVisible();
+  await expect(page.getByText("GUM", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "返回品牌列表" })).toBeVisible();
 });
 
@@ -69,12 +74,17 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
     name: string;
     minBodyLength: number;
     minImageCount: number;
+    requiresProductStage: boolean;
     products: Array<{ product: { id: string; brandName: string } }>;
   }>;
   const campaign = campaigns.find(
     (item) => item.name === "佳贝艾特2026年8月小红书种草审核",
   );
-  expect(campaign).toMatchObject({ minBodyLength: 50, minImageCount: 3 });
+  expect(campaign).toMatchObject({
+    minBodyLength: 50,
+    minImageCount: 3,
+    requiresProductStage: false,
+  });
   expect(
     campaign?.products.every(({ product }) => product.brandName === "佳贝艾特"),
   ).toBe(true);
@@ -83,7 +93,7 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
     (product) => product.name === "佳贝艾特荷兰版",
   )!;
   const requirementsResponse = await page.request.get(
-    `/api/campaigns/${campaign!.id}/requirements?productId=${netherlandsProduct.id}&stage=IFFO_2`,
+    `/api/campaigns/${campaign!.id}/requirements?productId=${netherlandsProduct.id}`,
   );
   const requirementsPayload = await requirementsResponse.json();
   expect(
@@ -93,6 +103,7 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
   const requirements = requirementsPayload.data.context as {
     minBodyLength: number;
     minImageCount: number;
+    requiresProductStage: boolean;
     rules: Array<{
       topic: string;
       ruleType: string;
@@ -100,7 +111,11 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
       topicCategory: string;
     }>;
   };
-  expect(requirements).toMatchObject({ minBodyLength: 50, minImageCount: 3 });
+  expect(requirements).toMatchObject({
+    minBodyLength: 50,
+    minImageCount: 3,
+    requiresProductStage: false,
+  });
   expect(requirements.rules.map((rule) => rule.topic)).toEqual(
     expect.arrayContaining([
       "#佳贝艾特荷兰版",
@@ -140,6 +155,26 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
   await expect(breadcrumb.getByText("佳贝艾特", { exact: true })).toBeVisible();
   await expect(page.getByText("#佳贝艾特荷兰版", { exact: true })).toBeVisible();
   await expect(page.getByText("#佳贝艾特港版", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("产品阶段与要求话题", { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText("IFFO", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("GUM", { exact: true })).toHaveCount(0);
+  const standardTopicTable = page.locator(".ant-table").filter({
+    has: page.getByText("标准话题词", { exact: true }),
+  });
+  await expect(standardTopicTable.locator(".ant-table-tbody .ant-table-row")).toHaveCount(7);
+  for (const topic of [
+    "#初见小温柔成长更友好",
+    "#佳贝艾特荷兰版",
+    "#佳贝艾特港版",
+    "#羊奶粉推荐婴儿",
+    "#好消化吸收的奶粉",
+    "#不易敏敏",
+    "#佳贝艾特羊奶粉",
+  ]) {
+    await expect(standardTopicTable.getByText(topic, { exact: true })).toBeVisible();
+  }
   await expect(page.getByText("#爱他美新手爸妈日记")).toHaveCount(0);
 
   await page.goto("/campaigns");

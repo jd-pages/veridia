@@ -78,7 +78,9 @@ interface Campaign {
   name: string;
   month: string;
   productId: string | null;
+  product?: Product | null;
   products?: Array<{ product: Product }>;
+  requiresProductStage: boolean;
 }
 
 interface AuditRequirements {
@@ -317,6 +319,24 @@ export default function TasksPage() {
   const selectedProduct = Form.useWatch("productId", form);
   const selectedCampaign = Form.useWatch("campaignId", form);
   const selectedStage = Form.useWatch("productStage", form);
+  const selectedCampaignDefinition = useMemo(
+    () => campaigns.find((campaign) => campaign.id === selectedCampaign),
+    [campaigns, selectedCampaign],
+  );
+  const selectedCampaignRequiresStage = Boolean(
+    selectedCampaignDefinition?.requiresProductStage,
+  );
+  const availableProducts = useMemo(() => {
+    if (!selectedCampaignDefinition) return [];
+    const productIds = new Set([
+      selectedCampaignDefinition.productId,
+      selectedCampaignDefinition.product?.id,
+      ...(selectedCampaignDefinition.products || []).map(
+        ({ product }) => product.id,
+      ),
+    ].filter((value): value is string => Boolean(value)));
+    return products.filter((product) => productIds.has(product.id));
+  }, [products, selectedCampaignDefinition]);
   const rawNoteLinks = Form.useWatch("urls", form) || "";
   const linkPreview = useMemo(
     () => extractNoteLinksFromText(rawNoteLinks),
@@ -474,13 +494,20 @@ export default function TasksPage() {
   }, [load]);
 
   useEffect(() => {
-    if (!selectedProduct || !selectedCampaign || !selectedStage) {
+    if (
+      !selectedProduct ||
+      !selectedCampaign ||
+      (selectedCampaignRequiresStage && !selectedStage)
+    ) {
       setRequirements(null);
       return;
     }
     let cancelled = false;
+    const stageQuery = selectedCampaignRequiresStage && selectedStage
+      ? `&stage=${encodeURIComponent(selectedStage)}`
+      : "";
     apiFetch<AuditRequirements>(
-      `/api/campaigns/${selectedCampaign}/requirements?productId=${encodeURIComponent(selectedProduct)}&stage=${encodeURIComponent(selectedStage)}`,
+      `/api/campaigns/${selectedCampaign}/requirements?productId=${encodeURIComponent(selectedProduct)}${stageQuery}`,
     )
       .then((result) => {
         if (!cancelled) setRequirements(result);
@@ -496,7 +523,13 @@ export default function TasksPage() {
     return () => {
       cancelled = true;
     };
-  }, [message, selectedCampaign, selectedProduct, selectedStage]);
+  }, [
+    message,
+    selectedCampaign,
+    selectedCampaignRequiresStage,
+    selectedProduct,
+    selectedStage,
+  ]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -579,20 +612,20 @@ export default function TasksPage() {
     [selectedBatch],
   );
   const requiredStageTopics = useMemo(
-    () => requirements
+    () => requirements && selectedCampaignRequiresStage
       ? stageTopicsForProductStage(
           requirements.context.rules,
           requirements.context.productStage,
         )
       : [],
-    [requirements],
+    [requirements, selectedCampaignRequiresStage],
   );
 
   const createBatch = async (values: {
     name?: string;
     productId: string;
     campaignId: string;
-    productStage: string;
+    productStage?: string;
     urls: string;
     notes?: string;
   }) => {
@@ -858,29 +891,6 @@ export default function TasksPage() {
                       <Row gutter={16}>
                         <Col xs={24} md={12}>
                           <Form.Item
-                            name="productId"
-                            label="所属产品"
-                            rules={[{ required: true }]}
-                          >
-                            <Select
-                              showSearch
-                              optionFilterProp="label"
-                              placeholder="选择产品"
-                              options={products.map((item) => ({
-                                value: item.id,
-                                label: item.code
-                                  ? `${item.code} · ${item.name}`
-                                  : item.name,
-                              }))}
-                              onChange={() => {
-                                form.setFieldValue("campaignId", undefined);
-                                form.setFieldValue("productStage", undefined);
-                              }}
-                            />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <Form.Item
                             name="campaignId"
                             label="所属活动"
                             rules={[{ required: true }]}
@@ -888,47 +898,73 @@ export default function TasksPage() {
                             <Select
                               showSearch
                               optionFilterProp="label"
-                              placeholder="选择活动"
-                              onChange={() =>
-                                form.setFieldValue("productStage", undefined)
+                              placeholder="请选择活动"
+                              onChange={() => {
+                                form.resetFields(["productId", "productStage"]);
+                                setRequirements(null);
+                              }}
+                              options={campaigns.map((item) => ({
+                                value: item.id,
+                                label: `${item.month} · ${item.name}`,
+                              }))}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <Form.Item
+                            name="productId"
+                            label="所属产品"
+                            rules={[{ required: true }]}
+                          >
+                            <Select
+                              showSearch
+                              optionFilterProp="label"
+                              disabled={!selectedCampaign}
+                              placeholder={
+                                selectedCampaign
+                                  ? "请选择产品"
+                                  : "请先选择活动"
                               }
-                              options={campaigns
-                                .filter(
-                                  (item) =>
-                                    item.productId === selectedProduct ||
-                                    item.products?.some(
-                                      ({ product }) =>
-                                        product.id === selectedProduct,
-                                    ),
-                                )
-                                .map((item) => ({
-                                  value: item.id,
-                                  label: `${item.month} · ${item.name}`,
-                                }))}
+                              options={availableProducts.map((item) => ({
+                                value: item.id,
+                                label: item.code
+                                  ? `${item.code} · ${item.name}`
+                                  : item.name,
+                              }))}
+                              onChange={() => {
+                                form.resetFields(["productStage"]);
+                                setRequirements(null);
+                              }}
                             />
                           </Form.Item>
                         </Col>
                       </Row>
-                      <Form.Item
-                        name="productStage"
-                        label="产品阶段话题"
-                        rules={[{ required: true }]}
-                        extra="请选择 IFFO 或 GUM。"
-                      >
-                        <Select
-                          placeholder="选择产品阶段话题"
-                          options={PRODUCT_STAGE_TOPIC_OPTIONS.map((item) => ({
-                            value: item.value,
-                            label: item.label,
-                          }))}
-                        />
-                      </Form.Item>
+                      {selectedCampaignRequiresStage ? (
+                        <Form.Item
+                          name="productStage"
+                          label="产品阶段话题"
+                          rules={[{ required: true }]}
+                          extra="请选择 IFFO 或 GUM。"
+                        >
+                          <Select
+                            placeholder="选择产品阶段话题"
+                            options={PRODUCT_STAGE_TOPIC_OPTIONS.map((item) => ({
+                              value: item.value,
+                              label: item.label,
+                            }))}
+                          />
+                        </Form.Item>
+                      ) : null}
                       {requirements ? (
                         <Alert
                           showIcon
                           type="info"
                           className={styles.requirementsAlert}
-                          message={`当前规则集 · ${requirements.product.name} · ${productStageTopicLabel(requirements.context.productStage)}`}
+                          message={`当前规则集 · ${requirements.product.name}${
+                            selectedCampaignRequiresStage
+                              ? ` · ${productStageTopicLabel(requirements.context.productStage)}`
+                              : ""
+                          }`}
                           description={
                             <Space direction="vertical" size={5}>
                               <span>
@@ -938,12 +974,12 @@ export default function TasksPage() {
                                   ? `公开并保留 ${requirements.context.retentionDays} 天`
                                   : "不要求公开"}
                               </span>
-                              <span>
-                                要求阶段话题：
-                                {requiredStageTopics.length
-                                  ? requiredStageTopics.join(" / ")
-                                  : "未配置"}
-                              </span>
+                              {selectedCampaignRequiresStage ? (
+                                <span>
+                                  要求阶段话题：
+                                  {requiredStageTopics.join(" / ")}
+                                </span>
+                              ) : null}
                               <span>
                                 可点击话题：
                                 {requirements.context.rules
