@@ -167,7 +167,7 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await expect.poll(() => exportRequests.length).toBe(1);
   expect(context.pages()).toHaveLength(pagesBeforeExport);
   expect(download.suggestedFilename()).toMatch(
-    /^VERIDIA审核结果_当前筛选_\d{4}-\d{2}-\d{2}\.xlsx$/u,
+    /^VERIDIA审核结果_当前筛选_\d{8}_\d{6}\.xlsx$/u,
   );
   const exportedUrl = new URL(exportRequests[0]);
   expect(exportedUrl.searchParams.get("startDate")).toMatch(
@@ -222,6 +222,9 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   const selectedDownloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "导出所选" }).click();
   const selectedDownload = await selectedDownloadPromise;
+  expect(selectedDownload.suggestedFilename()).toMatch(
+    /^VERIDIA审核结果_所选结果_\d{8}_\d{6}\.xlsx$/u,
+  );
   const selectedWorkbook = new ExcelJS.Workbook();
   await selectedWorkbook.xlsx.readFile((await selectedDownload.path())!);
   expect(selectedWorkbook.worksheets[0].rowCount - 1).toBe(1);
@@ -414,6 +417,7 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
     data: {
       task: {
         id: string;
+        batchId: string | null;
         url: string;
         productStage: string | null;
         product: { id: string };
@@ -493,7 +497,12 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
     await page.request.get("/api/results?page=1&pageSize=100")
   ).json()) as { data: { total: number } };
   expect(afterSingleDelete.data.total).toBe(initialList.data.total - 1);
-  const tasks = (await (await page.request.get("/api/tasks")).json()) as {
+  const taskQuery = detail.data.task.batchId
+    ? `?batchId=${detail.data.task.batchId}`
+    : "";
+  const tasks = (await (
+    await page.request.get(`/api/tasks${taskQuery}`)
+  ).json()) as {
     data: Array<{ id: string }>;
   };
   const products = (await (await page.request.get("/api/products")).json()) as {

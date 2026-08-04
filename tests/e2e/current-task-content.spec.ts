@@ -156,3 +156,162 @@ test("审核任务页只展示当前批次的执行记录和笔记", async ({ pa
     await expect(page.getByText(url, { exact: true }).first()).toBeVisible();
   }
 });
+
+test("连续创建两个批次时汇总执行记录并支持批次筛选", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  });
+  const products = (
+    await (await page.request.get("/api/products")).json()
+  ).data as Array<{ id: string; name: string }>;
+  const product =
+    products.find((item) => item.name.includes("澳洲白金版")) || products[0];
+  const campaigns = (
+    await (
+      await page.request.get(`/api/campaigns?productId=${product.id}`)
+    ).json()
+  ).data as Array<{ id: string; name: string }>;
+  const campaign = campaigns.find((item) =>
+    item.name.includes("爱他美2026年7月"),
+  ) || campaigns[0];
+  const suffix = Date.now();
+  const create = async (name: string, count: number, marker: string) => {
+    const response = await page.request.post("/api/automation/batches", {
+      data: {
+        name,
+        productId: product.id,
+        campaignId: campaign.id,
+        productStage: "IFFO",
+        urls: Array.from(
+          { length: count },
+          (_, index) =>
+            `${E2E_ORIGIN}/mock/xhs?case=passed&${marker}=${suffix}-${index}`,
+        ).join("\n"),
+        intervalMs: 1000,
+      },
+    });
+    expect(response.ok()).toBeTruthy();
+    return (await response.json()).data.batchId as string;
+  };
+  const firstBatchId = await create(`德白批次-${suffix}`, 2, "first-batch");
+  const secondBatchId = await create(`澳白批次-${suffix}`, 3, "second-batch");
+  const batchIds = [firstBatchId, secondBatchId];
+
+  const summary = (
+    await (
+      await page.request.get(
+        `/api/automation/batches?batchIds=${batchIds.join(",")}&includeTasks=false`,
+      )
+    ).json()
+  ).data as Array<{ stats: { total: number }; tasks: unknown[] }>;
+  expect(summary.reduce((total, batch) => total + batch.stats.total, 0)).toBe(5);
+  expect(summary.every((batch) => batch.tasks.length === 0)).toBe(true);
+
+  const allTasks = (
+    await (
+      await page.request.get(
+        `/api/tasks?batchIds=${batchIds.join(",")}&page=1&pageSize=50`,
+      )
+    ).json()
+  ).data as { items: Array<{ batchId: string }>; total: number };
+  expect(allTasks.total).toBe(5);
+  expect(new Set(allTasks.items.map((task) => task.batchId))).toEqual(
+    new Set(batchIds),
+  );
+
+  for (const batchId of batchIds) {
+    await page.request.post(`/api/automation/batches/${batchId}/control`, {
+      data: { action: "CANCEL" },
+    });
+  }
+
+  await page.goto(`/tasks?batchIds=${batchIds.join(",")}`);
+  await expect(
+    page.getByText("当前显示 5 条记录", { exact: true }),
+  ).toBeVisible();
+  const executionCard = page.locator(".ant-card").filter({
+    has: page.getByRole("heading", { name: "自动审核进度", exact: true }),
+  });
+  await expect(
+    executionCard.locator(".ant-table-tbody .ant-table-row"),
+  ).toHaveCount(5);
+
+  await page
+    .getByText("全部当前批次（2）", { exact: true })
+    .click({ force: true });
+  await page.getByText(`澳白批次-${suffix}（3 条）`, { exact: true }).click();
+  await expect(
+    page.getByText("当前显示 3 条记录", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    executionCard.locator(".ant-table-tbody .ant-table-row"),
+  ).toHaveCount(3);
+});
+
+test("300 条任务分片入队且执行记录只读取当前页", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  });
+  const products = (
+    await (await page.request.get("/api/products")).json()
+  ).data as Array<{ id: string; name: string }>;
+  const product =
+    products.find((item) => item.name.includes("澳洲白金版")) || products[0];
+  const campaigns = (
+    await (
+      await page.request.get(`/api/campaigns?productId=${product.id}`)
+    ).json()
+  ).data as Array<{ id: string; name: string }>;
+  const campaign = campaigns.find((item) =>
+    item.name.includes("爱他美2026年7月"),
+  ) || campaigns[0];
+  const suffix = Date.now();
+  const response = await page.request.post("/api/automation/batches", {
+    data: {
+      name: `300条压力验证-${suffix}`,
+      productId: product.id,
+      campaignId: campaign.id,
+      productStage: "IFFO",
+      urls: Array.from(
+        { length: 300 },
+        (_, index) =>
+          `${E2E_ORIGIN}/mock/xhs?case=passed&stress=${suffix}-${index}`,
+      ).join("\n"),
+      intervalMs: 1000,
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()).data as {
+    batchId: string;
+    created: number;
+  };
+  expect(payload.created).toBe(300);
+
+  const firstPage = (
+    await (
+      await page.request.get(
+        `/api/tasks?batchIds=${payload.batchId}&page=1&pageSize=50`,
+      )
+    ).json()
+  ).data as { items: unknown[]; total: number; pageSize: number };
+  expect(firstPage.total).toBe(300);
+  expect(firstPage.pageSize).toBe(50);
+  expect(firstPage.items).toHaveLength(50);
+
+  await page.request.post(`/api/automation/batches/${payload.batchId}/control`, {
+    data: { action: "CANCEL" },
+  });
+
+  await page.goto(`/tasks?batchId=${payload.batchId}`);
+  await expect(
+    page.getByText("当前显示 300 条记录", { exact: true }),
+  ).toBeVisible();
+  const executionCard = page.locator(".ant-card").filter({
+    has: page.getByRole("heading", { name: "自动审核进度", exact: true }),
+  });
+  await expect(
+    executionCard.locator(".ant-table-tbody .ant-table-row"),
+  ).toHaveCount(50);
+});

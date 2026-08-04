@@ -14,7 +14,7 @@ import {
 import {
   auditNoteIdentity,
   auditTaskDuplicateMessages,
-  findBlockingAuditTask,
+  findBlockingAuditTasks,
 } from "@/lib/audit-task-deduplication";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
@@ -22,10 +22,23 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
   const batchId = searchParams.get("batchId")?.trim() || undefined;
+  const batchIds = (searchParams.get("batchIds") || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 50);
   const requestedLimit = Number(searchParams.get("limit") || 20);
   const limit = Number.isFinite(requestedLimit) ? requestedLimit : 20;
+  const includeTasks = searchParams.get("includeTasks") !== "false";
   kickAutomaticAuditQueue();
-  return ok(await getAutomaticBatches({ batchId, limit: batchId ? 1 : limit }));
+  return ok(
+    await getAutomaticBatches({
+      batchId,
+      batchIds,
+      limit: batchId ? 1 : limit,
+      includeTasks,
+    }),
+  );
 }, "读取自动审核批次");
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {
@@ -82,6 +95,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   const accepted: string[] = [];
   const skipped: Array<{ url: string; reason: string }> = [];
   const requestIdentities = new Set<string>();
+  const blockingTasks = await findBlockingAuditTasks({ urls });
   for (const url of urls) {
     const identity = auditNoteIdentity(url);
     if (requestIdentities.has(identity)) {
@@ -92,7 +106,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
       continue;
     }
     requestIdentities.add(identity);
-    const duplicate = await findBlockingAuditTask({ url });
+    const duplicate = blockingTasks.get(url);
     if (duplicate) skipped.push({ url, reason: duplicate.message });
     else accepted.push(url);
   }

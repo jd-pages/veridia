@@ -20,18 +20,49 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status") || undefined;
   const batchId = searchParams.get("batchId")?.trim() || undefined;
+  const batchIds = (searchParams.get("batchIds") || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 50);
+  const requestedPage = Number(searchParams.get("page") || 1);
+  const requestedPageSize = Number(searchParams.get("pageSize") || 50);
+  const page = Number.isFinite(requestedPage)
+    ? Math.max(1, Math.floor(requestedPage))
+    : 1;
+  const pageSize = Number.isFinite(requestedPageSize)
+    ? Math.min(100, Math.max(1, Math.floor(requestedPageSize)))
+    : 50;
+  const paginated =
+    searchParams.has("page") ||
+    searchParams.has("pageSize") ||
+    batchIds.length > 0;
+  const where = {
+    status,
+    ...(batchIds.length
+      ? { batchId: { in: batchIds } }
+      : { batchId }),
+  };
   await backfillMissingProcessingFailureResults();
-  const tasks = await prisma.auditTask.findMany({
-    where: { status, batchId },
-    include: {
-      product: true,
-      campaign: true,
-      auditResults: { orderBy: { auditedAt: "desc" }, take: 1 },
-    },
-    orderBy: batchId ? { queueOrder: "asc" } : { createdAt: "desc" },
-    take: 100,
-  });
-  return ok(tasks);
+  const [tasks, total] = await Promise.all([
+    prisma.auditTask.findMany({
+      where,
+      include: {
+        batch: { select: { id: true, name: true } },
+        product: true,
+        campaign: true,
+        auditResults: { orderBy: { auditedAt: "desc" }, take: 1 },
+      },
+      orderBy:
+        batchId || batchIds.length
+          ? [{ createdAt: "asc" }, { queueOrder: "asc" }]
+          : [{ createdAt: "desc" }],
+      skip: paginated ? (page - 1) * pageSize : 0,
+      take: paginated ? pageSize : 100,
+    }),
+    paginated ? prisma.auditTask.count({ where }) : Promise.resolve(0),
+  ]);
+  return ok(paginated ? { items: tasks, total, page, pageSize } : tasks);
 }, "读取审核任务");
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {

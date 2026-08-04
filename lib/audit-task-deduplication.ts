@@ -192,3 +192,71 @@ export async function findBlockingAuditTask(input: {
   }
   return null;
 }
+
+export async function findBlockingAuditTasks(input: {
+  urls: string[];
+  now?: Date;
+}) {
+  const matches = new Map<
+    string,
+    { taskId: string; reason: "TODAY_DUPLICATE"; message: string }
+  >();
+  if (!input.urls.length) return matches;
+  const { start, end } = localNaturalDayRange(input.now);
+  const candidates = await prisma.auditTask.findMany({
+    where: {
+      OR: [
+        { createdAt: { gte: start, lt: end } },
+        {
+          auditResults: {
+            some: { auditedAt: { gte: start, lt: end } },
+          },
+        },
+      ],
+    },
+    select: {
+      id: true,
+      url: true,
+      normalizedUrl: true,
+      finalUrl: true,
+      auditResults: {
+        select: {
+          note: {
+            select: { platformNoteId: true, url: true, finalUrl: true },
+          },
+        },
+        orderBy: { auditedAt: "desc" },
+        take: 5,
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  for (const url of input.urls) {
+    const inputIdentity = auditNoteIdentity(url);
+    const matching = candidates.find(
+      (task) =>
+        auditTaskLinksMatch(url, task) ||
+        task.auditResults.some(({ note }) => {
+          const platformIdentity = note.platformNoteId
+            ? `xhs-note:${note.platformNoteId.toLocaleLowerCase()}`
+            : "";
+          return (
+            inputIdentity === platformIdentity ||
+            auditTaskLinksMatch(url, {
+              url: note.url,
+              normalizedUrl: note.url,
+              finalUrl: note.finalUrl,
+            })
+          )
+        }),
+    );
+    if (matching) {
+      matches.set(url, {
+        taskId: matching.id,
+        reason: "TODAY_DUPLICATE",
+        message: auditTaskDuplicateMessages.TODAY_DUPLICATE,
+      });
+    }
+  }
+  return matches;
+}

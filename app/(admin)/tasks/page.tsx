@@ -124,6 +124,7 @@ interface Task {
   finishedAt: string | null;
   product: Product;
   campaign: Campaign;
+  batch: { id: string; name: string | null } | null;
   auditResults: Array<{
     id: string;
     autoStatus: string;
@@ -177,6 +178,7 @@ interface ImportPreview {
   invalidCount: number;
   imported: number;
   batchId?: string | null;
+  rowsTruncated?: boolean;
   templateVersion: string;
   templateBrand: "达能" | "佳贝艾特";
   sourceLabel: string;
@@ -217,6 +219,15 @@ const activeBatchStatuses = new Set([
   "PAUSED",
   "LOGIN_EXPIRED",
 ]);
+
+const ALL_CURRENT_BATCHES = "__ALL_CURRENT_BATCHES__";
+
+interface TaskPage {
+  items: Task[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
 
 const governanceTone: Record<
   string,
@@ -275,10 +286,14 @@ function formatDateTime(value: string | null | undefined) {
   }).format(new Date(value));
 }
 
-function rememberCurrentBatch(batchId: string | undefined) {
+function rememberCurrentBatches(batchIds: string[]) {
   const url = new URL(window.location.href);
-  if (batchId) url.searchParams.set("batchId", batchId);
-  else url.searchParams.delete("batchId");
+  url.searchParams.delete("batchId");
+  url.searchParams.delete("batchIds");
+  if (batchIds.length === 1) url.searchParams.set("batchId", batchIds[0]);
+  else if (batchIds.length > 1) {
+    url.searchParams.set("batchIds", batchIds.join(","));
+  }
   window.history.replaceState(window.history.state, "", url);
 }
 
@@ -287,9 +302,15 @@ export default function TasksPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskTotal, setTaskTotal] = useState(0);
+  const [taskPage, setTaskPage] = useState(1);
+  const [taskPageSize, setTaskPageSize] = useState(50);
   const [batches, setBatches] = useState<AuditBatch[]>([]);
+  const [trackedBatchIds, setTrackedBatchIds] = useState<string[]>([]);
   const [session, setSession] = useState<AutomationSession | null>(null);
-  const [selectedBatchId, setSelectedBatchId] = useState<string>();
+  const [selectedBatchId, setSelectedBatchId] = useState(
+    ALL_CURRENT_BATCHES,
+  );
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
@@ -313,69 +334,140 @@ export default function TasksPage() {
   );
   const canOperate = canAccessBusiness(currentRole);
 
-  const load = useCallback(async (quiet = false, targetBatchId?: string) => {
-    if (!quiet) setLoading(true);
-    const batchQuery = targetBatchId
-      ? `?batchId=${encodeURIComponent(targetBatchId)}`
-      : "?limit=1";
-    const [productResult, campaignResult, batchResult, sessionResult] =
-      await Promise.allSettled([
-        apiFetch<Product[]>("/api/products"),
-        apiFetch<Campaign[]>("/api/campaigns"),
-        apiFetch<AuditBatch[]>(`/api/automation/batches${batchQuery}`),
+  const load = useCallback(
+    async (
+      quiet = false,
+      requestedBatchIds: string[] = [],
+      requestedPage = 1,
+      requestedPageSize = 50,
+      requestedSelection = ALL_CURRENT_BATCHES,
+    ) => {
+      if (!quiet) setLoading(true);
+      const batchQuery = new URLSearchParams({
+        includeTasks: "false",
+        limit: "50",
+      });
+      if (requestedBatchIds.length) {
+        batchQuery.set("batchIds", requestedBatchIds.join(","));
+      }
+      const [batchResult, sessionResult] = await Promise.allSettled([
+        apiFetch<AuditBatch[]>(`/api/automation/batches?${batchQuery}`),
         apiFetch<AutomationSession>("/api/automation/session"),
       ]);
-    if (productResult.status === "fulfilled") setProducts(productResult.value);
-    if (campaignResult.status === "fulfilled") setCampaigns(campaignResult.value);
-    if (batchResult.status === "fulfilled") {
-      const currentBatch = batchResult.value[0];
-      setBatches(currentBatch ? [currentBatch] : []);
-      setSelectedBatchId(currentBatch?.id);
-      rememberCurrentBatch(currentBatch?.id);
-      if (currentBatch) {
-        try {
-          const currentTasks = await apiFetch<Task[]>(
-            `/api/tasks?batchId=${encodeURIComponent(currentBatch.id)}`,
-          );
-          setTasks(currentTasks);
-        } catch (error) {
-          setTasks([]);
-          if (!quiet) {
-            message.error(
-              error instanceof Error
-                ? error.message
-                : "读取本次任务内容失败，请刷新重试。",
+      let dataFailure: PromiseRejectedResult | undefined;
+      if (!quiet) {
+        const [productResult, campaignResult] = await Promise.allSettled([
+          apiFetch<Product[]>("/api/products"),
+          apiFetch<Campaign[]>("/api/campaigns"),
+        ]);
+        if (productResult.status === "fulfilled") {
+          setProducts(productResult.value);
+        }
+        if (campaignResult.status === "fulfilled") {
+          setCampaigns(campaignResult.value);
+        }
+        dataFailure = [productResult, campaignResult].find(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
+        );
+      }
+      if (batchResult.status === "fulfilled") {
+        const activeBatches = batchResult.value.filter((batch) =>
+          activeBatchStatuses.has(batch.status),
+        );
+        const queueBatches = requestedBatchIds.length
+          ? batchResult.value
+          : activeBatches.length
+            ? activeBatches
+            : batchResult.value.slice(0, 1);
+        const resolvedBatchIds = queueBatches.map((batch) => batch.id);
+        const effectiveSelection =
+          requestedSelection !== ALL_CURRENT_BATCHES &&
+          resolvedBatchIds.includes(requestedSelection)
+            ? requestedSelection
+            : ALL_CURRENT_BATCHES;
+        setBatches(queueBatches);
+        setTrackedBatchIds(resolvedBatchIds);
+        setSelectedBatchId(effectiveSelection);
+        rememberCurrentBatches(resolvedBatchIds);
+        const taskBatchIds =
+          effectiveSelection === ALL_CURRENT_BATCHES
+            ? resolvedBatchIds
+            : [effectiveSelection];
+        if (taskBatchIds.length) {
+          try {
+            const query = new URLSearchParams({
+              batchIds: taskBatchIds.join(","),
+              page: String(requestedPage),
+              pageSize: String(requestedPageSize),
+            });
+            const currentTasks = await apiFetch<TaskPage>(`/api/tasks?${query}`);
+            setTasks((previous) =>
+              JSON.stringify(previous) === JSON.stringify(currentTasks.items)
+                ? previous
+                : currentTasks.items,
             );
+            setTaskTotal(currentTasks.total);
+            setTaskPage(currentTasks.page);
+            setTaskPageSize(currentTasks.pageSize);
+          } catch (error) {
+            setTasks([]);
+            setTaskTotal(0);
+            if (!quiet) {
+              message.error(
+                error instanceof Error
+                  ? error.message
+                  : "读取本次任务内容失败，请刷新重试。",
+              );
+            }
           }
+        } else {
+          setTasks([]);
+          setTaskTotal(0);
         }
       } else {
-        setTasks([]);
+        dataFailure = batchResult;
       }
-    }
-    if (sessionResult.status === "fulfilled") {
-      setSession(sessionResult.value);
-    } else {
-      setSession({ status: "LOGIN_REQUIRED", lastLoginAt: null, lastError: null });
-    }
-    const dataFailure = [
-      productResult,
-      campaignResult,
-      batchResult,
-    ].find((result) => result.status === "rejected");
-    if (!quiet && dataFailure?.status === "rejected") {
-      message.error(
-        dataFailure.reason instanceof Error
-          ? dataFailure.reason.message
-          : "数据读取失败，请刷新或重启 VERIDIA。",
-      );
-    }
-    if (!quiet) setLoading(false);
-  }, [message]);
+      if (sessionResult.status === "fulfilled") {
+        setSession(sessionResult.value);
+      } else {
+        setSession({
+          status: "LOGIN_REQUIRED",
+          lastLoginAt: null,
+          lastError: null,
+        });
+      }
+      if (!quiet && dataFailure) {
+        message.error(
+          dataFailure.reason instanceof Error
+            ? dataFailure.reason.message
+            : "数据读取失败，请刷新或重启 VERIDIA。",
+        );
+      }
+      if (!quiet) setLoading(false);
+    },
+    [message],
+  );
 
   useEffect(() => {
-    const requestedBatchId =
-      new URLSearchParams(window.location.search).get("batchId") || undefined;
-    void load(false, requestedBatchId);
+    const search = new URLSearchParams(window.location.search);
+    const requestedBatchId = search.get("batchId")?.trim() || "";
+    const requestedBatchIds = (search.get("batchIds") || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const initialBatchIds = requestedBatchIds.length
+      ? requestedBatchIds
+      : requestedBatchId
+        ? [requestedBatchId]
+        : [];
+    void load(
+      false,
+      initialBatchIds,
+      1,
+      50,
+      requestedBatchId || ALL_CURRENT_BATCHES,
+    );
     void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
       setCurrentRole(user?.role || null),
     );
@@ -409,26 +501,83 @@ export default function TasksPage() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (batches.some((batch) => activeBatchStatuses.has(batch.status))) {
-        void load(true, selectedBatchId);
+        void load(
+          true,
+          trackedBatchIds,
+          taskPage,
+          taskPageSize,
+          selectedBatchId,
+        );
       }
-    }, 1000);
+    }, 2000);
     return () => window.clearInterval(timer);
-  }, [batches, load, selectedBatchId]);
+  }, [
+    batches,
+    load,
+    selectedBatchId,
+    taskPage,
+    taskPageSize,
+    trackedBatchIds,
+  ]);
 
-  const selectedBatch = useMemo(
-    () => batches.find((batch) => batch.id === selectedBatchId) || batches[0],
-    [batches, selectedBatchId],
-  );
-  const currentTaskSummary = useMemo(() => {
-    const statuses = tasks.map((task) => task.auditResults[0]?.autoStatus);
+  const selectedBatch = useMemo(() => {
+    const focused = batches.find((batch) => batch.id === selectedBatchId);
+    if (focused || batches.length <= 1) return focused || batches[0];
+    const sum = (field: keyof BatchStats) =>
+      batches.reduce((total, batch) => total + batch.stats[field], 0);
+    const total = sum("total");
+    const completed = sum("completed");
+    const status =
+      batches.find((batch) => batch.status === "RUNNING")?.status ||
+      batches.find((batch) => batch.status === "QUEUED")?.status ||
+      batches.find((batch) => batch.status === "PAUSED")?.status ||
+      batches.find((batch) => batch.status === "LOGIN_EXPIRED")?.status ||
+      (batches.some((batch) => batch.status === "COMPLETED_WITH_ERRORS")
+        ? "COMPLETED_WITH_ERRORS"
+        : "COMPLETED");
     return {
-      passed: statuses.filter((status) => status === "PASSED").length,
-      failed: statuses.filter((status) => status === "FAILED").length,
-      needsReview: statuses.filter(
-        (status) => status === "NEEDS_REVIEW" || status === "READ_FAILED",
-      ).length,
-    };
-  }, [tasks]);
+      ...batches[0],
+      id: ALL_CURRENT_BATCHES,
+      name: `当前队列：${batches.length} 个批次`,
+      status,
+      source: "QUEUE",
+      productStage: null,
+      product: null,
+      campaign: null,
+      finishedAt: batches.every((batch) => batch.finishedAt)
+        ? batches[0].finishedAt
+        : null,
+      stats: {
+        total,
+        waiting: sum("waiting"),
+        processing: sum("processing"),
+        succeeded: sum("succeeded"),
+        failed: sum("failed"),
+        readFailed: sum("readFailed"),
+        loginExpired: sum("loginExpired"),
+        needsReview: sum("needsReview"),
+        cancelled: sum("cancelled"),
+        completed,
+        remaining: sum("remaining"),
+        progress: total > 0 ? Math.round((completed / total) * 100) : 0,
+      },
+      currentTask:
+        batches.find((batch) => batch.currentTask)?.currentTask || null,
+      lastErrorCode:
+        batches.find((batch) => batch.lastErrorCode)?.lastErrorCode || null,
+      lastErrorMessage:
+        batches.find((batch) => batch.lastErrorMessage)?.lastErrorMessage || null,
+    } satisfies AuditBatch;
+  }, [batches, selectedBatchId]);
+  const isCombinedQueue = selectedBatch?.id === ALL_CURRENT_BATCHES;
+  const currentTaskSummary = useMemo(
+    () => ({
+      passed: selectedBatch?.stats.succeeded || 0,
+      failed: selectedBatch?.stats.failed || 0,
+      needsReview: selectedBatch?.stats.needsReview || 0,
+    }),
+    [selectedBatch],
+  );
   const requiredStageTopics = useMemo(
     () => requirements
       ? stageTopicsForProductStage(
@@ -461,7 +610,10 @@ export default function TasksPage() {
         method: "POST",
         body: JSON.stringify(values),
       });
-      setSelectedBatchId(result.batchId);
+      const nextBatchIds = [...new Set([...trackedBatchIds, result.batchId])];
+      setTrackedBatchIds(nextBatchIds);
+      setSelectedBatchId(ALL_CURRENT_BATCHES);
+      setTaskPage(1);
       message.success(
         result.skipped.length
           ? `已创建 ${result.created} 条，跳过 ${result.skipped.length} 条重复链接，自动审核已开始`
@@ -473,7 +625,7 @@ export default function TasksPage() {
         );
       }
       form.setFieldValue("urls", "");
-      await load(true, result.batchId);
+      await load(true, nextBatchIds, 1, taskPageSize, ALL_CURRENT_BATCHES);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "创建批次失败");
     } finally {
@@ -499,9 +651,14 @@ export default function TasksPage() {
       });
       setPreview(result);
       if (commit) {
-        if (result.batchId) setSelectedBatchId(result.batchId);
+        const nextBatchIds = result.batchId
+          ? [...new Set([...trackedBatchIds, result.batchId])]
+          : trackedBatchIds;
+        setTrackedBatchIds(nextBatchIds);
+        setSelectedBatchId(ALL_CURRENT_BATCHES);
+        setTaskPage(1);
         message.success(`已导入 ${result.imported} 条，自动审核已开始`);
-        await load(true, result.batchId || undefined);
+        await load(true, nextBatchIds, 1, taskPageSize, ALL_CURRENT_BATCHES);
       } else {
         message.success("预检查完成");
       }
@@ -515,7 +672,7 @@ export default function TasksPage() {
   const controlBatch = async (
     action: "PAUSE" | "CONTINUE" | "CANCEL" | "RETRY_FAILED",
   ) => {
-    if (!selectedBatch) return;
+    if (!selectedBatch || isCombinedQueue) return;
     try {
       await apiFetch(`/api/automation/batches/${selectedBatch.id}/control`, {
         method: "POST",
@@ -529,7 +686,13 @@ export default function TasksPage() {
           RETRY_FAILED: "失败任务已重新入队",
         }[action],
       );
-      await load(true, selectedBatch.id);
+      await load(
+        true,
+        trackedBatchIds,
+        taskPage,
+        taskPageSize,
+        selectedBatch.id,
+      );
     } catch (error) {
       message.error(error instanceof Error ? error.message : "队列操作失败");
     }
@@ -974,6 +1137,13 @@ export default function TasksPage() {
                           {preview.total} 条
                         </Descriptions.Item>
                       </Descriptions>
+                      {preview.rowsTruncated ? (
+                        <Alert
+                          type="info"
+                          showIcon
+                          message={`预检结果共 ${preview.total} 条，页面仅展示前 ${preview.rows.length} 条；全部有效数据仍会正常入队。`}
+                        />
+                      ) : null}
                       <div className={styles.previewTableShell}>
                         <Table<ImportPreview["rows"][number]>
                           className={styles.enterpriseTable}
@@ -1126,7 +1296,7 @@ export default function TasksPage() {
                           },
                         ]}
                           pagination={{
-                            pageSize: 8,
+                            pageSize: 50,
                             showSizeChanger: false,
                             position: ["bottomRight"],
                           }}
@@ -1290,6 +1460,7 @@ export default function TasksPage() {
                   icon={<PauseCircleOutlined />}
                   disabled={
                     !canOperate ||
+                    isCombinedQueue ||
                     !["QUEUED", "RUNNING"].includes(selectedBatch.status)
                   }
                   onClick={() => void controlBatch("PAUSE")}
@@ -1301,6 +1472,7 @@ export default function TasksPage() {
                   icon={<PlayCircleOutlined />}
                   disabled={
                     !canOperate ||
+                    isCombinedQueue ||
                     !["PAUSED", "LOGIN_EXPIRED"].includes(selectedBatch.status)
                   }
                   onClick={() => void controlBatch("CONTINUE")}
@@ -1314,7 +1486,7 @@ export default function TasksPage() {
                     "COMPLETED",
                     "COMPLETED_WITH_ERRORS",
                     "CANCELLED",
-                  ].includes(selectedBatch.status) || !canOperate}
+                  ].includes(selectedBatch.status) || !canOperate || isCombinedQueue}
                   onClick={() => void controlBatch("CANCEL")}
                 >
                   取消
@@ -1323,6 +1495,7 @@ export default function TasksPage() {
                   icon={<RetweetOutlined />}
                   disabled={
                     !canOperate ||
+                    isCombinedQueue ||
                     selectedBatch.stats.failed +
                       selectedBatch.stats.loginExpired ===
                     0
@@ -1341,9 +1514,37 @@ export default function TasksPage() {
                 </span>
                 <h3>审核执行记录</h3>
               </div>
-              <span>
-                {tasks.length} {businessUiText.records}
-              </span>
+              <Space wrap>
+                <Select
+                  aria-label="执行记录批次筛选"
+                  value={selectedBatchId}
+                  style={{ minWidth: 220 }}
+                  options={[
+                    {
+                      value: ALL_CURRENT_BATCHES,
+                      label: `全部当前批次（${batches.length}）`,
+                    },
+                    ...batches.map((batch) => ({
+                      value: batch.id,
+                      label: `${batch.name || "未命名批次"}（${batch.stats.total} 条）`,
+                    })),
+                  ]}
+                  onChange={(value) => {
+                    setSelectedBatchId(value);
+                    setTaskPage(1);
+                    void load(
+                      true,
+                      trackedBatchIds,
+                      1,
+                      taskPageSize,
+                      value,
+                    );
+                  }}
+                />
+                <span>
+                  当前显示 {taskTotal} {businessUiText.records}
+                </span>
+              </Space>
             </div>
             <Table<Task>
               className={styles.enterpriseTable}
@@ -1351,7 +1552,7 @@ export default function TasksPage() {
               size="small"
               dataSource={tasks}
               loading={loading}
-              locale={{ emptyText: "本次任务暂无执行记录" }}
+              locale={{ emptyText: "当前队列暂无执行记录" }}
               sticky={{ offsetHeader: 64 }}
               scroll={{ x: 1180 }}
               columns={[
@@ -1361,9 +1562,18 @@ export default function TasksPage() {
                   width: 70,
                   render: (_value, _row, index) => (
                     <span className={styles.sequence}>
-                      {String(index + 1).padStart(2, "0")}
+                      {String((taskPage - 1) * taskPageSize + index + 1).padStart(
+                        2,
+                        "0",
+                      )}
                     </span>
                   ),
+                },
+                {
+                  title: "批次",
+                  width: 200,
+                  ellipsis: true,
+                  render: (_value, row) => row.batch?.name || "未命名批次",
                 },
                 {
                   title: "笔记链接",
@@ -1475,7 +1685,25 @@ export default function TasksPage() {
                   },
                 },
               ]}
-              pagination={{ pageSize: 8 }}
+              pagination={{
+                current: taskPage,
+                pageSize: taskPageSize,
+                total: taskTotal,
+                showSizeChanger: true,
+                pageSizeOptions: ["50", "100"],
+                showTotal: (total) => `共 ${total} 条`,
+                onChange: (page, pageSize) => {
+                  setTaskPage(page);
+                  setTaskPageSize(pageSize);
+                  void load(
+                    true,
+                    trackedBatchIds,
+                    page,
+                    pageSize,
+                    selectedBatchId,
+                  );
+                },
+              }}
             />
           </>
         ) : (
@@ -1509,19 +1737,23 @@ export default function TasksPage() {
               {selectedBatch.name || "未命名批次"}
             </Descriptions.Item>
             <Descriptions.Item label="所属产品">
-              {selectedBatch.product?.name || "-"}
+              {isCombinedQueue ? "多个产品" : selectedBatch.product?.name || "-"}
             </Descriptions.Item>
             <Descriptions.Item label="所属活动">
-              {selectedBatch.campaign?.name || "-"}
+              {isCombinedQueue ? "多个活动" : selectedBatch.campaign?.name || "-"}
             </Descriptions.Item>
             <Descriptions.Item label="产品阶段话题">
-              {productStageTopicLabel(selectedBatch.productStage)}
+              {isCombinedQueue
+                ? "多个批次"
+                : productStageTopicLabel(selectedBatch.productStage)}
             </Descriptions.Item>
             <Descriptions.Item label="任务来源">
-              {businessSourceLabel(selectedBatch.source)}
+              {isCombinedQueue
+                ? "多个批次"
+                : businessSourceLabel(selectedBatch.source)}
             </Descriptions.Item>
             <Descriptions.Item label="本次笔记数">
-              {tasks.length} 条
+              {selectedBatch.stats.total} 条
             </Descriptions.Item>
             <Descriptions.Item label="审核通过">
               {currentTaskSummary.passed} 条

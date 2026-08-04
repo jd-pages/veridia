@@ -187,7 +187,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   );
   expect(exportResponse.headers()["content-disposition"]).toMatch(
-    /VERIDIA%E5%AE%A1%E6%A0%B8%E7%BB%93%E6%9E%9C_%E5%BD%93%E5%89%8D%E7%AD%9B%E9%80%89_\d{4}-\d{2}-\d{2}\.xlsx/u,
+    /VERIDIA%E5%AE%A1%E6%A0%B8%E7%BB%93%E6%9E%9C_%E6%89%80%E9%80%89%E7%BB%93%E6%9E%9C_\d{8}_\d{6}\.xlsx/u,
   );
   const exportWorkbook = new ExcelJS.Workbook();
   await exportWorkbook.xlsx.load(
@@ -245,6 +245,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   );
   expect(csvExportResponse.ok()).toBeTruthy();
   expect(csvExportResponse.headers()["content-type"]).toContain("text/csv");
+  expect(csvExportResponse.headers()["content-disposition"]).toMatch(
+    /VERIDIA%E5%AE%A1%E6%A0%B8%E7%BB%93%E6%9E%9C_%E6%89%80%E9%80%89%E7%BB%93%E6%9E%9C_\d{8}_\d{6}\.csv/u,
+  );
   const csvExport = await csvExportResponse.body();
   expect(csvExport[0]).toBe(0xef);
   expect(csvExport[1]).toBe(0xbb);
@@ -264,10 +267,12 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const templateDownloadPromise = page.waitForEvent("download");
     await page.getByRole("button", { name: "下载导入模板" }).click();
-    await page.getByRole("menuitem", { name: "下载 Excel 模板" }).click();
+    await page
+      .getByRole("menuitem", { name: "下载达能 Excel 模板" })
+      .click();
     const templateDownload = await templateDownloadPromise;
     expect(templateDownload.suggestedFilename()).toMatch(
-      /^VERIDIA导入模板_.+_\d{4}-\d{2}-\d{2}\.xlsx$/u,
+      /^VERIDIA达能导入模板_.+_\d{4}-\d{2}-\d{2}\.xlsx$/u,
     );
   }
   expect(page.context().pages()).toHaveLength(pageCountBeforeTemplateDownloads);
@@ -333,8 +338,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(resultBox!.x + resultBox!.width).toBeLessThanOrEqual(
     tableBox!.x + tableBox!.width + 1,
   );
-  await page.locator(".ant-pagination-item-2").last().click();
   await expect(page.getByRole("cell", { name: "10", exact: true })).toBeVisible();
+  await expect(page.locator(".ant-pagination-item-2").last()).toHaveCount(0);
   await expect(previewResultHeader).toBeVisible();
   downloadedTemplateSheet.spliceRows(2, 9);
   downloadedTemplateSheet.getRow(2).values = [

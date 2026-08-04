@@ -1,5 +1,4 @@
 import { prisma } from "@/lib/db";
-import { normalizeUrl } from "@/lib/topic";
 import {
   resolveImportedNoteLink,
   type NoteLinkPlatform,
@@ -28,7 +27,7 @@ import {
 } from "@/lib/import-export-templates/kabrita";
 import {
   auditNoteIdentity,
-  findBlockingAuditTask,
+  findBlockingAuditTasks,
   importedAuditTaskDuplicateMessage,
 } from "@/lib/audit-task-deduplication";
 import {
@@ -66,6 +65,8 @@ interface CheckedRow {
   errors: string[];
 }
 
+const IMPORT_PREVIEW_ROW_LIMIT = 100;
+
 export async function POST(request: Request) {
   const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
@@ -99,6 +100,14 @@ export async function POST(request: Request) {
       where: { status: "ACTIVE", deletedAt: null },
       include: { aliases: { select: { alias: true } } },
     });
+    const campaignCache = new Map<
+      string,
+      Awaited<ReturnType<typeof prisma.campaign.findFirst>>
+    >();
+    const stageRulesCache = new Map<
+      string,
+      Array<{ applicableStage: string | null; milkType: string | null }>
+    >();
 
     for (const parsed of tabular.rows) {
       const values = parsed.values;
@@ -186,9 +195,7 @@ export async function POST(request: Request) {
       if (checked.failureReason) {
         checked.errors.push(checked.failureReason);
       }
-      let normalizedUrl = "";
       if (checked.url && checked.recognitionStatus === "RECOGNIZED") {
-        normalizedUrl = normalizeUrl(checked.url);
         const identity = auditNoteIdentity(checked.url);
         if (seen.has(identity)) checked.errors.push("文件内存在重复链接");
         seen.add(identity);
@@ -217,22 +224,25 @@ export async function POST(request: Request) {
         }
       }
 
-      const campaign = product
-        ? await prisma.campaign.findFirst({
-            where: {
-              ...(checked.campaignName
-                ? { name: checked.campaignName }
-                : {}),
-              ...(checked.month ? { month: checked.month } : {}),
-              status: "ACTIVE",
-              OR: [
-                { productId: product.id },
-                { products: { some: { productId: product.id } } },
-              ],
-            },
-            orderBy: [{ endDate: "desc" }, { updatedAt: "desc" }],
-          })
-        : null;
+      const campaignKey = product
+        ? [product.id, checked.campaignName, checked.month].join("\u0000")
+        : "";
+      let campaign = product ? campaignCache.get(campaignKey) : null;
+      if (product && !campaignCache.has(campaignKey)) {
+        campaign = await prisma.campaign.findFirst({
+          where: {
+            ...(checked.campaignName ? { name: checked.campaignName } : {}),
+            ...(checked.month ? { month: checked.month } : {}),
+            status: "ACTIVE",
+            OR: [
+              { productId: product.id },
+              { products: { some: { productId: product.id } } },
+            ],
+          },
+          orderBy: [{ endDate: "desc" }, { updatedAt: "desc" }],
+        });
+        campaignCache.set(campaignKey, campaign);
+      }
       if (!campaign) {
         checked.errors.push("活动不存在或与产品不匹配");
       } else {
@@ -251,17 +261,24 @@ export async function POST(request: Request) {
       if (!isKabritaTemplate && !importedStage) {
         checked.errors.push("产品阶段话题请填写 IFFO 或 GUM。");
       }
-      const stageRules = campaign && product?.brandName.trim()
-        ? await prisma.topicRule.findMany({
-            where: {
-              brandName: product.brandName,
-              campaignId: campaign.id,
-              topicCategory: "PRODUCT_STAGE",
-              status: "ACTIVE",
-            },
-            select: { applicableStage: true, milkType: true },
-          })
-        : [];
+      const stageRulesKey = campaign?.id || "";
+      let stageRules = stageRulesCache.get(stageRulesKey) || [];
+      if (
+        campaign &&
+        product?.brandName.trim() &&
+        !stageRulesCache.has(stageRulesKey)
+      ) {
+        stageRules = await prisma.topicRule.findMany({
+          where: {
+            brandName: product.brandName,
+            campaignId: campaign.id,
+            topicCategory: "PRODUCT_STAGE",
+            status: "ACTIVE",
+          },
+          select: { applicableStage: true, milkType: true },
+        });
+        stageRulesCache.set(stageRulesKey, stageRules);
+      }
       const compatibleStages = compatibleStageRuleValues(importedStage);
       const stageRule = importedStage
         ? stageRules.find(
@@ -274,14 +291,22 @@ export async function POST(request: Request) {
         );
       }
       checked.milkType = stageRule?.milkType || undefined;
-      if (normalizedUrl && campaign?.id) {
-        const duplicate = await findBlockingAuditTask({ url: checked.url });
-        if (duplicate) {
-          checked.errors.push(importedAuditTaskDuplicateMessage);
-        }
-      }
       checked.errors = [...new Set(checked.errors)];
       rows.push(checked);
+    }
+
+    const duplicateCandidates = rows
+      .filter((row) => row.url && row.campaignId)
+      .map((row) => row.url);
+    const blockingTasks = await findBlockingAuditTasks({
+      urls: duplicateCandidates,
+    });
+    for (const row of rows) {
+      if (blockingTasks.has(row.url)) {
+        row.errors = [
+          ...new Set([...row.errors, importedAuditTaskDuplicateMessage]),
+        ];
+      }
     }
 
     const validRows = rows.filter((row) => row.errors.length === 0);
@@ -297,56 +322,59 @@ export async function POST(request: Request) {
         where: { id: "active" },
         select: { currentVersion: true },
       });
-      const committed = await prisma.$transaction(async (tx) => {
-        const tasks: AutomaticTaskInput[] = validRows.map((row) => ({
-          url: row.url,
-          originalInput: row.originalLinkContent,
-          productId: row.productId!,
-          campaignId: row.campaignId!,
-          productStage: row.productStage,
-          milkType: row.milkType,
-          source: sourceType.includes("TENCENT") ? "EXCEL" : "EXCEL",
-          notes: row.notes,
-        }));
-        const batch = await createAutomaticBatchInTransaction(
-          tx,
-          {
-            name: `表格自动审核 · ${file.name}`,
+      const committed = await prisma.$transaction(
+        async (tx) => {
+          const tasks: AutomaticTaskInput[] = validRows.map((row) => ({
+            url: row.url,
+            originalInput: row.originalLinkContent,
+            productId: row.productId!,
+            campaignId: row.campaignId!,
+            productStage: row.productStage,
+            milkType: row.milkType,
             source: "EXCEL",
-            createdBy: user.id,
-            productId: productIds.length === 1 ? productIds[0] : undefined,
-            campaignId: campaignIds.length === 1 ? campaignIds[0] : undefined,
-            tasks,
-          },
-          syncState?.currentVersion || null,
-        );
-        await tx.importRecord.create({
-          data: {
-            fileName: file.name,
-            importType: "AUDIT_TASK",
-            totalCount: rows.length,
-            validCount: validRows.length,
-            invalidCount: rows.length - validRows.length,
-            skippedCount: skipDuplicates
-              ? rows.length - validRows.length
-              : 0,
-            status: "COMPLETED",
-            summary: JSON.stringify({
-              templateVersion: tabular.templateVersion,
-              templateBrand: tabular.templateBrand,
-              sourceType,
-              errors: rows
-                .filter((row) => row.errors.length)
-                .map((row) => ({
-                  row: row.rowNumber,
-                  errors: row.errors,
-                })),
-            }),
-            createdBy: user.id,
-          },
-        });
-        return batch;
-      });
+            notes: row.notes,
+          }));
+          const batch = await createAutomaticBatchInTransaction(
+            tx,
+            {
+              name: `表格自动审核 · ${file.name}`,
+              source: "EXCEL",
+              createdBy: user.id,
+              productId: productIds.length === 1 ? productIds[0] : undefined,
+              campaignId: campaignIds.length === 1 ? campaignIds[0] : undefined,
+              tasks,
+            },
+            syncState?.currentVersion || null,
+          );
+          await tx.importRecord.create({
+            data: {
+              fileName: file.name,
+              importType: "AUDIT_TASK",
+              totalCount: rows.length,
+              validCount: validRows.length,
+              invalidCount: rows.length - validRows.length,
+              skippedCount: skipDuplicates
+                ? rows.length - validRows.length
+                : 0,
+              status: "COMPLETED",
+              summary: JSON.stringify({
+                templateVersion: tabular.templateVersion,
+                templateBrand: tabular.templateBrand,
+                sourceType,
+                errors: rows
+                  .filter((row) => row.errors.length)
+                  .map((row) => ({
+                    row: row.rowNumber,
+                    errors: row.errors,
+                  })),
+              }),
+              createdBy: user.id,
+            },
+          });
+          return batch;
+        },
+        { timeout: 60_000 },
+      );
       batchId = committed.id;
       imported = validRows.length;
       kickAutomaticAuditQueue();
@@ -362,7 +390,8 @@ export async function POST(request: Request) {
       imported,
       batchId,
       skipDuplicates,
-      rows,
+      rows: rows.slice(0, IMPORT_PREVIEW_ROW_LIMIT),
+      rowsTruncated: rows.length > IMPORT_PREVIEW_ROW_LIMIT,
     });
   } catch (error) {
     return fail(

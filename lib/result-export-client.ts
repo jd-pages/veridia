@@ -1,5 +1,7 @@
 "use client";
 
+import { auditResultExportFileName } from "@/lib/result-export-file-name";
+
 export interface ResultExportOutcome {
   saved: boolean;
   canceled: boolean;
@@ -28,9 +30,7 @@ function responseFileName(response: Response) {
       // 使用后端提供的安全默认名称。
     }
   }
-  return `VERIDIA审核结果_当前筛选_${new Date()
-    .toISOString()
-    .slice(0, 10)}.xlsx`;
+  return auditResultExportFileName({ extension: "xlsx" });
 }
 
 async function responseError(response: Response) {

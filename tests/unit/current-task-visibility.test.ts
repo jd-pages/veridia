@@ -6,27 +6,43 @@ function source(relativePath: string) {
   return fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
-describe("审核任务页面当前批次展示", () => {
-  it("任务页只按当前 batchId 请求和渲染任务", () => {
+describe("审核任务页面当前队列展示", () => {
+  it("任务页按当前 batchIds 请求汇总和当前页记录", () => {
     const taskPage = source("app/(admin)/tasks/page.tsx");
 
-    expect(taskPage).toContain("/api/automation/batches${batchQuery}");
-    expect(taskPage).toContain("/api/tasks?batchId=${encodeURIComponent(currentBatch.id)}");
+    expect(taskPage).toContain("/api/automation/batches?${batchQuery}");
+    expect(taskPage).toContain("batchQuery.set(\"batchIds\"");
+    expect(taskPage).toContain("apiFetch<TaskPage>(`/api/tasks?${query}`)");
+    expect(taskPage).toContain("pageSize: String(requestedPageSize)");
     expect(taskPage).not.toContain('apiFetch<Task[]>("/api/tasks")');
     expect(taskPage.match(/dataSource=\{tasks\}/gu)).toHaveLength(2);
     expect(taskPage).toContain('locale={{ emptyText: "本次任务暂无笔记" }}');
-    expect(taskPage).toContain('locale={{ emptyText: "本次任务暂无执行记录" }}');
+    expect(taskPage).toContain('locale={{ emptyText: "当前队列暂无执行记录" }}');
   });
 
-  it("批次和任务 API 都支持 batchId 服务端过滤", () => {
+  it("批次和任务 API 同时支持 batchId 与 batchIds 服务端过滤", () => {
     const batchRoute = source("app/api/automation/batches/route.ts");
     const batchService = source("lib/automation/batch-service.ts");
     const taskRoute = source("app/api/tasks/route.ts");
 
     expect(batchRoute).toContain('searchParams.get("batchId")');
-    expect(batchService).toContain("where: batchId ? { id: batchId } : undefined");
+    expect(batchRoute).toContain('searchParams.get("batchIds")');
+    expect(batchService).toContain("const requestedIds = [batchId, ...batchIds]");
+    expect(batchService).toContain("const where = requestedIds.length");
     expect(taskRoute).toContain('searchParams.get("batchId")');
-    expect(taskRoute).toContain("where: { status, batchId }");
+    expect(taskRoute).toContain('searchParams.get("batchIds")');
+    expect(taskRoute).toContain("{ batchId: { in: batchIds } }");
+    expect(taskRoute).toContain("pageSize");
+  });
+
+  it("大批量任务按 50 条分片写入且预检响应最多返回 100 行", () => {
+    const batchService = source("lib/automation/batch-service.ts");
+    const importRoute = source("app/api/import/notes/route.ts");
+
+    expect(batchService).toContain("AUTOMATIC_TASK_WRITE_CHUNK_SIZE = 50");
+    expect(batchService).toContain("tx.auditTask.createMany");
+    expect(importRoute).toContain("IMPORT_PREVIEW_ROW_LIMIT = 100");
+    expect(importRoute).toContain("rows.slice(0, IMPORT_PREVIEW_ROW_LIMIT)");
   });
 
   it("页面使用本次任务文案并展示完整摘要", () => {

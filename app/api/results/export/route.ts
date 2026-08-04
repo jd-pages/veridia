@@ -18,6 +18,7 @@ import {
   buildAuditResultWhere,
   readResultQueryFilters,
 } from "@/lib/result-query";
+import { auditResultExportFileName } from "@/lib/result-export-file-name";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser(BUSINESS_ROLES);
@@ -74,13 +75,11 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     ? rows.map(auditResultToKabritaExportRecord)
     : rows.map(auditResultToCompactExportRecord);
   const format = searchParams.get("format") === "csv" ? "csv" : "xlsx";
-  const now = new Date();
-  const dateStamp = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-  ].join("-");
-  const baseName = `VERIDIA${useKabritaTemplate ? "佳贝艾特" : ""}审核结果_当前筛选_${dateStamp}`;
+  const fileName = auditResultExportFileName({
+    kabrita: useKabritaTemplate,
+    selected: Boolean(filters.ids?.length),
+    extension: format,
+  });
   const exportLog = (format: "csv" | "xlsx", bytes: number) =>
     console.info(
       "[审核结果导出] 文件生成完成",
@@ -112,7 +111,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
-          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`${baseName}.csv`)}`,
+          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
           "Cache-Control": "no-store",
           "X-Veridia-Export-Count": String(rows.length),
         },
@@ -134,7 +133,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`${baseName}.xlsx`)}`,
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
       "Cache-Control": "no-store",
       "X-Veridia-Export-Count": String(rows.length),
     },
