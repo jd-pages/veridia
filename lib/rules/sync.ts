@@ -194,6 +194,46 @@ export function verifyRuleManifestSignature(
   );
 }
 
+export function ruleSyncFailureDetails(
+  error: unknown,
+  fallbackCode: "RULE_CHECK_FAILED" | "RULE_SYNC_FAILED",
+) {
+  const cause =
+    error instanceof Error && error.cause && typeof error.cause === "object"
+      ? error.cause
+      : null;
+  const errorCode =
+    error && typeof error === "object" && "code" in error
+      ? String(error.code)
+      : cause && "code" in cause
+        ? String(cause.code)
+        : fallbackCode;
+  const message =
+    error instanceof Error ? error.message : "未知规则同步错误";
+  const causeMessage =
+    cause && "message" in cause && typeof cause.message === "string"
+      ? cause.message
+      : "";
+  return {
+    errorCode,
+    technicalMessage:
+      causeMessage && causeMessage !== message
+        ? `${message}；${causeMessage}`
+        : message,
+  };
+}
+
+function logRuleSyncFailure(
+  operation: "检查" | "同步",
+  details: ReturnType<typeof ruleSyncFailureDetails>,
+  error: unknown,
+) {
+  console.error(
+    `[VERIDIA RULE SYNC] ${operation}失败 ${details.errorCode}: ${details.technicalMessage}`,
+    error,
+  );
+}
+
 async function readLatestRelease() {
   const config = ruleSyncConfiguration();
   if (!config.configured) {
@@ -370,10 +410,8 @@ export async function checkLatestRules(force = false) {
       },
     });
   } catch (error) {
-    const code =
-      error && typeof error === "object" && "code" in error
-        ? String(error.code)
-        : "RULE_CHECK_FAILED";
+    const failure = ruleSyncFailureDetails(error, "RULE_CHECK_FAILED");
+    logRuleSyncFailure("检查", failure, error);
     await prisma.$transaction([
       prisma.ruleSyncState.update({
         where: { id: "active" },
@@ -388,8 +426,11 @@ export async function checkLatestRules(force = false) {
           schemaVersion: state.schemaVersion,
           source: "GITHUB",
           status: "FAILED",
-          errorCode: code,
+          errorCode: failure.errorCode,
           message: "暂时无法获取最新规则，已继续使用本地规则。",
+          detailsJson: JSON.stringify({
+            technicalMessage: failure.technicalMessage,
+          }),
           completedAt: now,
         },
       }),
@@ -527,12 +568,8 @@ export async function synchronizeLatestRules() {
     ]);
     return getRuleSyncStatus();
   } catch (error) {
-    const code =
-      error && typeof error === "object" && "code" in error
-        ? String(error.code)
-        : "RULE_SYNC_FAILED";
-    const technicalMessage =
-      error instanceof Error ? error.message : "未知规则同步错误";
+    const failure = ruleSyncFailureDetails(error, "RULE_SYNC_FAILED");
+    logRuleSyncFailure("同步", failure, error);
     await prisma.$transaction([
       prisma.ruleSyncState.update({
         where: { id: "active" },
@@ -542,9 +579,11 @@ export async function synchronizeLatestRules() {
         where: { id: history.id },
         data: {
           status: "FAILED",
-          errorCode: code,
+          errorCode: failure.errorCode,
           message: "暂时无法获取最新规则，已继续使用本地规则。",
-          detailsJson: JSON.stringify({ technicalMessage }),
+          detailsJson: JSON.stringify({
+            technicalMessage: failure.technicalMessage,
+          }),
           completedAt: new Date(),
         },
       }),

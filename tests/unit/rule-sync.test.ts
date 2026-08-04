@@ -7,6 +7,7 @@ import { payloadSha256, validateRulePayload } from "@/lib/rules/package";
 import defaultTemplates from "@/rules/default-import-export-templates.json";
 import {
   isRulePackageCompatible,
+  ruleSyncFailureDetails,
   validateRuleManifest,
   verifyRuleManifestSignature,
 } from "@/lib/rules/sync";
@@ -126,6 +127,37 @@ describe("GitHub 规则同步", () => {
     expect(isRulePackageCompatible("1.0.1", "1.0.2")).toBe(false);
     expect(isRulePackageCompatible("1.0.2", "1.0.2")).toBe(true);
     expect(isRulePackageCompatible("1.1.0", "1.0.2")).toBe(true);
+  });
+
+  it("保留普通客户端规则同步的真实错误码和技术原因", () => {
+    expect(
+      ruleSyncFailureDetails(
+        Object.assign(new Error("临时目录拒绝写入"), { code: "EACCES" }),
+        "RULE_SYNC_FAILED",
+      ),
+    ).toEqual({
+      errorCode: "EACCES",
+      technicalMessage: "临时目录拒绝写入",
+    });
+    expect(
+      ruleSyncFailureDetails(
+        new Error("fetch failed", {
+          cause: Object.assign(new Error("连接超时"), {
+            code: "ETIMEDOUT",
+          }),
+        }),
+        "RULE_SYNC_FAILED",
+      ),
+    ).toEqual({
+      errorCode: "ETIMEDOUT",
+      technicalMessage: "fetch failed；连接超时",
+    });
+    expect(
+      ruleSyncFailureDetails("unknown", "RULE_CHECK_FAILED"),
+    ).toEqual({
+      errorCode: "RULE_CHECK_FAILED",
+      technicalMessage: "未知规则同步错误",
+    });
   });
 
   it("客户端同步实现不包含上传方法、遥测或 GitHub Token", () => {

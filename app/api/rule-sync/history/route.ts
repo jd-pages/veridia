@@ -5,21 +5,37 @@ import { SYSTEM_ADMIN_ROLES } from "@/lib/permissions";
 export async function GET() {
   const user = await requireApiUser(SYSTEM_ADMIN_ROLES);
   if (user instanceof Response) return user;
+  const history = await prisma.ruleSyncHistory.findMany({
+    take: 50,
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      ruleVersion: true,
+      schemaVersion: true,
+      source: true,
+      status: true,
+      errorCode: true,
+      message: true,
+      detailsJson: true,
+      startedAt: true,
+      completedAt: true,
+    },
+  });
   return ok(
-    await prisma.ruleSyncHistory.findMany({
-      take: 50,
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        ruleVersion: true,
-        schemaVersion: true,
-        source: true,
-        status: true,
-        errorCode: true,
-        message: true,
-        startedAt: true,
-        completedAt: true,
-      },
+    history.map(({ detailsJson, ...item }) => {
+      let technicalMessage: string | null = null;
+      try {
+        const details = JSON.parse(detailsJson) as {
+          technicalMessage?: unknown;
+        };
+        technicalMessage =
+          typeof details.technicalMessage === "string"
+            ? details.technicalMessage
+            : null;
+      } catch {
+        technicalMessage = null;
+      }
+      return { ...item, technicalMessage };
     }),
   );
 }

@@ -325,8 +325,10 @@ export default function SettingsPage() {
                 Array<{
                   ruleVersion: string | null;
                   status: string;
+                  errorCode: string | null;
                   message: string | null;
-                  createdAt: string;
+                  technicalMessage: string | null;
+                  startedAt: string;
                 }>
               >("/api/rule-sync/history");
               modal.info({
@@ -335,11 +337,24 @@ export default function SettingsPage() {
                 content: (
                   <Space direction="vertical" style={{ width: "100%" }}>
                     {history.length ? history.map((item, index) => (
-                      <div key={`${item.createdAt}-${index}`}>
-                        {new Date(item.createdAt).toLocaleString("zh-CN")} ·{" "}
-                        {item.ruleVersion || "本地规则"} ·{" "}
-                        {ruleSyncStatusLabel(item.status)}
-                        {item.message ? ` · ${item.message}` : ""}
+                      <div key={`${item.startedAt}-${index}`}>
+                        <div>
+                          {new Date(item.startedAt).toLocaleString("zh-CN")} ·{" "}
+                          {item.ruleVersion || "本地规则"} ·{" "}
+                          {ruleSyncStatusLabel(item.status)}
+                          {item.errorCode ? ` · ${item.errorCode}` : ""}
+                        </div>
+                        {item.message && <div>{item.message}</div>}
+                        {item.technicalMessage && (
+                          <div
+                            style={{
+                              color: "#66748a",
+                              wordBreak: "break-all",
+                            }}
+                          >
+                            技术原因：{item.technicalMessage}
+                          </div>
+                        )}
                       </div>
                     )) : <span>暂无同步记录</span>}
                   </Space>
