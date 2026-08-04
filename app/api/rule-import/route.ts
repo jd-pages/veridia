@@ -1,4 +1,5 @@
 import { fail, ok, requireApiUser } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 import {
   buildCampaignImportPreview,
   commitCampaignRuleImport,
@@ -7,7 +8,7 @@ import {
 } from "@/lib/rule-import";
 
 export async function POST(request: Request) {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const form = await request.formData();
   const file = form.get("file");

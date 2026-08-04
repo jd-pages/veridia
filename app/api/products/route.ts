@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -27,7 +28,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
 }, "读取产品列表");
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
     code?: string;

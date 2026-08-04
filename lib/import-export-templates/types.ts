@@ -122,6 +122,7 @@ export interface TemplateFieldMatch {
   column: number;
   header: string;
   field: StandardField;
+  displayName: string;
 }
 
 export interface TabularPreviewRow {

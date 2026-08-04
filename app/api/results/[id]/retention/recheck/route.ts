@@ -1,4 +1,5 @@
 import { fail, ok, requireApiUser } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { createAutomaticBatch } from "@/lib/automation/batch-service";
 import { kickAutomaticAuditQueue } from "@/lib/automation/queue";
@@ -7,7 +8,7 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser(["ADMIN", "OPERATOR"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const { id } = await params;
   const result = await prisma.auditResult.findUnique({

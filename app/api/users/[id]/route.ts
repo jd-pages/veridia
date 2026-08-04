@@ -1,12 +1,13 @@
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
 import { hashLocalPassword } from "@/lib/accounts/service";
+import { SYSTEM_ADMIN_ROLES } from "@/lib/permissions";
 
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const currentUser = await requireApiUser(["ADMIN"]);
+  const currentUser = await requireApiUser(SYSTEM_ADMIN_ROLES);
   if (currentUser instanceof Response) return currentUser;
   const { id } = await context.params;
   const target = await prisma.user.findUnique({ where: { id } });

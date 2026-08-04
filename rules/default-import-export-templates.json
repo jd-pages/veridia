@@ -25,7 +25,7 @@
     "platform": { "displayName": "平台（必填）", "type": "string", "description": "线下表格的平台标识，仅用于记录和导出" },
     "shopName": { "displayName": "店铺名称（必填）", "type": "string", "description": "线下表格中的店铺名称，仅用于记录和导出" },
     "customerName": { "displayName": "客户名（必填）", "type": "string", "description": "线下表格中的客户名，仅用于记录和导出" },
-    "orderNumber": { "displayName": "订单编号（必填）", "type": "string", "description": "用于和原始表格对照，不参与审核判断" },
+    "orderNumber": { "displayName": "订单编号", "type": "string", "description": "可选，用于和原始表格对照，不参与审核判断" },
     "productName": { "displayName": "产品系列（必填）", "type": "string", "description": "系统中已有的产品名称、产品系列或简称" },
     "activityName": { "displayName": "活动", "type": "string", "description": "系统中已有的活动名称" },
     "influencerName": { "displayName": "达人昵称", "type": "string", "description": "达人或博主昵称" },
@@ -104,8 +104,8 @@
     "specification": ["规格", "产品规格", "商品规格", "specification"],
     "productStage": ["产品阶段话题", "产品段位", "奶粉段位", "阶段", "阶段（IFFO/GUM）", "段位", "productStage"]
   },
-  "requiredFields": ["platform", "shopName", "customerName", "productName", "productStage", "orderNumber", "contentChannel", "noteUrl", "publishTime"],
-  "optionalFields": ["noteId", "activityName", "influencerName", "title", "content", "effectiveBodyLength", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark", "productCode", "activityMonth", "specification", "publicStatus", "selfReview"],
+  "requiredFields": ["platform", "shopName", "customerName", "productName", "productStage", "contentChannel", "noteUrl", "publishTime"],
+  "optionalFields": ["orderNumber", "noteId", "activityName", "influencerName", "title", "content", "effectiveBodyLength", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark", "productCode", "activityMonth", "specification", "publicStatus", "selfReview"],
   "columnOrder": {
     "import": ["platform", "shopName", "customerName", "productName", "productStage", "orderNumber", "contentChannel", "noteUrl", "publishTime"],
     "auditResults": ["platform", "shopName", "customerName", "productName", "productStageTopic", "orderNumber", "contentChannel", "originalUrl", "publishTime", "selfReview"],

@@ -4,6 +4,7 @@ import type { Worksheet } from "exceljs";
 import { prisma } from "@/lib/db";
 import { cellText } from "@/lib/excel";
 import { normalizeTopic } from "@/lib/topic";
+import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 import {
   PRODUCT_STAGE_TOPIC_VALUES,
   detectProductStage,
@@ -122,6 +123,7 @@ function inferSharedBrandName(products: NormalizedProductRule[]) {
   for (const name of names.slice(1)) {
     while (prefix && !name.startsWith(prefix)) prefix = prefix.slice(0, -1);
   }
+  if (prefix === "爱他美") return "达能";
   return prefix.length >= 2 ? prefix : null;
 }
 
@@ -188,7 +190,6 @@ function parseRawCampaign(
   if (!sheet) throw new Error("Excel 中没有工作表");
 
   const imageText = cellText(sheet.getCell("B1"));
-  const bodyText = cellText(sheet.getCell("B2"));
   const retentionText = cellText(sheet.getCell("B3"));
   const topicHeaderRow = findRow(sheet, "产品阶段话题");
   const contentStartRow = findRow(sheet, "内容参考方向");
@@ -362,10 +363,6 @@ function parseRawCampaign(
     );
   }
 
-  const bodyThreshold = Number(bodyText.match(/(\d+)\s*字/u)?.[1] || 0);
-  const minBodyLength = /[＞>]/u.test(bodyText)
-    ? bodyThreshold + 1
-    : bodyThreshold;
   const retentionDays = Number(
     retentionText.match(/(?:保留|至少)[^\d]*(\d+)\s*天/u)?.[1] || 0,
   );
@@ -391,7 +388,7 @@ function parseRawCampaign(
       startDate: metadata.startDate,
       endDate: metadata.endDate,
       minImageCount: parseMinimumImageCount(imageText),
-      minBodyLength,
+      minBodyLength: MIN_BODY_LENGTH,
       publicRequired: /公开状态/u.test(retentionText),
       retentionDays,
       rewardDescription,
@@ -572,7 +569,7 @@ function parseStandardTemplate(
       startDate: campaignValue("开始日期"),
       endDate: campaignValue("结束日期"),
       minImageCount: Number(campaignValue("最低图片数量") || 0),
-      minBodyLength: Number(campaignValue("正文最低有效字数") || 0),
+      minBodyLength: MIN_BODY_LENGTH,
       publicRequired: parseBoolean(campaignValue("要求公开")),
       retentionDays: Number(campaignValue("最低保留天数") || 0),
       rewardDescription: campaignValue("奖励说明"),
@@ -853,7 +850,7 @@ export async function commitCampaignRuleImport(
       firstImageRequirement: null,
       prohibitedImageGuidance: null,
       bodyRequired: true,
-      minBodyLength: data.campaign.minBodyLength,
+      minBodyLength: MIN_BODY_LENGTH,
       publicRequired: data.campaign.publicRequired,
       retentionDays: data.campaign.retentionDays,
       rewardDescription: data.campaign.rewardDescription,
@@ -885,6 +882,7 @@ export async function commitCampaignRuleImport(
     await tx.topicRule.createMany({
       data: data.topicRules.map((rule) => ({
         ruleSource: "LOCAL_DRAFT",
+        brandName: inferredBrandName,
         campaignId: campaign.id,
         productId: rule.productName
           ? productByName.get(rule.productName) || null

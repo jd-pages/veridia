@@ -15,6 +15,7 @@ import {
   detectBodyProductStages,
   productStageTopicLabel,
 } from "@/lib/product-stage";
+import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 
 const pageFailureLabels: Record<string, string> = {
   NOT_FOUND: "笔记页面不存在",
@@ -194,15 +195,16 @@ export function evaluateAudit(
 
   const bodyPresent = Boolean(note.body && note.body.trim().length > 0);
   const effectiveBodyLength = countEffectiveBodyCharacters(note.body);
+  const minBodyLength = MIN_BODY_LENGTH;
   const bodyPassed =
     bodyReadIncomplete ||
     !context.bodyRequired ||
-    (bodyPresent && effectiveBodyLength >= context.minBodyLength);
+    (bodyPresent && effectiveBodyLength >= minBodyLength);
   evaluations.push({
     ruleKey: "GLOBAL_BODY",
     ruleName: "笔记正文",
     expectedValue: context.bodyRequired
-      ? `至少 ${context.minBodyLength} 个有效正文字符`
+      ? `至少 ${minBodyLength} 个有效正文字符`
       : "正文可选",
     actualValue: bodyPresent
       ? `${effectiveBodyLength} 个有效正文字符`
@@ -211,7 +213,7 @@ export function evaluateAudit(
     failureReason: bodyPassed
       ? undefined
       : bodyPresent
-        ? `有效正文字数不足：要求至少 ${context.minBodyLength} 个，实际 ${effectiveBodyLength} 个`
+        ? `有效正文字数不足：要求至少 ${minBodyLength} 个，实际 ${effectiveBodyLength} 个`
         : "笔记正文为空",
     evidence: {
       rawBodyLength: note.body?.length ?? 0,
@@ -222,7 +224,7 @@ export function evaluateAudit(
   if (!bodyPassed) {
     failures.push(
       bodyPresent
-        ? `有效正文字数不足（${effectiveBodyLength}/${context.minBodyLength}）`
+        ? `有效正文字数不足（${effectiveBodyLength}/${minBodyLength}）`
         : "笔记正文为空",
     );
   }

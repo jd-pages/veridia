@@ -3,6 +3,7 @@ import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { PrismaClient } from "@prisma/client";
 import { productStageTopicLabel } from "../lib/product-stage";
+import { MIN_BODY_LENGTH } from "../lib/audit-constants";
 
 const prisma = new PrismaClient();
 
@@ -38,7 +39,7 @@ async function main() {
     { header: "客户名（必填）", key: "customerName", width: 20 },
     { header: "产品系列（必填）", key: "productName", width: 26 },
     { header: "阶段（IFFO/GUM）", key: "productStage", width: 18 },
-    { header: "订单编号（必填）", key: "orderNumber", width: 22 },
+    { header: "订单编号", key: "orderNumber", width: 22 },
     { header: "内容渠道（必填）", key: "contentChannel", width: 18 },
     { header: "链接（必填）", key: "url", width: 52 },
     { header: "发帖时间（必填）", key: "publishTime", width: 22 },
@@ -112,7 +113,7 @@ async function main() {
     startDate: campaign.startDate.toISOString().slice(0, 10),
     endDate: campaign.endDate.toISOString().slice(0, 10),
     minImageCount: campaign.minImageCount,
-    minBodyLength: campaign.minBodyLength,
+    minBodyLength: MIN_BODY_LENGTH,
     publicRequired: campaign.publicRequired ? "是" : "否",
     retentionDays: campaign.retentionDays,
     rewardDescription: campaign.rewardDescription || "",

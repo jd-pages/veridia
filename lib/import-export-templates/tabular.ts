@@ -234,6 +234,7 @@ export async function parseTabularPreview(input: {
       column: columnIndex + 1,
       header: value,
       field,
+      displayName: displayName(templates, field),
     });
   });
   const legacyLayout = !["platform", "shopName", "customerName"].some(

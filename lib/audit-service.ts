@@ -5,6 +5,7 @@ import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
 import type { AuditContext, ExtractedNote } from "@/lib/types";
+import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 import {
   compatibleStageRuleValues,
   normalizeProductStageTopicValue,
@@ -19,21 +20,30 @@ export async function getAuditContext(
   const normalizedProductStage =
     normalizeProductStageTopicValue(productStage);
   const compatibleStages = compatibleStageRuleValues(normalizedProductStage);
-  const campaign = await prisma.campaign.findFirst({
-    where: {
-      id: campaignId,
-      status: "ACTIVE",
-      deletedAt: null,
-      OR: [
-        { productId },
-        { products: { some: { productId } } },
-      ],
-    },
-  });
+  const [product, campaign] = await Promise.all([
+    prisma.product.findFirst({
+      where: { id: productId, status: "ACTIVE", deletedAt: null },
+      select: { brandName: true },
+    }),
+    prisma.campaign.findFirst({
+      where: {
+        id: campaignId,
+        status: "ACTIVE",
+        deletedAt: null,
+        OR: [
+          { productId },
+          { products: { some: { productId } } },
+        ],
+      },
+    }),
+  ]);
   if (!campaign) throw new Error("活动不存在、已停用或与所选产品不匹配");
+  const brandName = product?.brandName.trim();
+  if (!brandName) throw new Error("所选产品未配置品牌，无法加载话题规则");
 
   const rules = await prisma.topicRule.findMany({
     where: {
+      brandName,
       status: "ACTIVE",
       AND: [
         {
@@ -58,6 +68,7 @@ export async function getAuditContext(
   });
   const hasStageRules = await prisma.topicRule.count({
     where: {
+      brandName,
       campaignId,
       status: "ACTIVE",
       topicCategory: "PRODUCT_STAGE",
@@ -125,7 +136,7 @@ export async function getAuditContext(
     ruleVersion: campaign.ruleVersion,
     rulePackageVersion: syncState?.currentVersion || null,
     bodyRequired: campaign.bodyRequired,
-    minBodyLength: campaign.minBodyLength,
+    minBodyLength: MIN_BODY_LENGTH,
     minImageCount: campaign.minImageCount,
     publicRequired: campaign.publicRequired,
     retentionDays: campaign.retentionDays,

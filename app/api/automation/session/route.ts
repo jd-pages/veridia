@@ -1,4 +1,5 @@
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 import {
   completeXiaohongshuLogin,
   getAutomationSession,
@@ -12,7 +13,7 @@ export const GET = withApiErrorBoundary(async function GET() {
 }, "读取小红书浏览器状态");
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {
-  const user = await requireApiUser(["ADMIN", "OPERATOR"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
     action?: "START_LOGIN" | "COMPLETE_LOGIN";

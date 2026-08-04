@@ -1,8 +1,13 @@
 import { prisma } from "@/lib/db";
-import { fail, requireApiUser } from "@/lib/api";
+import {
+  fail,
+  requireApiUser,
+  withApiErrorBoundary,
+} from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 import { getActiveImportExportTemplates } from "@/lib/import-export-templates/config";
 import {
-  auditResultToExportRecord,
+  auditResultToCompactExportRecord,
   buildConfiguredCsv,
   buildConfiguredWorkbook,
 } from "@/lib/import-export-templates/export";
@@ -12,8 +17,8 @@ import {
   readResultQueryFilters,
 } from "@/lib/result-query";
 
-export async function GET(request: Request) {
-  const user = await requireApiUser(["ADMIN", "OPERATOR"]);
+export const GET = withApiErrorBoundary(async function GET(request: Request) {
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
   const filters = readResultQueryFilters(searchParams);
@@ -32,25 +37,9 @@ export async function GET(request: Request) {
   const rows = await prisma.auditResult.findMany({
     where,
     include: {
-      note: {
-        include: {
-          topics: {
-            select: {
-              displayText: true,
-              isClickable: true,
-              isLinkElement: true,
-              hasHref: true,
-              href: true,
-              styleFeature: true,
-            },
-          },
-        },
-      },
+      note: true,
       task: { include: { product: true, campaign: true } },
       manualReviews: { orderBy: { createdAt: "desc" }, take: 1 },
-      ruleResults: {
-        select: { ruleName: true, passed: true },
-      },
     },
     orderBy: { auditedAt: "desc" },
   });
@@ -73,11 +62,7 @@ export async function GET(request: Request) {
     );
   }
   const { templates } = await getActiveImportExportTemplates();
-  const records = rows.map((row) =>
-    auditResultToExportRecord(row, templates, {
-      dateType: searchParams.get("dateType") || "AUDITED_AT",
-    }),
-  );
+  const records = rows.map(auditResultToCompactExportRecord);
   const format = searchParams.get("format") === "csv" ? "csv" : "xlsx";
   const now = new Date();
   const dateStamp = [
@@ -142,4 +127,4 @@ export async function GET(request: Request) {
       "X-Veridia-Export-Count": String(rows.length),
     },
   });
-}
+}, "导出审核结果");

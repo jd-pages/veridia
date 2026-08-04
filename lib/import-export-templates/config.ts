@@ -73,9 +73,9 @@ function normalizeBusinessTemplates(
     description: "必填，只填写 IFFO 或 GUM",
   };
   output.fieldDefinitions.orderNumber = {
-    displayName: "订单编号（必填）",
+    displayName: "订单编号",
     type: "string",
-    description: "用于和原始表格对照，不参与审核判断",
+    description: "可选，用于和原始表格对照，不参与审核判断",
   };
   output.fieldDefinitions.contentChannel = {
     displayName: "内容渠道（必填）",
@@ -206,7 +206,6 @@ function normalizeBusinessTemplates(
     "noteUrl",
     "productName",
     "productStage",
-    "orderNumber",
     "contentChannel",
     "publishTime",
   ];
@@ -215,6 +214,7 @@ function normalizeBusinessTemplates(
       ...output.optionalFields.filter(
         (field) => !output.requiredFields.includes(field),
       ),
+      "orderNumber" as const,
       "activityName" as const,
       "effectiveBodyLength" as const,
       "publicStatus" as const,

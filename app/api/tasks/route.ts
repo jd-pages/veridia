@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { extractSupportedNoteUrls, isSupportedNoteUrl, normalizeUrl } from "@/lib/topic";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 import {
   compatibleStageRuleValues,
   normalizeProductStageTopicValue,
@@ -34,7 +35,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
 }, "读取审核任务");
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {
-  const user = await requireApiUser(["ADMIN", "OPERATOR"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
     urls?: string | string[];

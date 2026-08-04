@@ -219,6 +219,7 @@ model TopicRule {
   scope             String    @default("CAMPAIGN")
   campaignId        String?
   productId         String?
+  brandName         String?
   ruleType          String
   topicCategory     String    @default("GENERAL")
   applicableStage   String?
@@ -238,6 +239,7 @@ model TopicRule {
   product           Product?  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([scope, status])
+  @@index([brandName, status, sortOrder])
   @@index([campaignId, status, sortOrder])
   @@index([productId, status])
   @@index([campaignId, applicableStage, status])

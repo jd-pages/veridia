@@ -5,6 +5,7 @@ import {
   App,
   Button,
   Card,
+  Col,
   Form,
   Input,
   InputNumber,
@@ -12,16 +13,26 @@ import {
   Popconfirm,
   Select,
   Space,
+  Statistic,
   Switch,
   Table,
   Tag,
+  Row,
+  Typography,
 } from "antd";
-import { EditOutlined, PlusOutlined, StopOutlined } from "@ant-design/icons";
+import {
+  ArrowLeftOutlined,
+  EditOutlined,
+  PlusOutlined,
+  RightOutlined,
+  StopOutlined,
+} from "@ant-design/icons";
 import PageHeader from "@/components/PageHeader";
 import StatusTag from "@/components/StatusTag";
 import { apiFetch } from "@/lib/client";
 import { ruleScopeLabels, ruleTypeLabels } from "@/lib/zh-CN";
 import type { SessionUser } from "@/lib/auth";
+import { canAccessBusiness } from "@/lib/permissions";
 import {
   aggregateProductStageTopicRows,
   productStageTopicLabel,
@@ -32,6 +43,7 @@ interface Product {
   id: string;
   name: string;
   code: string;
+  brandName: string;
 }
 
 interface Campaign {
@@ -40,10 +52,12 @@ interface Campaign {
   productId: string;
   month: string;
   product: Product;
+  products?: Array<{ product: Product }>;
 }
 
 interface Rule {
   id: string;
+  brandName: string | null;
   scope: string;
   campaignId: string | null;
   productId: string | null;
@@ -57,8 +71,19 @@ interface Rule {
   version: number;
   status: string;
   notes: string | null;
+  topicCategory: string;
+  applicableStage: string | null;
   campaign: Campaign | null;
   product: Product | null;
+}
+
+interface RuleBrand {
+  brandName: string;
+  productCount: number;
+  campaignCount: number;
+  ruleCount: number;
+  productNames: string[];
+  status: string;
 }
 
 interface StageGroup {
@@ -73,6 +98,8 @@ interface StageGroup {
 
 export default function RulesPage() {
   const { message } = App.useApp();
+  const [brands, setBrands] = useState<RuleBrand[]>([]);
+  const [selectedBrand, setSelectedBrand] = useState<string>();
   const [rules, setRules] = useState<Rule[]>([]);
   const [stageGroups, setStageGroups] = useState<StageGroup[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -88,70 +115,174 @@ export default function RulesPage() {
   const [form] = Form.useForm();
   const [stageForm] = Form.useForm();
   const scope = Form.useWatch("scope", form);
-  const isAdmin = currentRole === "ADMIN";
+  const canManageBusiness = canAccessBusiness(currentRole);
   const displayedStageGroups = useMemo(
-    () => aggregateProductStageTopicRows(stageGroups),
-    [stageGroups],
+    () =>
+      aggregateProductStageTopicRows(
+        stageGroups.map((group) => ({
+          ...group,
+          requiredTopic:
+            rules.find(
+              (rule) =>
+                rule.topicCategory === "PRODUCT_STAGE" &&
+                rule.applicableStage === group.key,
+            )?.topic || "未配置",
+        })),
+      ),
+    [rules, stageGroups],
   );
 
+  const loadBrands = useCallback(async () => {
+    setLoading(true);
+    try {
+      setBrands(await apiFetch<RuleBrand[]>("/api/rule-brands"));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "加载品牌失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [message]);
+
   const load = useCallback(async () => {
+    if (!selectedBrand) return;
     setLoading(true);
     try {
       const [ruleData, campaignData, productData, stageData] = await Promise.all([
         apiFetch<Rule[]>(
-          `/api/rules${campaignId ? `?campaignId=${campaignId}` : ""}`,
+          `/api/rules?brandName=${encodeURIComponent(selectedBrand)}${
+            campaignId ? `&campaignId=${campaignId}` : ""
+          }`,
         ),
         apiFetch<Campaign[]>("/api/campaigns"),
         apiFetch<Product[]>("/api/products"),
         apiFetch<StageGroup[]>("/api/rule-stage-groups"),
       ]);
       setRules(ruleData);
-      setCampaigns(campaignData);
-      setProducts(productData);
+      setCampaigns(
+        campaignData.filter((campaign) =>
+          [
+            campaign.product?.brandName,
+            ...(campaign.products || []).map(({ product }) => product.brandName),
+          ].includes(selectedBrand),
+        ),
+      );
+      setProducts(
+        productData.filter((product) => product.brandName === selectedBrand),
+      );
       setStageGroups(stageData);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "加载规则失败");
     } finally {
       setLoading(false);
     }
-  }, [campaignId, message]);
+  }, [campaignId, message, selectedBrand]);
 
   useEffect(() => {
-    void load();
+    void loadBrands();
     void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
       setCurrentRole(user?.role || null),
     );
+  }, [loadBrands]);
+
+  useEffect(() => {
+    void load();
   }, [load]);
+
+  if (!selectedBrand) {
+    return (
+      <>
+        <PageHeader
+          title="话题规则"
+          description="按品牌维护产品话题与阶段话题，审核任务将根据产品品牌自动匹配对应规则。"
+        />
+        <Row gutter={[16, 16]}>
+          {brands.map((brand) => (
+            <Col key={brand.brandName} xs={24} md={12} xl={8}>
+              <Card
+                className="surface-card"
+                loading={loading}
+                title={brand.brandName}
+                extra={<StatusTag value={brand.status} />}
+                actions={[
+                  <Button
+                    key="enter"
+                    type="link"
+                    icon={<RightOutlined />}
+                    onClick={() => setSelectedBrand(brand.brandName)}
+                  >
+                    进入规则
+                  </Button>,
+                ]}
+              >
+                <Row gutter={12}>
+                  <Col span={8}>
+                    <Statistic title="产品" value={brand.productCount} suffix="个" />
+                  </Col>
+                  <Col span={8}>
+                    <Statistic title="活动" value={brand.campaignCount} suffix="个" />
+                  </Col>
+                  <Col span={8}>
+                    <Statistic title="规则" value={brand.ruleCount} suffix="条" />
+                  </Col>
+                </Row>
+                <Typography.Paragraph
+                  type="secondary"
+                  ellipsis={{ rows: 2, expandable: true, symbol: "展开" }}
+                  style={{ marginTop: 16, marginBottom: 0 }}
+                >
+                  包含产品：{brand.productNames.join("、") || "暂无产品"}
+                </Typography.Paragraph>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+      </>
+    );
+  }
 
   return (
     <>
       <PageHeader
-        title="话题规则"
+        title={`${selectedBrand}话题规则`}
         description="产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #"
-        actions={isAdmin ? (
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              setEditing(null);
-              setOpen(true);
-              window.setTimeout(() => {
-                form.resetFields();
-                form.setFieldsValue({
-                  scope: "CAMPAIGN",
-                  ruleType: "MUST_ALL",
-                  exactMatch: true,
-                  clickableRequired: true,
-                  caseSensitive: false,
-                  minCount: 1,
-                  sortOrder: 10,
-                });
-              }, 0);
-            }}
-          >
-            新增规则
-          </Button>
-        ) : undefined}
+        actions={(
+          <Space wrap>
+            <Button
+              icon={<ArrowLeftOutlined />}
+              onClick={() => {
+                setSelectedBrand(undefined);
+                setCampaignId(undefined);
+                void loadBrands();
+              }}
+            >
+              返回品牌列表
+            </Button>
+            {canManageBusiness ? (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  setEditing(null);
+                  setOpen(true);
+                  window.setTimeout(() => {
+                    form.resetFields();
+                    form.setFieldsValue({
+                      scope: "CAMPAIGN",
+                      ruleType: "MUST_ALL",
+                      exactMatch: true,
+                      clickableRequired: true,
+                      caseSensitive: false,
+                      minCount: 1,
+                      sortOrder: 10,
+                    });
+                  }, 0);
+                }}
+              >
+                新增规则
+              </Button>
+            ) : null}
+          </Space>
+        )}
       />
       <Card
         className="surface-card"
@@ -188,7 +319,7 @@ export default function RulesPage() {
             {
               title: "操作",
               width: 280,
-              render: (_value, row) => isAdmin ? (
+              render: (_value, row) => canManageBusiness ? (
                 <Space size={4} wrap>
                   {row.members.map((member) => (
                     <Button
@@ -298,7 +429,7 @@ export default function RulesPage() {
               title: "操作",
               width: 150,
               fixed: "right",
-              render: (_value, row) => isAdmin ? (
+              render: (_value, row) => canManageBusiness ? (
                 <Space size={2}>
                   <Button
                     type="link"
@@ -319,7 +450,10 @@ export default function RulesPage() {
                       title="确认停用规则？"
                       description="活动规则版本会自动递增，历史审核结果不受影响。"
                       onConfirm={async () => {
-                        await apiFetch(`/api/rules/${row.id}`, { method: "DELETE" });
+                        await apiFetch(
+                          `/api/rules/${row.id}?brandName=${encodeURIComponent(selectedBrand)}`,
+                          { method: "DELETE" },
+                        );
                         message.success("规则已停用");
                         void load();
                       }}
@@ -350,7 +484,7 @@ export default function RulesPage() {
           onFinish={async (values) => {
             await apiFetch(editing ? `/api/rules/${editing.id}` : "/api/rules", {
               method: editing ? "PUT" : "POST",
-              body: JSON.stringify(values),
+              body: JSON.stringify({ ...values, brandName: selectedBrand }),
             });
             message.success(editing ? "规则已更新并生成新版本" : "规则已创建");
             setOpen(false);
@@ -477,6 +611,7 @@ export default function RulesPage() {
             await apiFetch(`/api/rule-stage-groups/${editingStage.key}`, {
               method: "PUT",
               body: JSON.stringify({
+                brandName: selectedBrand,
                 bodyTerms: editingStage.bodyTerms,
                 requireBodyStage: Boolean(values.requireBodyStage),
                 requiredTopic: values.requiredTopic,

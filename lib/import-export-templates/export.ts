@@ -21,6 +21,34 @@ import { utf8BomCsv } from "./tabular";
 
 export type ExportValueRecord = Partial<Record<StandardField, unknown>>;
 
+export interface CompactAuditResultExportSourceRow {
+  autoStatus: string;
+  pageStatus: string;
+  bodyStatus: string;
+  topicsCompliant: boolean;
+  failureReasons: string;
+  imageExtractionStatus: string;
+  imageStatus: string;
+  task: {
+    url: string;
+    failureCode: string | null;
+    failureMessage: string | null;
+    pageTitle: string | null;
+    pageType: string | null;
+    notes: string | null;
+    productStage: string | null;
+    product: { name: string; seriesName?: string | null };
+  };
+  note: {
+    url: string;
+    finalUrl: string | null;
+    publishedAt: Date | null;
+    title: string | null;
+    body: string | null;
+  };
+  manualReviews: Array<{ result: string }>;
+}
+
 function importedDateLabel(value: Date) {
   const parts = [
     value.getUTCFullYear(),
@@ -33,6 +61,20 @@ function importedDateLabel(value: Date) {
     String(value.getUTCSeconds()).padStart(2, "0"),
   ];
   return `${parts.join("-")} ${time.join(":")}`;
+}
+
+const AUDIT_RESULT_EXCEL_PRODUCT_SERIES_NAMES: Record<string, string> = {
+  爱他美澳洲白金版: "澳白",
+  爱他美德国白金版: "德白",
+  爱他美奇迹绿罐: "绿罐",
+  爱他美亲熠5HMO: "白罐",
+  爱他美至熠: "至熠",
+};
+
+function auditResultExcelProductSeriesName(value: unknown) {
+  return typeof value === "string"
+    ? AUDIT_RESULT_EXCEL_PRODUCT_SERIES_NAMES[value] || value
+    : value;
 }
 
 function columns(
@@ -69,6 +111,112 @@ function list(value: string, separator: string) {
   } catch {
     return String(value || "");
   }
+}
+
+function compactSelfReview(row: CompactAuditResultExportSourceRow) {
+  const finalStatus = row.manualReviews[0]?.result || row.autoStatus;
+  if (finalStatus === "PASSED") return "Y";
+
+  const unavailable = isUnavailableNoteResult({
+    pageStatus: row.pageStatus,
+    failureReasons: row.failureReasons,
+    pageTitle: row.task.pageTitle,
+    note: { title: row.note.title, body: row.note.body },
+    task: {
+      failureCode: row.task.failureCode,
+      failureMessage: row.task.failureMessage,
+      pageTitle: row.task.pageTitle,
+      pageType: row.task.pageType,
+    },
+  });
+  const importedMetadata = importedTaskMetadataFromNotes(row.task.notes);
+  const failureReasonList = list(row.failureReasons, " ");
+  const evidence = [
+    row.pageStatus,
+    row.bodyStatus,
+    row.imageExtractionStatus,
+    row.imageStatus,
+    row.task.failureCode,
+    row.task.failureMessage,
+    row.failureReasons,
+    failureReasonList,
+    importedMetadata.contentChannel,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  if (
+    unavailable ||
+    /PAGE_NOT_FOUND|PAGE_UNAVAILABLE|NOT_ACCESSIBLE|HTTP[_ -]?404|\b404\b|页面(?:无法访问|不见了|不存在)|笔记不存在|无法浏览|链接失效|该内容无法查看/iu.test(
+      evidence,
+    )
+  ) {
+    return "N-帖子无法查看";
+  }
+  if (
+    /CONTENT_CHANNEL_UNSUPPORTED|UNSUPPORTED_CONTENT_CHANNEL|内容渠道.{0,8}(?:不支持|暂不支持)|(?:不支持|暂不支持).{0,8}内容渠道|非小红书|抖音|快手/iu.test(
+      evidence,
+    )
+  ) {
+    return "N-内容渠道不支持";
+  }
+  if (finalStatus !== "FAILED") return "";
+  if (
+    row.topicsCompliant === false ||
+    /TOPIC(?:S)?_(?:MISSING|NOT_MATCHED|NON_COMPLIANT)|缺少.{0,8}话题|话题.{0,8}(?:未命中|不合规|缺失)|阶段话题.{0,8}缺失|未识别到话题|缺少精确话题/iu.test(
+      evidence,
+    )
+  ) {
+    return "N-缺少话题";
+  }
+  if (
+    row.bodyStatus === "EMPTY" ||
+    /BODY_(?:EMPTY|MISSING|TOO_SHORT)|正文.{0,8}(?:不存在|为空|过短)|有效正文字数不足|字数.{0,8}(?:不足|不达标|不够)/iu.test(
+      evidence,
+    )
+  ) {
+    return "N-字数不够";
+  }
+  if (
+    row.imageStatus === "NON_COMPLIANT" ||
+    /IMAGE_COUNT_(?:INSUFFICIENT|INVALID)|图片(?:数量)?.{0,8}(?:不足|不达标|不合规)|图片不足/iu.test(
+      evidence,
+    )
+  ) {
+    return "N-图片不足";
+  }
+  if (
+    /BODY_STAGE_(?:MISMATCH|INVALID)|阶段.{0,8}(?:不匹配|不符)|段位.{0,8}(?:不属于|不匹配|不符)|IFFO.{0,12}GUM.{0,8}(?:不符|不匹配)|正文段位不属于|正文未出现对应段位/iu.test(
+      evidence,
+    )
+  ) {
+    return "N-阶段不符";
+  }
+  return "N-其他不合规";
+}
+
+/**
+ * 审核结果下载固定为十列，只读取这十列实际需要的数据。
+ * 历史结果中的规则快照或技术审核字段即使不完整，也不应阻断人工导出。
+ */
+export function auditResultToCompactExportRecord(
+  row: CompactAuditResultExportSourceRow,
+): ExportValueRecord {
+  const importedMetadata = importedTaskMetadataFromNotes(row.task.notes);
+  return {
+    platform: importedMetadata.platform || "小红书",
+    shopName: importedMetadata.shopName,
+    customerName: importedMetadata.customerName,
+    productName: row.task.product.seriesName || row.task.product.name,
+    productStageTopic: productStageTopicLabel(row.task.productStage),
+    orderNumber: importedMetadata.orderNumber,
+    contentChannel: importedMetadata.contentChannel || "小红书",
+    originalUrl: row.task.url,
+    publishTime: importedMetadata.publishTime
+      ? importedPublishTimeValue(importedMetadata.publishTime)
+      : row.note.publishedAt,
+    selfReview: compactSelfReview(row),
+  };
 }
 
 export function auditResultToExportRecord(row: {
@@ -163,27 +311,7 @@ export function auditResultToExportRecord(row: {
       pageType: row.task.pageType,
     },
   });
-  const imageProblem =
-    !unavailable &&
-    ([
-      row.imageExtractionStatus,
-      row.imageStatus,
-      row.task.failureCode,
-      row.task.failureMessage,
-      failureReasonList,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .match(
-        /IMAGES_READ_FAILED|IMAGE_COUNT_INSUFFICIENT|IMAGE_COUNT_INVALID|NON_COMPLIANT|图片读取失败|图片数量读取失败|图片数量不足|图片不足|图片数量不合规|看不到奶粉段数/iu,
-      ) !== null);
-  const selfReview = (manual?.result || row.autoStatus) === "PASSED"
-    ? "Y"
-    : unavailable
-      ? "N-帖子无法查看"
-      : imageProblem
-        ? "N-图片看不到奶粉段数"
-        : "";
+  const selfReview = compactSelfReview(row);
   const importedMetadata = importedTaskMetadataFromNotes(row.task.notes);
   const bodyStatus =
     row.bodyStatus === "PRESENT"
@@ -313,7 +441,10 @@ export async function buildConfiguredWorkbook(input: {
     sheet.addRow(
       Object.fromEntries(
         selected.map(({ field }) => {
-          const value = record[field];
+          const value =
+            kind === "auditResults" && field === "productName"
+              ? auditResultExcelProductSeriesName(record[field])
+              : record[field];
           return [
             field,
             value === "" || value == null
@@ -359,10 +490,13 @@ export async function buildConfiguredWorkbook(input: {
       sheet.getCell(row, selfReviewColumn).dataValidation = {
         type: "list",
         allowBlank: true,
-        formulae: ['"Y,N-帖子无法查看,N-图片看不到奶粉段数"'],
+        formulae: [
+          '"Y,N-帖子无法查看,N-内容渠道不支持,N-缺少话题,N-字数不够,N-图片不足,N-阶段不符,N-其他不合规"',
+        ],
         showErrorMessage: true,
         errorTitle: "自审值无效",
-        error: "请选择 Y、N-帖子无法查看、N-图片看不到奶粉段数，或留空。",
+        error:
+          "请选择 Y 或一个预设的 N 类原因，也可以留空。",
       };
     }
   }

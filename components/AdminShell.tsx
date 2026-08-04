@@ -30,6 +30,7 @@ import type { SessionUser } from "@/lib/auth";
 import { apiFetch } from "@/lib/client";
 import VeridiaLogo from "@/components/VeridiaLogo";
 import DesktopUpdateCenter from "@/components/DesktopUpdateCenter";
+import { canAccessSystemSettings } from "@/lib/permissions";
 
 const { Sider, Header, Content } = Layout;
 
@@ -87,7 +88,7 @@ const items = [
   { key: "/campaigns", icon: <AppstoreOutlined />, label: "活动管理", roles: ["ADMIN", "OPERATOR"] },
   { key: "/rules", icon: <TagsOutlined />, label: "话题规则", roles: ["ADMIN", "OPERATOR"] },
   { key: "/imports", icon: <ImportOutlined />, label: "导入记录", roles: ["ADMIN", "OPERATOR"] },
-  { key: "/settings", icon: <SettingOutlined />, label: "系统设置", roles: ["ADMIN", "OPERATOR", "VIEWER"] },
+  { key: "/settings", icon: <SettingOutlined />, label: "系统设置", roles: ["ADMIN"] },
 ];
 
 export default function AdminShell({
@@ -102,6 +103,7 @@ export default function AdminShell({
   const router = useRouter();
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const canManageSystem = canAccessSystemSettings(user.role);
   const visibleItems = items.filter((item) => item.roles.includes(user.role));
   const selected =
     visibleItems.find((item) => pathname === item.key || pathname.startsWith(`${item.key}/`))
@@ -160,7 +162,7 @@ export default function AdminShell({
       }}
     >
       <App>
-        <RuleUpdateChecker enabled={user.role === "ADMIN" && !previewMode} />
+        <RuleUpdateChecker enabled={canManageSystem && !previewMode} />
         <Layout
           className={`admin-shell${collapsed ? " admin-shell-collapsed" : ""}`}
         >
@@ -237,7 +239,7 @@ export default function AdminShell({
               </Space>
             </Header>
             <Content className="admin-content">{children}</Content>
-            <DesktopUpdateCenter />
+            {canManageSystem && <DesktopUpdateCenter />}
           </Layout>
         </Layout>
       </App>

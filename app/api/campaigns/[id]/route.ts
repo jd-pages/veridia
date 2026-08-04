@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
+import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 
 export async function GET(
   _request: Request,
@@ -23,14 +25,30 @@ export async function GET(
       },
     },
   });
-  return campaign ? ok(campaign) : fail("活动不存在", 404);
+  if (!campaign) return fail("活动不存在", 404);
+  const brandNames = [
+    ...new Set(
+      [
+        campaign.product?.brandName,
+        ...campaign.products.map(({ product }) => product.brandName),
+      ].filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  return ok({
+    ...campaign,
+    brandNames,
+    topicRules: campaign.topicRules.filter(
+      (rule) => rule.brandName && brandNames.includes(rule.brandName),
+    ),
+    minBodyLength: MIN_BODY_LENGTH,
+  });
 }
 
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const { id } = await params;
   const body = (await request.json()) as Record<string, unknown>;
@@ -50,9 +68,7 @@ export async function PUT(
         ...(typeof body.minImageCount === "number"
           ? { minImageCount: Math.max(0, Math.floor(body.minImageCount)) }
           : {}),
-        ...(typeof body.minBodyLength === "number"
-          ? { minBodyLength: body.minBodyLength }
-          : {}),
+        minBodyLength: MIN_BODY_LENGTH,
         productImageRequired: false,
         firstImageRequirement: null,
         prohibitedImageGuidance: null,
@@ -101,7 +117,7 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const { id } = await params;
   try {

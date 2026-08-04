@@ -1,11 +1,12 @@
 import { fail, ok, requireApiUser } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 import { controlAutomaticBatch } from "@/lib/automation/queue";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser(["ADMIN", "OPERATOR"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const { id } = await params;
   const body = (await request.json()) as {

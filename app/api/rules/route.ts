@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { normalizeTopic } from "@/lib/topic";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -8,8 +9,9 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const campaignId = searchParams.get("campaignId") || undefined;
   const productId = searchParams.get("productId") || undefined;
+  const brandName = searchParams.get("brandName")?.trim() || undefined;
   const rules = await prisma.topicRule.findMany({
-    where: { campaignId, productId },
+    where: { campaignId, productId, brandName },
     include: { campaign: true, product: true },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
@@ -17,11 +19,12 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
 }, "读取话题规则");
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
     campaignId?: string;
     productId?: string;
+    brandName?: string;
     scope?: string;
     ruleType?: string;
     topicCategory?: string;
@@ -37,9 +40,36 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   };
   const topic = normalizeTopic(body.topic || "");
   if (!body.ruleType || !topic) return fail("规则类型和标准话题为必填项");
+  const brandName = body.brandName?.trim();
+  if (!brandName) return fail("规则必须归属品牌");
   const ruleType = body.ruleType;
   if ((body.scope ?? "CAMPAIGN") === "CAMPAIGN" && !body.campaignId) {
     return fail("活动规则必须选择所属活动");
+  }
+  if (body.productId) {
+    const product = await prisma.product.findUnique({
+      where: { id: body.productId },
+      select: { brandName: true },
+    });
+    if (!product || product.brandName !== brandName) {
+      return fail("所选产品不属于当前品牌");
+    }
+  }
+  if (body.campaignId) {
+    const campaign = await prisma.campaign.findUnique({
+      where: { id: body.campaignId },
+      include: {
+        product: { select: { brandName: true } },
+        products: { include: { product: { select: { brandName: true } } } },
+      },
+    });
+    const campaignBrands = [
+      campaign?.product?.brandName,
+      ...(campaign?.products || []).map(({ product }) => product.brandName),
+    ];
+    if (!campaign || !campaignBrands.includes(brandName)) {
+      return fail("所选活动不属于当前品牌");
+    }
   }
   try {
     const rule = await prisma.$transaction(async (tx) => {
@@ -54,6 +84,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
       return tx.topicRule.create({
         data: {
           ruleSource: "LOCAL_DRAFT",
+          brandName,
           campaignId: body.campaignId || null,
           productId: body.productId || null,
           scope: body.scope || "CAMPAIGN",

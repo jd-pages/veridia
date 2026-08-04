@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 import { normalizeTopic } from "@/lib/topic";
 import {
   DEFAULT_PAGE_STATUS_RULES,
@@ -73,6 +74,7 @@ const payloadSchema = z.object({
   topicRules: z.array(
     z.object({
       key: nonEmpty,
+      brand: nonEmpty.nullable().optional(),
       campaignKey: nullableText,
       productKey: nullableText,
       scope: nonEmpty,
@@ -105,6 +107,10 @@ function stableKey(prefix: string, parts: Array<string | null | undefined>) {
   return `${prefix}_${digest}`;
 }
 
+function normalizedRuleBrand(brand: string | null | undefined) {
+  return brand?.trim() === "爱他美" ? "达能" : brand?.trim() || null;
+}
+
 function uniqueValues(values: string[], label: string) {
   const seen = new Set<string>();
   for (const value of values) {
@@ -126,7 +132,20 @@ export function validateRulePayload(input: unknown): RulePackagePayload {
   uniqueValues(payload.topicRules.map((item) => item.key), "话题规则键");
 
   const productKeys = new Set(payload.products.map((item) => item.key));
+  const productBrandByKey = new Map(
+    payload.products.map((item) => [item.key, normalizedRuleBrand(item.brand)]),
+  );
   const campaignKeys = new Set(payload.campaigns.map((item) => item.key));
+  const campaignBrandsByKey = new Map(
+    payload.campaigns.map((campaign) => [
+      campaign.key,
+      new Set(
+        campaign.productKeys
+          .map((key) => productBrandByKey.get(key))
+          .filter((brand): brand is string => Boolean(brand)),
+      ),
+    ]),
+  );
   const stageKeys = new Set(payload.stageGroups.map((item) => item.key));
   for (const campaign of payload.campaigns) {
     for (const key of campaign.productKeys) {
@@ -144,6 +163,20 @@ export function validateRulePayload(input: unknown): RulePackagePayload {
     }
     if (rule.campaignKey && !campaignKeys.has(rule.campaignKey)) {
       throw new Error(`话题规则引用了不存在的活动：${rule.campaignKey}`);
+    }
+    const ruleBrand = normalizedRuleBrand(rule.brand);
+    const productBrand = rule.productKey
+      ? productBrandByKey.get(rule.productKey)
+      : null;
+    if (ruleBrand && productBrand && ruleBrand !== productBrand) {
+      throw new Error(`话题规则品牌与所属产品不一致：${rule.topic}`);
+    }
+    if (
+      ruleBrand &&
+      rule.campaignKey &&
+      !campaignBrandsByKey.get(rule.campaignKey)?.has(ruleBrand)
+    ) {
+      throw new Error(`话题规则品牌与所属活动不一致：${rule.topic}`);
     }
     if (
       rule.topicCategory === "PRODUCT_STAGE" &&
@@ -188,6 +221,19 @@ export async function exportCurrentRulePayload(options?: {
       product.publishedKey ||
         stableKey("product", [product.code, product.brandName, product.name]),
     ]),
+  );
+  const productBrandById = new Map(
+    products.map((product) => [product.id, product.brandName]),
+  );
+  const campaignBrandById = new Map(
+    campaigns.map((campaign) => {
+      const firstProductId =
+        campaign.products[0]?.productId || campaign.productId || null;
+      return [
+        campaign.id,
+        firstProductId ? productBrandById.get(firstProductId) || null : null,
+      ];
+    }),
   );
   const campaignKeyById = new Map(
     campaigns.map((campaign) => [
@@ -245,7 +291,7 @@ export async function exportCurrentRulePayload(options?: {
             : [],
       minImageCount: campaign.minImageCount,
       bodyRequired: campaign.bodyRequired,
-      minBodyLength: campaign.minBodyLength,
+      minBodyLength: MIN_BODY_LENGTH,
       publicRequired: campaign.publicRequired,
       retentionDays: campaign.retentionDays,
       rewardDescription: campaign.rewardDescription,
@@ -259,12 +305,18 @@ export async function exportCurrentRulePayload(options?: {
       key:
         rule.publishedKey ||
         stableKey("topic", [
+          rule.brandName,
           rule.campaignId ? campaignKeyById.get(rule.campaignId) : "global",
           rule.productId ? productKeyById.get(rule.productId) : "all-products",
           rule.topicCategory,
           rule.applicableStage,
           normalizeTopic(rule.topic),
         ]),
+      brand:
+        rule.brandName ||
+        (rule.productId ? productBrandById.get(rule.productId) : null) ||
+        (rule.campaignId ? campaignBrandById.get(rule.campaignId) : null) ||
+        null,
       campaignKey: rule.campaignId
         ? campaignKeyById.get(rule.campaignId) || null
         : null,
@@ -374,7 +426,7 @@ export async function applyRulePayload(
               ruleSource: source,
               code: item.code,
               name: item.name,
-              brandName: item.brand,
+              brandName: normalizedRuleBrand(item.brand)!,
               seriesName: item.series,
               category: item.category,
               contentDirection: item.contentDirection,
@@ -388,7 +440,7 @@ export async function applyRulePayload(
               ruleSource: source,
               code: item.code,
               name: item.name,
-              brandName: item.brand,
+              brandName: normalizedRuleBrand(item.brand)!,
               seriesName: item.series,
               category: item.category,
               contentDirection: item.contentDirection,
@@ -427,7 +479,7 @@ export async function applyRulePayload(
         endDate: new Date(item.endDate),
         minImageCount: item.minImageCount,
         bodyRequired: item.bodyRequired,
-        minBodyLength: item.minBodyLength,
+        minBodyLength: MIN_BODY_LENGTH,
         publicRequired: item.publicRequired,
         retentionDays: item.retentionDays,
         rewardDescription: item.rewardDescription,
@@ -483,6 +535,24 @@ export async function applyRulePayload(
     }
 
     for (const item of payload.topicRules) {
+      const inferredBrand = normalizedRuleBrand(
+        item.brand ||
+        (item.productKey
+          ? payload.products.find((product) => product.key === item.productKey)
+              ?.brand
+          : null) ||
+        (item.campaignKey
+          ? payload.campaigns
+              .find((campaign) => campaign.key === item.campaignKey)
+              ?.productKeys.map(
+                (productKey) =>
+                  payload.products.find((product) => product.key === productKey)
+                    ?.brand,
+              )
+              .find(Boolean)
+          : null) ||
+        null,
+      );
       const data = {
         publishedKey: item.key,
         ruleSource: source,
@@ -492,6 +562,7 @@ export async function applyRulePayload(
         productId: item.productKey
           ? productIds.get(item.productKey) || null
           : null,
+        brandName: inferredBrand,
         scope: item.scope,
         ruleType: item.ruleType,
         topicCategory: item.topicCategory,

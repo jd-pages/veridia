@@ -7,6 +7,7 @@ import { payloadSha256, validateRulePayload } from "@/lib/rules/package";
 import defaultTemplates from "@/rules/default-import-export-templates.json";
 import {
   isRulePackageCompatible,
+  ruleSyncFailureDetails,
   validateRuleManifest,
   verifyRuleManifestSignature,
 } from "@/lib/rules/sync";
@@ -25,6 +26,42 @@ describe("GitHub 规则同步", () => {
       payload.stageGroups.every((item) => item.requireBodyStage === false),
     ).toBe(true);
     expect(payload.topicRules.length).toBe(9);
+    expect(payload.products.every((item) => item.brand === "达能")).toBe(true);
+    expect(payload.topicRules.every((item) => item.brand === "达能")).toBe(
+      true,
+    );
+  });
+
+  it("旧规则包品牌字段可缺省，同名阶段话题可按品牌分别存在", () => {
+    const legacy = structuredClone(builtinRules) as unknown as {
+      topicRules: Array<Record<string, unknown>>;
+    };
+    for (const rule of legacy.topicRules) delete rule.brand;
+    expect(validateRulePayload(legacy).topicRules).toHaveLength(9);
+
+    const multiBrand = structuredClone(builtinRules);
+    multiBrand.products.push({
+      ...multiBrand.products[0],
+      key: "product_kabrita",
+      name: "佳贝艾特示例产品",
+      brand: "佳贝艾特",
+      series: "佳贝艾特示例产品",
+      aliases: ["佳贝艾特示例"],
+    });
+    multiBrand.campaigns.push({
+      ...multiBrand.campaigns[0],
+      key: "activity_kabrita",
+      name: "佳贝艾特示例活动",
+      productKeys: ["product_kabrita"],
+    });
+    multiBrand.topicRules.push({
+      ...multiBrand.topicRules[6],
+      key: "topic_kabrita_stage",
+      brand: "佳贝艾特",
+      campaignKey: "activity_kabrita",
+      productKey: null,
+    });
+    expect(validateRulePayload(multiBrand).topicRules).toHaveLength(10);
   });
 
   it("旧规则包缺少正文段位开关时保持原校验语义", () => {
@@ -126,6 +163,37 @@ describe("GitHub 规则同步", () => {
     expect(isRulePackageCompatible("1.0.1", "1.0.2")).toBe(false);
     expect(isRulePackageCompatible("1.0.2", "1.0.2")).toBe(true);
     expect(isRulePackageCompatible("1.1.0", "1.0.2")).toBe(true);
+  });
+
+  it("保留普通客户端规则同步的真实错误码和技术原因", () => {
+    expect(
+      ruleSyncFailureDetails(
+        Object.assign(new Error("临时目录拒绝写入"), { code: "EACCES" }),
+        "RULE_SYNC_FAILED",
+      ),
+    ).toEqual({
+      errorCode: "EACCES",
+      technicalMessage: "临时目录拒绝写入",
+    });
+    expect(
+      ruleSyncFailureDetails(
+        new Error("fetch failed", {
+          cause: Object.assign(new Error("连接超时"), {
+            code: "ETIMEDOUT",
+          }),
+        }),
+        "RULE_SYNC_FAILED",
+      ),
+    ).toEqual({
+      errorCode: "ETIMEDOUT",
+      technicalMessage: "fetch failed；连接超时",
+    });
+    expect(
+      ruleSyncFailureDetails("unknown", "RULE_CHECK_FAILED"),
+    ).toEqual({
+      errorCode: "RULE_CHECK_FAILED",
+      technicalMessage: "未知规则同步错误",
+    });
   });
 
   it("客户端同步实现不包含上传方法、遥测或 GitHub Token", () => {

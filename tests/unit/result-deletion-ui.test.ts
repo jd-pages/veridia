@@ -7,10 +7,10 @@ function source(relativePath: string) {
 }
 
 describe("审核结果删除界面", () => {
-  it("管理员保留单条删除，管理员和审核员共享批量删除", () => {
+  it("管理员和审核员共享单条与批量删除", () => {
     const page = source("app/(admin)/results/page.tsx");
     const batchBar = source("components/results/BatchActionBar.tsx");
-    expect(page).toContain('const canDeleteSingle = currentRole === "ADMIN"');
+    expect(page).toContain("const canDeleteSingle = canOperate");
     expect(page).toContain("const canDeleteBatch = canOperate");
     expect(page).toContain("if (canDeleteSingle)");
     expect(page).toContain("canDelete={canDeleteBatch}");

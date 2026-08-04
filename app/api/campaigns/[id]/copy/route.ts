@@ -1,12 +1,14 @@
 import dayjs from "dayjs";
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
+import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await requireApiUser(["ADMIN"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const { id } = await params;
   const body = (await request.json().catch(() => ({}))) as {
@@ -37,7 +39,7 @@ export async function POST(
         firstImageRequirement: null,
         prohibitedImageGuidance: null,
         bodyRequired: source.bodyRequired,
-        minBodyLength: source.minBodyLength,
+        minBodyLength: MIN_BODY_LENGTH,
         publicRequired: source.publicRequired,
         retentionDays: source.retentionDays,
         rewardDescription: source.rewardDescription,
@@ -53,6 +55,7 @@ export async function POST(
         topicRules: {
           create: source.topicRules.map((rule) => ({
             ruleSource: "LOCAL_DRAFT",
+            brandName: rule.brandName,
             productId: rule.productId,
             scope: "CAMPAIGN",
             ruleType: rule.ruleType,

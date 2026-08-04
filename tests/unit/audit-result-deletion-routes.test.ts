@@ -95,11 +95,16 @@ describe("审核结果删除接口权限与输入", () => {
     });
   });
 
-  it("OPERATOR 只能批量删除，不能调用管理员单条删除接口", async () => {
+  it("OPERATOR 与 ADMIN 一样可以单条和批量删除审核结果", async () => {
     mocks.getSession.mockResolvedValue(users.OPERATOR);
-    expect((await singleDelete()).status).toBe(403);
+    expect((await singleDelete()).status).toBe(200);
     expect((await batchDelete(["result-1"])).status).toBe(200);
-    expect(mocks.deleteAuditResults).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteAuditResults).toHaveBeenCalledTimes(2);
+    expect(mocks.deleteAuditResults).toHaveBeenNthCalledWith(1, {
+      ids: ["result-1"],
+      userId: "operator-1",
+      mode: "SINGLE",
+    });
     expect(mocks.deleteAuditResults).toHaveBeenCalledWith({
       ids: ["result-1"],
       userId: "operator-1",

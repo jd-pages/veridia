@@ -4,6 +4,10 @@ import { prisma } from "@/lib/db";
 import { effectiveAccountStatus } from "@/lib/accounts/validation";
 import type { LocalAccountRole } from "@/lib/accounts/types";
 import { ensureLocalPreviewRuntime } from "@/lib/local-runtime";
+import {
+  canAccessBusiness,
+  canAccessSystemSettings,
+} from "@/lib/permissions";
 
 const COOKIE_NAME = "veridia_local_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 365 * 10;
@@ -135,9 +139,9 @@ export async function getSession(): Promise<SessionUser | null> {
 }
 
 export function canManage(user: SessionUser | null) {
-  return user?.role === "ADMIN";
+  return canAccessSystemSettings(user?.role);
 }
 
 export function canOperate(user: SessionUser | null) {
-  return user?.role === "ADMIN" || user?.role === "OPERATOR";
+  return canAccessBusiness(user?.role);
 }

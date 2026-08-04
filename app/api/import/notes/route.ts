@@ -5,6 +5,7 @@ import {
   type NoteLinkPlatform,
 } from "@/lib/note-links";
 import { fail, ok, requireApiUser } from "@/lib/api";
+import { BUSINESS_ROLES } from "@/lib/permissions";
 import {
   createAutomaticBatchInTransaction,
   type AutomaticTaskInput,
@@ -60,7 +61,7 @@ interface CheckedRow {
 }
 
 export async function POST(request: Request) {
-  const user = await requireApiUser(["ADMIN", "OPERATOR"]);
+  const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const form = await request.formData();
   const file = form.get("file");
@@ -162,6 +163,9 @@ export async function POST(request: Request) {
         checked.productId = product.id;
         checked.productName = product.name;
         checked.productCode = product.code || checked.productCode;
+        if (!product.brandName.trim()) {
+          checked.errors.push("产品未配置品牌，无法加载话题规则");
+        }
       }
 
       const campaign = product
@@ -198,9 +202,10 @@ export async function POST(request: Request) {
       if (!importedStage) {
         checked.errors.push("产品阶段话题请填写 IFFO 或 GUM。");
       }
-      const stageRules = campaign
+      const stageRules = campaign && product?.brandName.trim()
         ? await prisma.topicRule.findMany({
             where: {
+              brandName: product.brandName,
               campaignId: campaign.id,
               topicCategory: "PRODUCT_STAGE",
               status: "ACTIVE",
@@ -299,6 +304,9 @@ export async function POST(request: Request) {
 
     return ok({
       ...tabular,
+      missingRequiredFields: tabular.missingRequiredFields.map(
+        (field) => templates.fieldDefinitions[field].displayName,
+      ),
       validCount: validRows.length,
       invalidCount: rows.length - validRows.length,
       imported,
