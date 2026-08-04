@@ -56,11 +56,14 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   expect(kabritaButtonBox).not.toBeNull();
   expect(Math.abs(danoneBox!.width - kabritaBox!.width)).toBeLessThanOrEqual(1);
   expect(Math.abs(danoneBox!.height - kabritaBox!.height)).toBeLessThanOrEqual(1);
+  const danoneButtonBottomInset =
+    danoneBox!.y + danoneBox!.height -
+    (danoneButtonBox!.y + danoneButtonBox!.height);
+  const kabritaButtonBottomInset =
+    kabritaBox!.y + kabritaBox!.height -
+    (kabritaButtonBox!.y + kabritaButtonBox!.height);
   expect(
-    Math.abs(
-      danoneButtonBox!.y + danoneButtonBox!.height -
-        (kabritaButtonBox!.y + kabritaButtonBox!.height),
-    ),
+    Math.abs(danoneButtonBottomInset - kabritaButtonBottomInset),
   ).toBeLessThanOrEqual(1);
 
   await page.setViewportSize({ width: 390, height: 844 });

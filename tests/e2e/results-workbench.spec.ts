@@ -14,6 +14,22 @@ const resultExportHeaders = [
   "自审",
 ];
 
+const kabritaResultExportHeaders = [
+  "登记时间",
+  "渠道",
+  "店铺名称",
+  "客户备注",
+  "买家购买ID",
+  "购买订单号",
+  "购买时间",
+  "购买罐数",
+  "参与次数",
+  "发布小红书账号",
+  "小红书发布链接",
+  "购买产品线",
+  "是否符合",
+];
+
 const removedResultExportHeaders = [
   "异常分类",
   "笔记链接",
@@ -46,6 +62,13 @@ const removedResultExportHeaders = [
   "noteContent",
   "contentText",
 ];
+
+function resultExportFileNamePattern(scope: "当前筛选" | "所选结果") {
+  return new RegExp(
+    `^VERIDIA(?:佳贝艾特)?审核结果_${scope}_\\d{8}_\\d{6}\\.xlsx$`,
+    "u",
+  );
+}
 
 async function login(page: Page) {
   const response = await page.request.post("/api/auth/login", {
@@ -195,7 +218,7 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await expect.poll(() => exportRequests.length).toBe(1);
   expect(context.pages()).toHaveLength(pagesBeforeExport);
   expect(download.suggestedFilename()).toMatch(
-    /^VERIDIA审核结果_当前筛选_\d{8}_\d{6}\.xlsx$/u,
+    resultExportFileNamePattern("当前筛选"),
   );
   const exportedUrl = new URL(exportRequests[0]);
   expect(exportedUrl.searchParams.get("startDate")).toMatch(
@@ -250,15 +273,20 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   const selectedDownloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "导出所选" }).click();
   const selectedDownload = await selectedDownloadPromise;
-  expect(selectedDownload.suggestedFilename()).toMatch(
-    /^VERIDIA审核结果_所选结果_\d{8}_\d{6}\.xlsx$/u,
+  const selectedFileName = selectedDownload.suggestedFilename();
+  expect(selectedFileName).toMatch(
+    resultExportFileNamePattern("所选结果"),
   );
   const selectedWorkbook = new ExcelJS.Workbook();
   await selectedWorkbook.xlsx.readFile((await selectedDownload.path())!);
   expect(selectedWorkbook.worksheets[0].rowCount - 1).toBe(1);
   const selectedHeaders = selectedWorkbook.worksheets[0].getRow(1)
     .values as unknown[];
-  expect(selectedHeaders.slice(1)).toEqual(resultExportHeaders);
+  expect(selectedHeaders.slice(1)).toEqual(
+    selectedFileName.startsWith("VERIDIA佳贝艾特")
+      ? kabritaResultExportHeaders
+      : resultExportHeaders,
+  );
   for (const removedHeader of removedResultExportHeaders) {
     expect(selectedHeaders).not.toContain(removedHeader);
   }

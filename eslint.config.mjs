@@ -13,10 +13,12 @@ export default defineConfig([
   globalIgnores([
     ".next/**",
     ".next-preview-*/**",
+    ".playwright/**",
     "node_modules/**",
     "coverage/**",
     "playwright-report/**",
     "test-results/**",
+    "dist/**",
     "dist-installer/**",
     "desktop-runtime/**",
     "release/**",
