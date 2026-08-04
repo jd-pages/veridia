@@ -534,6 +534,78 @@
   margin-bottom: 0;
 }
 
+.excelImportStack {
+  width: 100%;
+  min-width: 0;
+}
+
+.excelImportStack > :global(.ant-space-item) {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.previewTableShell {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding-right: 2px;
+}
+
+.previewTableShell :global(.ant-table-wrapper),
+.previewTableShell :global(.ant-spin-nested-loading),
+.previewTableShell :global(.ant-spin-container) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.previewTableShell :global(.ant-table-content) {
+  overflow-x: auto !important;
+  scrollbar-gutter: stable;
+}
+
+.previewTableShell :global(.ant-table-cell) {
+  box-sizing: border-box;
+}
+
+.previewTableShell :global(.ant-pagination) {
+  padding-right: 8px;
+}
+
+.previewEllipsis {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewWrap,
+.previewResult {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.previewHeaderWrap {
+  display: inline-block;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.stageTopicCell {
+  display: flex;
+  min-width: 0;
+  justify-content: center;
+}
+
+.stageTopicCell :global(.ant-tag) {
+  max-width: 100%;
+  margin-inline-end: 0;
+}
+
 .sequence,
 .sourceCode {
   color: #667085;

@@ -124,6 +124,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     campaign: {
       customerRegistrationNotes: string;
       minImageCount?: number;
+      minBodyLength: number;
     };
     topicRules: Array<{ productName: string | null; topic: string }>;
   };
@@ -131,6 +132,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     /图片.*不参与自动审核/u,
   );
   expect(rulePreview.campaign.minImageCount).toBe(2);
+  expect(rulePreview.campaign.minBodyLength).toBe(30);
   expect(
     rulePreview.topicRules.find(
       (rule) => rule.topic === "#爱他美澳洲白金版",
@@ -213,9 +215,17 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const exportedSelfReview = exportSheet
     .getRow(2)
     .getCell(selfReviewColumn).text;
-  expect(["Y", "N-帖子无法查看", "N-图片看不到奶粉段数", ""]).toContain(
-    exportedSelfReview,
-  );
+  expect([
+    "Y",
+    "N-帖子无法查看",
+    "N-内容渠道不支持",
+    "N-缺少话题",
+    "N-字数不够",
+    "N-图片不足",
+    "N-阶段不符",
+    "N-其他不合规",
+    "",
+  ]).toContain(exportedSelfReview);
 
   const emptyExportResponse = await page.request.get(
     `/api/results/export?keyword=no-export-${suffix}`,
@@ -278,19 +288,62 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "客户名（必填）",
     "产品系列（必填）",
     "阶段（IFFO/GUM）",
-    "订单编号（必填）",
+    "订单编号",
     "内容渠道（必填）",
     "链接（必填）",
     "发帖时间（必填）",
   ]);
   const downloadedTemplateSheet = noteTemplateWorkbook.worksheets[0];
+  for (let index = 0; index < 9; index += 1) {
+    downloadedTemplateSheet.getRow(index + 2).values = [
+      "小红书",
+      "E2E 店铺",
+      "E2E 客户",
+      product.name,
+      "IFFO",
+      "",
+      "小红书",
+      `${E2E_ORIGIN}/mock/xhs?case=passed&preview-layout=${suffix}-${index}`,
+      "2026-08-03 12:00:00",
+    ];
+  }
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "preview-layout.xlsx",
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: Buffer.from(await noteTemplateWorkbook.xlsx.writeBuffer()),
+  });
+  await page.getByRole("button", { name: "开始预检查" }).click();
+  await expect(page.getByText("可导入 9 条，异常 0 条")).toBeVisible();
+  const previewTableContent = page.locator(".ant-table-content").last();
+  await previewTableContent.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+  const previewResultHeader = page.getByRole("columnheader", {
+    name: "预检结果",
+  });
+  await expect(previewResultHeader).toBeVisible();
+  const [tableBox, resultBox] = await Promise.all([
+    previewTableContent.boundingBox(),
+    previewResultHeader.boundingBox(),
+  ]);
+  expect(tableBox).not.toBeNull();
+  expect(resultBox).not.toBeNull();
+  expect(resultBox!.x).toBeGreaterThanOrEqual(tableBox!.x - 1);
+  expect(resultBox!.x + resultBox!.width).toBeLessThanOrEqual(
+    tableBox!.x + tableBox!.width + 1,
+  );
+  await page.locator(".ant-pagination-item-2").last().click();
+  await expect(page.getByRole("cell", { name: "10", exact: true })).toBeVisible();
+  await expect(previewResultHeader).toBeVisible();
+  downloadedTemplateSheet.spliceRows(2, 9);
   downloadedTemplateSheet.getRow(2).values = [
     "小红书",
     "E2E 店铺",
     "E2E 客户",
     product.name,
     "IFFO",
-    `E2E-${suffix}`,
+    "",
     "小红书",
     `${E2E_ORIGIN}/mock/xhs?case=passed&minimal-template=${suffix}`,
     "2026-08-03 12:00:00",
@@ -319,6 +372,14 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     ["COMPLETED"],
   );
   expect(minimalTemplateBatch.stats.succeeded).toBe(1);
+  const minimalTemplateTask = (
+    (await (await page.request.get("/api/tasks")).json()).data as Array<{
+      url: string;
+      notes: string | null;
+    }>
+  ).find((task) => task.url.includes(`minimal-template=${suffix}`));
+  expect(minimalTemplateTask).toBeTruthy();
+  expect(minimalTemplateTask?.notes).not.toContain("订单编号：");
 
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("导入");

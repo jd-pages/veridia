@@ -5,6 +5,8 @@ import {
 } from "@/lib/audit-engine";
 import { createMockNote } from "@/lib/mock-data";
 import type { AuditContext } from "@/lib/types";
+import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
+import defaultRules from "@/rules/default-rules.json";
 
 const context: AuditContext = {
   productId: "p1",
@@ -12,7 +14,7 @@ const context: AuditContext = {
   campaignName: "测试活动",
   ruleVersion: 3,
   minImageCount: 2,
-  minBodyLength: 1,
+  minBodyLength: MIN_BODY_LENGTH,
   publicRequired: false,
   retentionDays: 0,
   bodyRequired: true,
@@ -82,7 +84,7 @@ describe("audit engine", () => {
 
   it("话题技术读取失败时保留正文结论并进入待人工复核", () => {
     const note = createMockNote("no-topics");
-    note.body = "这是一段长度足够且可以正常参与固定规则审核的正文内容。";
+    note.body = "这是一段长度足够且可以正常参与固定规则审核的正文内容。".repeat(2);
     note.technicalWarnings = ["TOPICS_NOT_RECOGNIZED"];
     const result = evaluateAudit(note, context);
     expect(result.bodyStatus).toBe("PRESENT");
@@ -294,13 +296,37 @@ describe("audit engine", () => {
     expect(result.forbiddenTopics).toContain("#治疗挑食");
   });
 
-  it("正文字数排除话题、链接、空白和纯标点，并严格执行至少 41 字", () => {
+  it("保持现有正文清洗方式并严格执行 29/30/31 字边界", () => {
     expect(
       countEffectiveBodyCharacters(
-        `${"好".repeat(40)} #爱他美新手爸妈日记 https://example.com ，。！？`,
+        `${"好".repeat(29)} #爱他美新手爸妈日记 https://example.com ，。！？`,
       ),
-    ).toBe(40);
-    expect(countEffectiveBodyCharacters("好".repeat(41))).toBe(41);
+    ).toBe(29);
+
+    const bodyRulePassed = (length: number) => {
+      const note = createMockNote("passed");
+      note.body = "好".repeat(length);
+      const result = evaluateAudit(note, context);
+      return {
+        passed: result.ruleResults.find(
+          (rule) => rule.ruleKey === "GLOBAL_BODY",
+        )?.passed,
+        failures: result.failureReasons,
+      };
+    };
+    expect(bodyRulePassed(29)).toMatchObject({ passed: false });
+    expect(bodyRulePassed(29).failures).toContain(
+      "有效正文字数不足（29/30）",
+    );
+    expect(bodyRulePassed(30)).toMatchObject({ passed: true });
+    expect(bodyRulePassed(31)).toMatchObject({ passed: true });
+  });
+
+  it("内置活动规则正文最低字数统一为 30", () => {
+    expect(MIN_BODY_LENGTH).toBe(30);
+    expect(defaultRules.campaigns.every(
+      (campaign) => campaign.minBodyLength === MIN_BODY_LENGTH,
+    )).toBe(true);
   });
 
   it("只审核当前段位话题，且同名普通文本不能代替可点击话题", () => {
@@ -312,7 +338,7 @@ describe("audit engine", () => {
       milkType: "IFFO",
       ruleVersion: 1,
       minImageCount: 2,
-      minBodyLength: 41,
+      minBodyLength: MIN_BODY_LENGTH,
       publicRequired: true,
       retentionDays: 15,
       bodyRequired: true,
@@ -455,7 +481,7 @@ describe("audit engine", () => {
       ],
     };
     const note = createMockNote("passed");
-    note.body = "这是一次真实的喂养体验记录，正文不包含任何产品段位描述。";
+    note.body = "这是一次真实的喂养体验记录，正文不包含任何产品段位描述。".repeat(2);
     note.topics = [
       {
         displayText: "#二段奶粉推荐",

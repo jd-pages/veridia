@@ -94,7 +94,7 @@
       ],
       "minImageCount": 2,
       "bodyRequired": true,
-      "minBodyLength": 41,
+      "minBodyLength": 30,
       "publicRequired": true,
       "retentionDays": 15,
       "rewardDescription": "50元/篇；*帖子需符合要求通过审核并保留15天，才可发放奖励",

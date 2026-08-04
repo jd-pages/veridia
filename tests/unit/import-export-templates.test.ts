@@ -34,11 +34,11 @@ describe("远程表格模板配置", () => {
       "customerName",
       "productName",
       "productStage",
-      "orderNumber",
       "contentChannel",
       "noteUrl",
       "publishTime",
     ]);
+    expect(templates.optionalFields).toContain("orderNumber");
     expect(templates.fieldAliases.noteUrl).toContain("小红书链接");
     expect(templates.sourcePresets.TENCENT_DOCS_EXPORTED_XLSX?.localOnly).toBe(
       true,
@@ -171,7 +171,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
 
   it("新九列表格读取人工识别字段并继续识别小红书短链接", async () => {
     const csv = [
-      "平台（必填）,店铺名称（必填）,客户名（必填）,产品系列（必填）,阶段（IFFO/GUM）,订单编号（必填）,内容渠道（必填）,链接（必填）,发帖时间（必填）",
+      "平台（必填）,店铺名称（必填）,客户名（必填）,产品系列（必填）,阶段（IFFO/GUM）,订单编号,内容渠道（必填）,链接（必填）,发帖时间（必填）",
       "小红书,示例店铺,示例客户,爱他美奇迹绿罐,IFFO,ORDER-1001,小红书,https://xhslink.com/new-template,2026-08-03 12:00:00",
     ].join("\r\n");
     const result = await parseTabularPreview({
@@ -212,10 +212,60 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       sourceType: "CSV",
       templates,
     });
-    expect(missingOrder.validCount).toBe(0);
-    expect(missingOrder.rows[0].errors).toContain(
-      "缺少必填字段：订单编号（必填）",
-    );
+    expect(missingOrder.validCount).toBe(1);
+    expect(missingOrder.invalidCount).toBe(0);
+    expect(missingOrder.rows[0].errors).toEqual([]);
+    expect(missingOrder.rows[0].values.orderNumber).toBe("");
+  });
+
+  it("订单编号可留空但其余八个必填字段仍逐项拦截", async () => {
+    const headers = [
+      "平台（必填）",
+      "店铺名称（必填）",
+      "客户名（必填）",
+      "产品系列（必填）",
+      "阶段（IFFO/GUM）",
+      "订单编号",
+      "内容渠道（必填）",
+      "链接（必填）",
+      "发帖时间（必填）",
+    ];
+    const values = [
+      "小红书",
+      "示例店铺",
+      "示例客户",
+      "爱他美奇迹绿罐",
+      "IFFO",
+      "",
+      "小红书",
+      "https://xhslink.com/required-fields",
+      "2026-08-03 12:00:00",
+    ];
+    const required = [
+      [0, "平台（必填）"],
+      [1, "店铺名称（必填）"],
+      [2, "客户名（必填）"],
+      [3, "产品系列（必填）"],
+      [4, "阶段（IFFO/GUM）"],
+      [6, "内容渠道（必填）"],
+      [7, "链接（必填）"],
+      [8, "发帖时间（必填）"],
+    ] as const;
+
+    for (const [index, displayName] of required) {
+      const row = [...values];
+      row[index] = "";
+      const result = await parseTabularPreview({
+        bytes: Buffer.from(`${headers.join(",")}\r\n${row.join(",")}`),
+        fileName: `缺少-${index}.csv`,
+        sourceType: "CSV",
+        templates,
+      });
+      expect(result.validCount).toBe(0);
+      expect(result.rows[0].errors).toContain(
+        `缺少必填字段：${displayName}`,
+      );
+    }
   });
 
   it("清晰提示缺少必填字段、重复表头、空文件和乱码CSV", async () => {
@@ -304,7 +354,7 @@ describe("模板驱动导出", () => {
       "客户名（必填）",
       "产品系列（必填）",
       "阶段（IFFO/GUM）",
-      "订单编号（必填）",
+      "订单编号",
       "内容渠道（必填）",
       "链接（必填）",
       "发帖时间（必填）",
@@ -318,6 +368,12 @@ describe("模板驱动导出", () => {
     });
     expect(workbook.getWorksheet("笔记导入")?.getCell("G2").text).toBe(
       "小红书",
+    );
+    expect(workbook.getWorksheet("填写说明")?.getCell("B8").text).toBe(
+      "订单编号",
+    );
+    expect(workbook.getWorksheet("填写说明")?.getCell("C8").text).toBe(
+      "否",
     );
     expect(workbook.getWorksheet("笔记导入")?.getColumn(9).numFmt).toBe(
       "yyyy-mm-dd hh:mm:ss",
@@ -356,7 +412,7 @@ describe("模板驱动导出", () => {
       "客户名（必填）",
       "产品系列（必填）",
       "阶段（IFFO/GUM）",
-      "订单编号（必填）",
+      "订单编号",
       "内容渠道（必填）",
       "链接（必填）",
       "发帖时间（必填）",
@@ -387,14 +443,20 @@ describe("模板驱动导出", () => {
   });
 
   it("Excel和CSV严格使用模板列顺序且CSV含UTF-8 BOM", async () => {
-    const records = [
-      {
-        noteUrl: "https://xhslink.com/a",
-        productName: "爱他美澳洲白金版",
-        activityName: "7月活动",
-        auditResult: "审核通过",
-      },
+    const productNames = [
+      "爱他美澳洲白金版",
+      "爱他美德国白金版",
+      "爱他美奇迹绿罐",
+      "爱他美亲熠5HMO",
+      "爱他美至熠",
+      "未配置简称产品",
     ];
+    const records = productNames.map((productName, index) => ({
+      noteUrl: `https://xhslink.com/${index + 1}`,
+      productName,
+      activityName: "7月活动",
+      auditResult: "审核通过",
+    }));
     const csv = buildConfiguredCsv({
       templates,
       kind: "auditResults",
@@ -402,6 +464,7 @@ describe("模板驱动导出", () => {
     });
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     expect(csv.slice(1).split("\r\n")[0].split(",")[0]).toBe("平台");
+    expect(csv).toContain("爱他美澳洲白金版");
 
     const bytes = await buildConfiguredWorkbook({
       templates,
@@ -413,9 +476,12 @@ describe("模板驱动导出", () => {
     expect(workbook.worksheets[0].getRow(1).getCell(1).text).toBe(
       "平台",
     );
+    expect(
+      workbook.worksheets[0].getColumn(4).values.slice(2),
+    ).toEqual(["澳白", "德白", "绿罐", "白罐", "至熠", "未配置简称产品"]);
   });
 
-  it("自审按通过、笔记不存在和图片异常映射且订单编号不参与审核", () => {
+  it("自审按单一优先级细分失败原因且订单编号不参与审核", () => {
     const baseRow: Parameters<typeof auditResultToExportRecord>[0] = {
       autoStatus: "PASSED",
       pageStatus: "NORMAL",
@@ -511,9 +577,9 @@ describe("模板驱动导出", () => {
       },
       templates,
     );
-    expect(imageProblem.selfReview).toBe("N-图片看不到奶粉段数");
+    expect(imageProblem.selfReview).toBe("N-图片不足");
 
-    const otherFailure = auditResultToExportRecord(
+    const topicFailure = auditResultToExportRecord(
       {
         ...baseRow,
         autoStatus: "FAILED",
@@ -522,13 +588,15 @@ describe("模板驱动导出", () => {
       },
       templates,
     );
-    expect(otherFailure.selfReview).toBe("");
+    expect(topicFailure.selfReview).toBe("N-缺少话题");
 
     const compactSource: Parameters<
       typeof auditResultToCompactExportRecord
     >[0] = {
       autoStatus: baseRow.autoStatus,
       pageStatus: baseRow.pageStatus,
+      bodyStatus: baseRow.bodyStatus,
+      topicsCompliant: baseRow.topicsCompliant,
       failureReasons: baseRow.failureReasons,
       imageExtractionStatus: baseRow.imageExtractionStatus,
       imageStatus: baseRow.imageStatus,
@@ -543,6 +611,126 @@ describe("模板驱动导出", () => {
       orderNumber: "ORDER-1001",
       selfReview: "Y",
     });
+
+    const selfReview = (
+      input: Partial<typeof compactSource>,
+    ) => auditResultToCompactExportRecord({
+      ...compactSource,
+      ...input,
+      task: { ...compactSource.task, ...input.task },
+      note: { ...compactSource.note, ...input.note },
+    }).selfReview;
+    expect(selfReview({
+      autoStatus: "FAILED",
+      manualReviews: [{ result: "PASSED" }],
+    })).toBe("Y");
+    expect(selfReview({
+      autoStatus: "FAILED",
+      topicsCompliant: false,
+      failureReasons: '["缺少指定话题"]',
+      task: {
+        ...compactSource.task,
+        notes: buildImportedTaskNotes({ contentChannel: "抖音" }),
+      },
+    })).toBe("N-内容渠道不支持");
+    expect(selfReview({
+      autoStatus: "FAILED",
+      topicsCompliant: false,
+      failureReasons: '["话题未命中"]',
+    })).toBe("N-缺少话题");
+    expect(selfReview({
+      autoStatus: "FAILED",
+      bodyStatus: "EMPTY",
+      failureReasons: '["有效正文字数不足（29/30）"]',
+    })).toBe("N-字数不够");
+    expect(selfReview({
+      autoStatus: "FAILED",
+      imageStatus: "NON_COMPLIANT",
+      failureReasons: '["图片数量不足（1/2）"]',
+    })).toBe("N-图片不足");
+    expect(selfReview({
+      autoStatus: "FAILED",
+      failureReasons: '["正文段位不属于当前产品阶段话题：IFFO"]',
+    })).toBe("N-阶段不符");
+    expect(selfReview({
+      autoStatus: "FAILED",
+      failureReasons: '["笔记当前未公开"]',
+    })).toBe("N-其他不合规");
+    expect(selfReview({
+      autoStatus: "NEEDS_REVIEW",
+      imageExtractionStatus: "IMAGES_READ_FAILED",
+      failureReasons: '["图片读取失败，待人工复核"]',
+    })).toBe("");
+    expect(selfReview({
+      autoStatus: "FAILED",
+      pageStatus: "NOT_FOUND",
+      topicsCompliant: false,
+      bodyStatus: "EMPTY",
+      imageStatus: "NON_COMPLIANT",
+      failureReasons:
+        '["页面不存在","缺少话题","字数不足","图片不足","阶段不符"]',
+      task: {
+        ...compactSource.task,
+        notes: buildImportedTaskNotes({ contentChannel: "抖音" }),
+      },
+    })).toBe("N-帖子无法查看");
+    expect(selfReview({
+      autoStatus: "FAILED",
+      topicsCompliant: false,
+      bodyStatus: "EMPTY",
+      imageStatus: "NON_COMPLIANT",
+      failureReasons: '["缺少话题","字数不足","图片不足","阶段不符"]',
+    })).toBe("N-缺少话题");
+    expect(selfReview({
+      autoStatus: "FAILED",
+      bodyStatus: "EMPTY",
+      imageStatus: "NON_COMPLIANT",
+      failureReasons: '["字数不足","图片不足","阶段不符"]',
+    })).toBe("N-字数不够");
+    expect(selfReview({
+      autoStatus: "FAILED",
+      imageStatus: "NON_COMPLIANT",
+      failureReasons: '["图片不足","阶段不符"]',
+    })).toBe("N-图片不足");
+    const allowedSelfReviewValues = [
+      "Y",
+      "N-帖子无法查看",
+      "N-内容渠道不支持",
+      "N-缺少话题",
+      "N-字数不够",
+      "N-图片不足",
+      "N-阶段不符",
+      "N-其他不合规",
+      "",
+    ];
+    for (const value of [
+      passed.selfReview,
+      unavailable.selfReview,
+      imageProblem.selfReview,
+      topicFailure.selfReview,
+      selfReview({ autoStatus: "FAILED", failureReasons: "[]" }),
+      selfReview({ autoStatus: "NEEDS_REVIEW" }),
+    ]) {
+      expect(allowedSelfReviewValues).toContain(value);
+      expect(value).not.toBe("N-产品不符");
+      expect(value).not.toBe("N-图片看不到奶粉段数");
+    }
+
+    const compactWithoutOrder = auditResultToCompactExportRecord({
+      ...compactSource,
+      task: {
+        ...compactSource.task,
+        notes: buildImportedTaskNotes({
+          platform: "小红书",
+          shopName: "示例店铺",
+          customerName: "示例客户",
+          orderNumber: "",
+          contentChannel: "小红书",
+          publishTime: "2026-08-03 12:00:00",
+        }),
+      },
+    });
+    expect(compactWithoutOrder.orderNumber).toBe("");
   });
 
   it("18条当前筛选结果严格生成十列线下处理字段", async () => {
@@ -552,7 +740,7 @@ describe("模板驱动导出", () => {
       customerName: "示例客户",
       productName: "爱他美澳洲白金版",
       productStageTopic: "IFFO",
-      orderNumber: `ORDER-${index + 1}`,
+      orderNumber: index === 0 ? "" : `ORDER-${index + 1}`,
       contentChannel: "小红书",
       originalUrl: `https://www.xiaohongshu.com/explore/export-${index + 1}`,
       publishTime: new Date(Date.UTC(2026, 7, 3, 12, 0, 0)),
@@ -583,12 +771,16 @@ describe("模板驱动导出", () => {
     expect(sheet.getColumn(9).numFmt).toBe("yyyy-mm-dd hh:mm:ss");
     expect(sheet.getColumn(8).alignment?.wrapText).toBe(true);
     expect(sheet.getColumn(headers.indexOf("产品系列")).values).toContain(
-      "爱他美澳洲白金版",
+      "澳白",
     );
+    expect(sheet.getCell("F2").text).toBe("");
+    expect(sheet.getCell("F3").text).toBe("ORDER-2");
     expect(sheet.getCell("J2").dataValidation).toMatchObject({
       type: "list",
       allowBlank: true,
-      formulae: ['"Y,N-帖子无法查看,N-图片看不到奶粉段数"'],
+      formulae: [
+        '"Y,N-帖子无法查看,N-内容渠道不支持,N-缺少话题,N-字数不够,N-图片不足,N-阶段不符,N-其他不合规"',
+      ],
     });
     expect(sheet.autoFilter).toBeTruthy();
     expect(sheet.getCell("A1").fill).toMatchObject({

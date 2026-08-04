@@ -300,6 +300,9 @@ export async function POST(request: Request) {
 
     return ok({
       ...tabular,
+      missingRequiredFields: tabular.missingRequiredFields.map(
+        (field) => templates.fieldDefinitions[field].displayName,
+      ),
       validCount: validRows.length,
       invalidCount: rows.length - validRows.length,
       imported,

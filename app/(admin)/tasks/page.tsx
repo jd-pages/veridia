@@ -178,7 +178,11 @@ interface ImportPreview {
   batchId?: string | null;
   templateVersion: string;
   sourceType: string;
-  recognizedFields: Array<{ header: string; field: string }>;
+  recognizedFields: Array<{
+    header: string;
+    field: string;
+    displayName: string;
+  }>;
   unknownHeaders: string[];
   missingRequiredFields: string[];
   duplicateHeaders: string[];
@@ -901,7 +905,12 @@ export default function TasksPage() {
                     </Button>
                   </Dropdown>
                 </div>
-                <Space direction="vertical" size={18} style={{ width: "100%" }}>
+                <Space
+                  className={styles.excelImportStack}
+                  direction="vertical"
+                  size={18}
+                  style={{ width: "100%" }}
+                >
                   <Upload.Dragger
                     className={styles.uploadArea}
                     accept=".xlsx,.xls,.csv"
@@ -960,7 +969,7 @@ export default function TasksPage() {
                         </Descriptions.Item>
                         <Descriptions.Item label="识别字段">
                           {preview.recognizedFields
-                            .map((item) => item.header)
+                            .map((item) => item.displayName)
                             .join("、") || "无"}
                         </Descriptions.Item>
                         <Descriptions.Item label="未识别字段">
@@ -973,30 +982,46 @@ export default function TasksPage() {
                           {preview.duplicateHeaders.join("、") || "无"}
                         </Descriptions.Item>
                       </Descriptions>
-                      <Table
-                        className={styles.enterpriseTable}
-                        rowKey="rowNumber"
-                        size="small"
-                        dataSource={preview.rows}
-                        sticky={{ offsetHeader: 64 }}
+                      <div className={styles.previewTableShell}>
+                        <Table<ImportPreview["rows"][number]>
+                          className={styles.enterpriseTable}
+                          rowKey="rowNumber"
+                          size="small"
+                          dataSource={preview.rows}
+                          tableLayout="fixed"
+                          scroll={{ x: 1500 }}
                         columns={[
                           { title: "行", dataIndex: "rowNumber", width: 70 },
                           {
                             title: "原始链接内容",
                             dataIndex: "originalLinkContent",
-                            ellipsis: true,
-                            width: 240,
+                            width: 210,
+                            render: (value: string) => (
+                              <span
+                                className={styles.previewEllipsis}
+                                title={value}
+                              >
+                                {value || "-"}
+                              </span>
+                            ),
                           },
                           {
                             title: "提取后的真实链接",
                             dataIndex: "url",
-                            ellipsis: true,
-                            width: 260,
+                            width: 230,
+                            render: (value: string) => (
+                              <span
+                                className={styles.previewEllipsis}
+                                title={value}
+                              >
+                                {value || "-"}
+                              </span>
+                            ),
                           },
                           {
                             title: "识别状态",
                             dataIndex: "recognitionStatus",
-                            width: 120,
+                            width: 110,
                             render: (value: string) =>
                               value === "RECOGNIZED" ? (
                                 <Tag color="green">已识别</Tag>
@@ -1009,29 +1034,55 @@ export default function TasksPage() {
                           {
                             title: "链接识别说明",
                             dataIndex: "failureReason",
-                            ellipsis: true,
-                            width: 220,
-                            render: (value: string) => value || "-",
+                            width: 190,
+                            render: (value: string) => (
+                              <span
+                                className={styles.previewEllipsis}
+                                title={value}
+                              >
+                                {value || "-"}
+                              </span>
+                            ),
                           },
                           {
                             title: "产品",
                             dataIndex: "productName",
-                            width: 160,
+                            width: 150,
+                            render: (value: string) => (
+                              <span
+                                className={styles.previewEllipsis}
+                                title={value}
+                              >
+                                {value || "-"}
+                              </span>
+                            ),
                           },
                           {
                             title: "活动",
                             dataIndex: "campaignName",
-                            width: 220,
+                            width: 190,
+                            render: (value: string) => (
+                              <span className={styles.previewWrap} title={value}>
+                                {value || "-"}
+                              </span>
+                            ),
                           },
                           {
-                            title: "产品阶段话题",
-                            width: 240,
+                            title: (
+                              <span className={styles.previewHeaderWrap}>
+                                产品阶段话题
+                              </span>
+                            ),
+                            width: 130,
+                            align: "center",
                             render: (_value, row) =>
                               row.productStage ? (
-                                <Tag>
-                                  {row.stageGroup ||
-                                    productStageTopicLabel(row.productStage)}
-                                </Tag>
+                                <span className={styles.stageTopicCell}>
+                                  <Tag>
+                                    {row.stageGroup ||
+                                      productStageTopicLabel(row.productStage)}
+                                  </Tag>
+                                </span>
                               ) : (
                                 "-"
                               ),
@@ -1039,10 +1090,13 @@ export default function TasksPage() {
                           {
                             title: "预检结果",
                             dataIndex: "errors",
-                            width: 260,
+                            width: 220,
                             render: (errors: string[]) =>
                               errors.length ? (
-                                <span className={styles.errorText}>
+                                <span
+                                  className={`${styles.errorText} ${styles.previewResult}`}
+                                  title={errors.join("；")}
+                                >
                                   {errors.join("；")}
                                 </span>
                               ) : (
@@ -1050,8 +1104,13 @@ export default function TasksPage() {
                               ),
                           },
                         ]}
-                        pagination={{ pageSize: 8 }}
-                      />
+                          pagination={{
+                            pageSize: 8,
+                            showSizeChanger: false,
+                            position: ["bottomRight"],
+                          }}
+                        />
+                      </div>
                     </>
                   ) : null}
                 </Space>

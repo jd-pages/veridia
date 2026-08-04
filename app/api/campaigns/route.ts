@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
+import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -28,7 +29,12 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     },
     orderBy: [{ month: "desc" }, { updatedAt: "desc" }],
   });
-  return ok(campaigns);
+  return ok(
+    campaigns.map((campaign) => ({
+      ...campaign,
+      minBodyLength: MIN_BODY_LENGTH,
+    })),
+  );
 }, "读取活动列表");
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {
@@ -70,7 +76,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
         startDate: new Date(body.startDate || `${body.month}-01`),
         endDate: new Date(body.endDate || `${body.month}-28`),
         minImageCount: Math.max(0, Math.floor(body.minImageCount ?? 2)),
-        minBodyLength: body.minBodyLength ?? 1,
+        minBodyLength: MIN_BODY_LENGTH,
         productImageRequired: false,
         firstImageRequirement: null,
         prohibitedImageGuidance: null,

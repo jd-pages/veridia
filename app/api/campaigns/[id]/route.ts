@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
+import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 
 export async function GET(
   _request: Request,
@@ -24,7 +25,9 @@ export async function GET(
       },
     },
   });
-  return campaign ? ok(campaign) : fail("活动不存在", 404);
+  return campaign
+    ? ok({ ...campaign, minBodyLength: MIN_BODY_LENGTH })
+    : fail("活动不存在", 404);
 }
 
 export async function PUT(
@@ -51,9 +54,7 @@ export async function PUT(
         ...(typeof body.minImageCount === "number"
           ? { minImageCount: Math.max(0, Math.floor(body.minImageCount)) }
           : {}),
-        ...(typeof body.minBodyLength === "number"
-          ? { minBodyLength: body.minBodyLength }
-          : {}),
+        minBodyLength: MIN_BODY_LENGTH,
         productImageRequired: false,
         firstImageRequirement: null,
         prohibitedImageGuidance: null,
