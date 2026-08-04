@@ -64,15 +64,43 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
 }) => {
   await login(page);
   await page.setViewportSize({ width: 1366, height: 768 });
-  await page.goto("/results");
+  await page.goto("/results?startDate=2026-08-01&endDate=2026-08-31");
   await expect(page).toHaveTitle("VERIDIA");
   await expect(page.getByText("日期范围", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("开始日期")).toHaveValue(
-    /^\d{4}-\d{2}-01$/u,
+  await expect(page.getByLabel("开始日期")).toHaveValue("2026-08-01");
+  await expect(page.getByLabel("结束日期")).toHaveValue("2026-08-31");
+  await page.getByLabel("开始日期").click();
+  const datePickerPopup = page.locator(".ant-picker-dropdown:visible");
+  await expect(datePickerPopup.locator(".ant-picker-header-view")).toContainText(
+    "八月",
   );
-  await expect(page.getByLabel("结束日期")).toHaveValue(
-    /^\d{4}-\d{2}-\d{2}$/u,
-  );
+  await expect(datePickerPopup.locator("thead th")).toHaveText([
+    "日",
+    "一",
+    "二",
+    "三",
+    "四",
+    "五",
+    "六",
+  ]);
+  await expect(datePickerPopup.getByText("今天", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  const resultFilterRequests: URL[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/results") resultFilterRequests.push(url);
+  });
+  await page.getByRole("button", { name: "查询" }).click();
+  await expect
+    .poll(() =>
+      resultFilterRequests.some(
+        (url) =>
+          url.searchParams.get("startDate") === "2026-08-01" &&
+          url.searchParams.get("endDate") === "2026-08-31",
+      ),
+    )
+    .toBe(true);
   const dateDivider = page.getByLabel("日期范围分隔符");
   await expect(dateDivider).toHaveValue("至");
   const dividerBox = await dateDivider.boundingBox();

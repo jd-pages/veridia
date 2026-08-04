@@ -8,6 +8,7 @@ import {
 } from "next/font/google";
 import "antd/dist/reset.css";
 import "./globals.css";
+import AppLocaleProvider from "@/components/AppLocaleProvider";
 
 const manrope = Manrope({
   variable: "--font-manrope",
@@ -57,7 +58,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body
         className={`${inter.variable} ${manrope.variable} ${notoSansSC.variable} ${notoSerifSC.variable}`}
       >
-        <AntdRegistry>{children}</AntdRegistry>
+        <AntdRegistry>
+          <AppLocaleProvider>{children}</AppLocaleProvider>
+        </AntdRegistry>
       </body>
     </html>
   );

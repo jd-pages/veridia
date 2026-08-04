@@ -10,7 +10,7 @@ import {
   Space,
   Tag,
 } from "antd";
-import zhCN from "antd/locale/zh_CN";
+import { veridiaZhCN } from "@/components/AppLocaleProvider";
 import {
   AppstoreOutlined,
   AuditOutlined,
@@ -122,7 +122,7 @@ export default function AdminShell({
 
   return (
     <ConfigProvider
-      locale={zhCN}
+      locale={veridiaZhCN}
       theme={{
         token: {
           colorPrimary: "#163c85",

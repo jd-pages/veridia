@@ -12,7 +12,7 @@ import {
   Modal,
   Space,
 } from "antd";
-import zhCN from "antd/locale/zh_CN";
+import { veridiaZhCN } from "@/components/AppLocaleProvider";
 import { LockOutlined, UserOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/client";
@@ -171,7 +171,7 @@ export default function LocalLoginScreen() {
   );
 
   return (
-    <ConfigProvider locale={zhCN}>
+    <ConfigProvider locale={veridiaZhCN}>
       <App>
         {content}
         <Modal

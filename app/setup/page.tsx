@@ -15,7 +15,7 @@ import {
   Steps,
   Typography,
 } from "antd";
-import zhCN from "antd/locale/zh_CN";
+import { veridiaZhCN } from "@/components/AppLocaleProvider";
 import {
   CheckCircleOutlined,
   CloudSyncOutlined,
@@ -377,7 +377,7 @@ function SetupContent() {
 
 export default function SetupPage() {
   return (
-    <ConfigProvider locale={zhCN}>
+    <ConfigProvider locale={veridiaZhCN}>
       <App>
         <SetupContent />
       </App>

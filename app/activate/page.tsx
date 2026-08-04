@@ -2,7 +2,7 @@
 
 import "@ant-design/v5-patch-for-react-19";
 import { App, Button, Card, ConfigProvider, Space } from "antd";
-import zhCN from "antd/locale/zh_CN";
+import { veridiaZhCN } from "@/components/AppLocaleProvider";
 import { useRouter } from "next/navigation";
 import AccountActivationForm from "@/components/AccountActivationForm";
 import VeridiaLogo from "@/components/VeridiaLogo";
@@ -10,7 +10,7 @@ import VeridiaLogo from "@/components/VeridiaLogo";
 export default function ActivatePage() {
   const router = useRouter();
   return (
-    <ConfigProvider locale={zhCN}>
+    <ConfigProvider locale={veridiaZhCN}>
       <App>
         <main className="setup-page">
           <Card className="setup-card" style={{ maxWidth: 720 }}>
