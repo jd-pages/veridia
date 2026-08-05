@@ -35,6 +35,26 @@ export async function createAutomaticBatchInTransaction(
   rulePackageVersion: string | null,
 ) {
   if (!input.tasks.length) throw new Error("没有可加入自动审核的链接");
+  const activeBatch = await tx.auditBatch.findFirst({
+    where: {
+      status: {
+        in: [
+          "QUEUED",
+          "RUNNING",
+          "RESUMING",
+          "LOGIN_EXPIRED",
+          "SECURITY_RESTRICTED",
+        ],
+      },
+    },
+    select: { id: true },
+  });
+  if (activeBatch) {
+    console.warn("[自动审核] 已拦截第二任务启动", { activeBatchId: activeBatch.id });
+    throw new Error(
+      "当前已有小红书自动审核任务正在运行，请完成、暂停或取消当前任务后再启动新任务。",
+    );
+  }
   const batch = await tx.auditBatch.create({
     data: {
       name: input.name?.trim() || null,

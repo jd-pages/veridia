@@ -157,7 +157,7 @@ test("审核任务页只展示当前批次的执行记录和笔记", async ({ pa
   }
 });
 
-test("连续创建两个批次时汇总执行记录并支持批次筛选", async ({ page }) => {
+test("运行中阻止第二批次，暂停后可创建并汇总筛选", async ({ page }) => {
   test.setTimeout(60_000);
   await page.request.post("/api/auth/login", {
     data: { username: "admin", password: "Admin123!" },
@@ -176,8 +176,8 @@ test("连续创建两个批次时汇总执行记录并支持批次筛选", async
     item.name.includes("爱他美2026年7月"),
   ) || campaigns[0];
   const suffix = Date.now();
-  const create = async (name: string, count: number, marker: string) => {
-    const response = await page.request.post("/api/automation/batches", {
+  const requestBatch = (name: string, count: number, marker: string) =>
+    page.request.post("/api/automation/batches", {
       data: {
         name,
         productId: product.id,
@@ -186,16 +186,37 @@ test("连续创建两个批次时汇总执行记录并支持批次筛选", async
         urls: Array.from(
           { length: count },
           (_, index) =>
-            `${E2E_ORIGIN}/mock/xhs?case=passed&${marker}=${suffix}-${index}`,
+            `${E2E_ORIGIN}/mock/xhs?case=passed&autoDelay=2000&${marker}=${suffix}-${index}`,
         ).join("\n"),
         intervalMs: 1000,
       },
     });
-    expect(response.ok()).toBeTruthy();
-    return (await response.json()).data.batchId as string;
-  };
-  const firstBatchId = await create(`德白批次-${suffix}`, 2, "first-batch");
-  const secondBatchId = await create(`澳白批次-${suffix}`, 3, "second-batch");
+  const firstResponse = await requestBatch(
+    `德白批次-${suffix}`,
+    2,
+    "first-batch",
+  );
+  expect(firstResponse.ok()).toBeTruthy();
+  const firstBatchId = (await firstResponse.json()).data.batchId as string;
+  const blockedResponse = await requestBatch(
+    `澳白批次-${suffix}`,
+    3,
+    "blocked-second-batch",
+  );
+  expect(blockedResponse.status()).toBe(409);
+  expect((await blockedResponse.json()).error).toContain(
+    "当前已有小红书自动审核任务正在运行",
+  );
+  await page.request.post(`/api/automation/batches/${firstBatchId}/control`, {
+    data: { action: "PAUSE" },
+  });
+  const secondResponse = await requestBatch(
+    `澳白批次-${suffix}`,
+    3,
+    "second-batch",
+  );
+  expect(secondResponse.ok()).toBeTruthy();
+  const secondBatchId = (await secondResponse.json()).data.batchId as string;
   const batchIds = [firstBatchId, secondBatchId];
 
   const summary = (

@@ -14,10 +14,10 @@ describe("账号角色权限", () => {
     expect(canAccessBusiness("VIEWER")).toBe(false);
   });
 
-  it("系统设置敏感权限仍仅允许 ADMIN", () => {
-    expect(SYSTEM_ADMIN_ROLES).toEqual(["ADMIN"]);
+  it("ADMIN 和 OPERATOR 拥有相同系统设置权限", () => {
+    expect(SYSTEM_ADMIN_ROLES).toEqual(["ADMIN", "OPERATOR"]);
     expect(canAccessSystemSettings("ADMIN")).toBe(true);
-    expect(canAccessSystemSettings("OPERATOR")).toBe(false);
+    expect(canAccessSystemSettings("OPERATOR")).toBe(true);
     expect(canAccessSystemSettings("VIEWER")).toBe(false);
   });
 });

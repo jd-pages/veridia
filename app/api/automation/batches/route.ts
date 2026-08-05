@@ -123,25 +123,34 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     return fail(auditTaskDuplicateMessages.TODAY_DUPLICATE);
   }
 
-  const batch = await createAutomaticBatch({
-    name: body.name || `自动审核 ${new Date().toLocaleString("zh-CN")}`,
-    source: "MANUAL",
-    createdBy: user.id,
-    productId: body.productId,
-    campaignId: body.campaignId,
-    productStage: effectiveProductStage || undefined,
-    intervalMs: body.intervalMs,
-    tasks: accepted.map((url) => ({
-      url,
-      originalInput: extraction.rawInput,
-      productId: body.productId!,
-      campaignId: body.campaignId!,
-      productStage: effectiveProductStage,
-      milkType: stageRule?.milkType || null,
-      notes: body.notes,
+  let batch;
+  try {
+    batch = await createAutomaticBatch({
+      name: body.name || `自动审核 ${new Date().toLocaleString("zh-CN")}`,
       source: "MANUAL",
-    })),
-  });
+      createdBy: user.id,
+      productId: body.productId,
+      campaignId: body.campaignId,
+      productStage: effectiveProductStage || undefined,
+      intervalMs: body.intervalMs,
+      tasks: accepted.map((url) => ({
+        url,
+        originalInput: extraction.rawInput,
+        productId: body.productId!,
+        campaignId: body.campaignId!,
+        productStage: effectiveProductStage,
+        milkType: stageRule?.milkType || null,
+        notes: body.notes,
+        source: "MANUAL",
+      })),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "创建自动审核批次失败";
+    if (message.includes("当前已有小红书自动审核任务正在运行")) {
+      return fail(message, 409, "XHS_AUDIT_ALREADY_RUNNING");
+    }
+    throw error;
+  }
   await prisma.operationLog.create({
     data: {
       userId: user.id,

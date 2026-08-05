@@ -1,10 +1,15 @@
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { SYSTEM_ADMIN_ROLES } from "@/lib/permissions";
+import {
+  ensureXhsPacingSettings,
+  normalizeXhsPacingSetting,
+} from "@/lib/automation/pacing";
 
 export const GET = withApiErrorBoundary(async function GET() {
   const user = await requireApiUser(SYSTEM_ADMIN_ROLES);
   if (user instanceof Response) return user;
+  await ensureXhsPacingSettings();
   const settings = await prisma.systemSetting.findMany({
     where: {
       isSecret: false,
@@ -51,7 +56,7 @@ export const PUT = withApiErrorBoundary(async function PUT(request: Request) {
   return ok(
     await prisma.systemSetting.update({
       where: { key: body.key },
-      data: { value: body.value },
+      data: { value: normalizeXhsPacingSetting(body.key, body.value) },
     }),
   );
 }, "修改系统设置");

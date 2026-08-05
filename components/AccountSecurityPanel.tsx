@@ -17,6 +17,7 @@ import {
 } from "antd";
 import type { SessionUser } from "@/lib/auth";
 import { apiFetch } from "@/lib/client";
+import { canAccessSystemSettings } from "@/lib/permissions";
 
 interface ManagedAccount {
   id: string;
@@ -70,7 +71,7 @@ export default function AccountSecurityPanel() {
   const load = useCallback(async () => {
     const user = await apiFetch<SessionUser | null>("/api/auth/me");
     setCurrentUser(user);
-    if (user?.role === "ADMIN") {
+    if (canAccessSystemSettings(user?.role)) {
       setAccounts(await apiFetch<ManagedAccount[]>("/api/users"));
     }
   }, []);
@@ -224,7 +225,7 @@ export default function AccountSecurityPanel() {
         </div>
       </Card>
 
-      {currentUser?.role === "ADMIN" && (
+      {canAccessSystemSettings(currentUser?.role) && (
         <Card
           className="surface-card"
           title="本机账号管理"

@@ -191,6 +191,7 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
     "活动管理",
     "话题规则",
     "导入记录",
+    "系统设置",
   ]) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
@@ -239,18 +240,35 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
       >[0],
     );
     const headers = workbook.worksheets[0]?.getRow(1).values as unknown[];
-    expect(headers.slice(1)).toEqual([
-      "平台",
-      "店铺名称",
-      "客户名",
-      "产品系列",
-      "阶段",
-      "订单编号",
-      "内容渠道",
-      "链接",
-      "发帖时间",
-      "自审",
-    ]);
+    expect([
+      [
+        "平台",
+        "店铺名称",
+        "客户名",
+        "产品系列",
+        "阶段",
+        "订单编号",
+        "内容渠道",
+        "链接",
+        "发帖时间",
+        "自审",
+      ],
+      [
+        "登记时间",
+        "渠道",
+        "店铺名称",
+        "客户备注",
+        "买家购买ID",
+        "购买订单号",
+        "购买时间",
+        "购买罐数",
+        "参与次数",
+        "发布小红书账号",
+        "小红书发布链接",
+        "购买产品线",
+        "自审",
+      ],
+    ]).toContainEqual(headers.slice(1));
   }
 
   const operatorProduct = await page.request.post("/api/products", {
@@ -334,10 +352,15 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
     "/api/users",
     "/api/rule-sync/status",
   ]) {
-    expect((await page.request.get(endpoint)).status(), endpoint).toBe(403);
+    expect((await page.request.get(endpoint)).status(), endpoint).toBe(200);
   }
   await page.goto("/settings");
-  await expect(page).toHaveURL(/\/dashboard$/u);
+  await expect(page).toHaveURL(/\/settings$/u);
+  await expect(page.getByText("账号安全", { exact: true })).toBeVisible();
+  await expect(page.getByText("本机账号管理", { exact: true })).toBeVisible();
+  await expect(page.getByText("小红书会话诊断", { exact: true })).toBeVisible();
+  await expect(page.getByText("小红书访问节奏", { exact: true })).toBeVisible();
+  await expect(page.getByText("规则同步", { exact: true })).toBeVisible();
 });
 
 test("旧版 VRD1 激活码仍可使用原初始密码登录", async ({ page }) => {

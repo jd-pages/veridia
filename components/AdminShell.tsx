@@ -88,7 +88,7 @@ const items = [
   { key: "/campaigns", icon: <AppstoreOutlined />, label: "活动管理", roles: ["ADMIN", "OPERATOR"] },
   { key: "/rules", icon: <TagsOutlined />, label: "话题规则", roles: ["ADMIN", "OPERATOR"] },
   { key: "/imports", icon: <ImportOutlined />, label: "导入记录", roles: ["ADMIN", "OPERATOR"] },
-  { key: "/settings", icon: <SettingOutlined />, label: "系统设置", roles: ["ADMIN"] },
+  { key: "/settings", icon: <SettingOutlined />, label: "系统设置", roles: ["ADMIN", "OPERATOR"] },
 ];
 
 export default function AdminShell({

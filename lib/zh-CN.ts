@@ -13,6 +13,7 @@ export const processStatusLabels: Record<string, string> = {
   CANCELLED: "已取消",
   NEEDS_REVIEW: "待人工复核",
   LOGIN_EXPIRED: "登录失效",
+  SECURITY_RESTRICTED: "等待安全验证",
 };
 
 export const auditResultLabels: Record<string, string> = {
@@ -39,6 +40,9 @@ export const sessionStatusLabels: Record<string, string> = {
   LOGIN_IN_PROGRESS: "登录中",
   LOGIN_EXPIRED: "登录失效",
   LOGIN_REQUIRED: "需要登录",
+  SECURITY_CHECK: "需要安全验证",
+  NETWORK_ERROR: "网络异常",
+  CHECKING: "检测中",
   UNKNOWN: "尚未登录",
 };
 
@@ -54,6 +58,7 @@ export const commonStatusLabels: Record<string, string> = {
   LOGIN_EXPIRED: "登录失效",
   LOGIN_REQUIRED: "需要登录",
   SECURITY_VERIFICATION: "需要安全验证",
+  SECURITY_RESTRICTED: "等待安全验证",
   NEEDS_CONFIRMATION: "需要人工确认",
   PRESENT: "正文存在",
   EMPTY: "正文为空",

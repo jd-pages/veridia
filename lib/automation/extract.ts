@@ -149,6 +149,9 @@ async function waitForPageReadiness(
       .count()
       .catch(() => 0);
     if (keyElementCount > 0) {
+      await page
+        .waitForLoadState("networkidle", { timeout: 2_500 })
+        .catch(() => undefined);
       await page.waitForTimeout(600);
       return;
     }
@@ -280,10 +283,16 @@ export async function extractAuditTaskAutomatically(
   const mock = isMockUrl(task.url);
   if (!mock) {
     const session = await getAutomationSession();
-    if (session.status !== "READY") {
+    if (session.status === "LOGIN_REQUIRED") {
       throw new AutomaticExtractionError(
         "LOGIN_REQUIRED",
         "请先在专用浏览器中登录小红书",
+      );
+    }
+    if (session.status === "SECURITY_CHECK") {
+      throw new AutomaticExtractionError(
+        "SECURITY_CHECK",
+        "请先在专用浏览器中完成人工安全验证",
       );
     }
   }

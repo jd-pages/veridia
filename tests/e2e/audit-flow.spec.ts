@@ -225,7 +225,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "N-阶段不符",
     "N-其他不合规",
     "",
-  ]).toContain(exportedSelfReview);
+  ]).toContain(exportedSelfReview.split("；")[0]);
 
   const emptyExportResponse = await page.request.get(
     `/api/results/export?keyword=no-export-${suffix}`,
@@ -692,7 +692,10 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const unavailableCells = unavailableRow.locator("td");
   await expect(unavailableCells.nth(3)).toHaveText("无");
   await expect(unavailableCells.nth(4)).toHaveText("无");
-  await expect(unavailableCells.nth(5)).toHaveText("笔记不存在");
+  await expect(unavailableCells.nth(5)).toContainText("笔记不存在");
+  await expect(unavailableCells.nth(5)).toContainText(
+    "页面无法访问：小红书页面提示",
+  );
   await expect(unavailableRow).not.toContainText(
     /ERROR_PAGE|APP_LAUNCH|页面失效|未提取到正文|暂无结论|未执行话题审核|未执行图片数量审核|处理失败|待人工复核|项异常|缺少精准话题|有效正文字符不足|图片数量不足/u,
   );
@@ -743,7 +746,10 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(page.getByText(/笔记ID/u)).toHaveCount(0);
   await expect(page.getByText(unavailableResult.task.url, { exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "失败原因" })).toHaveCount(1);
-  await expect(page.getByText("笔记不存在", { exact: true })).toHaveCount(2);
+  await expect(page.getByText("笔记不存在", { exact: true })).toHaveCount(1);
+  await expect(
+    page.getByText(/页面无法访问：小红书页面提示/u),
+  ).toBeVisible();
 
   const auditedDate = new Date(resultCoverage.items[0].auditedAt);
   const auditDay = [

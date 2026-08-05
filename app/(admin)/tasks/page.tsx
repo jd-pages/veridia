@@ -170,6 +170,7 @@ interface AuditBatch {
 
 interface AutomationSession {
   status: string;
+  sessionState?: string;
   lastLoginAt: string | null;
   lastError: string | null;
 }
@@ -220,6 +221,7 @@ const activeBatchStatuses = new Set([
   "RUNNING",
   "PAUSED",
   "LOGIN_EXPIRED",
+  "SECURITY_RESTRICTED",
 ]);
 
 const ALL_CURRENT_BATCHES = "__ALL_CURRENT_BATCHES__";
@@ -243,6 +245,7 @@ const governanceTone: Record<
   COMPLETED_WITH_ERRORS: "warning",
   NEEDS_REVIEW: "warning",
   LOGIN_EXPIRED: "warning",
+  SECURITY_RESTRICTED: "warning",
   PAUSED: "warning",
   RUNNING: "info",
   PROCESSING: "info",
@@ -565,6 +568,7 @@ export default function TasksPage() {
       batches.find((batch) => batch.status === "QUEUED")?.status ||
       batches.find((batch) => batch.status === "PAUSED")?.status ||
       batches.find((batch) => batch.status === "LOGIN_EXPIRED")?.status ||
+      batches.find((batch) => batch.status === "SECURITY_RESTRICTED")?.status ||
       (batches.some((batch) => batch.status === "COMPLETED_WITH_ERRORS")
         ? "COMPLETED_WITH_ERRORS"
         : "COMPLETED");
@@ -731,7 +735,9 @@ export default function TasksPage() {
     }
   };
 
-  const loginAction = async (action: "START_LOGIN" | "COMPLETE_LOGIN") => {
+  const loginAction = async (
+    action: "START_LOGIN" | "COMPLETE_LOGIN" | "CHECK_SESSION",
+  ) => {
     try {
       const result = await apiFetch<AutomationSession>("/api/automation/session", {
         method: "POST",
@@ -740,8 +746,10 @@ export default function TasksPage() {
       setSession(result);
       if (action === "START_LOGIN") {
         message.info("专用浏览器已打开，请手动登录或扫码");
-      } else if (result.status === "READY") {
+      } else if (result.sessionState === "LOGGED_IN" || result.status === "READY") {
         message.success("登录状态已保存，可以继续自动审核");
+      } else if (result.sessionState === "NETWORK_ERROR") {
+        message.warning("登录检测遇到网络异常，当前状态未判定为退出登录");
       } else {
         message.warning(result.lastError || "尚未识别到有效登录状态");
       }
@@ -853,7 +861,10 @@ export default function TasksPage() {
             type="primary"
             onClick={() => void loginAction("COMPLETE_LOGIN")}
           >
-            我已完成登录
+            我已完成登录/验证
+          </Button>
+          <Button onClick={() => void loginAction("CHECK_SESSION")}>
+            重新检测
           </Button>
         </Space>}
       </Card>
@@ -1482,13 +1493,21 @@ export default function TasksPage() {
                 <Alert
                   className={styles.batchAlert}
                   type={
-                    selectedBatch.status === "LOGIN_EXPIRED"
-                      ? "warning"
-                      : "error"
+                    selectedBatch.lastErrorCode === "ACCESS_COOLDOWN"
+                      ? "info"
+                      : ["LOGIN_EXPIRED", "SECURITY_RESTRICTED"].includes(
+                            selectedBatch.status,
+                          )
+                        ? "warning"
+                        : "error"
                   }
                   showIcon
                   message={selectedBatch.lastErrorMessage}
-                  description="请根据上方提示处理后重试。"
+                  description={
+                    selectedBatch.lastErrorCode === "ACCESS_COOLDOWN"
+                      ? "冷却期间仍可暂停或取消任务。"
+                      : "请根据上方提示处理后重试。"
+                  }
                 />
               ) : null}
               <Space wrap className={styles.batchActions}>
@@ -1509,7 +1528,9 @@ export default function TasksPage() {
                   disabled={
                     !canOperate ||
                     isCombinedQueue ||
-                    !["PAUSED", "LOGIN_EXPIRED"].includes(selectedBatch.status)
+                    !["PAUSED", "LOGIN_EXPIRED", "SECURITY_RESTRICTED"].includes(
+                      selectedBatch.status,
+                    )
                   }
                   onClick={() => void controlBatch("CONTINUE")}
                 >

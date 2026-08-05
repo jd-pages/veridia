@@ -20,6 +20,7 @@ import { apiFetch } from "@/lib/client";
 import { ruleSyncStatusLabel } from "@/lib/rules/labels";
 import { settingLabel } from "@/lib/zh-CN";
 import type { SessionUser } from "@/lib/auth";
+import { canAccessSystemSettings } from "@/lib/permissions";
 
 interface Setting {
   id: string;
@@ -59,6 +60,45 @@ interface RuleSyncStatus {
   lastSyncedAt: string | null;
 }
 
+interface XhsSessionDiagnostics {
+  status: string;
+  sessionState: string;
+  profilePath: string;
+  partition: string;
+  browserRunning: boolean;
+  pageCount: number;
+  lastCheckedAt: string | null;
+  lastVerificationAt: string | null;
+  lastInvalidReason: string | null;
+  profileLocked: boolean;
+  currentAuditTaskId: string | null;
+  auditLock: {
+    batchId: string;
+    status: string;
+    heartbeatAt: string;
+    profilePath: string;
+  } | null;
+}
+
+const xhsSessionStateLabels: Record<string, string> = {
+  LOGGED_IN: "已登录",
+  LOGGED_OUT: "未登录",
+  SECURITY_RESTRICTED: "需要人工安全验证",
+  SESSION_CHECKING: "正在检测",
+  NETWORK_ERROR: "网络异常",
+  UNKNOWN: "尚未确认",
+};
+
+const pacingFields = [
+  ["XHS_AUDIT_WAIT_MIN_MS", "单篇后最短等待（毫秒）"],
+  ["XHS_AUDIT_WAIT_MAX_MS", "单篇后最长等待（毫秒）"],
+  ["XHS_NETWORK_MAX_RETRIES", "网络异常最大重试次数"],
+  ["XHS_NETWORK_RETRY_FIRST_MS", "第一次重试等待（毫秒）"],
+  ["XHS_NETWORK_RETRY_SECOND_MS", "第二次重试等待（毫秒）"],
+  ["XHS_COOLDOWN_TASK_COUNT", "连续审核冷却篇数"],
+  ["XHS_COOLDOWN_MS", "连续审核冷却时间（毫秒）"],
+] as const;
+
 export default function SettingsPage() {
   const { message, modal } = App.useApp();
   const desktopAvailable =
@@ -67,26 +107,33 @@ export default function SettingsPage() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [ruleSync, setRuleSync] = useState<RuleSyncStatus | null>(null);
+  const [xhsSession, setXhsSession] = useState<XhsSessionDiagnostics | null>(null);
+  const [xhsBusy, setXhsBusy] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [syncingRules, setSyncingRules] = useState(false);
   const [migratingData, setMigratingData] = useState(false);
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
   );
-  const isAdmin = currentRole === "ADMIN";
+  const canManageSystem = canAccessSystemSettings(currentRole);
   const load = useCallback(async () => {
     try {
-      const data = (await apiFetch<Setting[]>("/api/settings")).filter(
+      const allSettings = await apiFetch<Setting[]>("/api/settings");
+      const data = allSettings.filter(
         (item) =>
           ![
             "AI_ENABLED",
             "AUTH_MODE",
             "DEFAULT_MIN_IMAGES",
             "SETUP_COMPLETED",
-          ].includes(item.key) && !item.key.startsWith("OPENAI_"),
+          ].includes(item.key) &&
+          !item.key.startsWith("OPENAI_") &&
+          !item.key.startsWith("XHS_"),
       );
       setItems(data);
-      setDrafts(Object.fromEntries(data.map((item) => [item.key, item.value])));
+      setDrafts(
+        Object.fromEntries(allSettings.map((item) => [item.key, item.value])),
+      );
     } catch (error) {
       message.error(error instanceof Error ? error.message : "加载设置失败");
     }
@@ -112,6 +159,37 @@ export default function SettingsPage() {
     }
   }, [message]);
   useEffect(() => { void loadRuleSync(); }, [loadRuleSync]);
+  const loadXhsSession = useCallback(async () => {
+    try {
+      setXhsSession(
+        await apiFetch<XhsSessionDiagnostics>("/api/automation/session"),
+      );
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "读取小红书会话失败");
+    }
+  }, [message]);
+  useEffect(() => { void loadXhsSession(); }, [loadXhsSession]);
+
+  const runXhsAction = async (
+    action:
+      | "START_LOGIN"
+      | "COMPLETE_LOGIN"
+      | "CHECK_SESSION"
+      | "RESTART_BROWSER"
+      | "LOGOUT_XHS",
+  ) => {
+    setXhsBusy(true);
+    try {
+      setXhsSession(
+        await apiFetch<XhsSessionDiagnostics>("/api/automation/session", {
+          method: "POST",
+          body: JSON.stringify({ action }),
+        }),
+      );
+    } finally {
+      setXhsBusy(false);
+    }
+  };
 
   const changeDataDirectory = async () => {
     const desktop = window.veridiaDesktop;
@@ -153,6 +231,121 @@ export default function SettingsPage() {
     <>
       <PageHeader title="系统设置" description="本地固定规则审核参数" />
       <AccountSecurityPanel />
+      <Card
+        className="surface-card"
+        title="小红书会话诊断"
+        style={{ marginBottom: 16 }}
+      >
+        <Descriptions column={{ xs: 1, md: 2, xl: 4 }}>
+          <Descriptions.Item label="当前会话状态">
+            <Tag>{xhsSessionStateLabels[xhsSession?.sessionState || "UNKNOWN"]}</Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="浏览器运行">
+            {xhsSession?.browserRunning ? "是" : "否"}
+          </Descriptions.Item>
+          <Descriptions.Item label="当前页面数量">
+            {xhsSession?.pageCount ?? 0}
+          </Descriptions.Item>
+          <Descriptions.Item label="Profile lock">
+            {xhsSession?.profileLocked ? "已检测到" : "未检测到"}
+          </Descriptions.Item>
+          <Descriptions.Item label="Profile 路径">
+            <span style={{ wordBreak: "break-all" }}>{xhsSession?.profilePath || "—"}</span>
+          </Descriptions.Item>
+          <Descriptions.Item label="持久会话类型">
+            {xhsSession?.partition || "—"}
+          </Descriptions.Item>
+          <Descriptions.Item label="最近登录检测">
+            {xhsSession?.lastCheckedAt
+              ? new Date(xhsSession.lastCheckedAt).toLocaleString("zh-CN")
+              : "尚未检测"}
+          </Descriptions.Item>
+          <Descriptions.Item label="最近安全验证">
+            {xhsSession?.lastVerificationAt
+              ? new Date(xhsSession.lastVerificationAt).toLocaleString("zh-CN")
+              : "无"}
+          </Descriptions.Item>
+          <Descriptions.Item label="当前审核任务 ID">
+            {xhsSession?.currentAuditTaskId || "无"}
+          </Descriptions.Item>
+          <Descriptions.Item label="当前审核批次">
+            {xhsSession?.auditLock?.batchId || "无"}
+          </Descriptions.Item>
+          <Descriptions.Item label="最近失效原因">
+            {xhsSession?.lastInvalidReason || "无"}
+          </Descriptions.Item>
+        </Descriptions>
+        <Space wrap>
+          <Button loading={xhsBusy} onClick={() => void runXhsAction("START_LOGIN")}>
+            打开小红书浏览器
+          </Button>
+          <Button loading={xhsBusy} onClick={() => void runXhsAction("COMPLETE_LOGIN")}>
+            我已完成登录/验证
+          </Button>
+          <Button loading={xhsBusy} onClick={() => void runXhsAction("CHECK_SESSION")}>
+            重新检测登录状态
+          </Button>
+          <Button loading={xhsBusy} onClick={() => void runXhsAction("RESTART_BROWSER")}>
+            重启专用浏览器
+          </Button>
+          <Button
+            danger
+            loading={xhsBusy}
+            onClick={() =>
+              modal.confirm({
+                title: "主动退出小红书登录？",
+                content: "此操作会清除小红书专用 Profile 中的登录状态。",
+                onOk: () => runXhsAction("LOGOUT_XHS"),
+              })
+            }
+          >
+            主动退出小红书登录
+          </Button>
+        </Space>
+      </Card>
+      <Card
+        className="surface-card"
+        title="小红书访问节奏"
+        style={{ marginBottom: 16 }}
+      >
+        <Alert
+          showIcon
+          type="info"
+          message="审核并发数固定为 1；安全验证不会自动重试，需人工完成后继续。"
+          style={{ marginBottom: 12 }}
+        />
+        <Descriptions column={{ xs: 1, md: 2, xl: 4 }}>
+          <Descriptions.Item label="审核并发数">1（固定）</Descriptions.Item>
+          {pacingFields.map(([key, label]) => (
+            <Descriptions.Item label={label} key={key}>
+              <Input
+                value={drafts[key] || ""}
+                onChange={(event) =>
+                  setDrafts((current) => ({ ...current, [key]: event.target.value }))
+                }
+              />
+            </Descriptions.Item>
+          ))}
+        </Descriptions>
+        <Button
+          type="primary"
+          disabled={!canManageSystem}
+          onClick={async () => {
+            await Promise.all(
+              pacingFields.map(([key]) =>
+                apiFetch("/api/settings", {
+                  method: "PUT",
+                  body: JSON.stringify({ key, value: drafts[key] }),
+                }),
+              ),
+            );
+            message.success("小红书访问节奏已保存");
+            await load();
+          }}
+        >
+          保存访问节奏
+        </Button>
+      </Card>
       <Card className="surface-card" title="软件与更新" style={{ marginBottom: 16 }}>
         <Descriptions column={{ xs: 1, md: 2 }}>
           <Descriptions.Item label="当前版本">
@@ -172,7 +365,7 @@ export default function SettingsPage() {
           <Descriptions.Item label="自动检查更新" span={2}>
             <Switch
               checked={versionInfo?.autoUpdate || false}
-              disabled={!desktopAvailable || !isAdmin}
+              disabled={!desktopAvailable || !canManageSystem}
               checkedChildren="开启"
               unCheckedChildren="关闭"
               onChange={async (checked) => {
@@ -188,7 +381,7 @@ export default function SettingsPage() {
           <Button
             icon={<FolderOpenOutlined />}
             loading={migratingData}
-            disabled={!desktopAvailable || !isAdmin}
+            disabled={!desktopAvailable || !canManageSystem}
             onClick={() => void changeDataDirectory()}
           >
             更改数据位置
@@ -270,7 +463,7 @@ export default function SettingsPage() {
           />
         )}
         <Space wrap>
-          {isAdmin && <Button
+          {canManageSystem && <Button
             disabled={!ruleSync?.configured}
             onClick={async () => {
               setSyncingRules(true);
@@ -292,7 +485,7 @@ export default function SettingsPage() {
           >
             检查更新
           </Button>}
-          {isAdmin && <Button
+          {canManageSystem && <Button
             type="primary"
             loading={syncingRules}
             disabled={!ruleSync?.configured}
@@ -319,7 +512,7 @@ export default function SettingsPage() {
           >
             立即同步
           </Button>}
-          {isAdmin && <Button
+          {canManageSystem && <Button
             onClick={async () => {
               const history = await apiFetch<
                 Array<{
@@ -364,7 +557,7 @@ export default function SettingsPage() {
           >
             查看同步记录
           </Button>}
-          {isAdmin && <Button
+          {canManageSystem && <Button
             onClick={async () => {
               setRuleSync(
                 await apiFetch<RuleSyncStatus>("/api/rule-sync/restore", {
@@ -376,10 +569,10 @@ export default function SettingsPage() {
           >
             恢复上一版规则
           </Button>}
-          {isAdmin && <Button href="/api/rule-sync/export">导出当前规则</Button>}
+          {canManageSystem && <Button href="/api/rule-sync/export">导出当前规则</Button>}
         </Space>
       </Card>
-      {isAdmin && <Card className="surface-card">
+      {canManageSystem && <Card className="surface-card">
         <Table<Setting>
           rowKey="id"
           dataSource={items}

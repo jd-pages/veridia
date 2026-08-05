@@ -71,9 +71,12 @@ export async function ensureLocalRuntime() {
         platform: "XIAOHONGSHU",
         status: "UNKNOWN",
         profilePath:
-          process.env.XHS_PROFILE_PATH || ".playwright/xhs-profile",
+          process.env.XHS_PROFILE_PATH || "系统用户数据目录/sessions/xiaohongshu-profile",
       },
-      update: {},
+      update: {
+        profilePath:
+          process.env.XHS_PROFILE_PATH || "系统用户数据目录/sessions/xiaohongshu-profile",
+      },
     }),
   ]);
 
