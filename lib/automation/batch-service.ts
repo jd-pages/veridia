@@ -22,6 +22,8 @@ export interface AutomaticTaskInput {
   channel?: string | null;
   commercePlatform?: string | null;
   storeName?: string | null;
+  storeTopicRuleId?: string | null;
+  matchedStoreName?: string | null;
   expectedStoreTopic?: string | null;
   storeMappingStatus?: string | null;
   orderNumber?: string | null;
@@ -105,6 +107,8 @@ export async function createAutomaticBatchInTransaction(
       channel: task.channel?.trim() || task.platform?.trim() || null,
       commercePlatform: task.commercePlatform?.trim() || null,
       storeName: task.storeName?.trim() || null,
+      storeTopicRuleId: task.storeTopicRuleId?.trim() || null,
+      matchedStoreName: task.matchedStoreName?.trim() || null,
       expectedStoreTopic: task.expectedStoreTopic?.trim() || null,
       storeMappingStatus: task.storeMappingStatus?.trim() || null,
       orderNumber: task.orderNumber?.trim() || null,

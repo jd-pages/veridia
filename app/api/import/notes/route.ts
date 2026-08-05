@@ -47,6 +47,7 @@ import {
   resolveStoreTopicConfig,
   type StoreMappingStatus,
 } from "@/lib/store-topic-config";
+import { loadActiveStoreTopicRules } from "@/lib/store-topic-rule-service";
 
 interface CheckedRow {
   rowNumber: number;
@@ -62,6 +63,8 @@ interface CheckedRow {
   channel: NoteLinkPlatform;
   commercePlatform: string;
   expectedStoreTopic: string;
+  storeTopicRuleId: string;
+  matchedStoreName: string;
   storeMappingStatus: StoreMappingStatus;
   recognitionStatus: "RECOGNIZED" | "UNRECOGNIZED" | "UNSUPPORTED";
   failureReason: string;
@@ -119,6 +122,7 @@ export async function POST(request: Request) {
       where: { status: "ACTIVE", deletedAt: null },
       include: { aliases: { select: { alias: true } } },
     });
+    const activeStoreTopicRules = await loadActiveStoreTopicRules();
     const campaignCache = new Map<
       string,
       Awaited<ReturnType<typeof prisma.campaign.findFirst>>
@@ -147,10 +151,13 @@ export async function POST(request: Request) {
       const importedCommercePlatform = String(
         values.commercePlatform || values.platform || "",
       ).trim();
-      const storeResolution = resolveStoreTopicConfig({
-        storeName: importedStoreName,
-        commercePlatform: importedCommercePlatform,
-      });
+      const storeResolution = resolveStoreTopicConfig(
+        activeStoreTopicRules,
+        {
+          storeName: importedStoreName,
+          commercePlatform: importedCommercePlatform,
+        },
+      );
       const purchaseProductLine = isKabritaTemplate
         ? values.purchaseProductLine || ""
         : "";
@@ -182,6 +189,8 @@ export async function POST(request: Request) {
         channel: linkResolution.platform,
         commercePlatform: storeResolution.commercePlatform || "",
         expectedStoreTopic: storeResolution.expectedTopic || "",
+        storeTopicRuleId: storeResolution.storeTopicRuleId || "",
+        matchedStoreName: storeResolution.matchedStoreName || "",
         storeMappingStatus: storeResolution.status,
         recognitionStatus: linkResolution.status,
         failureReason: linkResolution.failureReason,
@@ -423,6 +432,8 @@ export async function POST(request: Request) {
             channel: row.channel,
             commercePlatform: row.commercePlatform,
             storeName: row.shopName,
+            storeTopicRuleId: row.storeTopicRuleId,
+            matchedStoreName: row.matchedStoreName,
             expectedStoreTopic: row.expectedStoreTopic,
             storeMappingStatus: row.storeMappingStatus,
             orderNumber: row.orderNumber,

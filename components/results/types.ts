@@ -72,6 +72,8 @@ export interface ResultRow {
     channel: string | null;
     commercePlatform: string | null;
     storeName: string | null;
+    storeTopicRuleId: string | null;
+    matchedStoreName: string | null;
     expectedStoreTopic: string | null;
     storeMappingStatus: string | null;
     orderNumber: string | null;

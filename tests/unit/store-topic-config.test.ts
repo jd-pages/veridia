@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { evaluateAudit } from "@/lib/audit-engine";
 import { createMockNote } from "@/lib/mock-data";
 import {
+  expectedStoreTopicForName,
+  normalizeStoreNameForMatch,
   resolveStoreTopicConfig,
-  storeTopicConfigs,
   validateStoreTopic,
 } from "@/lib/store-topic-config";
+import { storeTopicRuleSeeds } from "@/lib/store-topic-rule-seeds";
 import type { AuditContext, ExtractedTopic } from "@/lib/types";
 
 const topic = (
@@ -20,47 +22,77 @@ const topic = (
   domPath: "main/topic",
 });
 
+const storeTopicConfigs = storeTopicRuleSeeds.map((seed) => ({
+  ...seed,
+  normalizedStoreName: normalizeStoreNameForMatch(seed.storeName),
+  expectedTopic: expectedStoreTopicForName(seed.storeName),
+  enabled: true,
+}));
+
+const resolve = (input: { storeName?: unknown; commercePlatform?: unknown }) =>
+  resolveStoreTopicConfig(storeTopicConfigs, input);
+
 describe("店铺话题配置与精确审核", () => {
   it("配置清单由单一来源保存且不包含简称", () => {
     expect(storeTopicConfigs).toHaveLength(42);
     expect(
-      resolveStoreTopicConfig({
+      resolve({
         storeName: "佳贝艾特(Kabrita)海外专卖店",
+        commercePlatform: "京东",
       }),
     ).toMatchObject({
       status: "MATCHED",
       commercePlatform: "JD",
-      expectedTopic: "佳贝艾特(Kabrita)海外专卖店",
+      expectedTopic: "#佳贝艾特(Kabrita)海外专卖店",
     });
-    expect(resolveStoreTopicConfig({ storeName: "佳贝艾特海外专卖店" }).status)
+    expect(resolve({ storeName: "佳贝艾特海外专卖店", commercePlatform: "京东" }).status)
       .toBe("STORE_NOT_MAPPED");
   });
 
   it.each([
-    "佳贝艾特(kabrita)海外专卖店",
     "佳贝艾特Kabrita海外专卖店",
     "佳贝艾特(Kabrita) 海外专卖店",
     "佳贝艾特(Kabrita)海外专卖",
     "佳贝艾特(Kabrita)海外专卖店旗舰",
-  ])("大小写、括号、内部空格或字数不同均不能匹配：%s", (storeName) => {
-    expect(resolveStoreTopicConfig({ storeName }).status).toBe(
+  ])("括号、内部空格或字数不同均不能匹配：%s", (storeName) => {
+    expect(resolve({ storeName, commercePlatform: "京东" }).status).toBe(
       "STORE_NOT_MAPPED",
     );
   });
 
+  it.each([
+    ["天猫", "FOLO海外专营店", "folo海外专营店"],
+    ["京东", "aptamil爱他美海外进口超市", "Aptamil爱他美海外进口超市"],
+    ["京东", "佳贝艾特(kabrita)海外专卖店", "佳贝艾特(Kabrita)海外专卖店"],
+    ["抖音电商", "bellamy's贝拉米荣程海外专卖店", "Bellamy's贝拉米荣程海外专卖店"],
+  ])("英文字母大小写不同仍精确匹配：%s / %s", (commercePlatform, storeName, matchedStoreName) => {
+    expect(resolve({ commercePlatform, storeName })).toMatchObject({
+      status: "MATCHED",
+      matchedStoreName,
+    });
+  });
+
   it("只移除店铺名称首尾空格，并同时校验成交平台", () => {
     expect(
-      resolveStoreTopicConfig({
+      resolve({
         storeName: "  京东健康官方进口超市  ",
         commercePlatform: "京东",
       }).status,
     ).toBe("MATCHED");
     expect(
-      resolveStoreTopicConfig({
+      resolve({
         storeName: "京东健康官方进口超市",
         commercePlatform: "天猫",
       }).status,
     ).toBe("STORE_NOT_MAPPED");
+  });
+
+  it.each([
+    "FOLO海外店",
+    "FOLO 海外专营店",
+    "FOLO海外旗舰店",
+  ])("不做简称、内部空格或近似匹配：%s", (storeName) => {
+    expect(resolve({ storeName, commercePlatform: "天猫" }).status).toBe("STORE_NOT_MAPPED");
   });
 
   it("完整且可点击的店铺话题合规", () => {
@@ -68,12 +100,42 @@ describe("店铺话题配置与精确审核", () => {
       validateStoreTopic({
         channel: "XIAOHONGSHU",
         storeName: "京东健康官方进口超市",
-        expectedTopic: "京东健康官方进口超市",
+        expectedTopic: "#京东健康官方进口超市",
         mappingStatus: "MATCHED",
         extractedTopics: [topic("#京东健康官方进口超市")],
         pageUrl: "https://www.xiaohongshu.com/explore/123",
       }),
     ).toMatchObject({ status: "COMPLIANT", matchedTopic: "#京东健康官方进口超市" });
+  });
+
+  it("可点击店铺话题仅忽略英文字母大小写", () => {
+    expect(validateStoreTopic({
+      channel: "XIAOHONGSHU",
+      storeName: "FOLO海外专营店",
+      expectedTopic: "#folo海外专营店",
+      mappingStatus: "MATCHED",
+      extractedTopics: [topic("#FOLO海外专营店")],
+      pageUrl: "https://www.xiaohongshu.com/explore/123",
+    })).toMatchObject({
+      status: "COMPLIANT",
+      matchedTopic: "#FOLO海外专营店",
+    });
+    expect(validateStoreTopic({
+      channel: "XIAOHONGSHU",
+      expectedTopic: "#folo海外专营店",
+      mappingStatus: "MATCHED",
+      extractedTopics: [topic("#FOLO 海外专营店")],
+    }).status).toBe("NON_COMPLIANT");
+  });
+
+  it("停用规则不参与新匹配", () => {
+    const disabled = storeTopicConfigs.map((rule) =>
+      rule.storeName === "folo海外专营店" ? { ...rule, enabled: false } : rule,
+    );
+    expect(resolveStoreTopicConfig(disabled, {
+      commercePlatform: "天猫",
+      storeName: "FOLO海外专营店",
+    }).status).toBe("STORE_NOT_MAPPED");
   });
 
   it("店铺话题作为独立规则参与综合话题结论", () => {
@@ -92,8 +154,10 @@ describe("店铺话题配置与精确审核", () => {
       storeTopicRequirement: {
         channel: "XIAOHONGSHU",
         storeName: "京东健康官方进口超市",
+        storeTopicRuleId: "store-topic-jd-21",
+        matchedStoreName: "京东健康官方进口超市",
         commercePlatform: "JD",
-        expectedTopic: "京东健康官方进口超市",
+        expectedTopic: "#京东健康官方进口超市",
         mappingStatus: "MATCHED",
       },
     };
@@ -115,7 +179,7 @@ describe("店铺话题配置与精确审核", () => {
     const common = {
       channel: "XIAOHONGSHU",
       storeName: "京东健康官方进口超市",
-      expectedTopic: "京东健康官方进口超市",
+      expectedTopic: "#京东健康官方进口超市",
       mappingStatus: "MATCHED",
       pageUrl: "https://www.xiaohongshu.com/explore/123",
     };
@@ -157,8 +221,10 @@ describe("店铺话题配置与精确审核", () => {
       storeTopicRequirement: {
         channel: "XIAOHONGSHU",
         storeName: "京东健康官方进口超市",
+        storeTopicRuleId: "store-topic-jd-21",
+        matchedStoreName: "京东健康官方进口超市",
         commercePlatform: "JD",
-        expectedTopic: "京东健康官方进口超市",
+        expectedTopic: "#京东健康官方进口超市",
         mappingStatus: "MATCHED",
       },
     };

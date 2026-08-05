@@ -291,9 +291,21 @@ export default function AuditDecisionSummary({
             ) : (
               <div className={styles.auditDetailList}>
                 <div>
+                  <span>导入店铺</span>
+                  <strong>{row.task.storeName || "—"}</strong>
+                </div>
+                <div>
+                  <span>匹配标准店铺</span>
+                  <strong>{row.task.matchedStoreName || "未匹配"}</strong>
+                </div>
+                <div>
                   <span>要求话题</span>
                   <strong>
-                    {row.expectedStoreTopic ? `#${row.expectedStoreTopic}` : "无法确认"}
+                    {row.expectedStoreTopic
+                      ? row.expectedStoreTopic.startsWith("#")
+                        ? row.expectedStoreTopic
+                        : `#${row.expectedStoreTopic}`
+                      : "无法确认"}
                   </strong>
                 </div>
                 <div>

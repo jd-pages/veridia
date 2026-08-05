@@ -19,6 +19,7 @@ import {
   Statistic,
   Table,
   Tag,
+  Tabs,
   Upload,
 } from "antd";
 import {
@@ -37,6 +38,7 @@ import { productStageTopicLabel } from "@/lib/product-stage";
 import { topicCategoryLabels } from "@/lib/zh-CN";
 import type { SessionUser } from "@/lib/auth";
 import { canAccessBusiness } from "@/lib/permissions";
+import StoreTopicRulesPanel from "@/components/campaigns/StoreTopicRulesPanel";
 
 interface Product {
   id: string;
@@ -168,6 +170,7 @@ export default function CampaignsPage() {
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
   );
+  const [activeSection, setActiveSection] = useState("campaigns");
   const canManageBusiness = canAccessBusiness(currentRole);
 
   const load = useCallback(async () => {
@@ -239,9 +242,11 @@ export default function CampaignsPage() {
     <>
       <PageHeader
         title="活动与规则"
-        description="原始横向活动表先预检查，再转换为产品、段位和话题的标准规则"
+        description={activeSection === "campaigns"
+          ? "原始横向活动表先预检查，再转换为产品、段位和话题的标准规则"
+          : "独立维护各成交平台的标准店铺名称和必带可点击店铺话题"}
         actions={
-          <Space wrap>
+          activeSection === "campaigns" ? <Space wrap>
             <Button
               icon={<DownloadOutlined />}
               onClick={() => window.open("/api/rule-import/template", "_blank")}
@@ -264,11 +269,20 @@ export default function CampaignsPage() {
             <Button icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新
             </Button>
-          </Space>
+          </Space> : null
         }
       />
 
-      <Card className="surface-card">
+      <Tabs
+        activeKey={activeSection}
+        onChange={setActiveSection}
+        items={[
+          { key: "campaigns", label: "活动规则" },
+          { key: "store-topics", label: "店铺话题规则" },
+        ]}
+      />
+
+      {activeSection === "campaigns" ? <Card className="surface-card">
         <Table<Campaign>
           rowKey="id"
           loading={loading}
@@ -337,7 +351,7 @@ export default function CampaignsPage() {
           ]}
           pagination={{ pageSize: 10 }}
         />
-      </Card>
+      </Card> : <StoreTopicRulesPanel canManage={canManageBusiness} />}
 
       <Modal
         open={importOpen}

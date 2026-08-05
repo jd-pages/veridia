@@ -25,7 +25,7 @@ export const contentChannelLabels: Record<ContentChannel, string> = {
 
 export const commercePlatformLabels: Record<CommercePlatform, string> = {
   JD: "京东",
-  DOUYIN_ECOMMERCE: "抖音",
+  DOUYIN_ECOMMERCE: "抖音电商",
   TMALL: "天猫",
   TAOBAO: "淘宝",
 };

@@ -115,9 +115,11 @@ export interface AuditContext {
   storeTopicRequirement?: {
     channel: "XIAOHONGSHU" | "DOUYIN" | null;
     storeName: string | null;
+    storeTopicRuleId: string | null;
+    matchedStoreName: string | null;
     commercePlatform: "JD" | "DOUYIN_ECOMMERCE" | "TMALL" | "TAOBAO" | null;
     expectedTopic: string | null;
-    mappingStatus: string;
+    mappingStatus: "MATCHED" | "STORE_NAME_MISSING" | "STORE_NOT_MAPPED";
   } | null;
 }
 

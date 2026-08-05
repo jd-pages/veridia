@@ -43,6 +43,8 @@ export async function POST(
         channel: result.task.channel,
         commercePlatform: result.task.commercePlatform,
         storeName: result.task.storeName,
+        storeTopicRuleId: result.task.storeTopicRuleId,
+        matchedStoreName: result.task.matchedStoreName,
         expectedStoreTopic: result.task.expectedStoreTopic,
         storeMappingStatus: result.task.storeMappingStatus,
         orderNumber: result.task.orderNumber,

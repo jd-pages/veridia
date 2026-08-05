@@ -4,7 +4,7 @@ import { evaluateAudit } from "@/lib/audit-engine";
 import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
-import { resolveStoreTopicAuditRequirement } from "@/lib/store-topic-config";
+import { resolveStoreTopicAuditRequirement } from "@/lib/store-topic-rule-service";
 import type { AuditContext, ExtractedNote } from "@/lib/types";
 import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
 import { completedAuditTaskUpdate } from "@/lib/automation/task-lifecycle";
@@ -194,9 +194,21 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
     task.campaignId,
     task.productStage,
   );
+  const storeTopicRequirement = await resolveStoreTopicAuditRequirement(task);
+  if (storeTopicRequirement) {
+    await prisma.auditTask.update({
+      where: { id: task.id },
+      data: {
+        storeTopicRuleId: storeTopicRequirement.storeTopicRuleId,
+        matchedStoreName: storeTopicRequirement.matchedStoreName,
+        expectedStoreTopic: storeTopicRequirement.expectedTopic,
+        storeMappingStatus: storeTopicRequirement.mappingStatus,
+      },
+    });
+  }
   const context = {
     ...baseContext,
-    storeTopicRequirement: resolveStoreTopicAuditRequirement(task),
+    storeTopicRequirement,
   };
   const evaluation = evaluateAudit(payload, context);
   const sanitizedPayload = { ...payload };

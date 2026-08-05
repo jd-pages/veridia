@@ -710,7 +710,7 @@ export function evaluateAudit(
       ruleKey: "STORE_TOPIC",
       ruleName: "店铺话题审核",
       expectedValue: storeTopicAudit.expectedTopic
-        ? `#${storeTopicAudit.expectedTopic}，且为可点击话题`
+        ? `${storeTopicAudit.expectedTopic.startsWith("#") ? storeTopicAudit.expectedTopic : `#${storeTopicAudit.expectedTopic}`}，且为可点击话题`
         : "导入店铺名称需完全匹配店铺话题配置",
       actualValue: storeTopicAudit.matchedTopic || "未命中",
       passed: storeTopicAudit.needsReview ? true : passed,

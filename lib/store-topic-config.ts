@@ -7,47 +7,24 @@ import {
 } from "@/lib/result-source";
 
 export interface StoreTopicConfig {
+  id: string;
   commercePlatform: CommercePlatform;
   storeName: string;
+  normalizedStoreName: string;
   expectedTopic: string;
   enabled: boolean;
 }
 
-const storesByPlatform: Record<CommercePlatform, readonly string[]> = {
-  JD: [
-    "爱他美优选海外专卖店", "爱他美国际进口超市", "Aptamil爱他美海外进口超市",
-    "爱他美精选海外专卖店", "爱他美海外京东自营专区", "FOLO海外官方旗舰店",
-    "国际平价会员店", "环球甄选旗舰店", "海星健康官方进口超市",
-    "京东全球购母婴直营店", "佳贝艾特(Kabrita)海外专卖店",
-    "佳贝艾特海外京东自营旗舰店", "佳贝艾特官方海外旗舰店",
-    "佳贝艾特(Kabrita)海外旗舰店", "a2海外专卖店", "美素佳儿海外专卖店",
-    "雀巢母婴海外专卖店", "贝拉米海外专卖店", "惠氏(Wyeth)海外专卖店",
-    "健康官方进口超市", "京东健康官方进口超市", "荷兰官方进口国家馆",
-    "德国官方进口国家馆", "澳大利亚官方进口国家馆", "医学营养京东自营旗舰店",
-    "京东健康海外自营旗舰店", "京东健康全球探物",
-  ],
-  DOUYIN_ECOMMERCE: [
-    "ROCKCHECK海外专营店", "FOLO海外旗舰店", "佳贝艾特kabrita海外旗舰店",
-    "Bellamy's贝拉米荣程海外专卖店",
-  ],
-  TMALL: [
-    "folo海外专营店", "AYW海外专营店", "BJF海外专营店", "贝拉米海星海外专卖店",
-    "kabrita海外旗舰店", "kabrita母婴海外旗舰店", "a2金胜海外专卖店",
-    "a2海星海外专卖店", "爱他美金胜海外专卖店",
-  ],
-  TAOBAO: ["ALG阿莱购", "国际进口超市"],
-};
+export function normalizeStoreNameForMatch(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .replace(/[A-Z]/g, (character) => character.toLowerCase());
+}
 
-export const storeTopicConfigs: readonly StoreTopicConfig[] = Object.entries(
-  storesByPlatform,
-).flatMap(([commercePlatform, stores]) =>
-  stores.map((storeName) => ({
-    commercePlatform: commercePlatform as CommercePlatform,
-    storeName,
-    expectedTopic: storeName,
-    enabled: true,
-  })),
-);
+export function expectedStoreTopicForName(storeName: unknown) {
+  const normalized = String(storeName ?? "").trim();
+  return normalized ? `#${normalized}` : "";
+}
 
 export type StoreMappingStatus =
   | "MATCHED"
@@ -56,49 +33,59 @@ export type StoreMappingStatus =
 
 export interface StoreTopicResolution {
   status: StoreMappingStatus;
+  storeTopicRuleId: string | null;
   storeName: string | null;
+  matchedStoreName: string | null;
   commercePlatform: CommercePlatform | null;
   expectedTopic: string | null;
   config: StoreTopicConfig | null;
   failureReason: string | null;
 }
 
-export function resolveStoreTopicConfig(input: {
-  storeName?: unknown;
-  commercePlatform?: unknown;
-}): StoreTopicResolution {
+export function resolveStoreTopicConfig(
+  configs: readonly StoreTopicConfig[],
+  input: { storeName?: unknown; commercePlatform?: unknown },
+): StoreTopicResolution {
   const storeName = String(input.storeName ?? "").trim();
+  const commercePlatform = parseCommercePlatform(input.commercePlatform);
   if (!storeName) {
     return {
       status: "STORE_NAME_MISSING",
+      storeTopicRuleId: null,
       storeName: null,
-      commercePlatform: parseCommercePlatform(input.commercePlatform),
+      matchedStoreName: null,
+      commercePlatform,
       expectedTopic: null,
       config: null,
       failureReason: "导入数据未填写店铺名称。",
     };
   }
-  const rawPlatform = String(input.commercePlatform ?? "").trim();
-  const commercePlatform = parseCommercePlatform(rawPlatform);
-  const matches = storeTopicConfigs.filter(
+  const normalizedStoreName = normalizeStoreNameForMatch(storeName);
+  const matches = configs.filter(
     (item) =>
       item.enabled &&
-      item.storeName === storeName &&
-      (!rawPlatform || item.commercePlatform === commercePlatform),
+      item.commercePlatform === commercePlatform &&
+      item.normalizedStoreName === normalizedStoreName,
   );
   if (matches.length !== 1) {
     return {
       status: "STORE_NOT_MAPPED",
+      storeTopicRuleId: null,
       storeName,
+      matchedStoreName: null,
       commercePlatform,
       expectedTopic: null,
       config: null,
-      failureReason: "导入店铺名称未在店铺话题配置中找到完全一致的记录。",
+      failureReason: commercePlatform
+        ? `未在${commercePlatform === "JD" ? "京东" : commercePlatform === "TMALL" ? "天猫" : commercePlatform === "TAOBAO" ? "淘宝" : "抖音电商"}店铺话题规则中找到匹配店铺：${storeName}。`
+        : `未找到有效成交平台，无法匹配店铺：${storeName}。`,
     };
   }
   return {
     status: "MATCHED",
+    storeTopicRuleId: matches[0].id,
     storeName,
+    matchedStoreName: matches[0].storeName,
     commercePlatform: matches[0].commercePlatform,
     expectedTopic: matches[0].expectedTopic,
     config: matches[0],
@@ -126,6 +113,11 @@ function exactTopicText(value: unknown) {
   return trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
 }
 
+function topicWithHash(value: unknown) {
+  const text = exactTopicText(value);
+  return text ? `#${text}` : "";
+}
+
 export function validateStoreTopic(input: {
   channel?: unknown;
   storeName?: unknown;
@@ -135,7 +127,8 @@ export function validateStoreTopic(input: {
   body?: unknown;
   pageUrl?: string | null;
 }): StoreTopicAuditResult {
-  const expectedTopic = String(input.expectedTopic ?? "").trim();
+  const expectedTopic = topicWithHash(input.expectedTopic);
+  const expectedTopicText = exactTopicText(expectedTopic);
   const mappingStatus = String(input.mappingStatus ?? "");
   if (mappingStatus === "STORE_NAME_MISSING") {
     return {
@@ -143,7 +136,7 @@ export function validateStoreTopic(input: {
       failureReason: "导入数据未填写店铺名称，店铺话题无法审核。", needsReview: true,
     };
   }
-  if (mappingStatus !== "MATCHED" || !expectedTopic) {
+  if (mappingStatus !== "MATCHED" || !expectedTopicText) {
     return {
       status: "UNREVIEWABLE", expectedTopic: null, matchedTopic: null,
       failureReason: "导入店铺名称未匹配店铺话题配置。", needsReview: true,
@@ -157,22 +150,26 @@ export function validateStoreTopic(input: {
     };
   }
   const exactMatches = input.extractedTopics.filter(
-    (topic) => exactTopicText(topic.displayText) === expectedTopic,
+    (topic) =>
+      normalizeStoreNameForMatch(exactTopicText(topic.displayText)) ===
+      normalizeStoreNameForMatch(expectedTopicText),
   );
   if (!exactMatches.length) {
-    const onlyInBody = String(input.body ?? "").includes(expectedTopic);
+    const onlyInBody = normalizeStoreNameForMatch(input.body).includes(
+      normalizeStoreNameForMatch(expectedTopicText),
+    );
     return {
       status: "NON_COMPLIANT", expectedTopic, matchedTopic: null,
       failureReason: onlyInBody
-        ? `店铺名称仅出现在正文中，未形成可点击话题：#${expectedTopic}`
-        : `缺少店铺话题：#${expectedTopic}`,
+        ? `店铺名称仅出现在正文中，未形成可点击话题：${expectedTopic}`
+        : `缺少店铺话题：${expectedTopic}`,
       needsReview: false,
     };
   }
   const clickability = classifyTopicCandidates(exactMatches, {
     pageUrl: input.pageUrl || undefined,
   });
-  const matchedTopic = `#${expectedTopic}`;
+  const matchedTopic = topicWithHash(exactMatches[0].displayText);
   if (clickability === "CLICKABLE") {
     return {
       status: "COMPLIANT", expectedTopic, matchedTopic,
@@ -182,18 +179,18 @@ export function validateStoreTopic(input: {
   if (clickability === "UNKNOWN") {
     return {
       status: "UNREVIEWABLE", expectedTopic, matchedTopic,
-      failureReason: `店铺话题可点击状态无法确认：#${expectedTopic}`,
+      failureReason: `店铺话题可点击状态无法确认：${expectedTopic}`,
       needsReview: true,
     };
   }
   return {
     status: "NON_COMPLIANT", expectedTopic, matchedTopic,
-    failureReason: `店铺话题不可点击：#${expectedTopic}`,
+    failureReason: `店铺话题不可点击：${expectedTopic}`,
     needsReview: false,
   };
 }
 
-export function resolveStoreTopicAuditRequirement(input: {
+export function buildStoreTopicAuditRequirement(input: {
   source?: unknown;
   channel?: unknown;
   platform?: unknown;
@@ -201,28 +198,30 @@ export function resolveStoreTopicAuditRequirement(input: {
   commercePlatform?: unknown;
   expectedStoreTopic?: unknown;
   storeMappingStatus?: unknown;
+  resolved: StoreTopicResolution;
 }) {
-  if (String(input.source ?? "") !== "EXCEL") return null;
-  const resolved = resolveStoreTopicConfig({
-    storeName: input.storeName,
-    commercePlatform: input.commercePlatform,
-  });
+  if (
+    String(input.source ?? "") !== "EXCEL" &&
+    !String(input.storeName ?? "").trim() &&
+    !String(input.expectedStoreTopic ?? "").trim()
+  ) return null;
+  const resolved = input.resolved;
   return {
     channel:
       parseContentChannel(input.channel) || parseContentChannel(input.platform),
     storeName: resolved.storeName,
+    storeTopicRuleId: resolved.storeTopicRuleId,
+    matchedStoreName: resolved.matchedStoreName,
     commercePlatform:
       parseCommercePlatform(input.commercePlatform) || resolved.commercePlatform,
-    expectedTopic:
-      String(input.expectedStoreTopic ?? "").trim() || resolved.expectedTopic,
-    mappingStatus:
-      String(input.storeMappingStatus ?? "").trim() || resolved.status,
+    expectedTopic: resolved.expectedTopic,
+    mappingStatus: resolved.status,
   };
 }
 
 export function storeTopicAuditForNote(
   note: Pick<ExtractedNote, "topics" | "body" | "url" | "finalUrl">,
-  requirement: ReturnType<typeof resolveStoreTopicAuditRequirement>,
+  requirement: ReturnType<typeof buildStoreTopicAuditRequirement>,
 ) {
   if (!requirement) {
     return {

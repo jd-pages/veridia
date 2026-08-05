@@ -1,6 +1,7 @@
 import { prisma } from "../lib/db";
 import { ensureLocalRuntime } from "../lib/local-runtime";
 import { ensureBuiltinRules } from "../lib/rules/sync";
+import { ensureStoreTopicRuleSeeds } from "../lib/store-topic-rule-service";
 
 /**
  * Safe, idempotent local initialization.
@@ -12,6 +13,7 @@ import { ensureBuiltinRules } from "../lib/rules/sync";
 async function main() {
   await ensureLocalRuntime();
   await ensureBuiltinRules();
+  await ensureStoreTopicRuleSeeds();
 }
 
 main()

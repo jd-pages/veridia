@@ -48,6 +48,25 @@ model User {
   @@map("users")
 }
 
+model StoreTopicRule {
+  id                  String    @id @default(cuid())
+  commercePlatform    String
+  storeName           String
+  normalizedStoreName String
+  expectedTopic       String
+  enabled             Boolean   @default(true)
+  deletedAt           DateTime?
+  createdBy           String?
+  updatedBy           String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([commercePlatform, normalizedStoreName])
+  @@index([commercePlatform, enabled, deletedAt])
+  @@index([updatedAt])
+  @@map("store_topic_rules")
+}
+
 model LocalAuthSession {
   id             String    @id @default(cuid())
   userId         String
@@ -273,6 +292,8 @@ model AuditTask {
   channel            String?
   commercePlatform   String?
   storeName          String?
+  storeTopicRuleId   String?
+  matchedStoreName   String?
   expectedStoreTopic String?
   storeMappingStatus String?
   orderNumber        String?
@@ -298,6 +319,7 @@ model AuditTask {
   @@index([platform])
   @@index([channel])
   @@index([commercePlatform])
+  @@index([storeTopicRuleId])
   @@index([orderNumber])
   @@map("audit_tasks")
 }
