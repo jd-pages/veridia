@@ -63,6 +63,35 @@ export function resolveSoftwareUpdateRepository(
   return candidates.map(repositoryFrom).find(Boolean) || "";
 }
 
+export function findPackagedBusinessDataArtifacts(applicationRoot) {
+  const artifacts = [];
+  const forbiddenDirectories = new Set([
+    ".playwright",
+    "playwright-report",
+    "test-results",
+  ]);
+  function scan(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const fullPath = path.join(directory, entry.name);
+      const relativePath = path.relative(applicationRoot, fullPath);
+      if (entry.isDirectory()) {
+        if (forbiddenDirectories.has(entry.name.toLowerCase())) {
+          artifacts.push(relativePath);
+        } else {
+          scan(fullPath);
+        }
+      } else if (
+        /\.(?:db|sqlite|sqlite3)$/iu.test(entry.name) ||
+        /^VERIDIA.*导入模板.*\.xlsx$/iu.test(entry.name)
+      ) {
+        artifacts.push(relativePath);
+      }
+    }
+  }
+  scan(applicationRoot);
+  return artifacts;
+}
+
 export async function afterPack(context) {
   if (context.electronPlatformName !== "win32") return;
 
@@ -79,6 +108,13 @@ export async function afterPack(context) {
   );
   if (!fs.existsSync(accountPublicKey)) {
     throw new Error("Electron 产物缺少账号签名公钥");
+  }
+  const businessDataArtifacts =
+    findPackagedBusinessDataArtifacts(applicationRoot);
+  if (businessDataArtifacts.length) {
+    throw new Error(
+      `Electron 产物包含业务数据库或本地验收产物：${businessDataArtifacts.join("、")}`,
+    );
   }
   const forbiddenNames = new Set([
     "创建veridia账号.bat",

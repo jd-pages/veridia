@@ -3,7 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import builtinRules from "@/rules/default-rules.json";
-import { payloadSha256, validateRulePayload } from "@/lib/rules/package";
+import {
+  normalizeLocalStageReferences,
+  payloadSha256,
+  validateRulePayload,
+} from "@/lib/rules/package";
 import defaultTemplates from "@/rules/default-import-export-templates.json";
 import {
   isRulePackageCompatible,
@@ -13,6 +17,37 @@ import {
 } from "@/lib/rules/sync";
 
 describe("GitHub 规则同步", () => {
+  it("导出旧本地规则备份时补齐达能阶段话题关联", () => {
+    const payload = validateRulePayload(builtinRules);
+    const brokenRules = payload.topicRules.map((rule) =>
+      rule.topic === "#新生儿奶粉"
+        ? { ...rule, applicableStage: "LEGACY_STAGE" }
+        : rule,
+    );
+
+    const normalized = normalizeLocalStageReferences([], brokenRules);
+
+    expect(
+      normalized.topicRules.find((rule) => rule.topic === "#新生儿奶粉")
+        ?.applicableStage,
+    ).toBe("IFFO_P1");
+    expect(
+      normalized.topicRules.find((rule) => rule.topic === "#二段奶粉推荐")
+        ?.applicableStage,
+    ).toBe("IFFO_2");
+    expect(
+      normalized.topicRules.find((rule) => rule.topic === "#三段奶粉推荐")
+        ?.applicableStage,
+    ).toBe("GUM_3_4_1PLUS_2PLUS");
+    expect(() =>
+      validateRulePayload({
+        ...payload,
+        stageGroups: normalized.stageGroups,
+        topicRules: normalized.topicRules,
+      }),
+    ).not.toThrow();
+  });
+
   it("内置规则快照包含产品、活动、阶段组和话题规则", () => {
     const payload = validateRulePayload(builtinRules);
     expect(payload.products.length).toBe(7);

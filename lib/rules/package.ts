@@ -190,6 +190,39 @@ export function validateRulePayload(input: unknown): RulePackagePayload {
   return payload;
 }
 
+export function normalizeLocalStageReferences(
+  storedGroups: RulePackageStageGroup[],
+  topicRules: RulePackagePayload["topicRules"],
+) {
+  const stageGroupsByKey = new Map(
+    DEFAULT_RULE_STAGE_GROUPS.map((group) => [group.key, group]),
+  );
+  for (const group of storedGroups) stageGroupsByKey.set(group.key, group);
+  const stageGroups = [...stageGroupsByKey.values()].sort(
+    (left, right) => left.sortOrder - right.sortOrder,
+  );
+  const stageKeys = new Set(stageGroups.map((group) => group.key));
+  const stageKeyByTopic = new Map(
+    stageGroups.map((group) => [normalizeTopic(group.requiredTopic), group.key]),
+  );
+
+  return {
+    stageGroups,
+    topicRules: topicRules.map((rule) => {
+      if (
+        rule.topicCategory !== "PRODUCT_STAGE" ||
+        (rule.applicableStage && stageKeys.has(rule.applicableStage))
+      ) {
+        return rule;
+      }
+      const inferredStage = stageKeyByTopic.get(normalizeTopic(rule.topic));
+      return inferredStage
+        ? { ...rule, applicableStage: inferredStage }
+        : rule;
+    }),
+  };
+}
+
 export async function exportCurrentRulePayload(options?: {
   ruleVersion?: string;
   minimumAppVersion?: string;
@@ -241,8 +274,8 @@ export async function exportCurrentRulePayload(options?: {
         stableKey("activity", [campaign.name, campaign.month]),
     ]),
   );
-  const stageGroups: RulePackageStageGroup[] = storedGroups.length
-    ? storedGroups.map((group) => ({
+  const storedStageGroups: RulePackageStageGroup[] = storedGroups.map(
+    (group) => ({
         key: group.key,
         label: group.label,
         canonicalStages: JSON.parse(group.canonicalStages) as string[],
@@ -251,8 +284,51 @@ export async function exportCurrentRulePayload(options?: {
         requiredTopic: group.requiredTopic,
         sortOrder: group.sortOrder,
         status: group.status,
-      }))
-    : DEFAULT_RULE_STAGE_GROUPS;
+      }),
+  );
+
+  const exportedTopicRules: RulePackagePayload["topicRules"] = topicRules.map(
+    (rule) => ({
+      key:
+        rule.publishedKey ||
+        stableKey("topic", [
+          rule.brandName,
+          rule.campaignId ? campaignKeyById.get(rule.campaignId) : "global",
+          rule.productId ? productKeyById.get(rule.productId) : "all-products",
+          rule.topicCategory,
+          rule.applicableStage,
+          normalizeTopic(rule.topic),
+        ]),
+      brand:
+        rule.brandName ||
+        (rule.productId ? productBrandById.get(rule.productId) : null) ||
+        (rule.campaignId ? campaignBrandById.get(rule.campaignId) : null) ||
+        null,
+      campaignKey: rule.campaignId
+        ? campaignKeyById.get(rule.campaignId) || null
+        : null,
+      productKey: rule.productId
+        ? productKeyById.get(rule.productId) || null
+        : null,
+      scope: rule.scope,
+      ruleType: rule.ruleType,
+      topicCategory: rule.topicCategory,
+      applicableStage: rule.applicableStage,
+      milkType: rule.milkType,
+      topic: normalizeTopic(rule.topic),
+      exactMatch: rule.exactMatch,
+      clickableRequired: rule.clickableRequired,
+      caseSensitive: rule.caseSensitive,
+      minCount: rule.minCount,
+      sortOrder: rule.sortOrder,
+      revision: rule.version,
+      status: rule.status,
+    }),
+  );
+  const normalizedLocalRules = normalizeLocalStageReferences(
+    storedStageGroups,
+    exportedTopicRules,
+  );
 
   return validateRulePayload({
     ruleVersion:
@@ -299,43 +375,8 @@ export async function exportCurrentRulePayload(options?: {
       ruleRevision: campaign.ruleVersion,
       status: campaign.status,
     })),
-    stageGroups,
-    topicRules: topicRules.map((rule) => ({
-      key:
-        rule.publishedKey ||
-        stableKey("topic", [
-          rule.brandName,
-          rule.campaignId ? campaignKeyById.get(rule.campaignId) : "global",
-          rule.productId ? productKeyById.get(rule.productId) : "all-products",
-          rule.topicCategory,
-          rule.applicableStage,
-          normalizeTopic(rule.topic),
-        ]),
-      brand:
-        rule.brandName ||
-        (rule.productId ? productBrandById.get(rule.productId) : null) ||
-        (rule.campaignId ? campaignBrandById.get(rule.campaignId) : null) ||
-        null,
-      campaignKey: rule.campaignId
-        ? campaignKeyById.get(rule.campaignId) || null
-        : null,
-      productKey: rule.productId
-        ? productKeyById.get(rule.productId) || null
-        : null,
-      scope: rule.scope,
-      ruleType: rule.ruleType,
-      topicCategory: rule.topicCategory,
-      applicableStage: rule.applicableStage,
-      milkType: rule.milkType,
-      topic: normalizeTopic(rule.topic),
-      exactMatch: rule.exactMatch,
-      clickableRequired: rule.clickableRequired,
-      caseSensitive: rule.caseSensitive,
-      minCount: rule.minCount,
-      sortOrder: rule.sortOrder,
-      revision: rule.version,
-      status: rule.status,
-    })),
+    stageGroups: normalizedLocalRules.stageGroups,
+    topicRules: normalizedLocalRules.topicRules,
     pageStatusRules: DEFAULT_PAGE_STATUS_RULES,
     importExportTemplates: syncState?.templateConfigJson
       ? validateImportExportTemplates(

@@ -2,7 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveSoftwareUpdateRepository } from "../../scripts/after-pack.mjs";
+import {
+  findPackagedBusinessDataArtifacts,
+  resolveSoftwareUpdateRepository,
+} from "../../scripts/after-pack.mjs";
 
 const temporaryDirectories: string[] = [];
 
@@ -85,5 +88,37 @@ describe("after-pack 软件更新仓库解析", () => {
         { VERIDIA_RULES_REPOSITORY: "jd-pages/veridia-rules" },
       ),
     ).toBe("");
+  });
+});
+
+describe("after-pack 业务数据隔离", () => {
+  it("拒绝把业务数据库、历史导入模板和验收产物打进应用", () => {
+    const applicationRoot = project();
+    fs.mkdirSync(path.join(applicationRoot, "data"), { recursive: true });
+    fs.writeFileSync(path.join(applicationRoot, "data", "veridia.db"), "db");
+    fs.writeFileSync(
+      path.join(applicationRoot, "VERIDIA佳贝艾特导入模板_20260804.xlsx"),
+      "xlsx",
+    );
+    fs.mkdirSync(path.join(applicationRoot, "test-results"));
+
+    expect(findPackagedBusinessDataArtifacts(applicationRoot).sort()).toEqual([
+      "VERIDIA佳贝艾特导入模板_20260804.xlsx",
+      path.join("data", "veridia.db"),
+      "test-results",
+    ].sort());
+  });
+
+  it("允许项目规则源和 Prisma schema 进入应用", () => {
+    const applicationRoot = project();
+    fs.mkdirSync(path.join(applicationRoot, "rules"), { recursive: true });
+    fs.writeFileSync(
+      path.join(applicationRoot, "rules", "default-rules.json"),
+      "{}",
+    );
+    fs.mkdirSync(path.join(applicationRoot, "prisma"), { recursive: true });
+    fs.writeFileSync(path.join(applicationRoot, "prisma", "schema.prisma"), "");
+
+    expect(findPackagedBusinessDataArtifacts(applicationRoot)).toEqual([]);
   });
 });

@@ -74,10 +74,10 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     expect(afterRules.status).toBe("FAILED");
   }
   expect(afterRules.counts).toEqual({
-    products: 5,
-    activities: 1,
+    products: 7,
+    activities: 2,
     stageGroups: 3,
-    topicRules: 9,
+    topicRules: 19,
   });
 
   const productsResponse = await page.request.get("/api/products");
