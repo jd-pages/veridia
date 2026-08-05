@@ -13,6 +13,9 @@ export interface AutomaticTaskInput {
   productStage?: string | null;
   milkType?: string | null;
   notes?: string | null;
+  platform?: string | null;
+  storeName?: string | null;
+  orderNumber?: string | null;
   source?: string;
 }
 
@@ -86,6 +89,9 @@ export async function createAutomaticBatchInTransaction(
       status: "PENDING",
       queueOrder: index,
       notes: task.notes?.trim() || null,
+      platform: task.platform?.trim() || null,
+      storeName: task.storeName?.trim() || null,
+      orderNumber: task.orderNumber?.trim() || null,
       createdBy: input.createdBy || null,
       softwareVersion: packageJson.version,
       rulePackageVersion,

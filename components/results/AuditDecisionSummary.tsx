@@ -1,5 +1,6 @@
 "use client";
 
+import { Tooltip, Typography } from "antd";
 import { productStageTopicLabel } from "@/lib/product-stage";
 import {
   auditConclusionCardLabel,
@@ -9,6 +10,11 @@ import {
 } from "@/lib/result-detail-presentation";
 import { isUnavailableNoteResult } from "@/lib/result-display";
 import { resultDetailLinks } from "@/lib/result-links";
+import {
+  formatAuditTime,
+  parseResultPlatform,
+  resultPlatformLabel,
+} from "@/lib/result-source";
 import { getTopicAuditSummary } from "./TopicAuditCell";
 import ResultDetailLink from "./ResultDetailLink";
 import type { ResultDetail, ResultRow } from "./types";
@@ -90,6 +96,10 @@ export default function AuditDecisionSummary({
     (item) => item.ruleKey === "KABRITA_BASIC_REWARD",
   );
   const basicReward = parseBasicRewardEvidence(basicRewardRule?.evidence);
+  const platform = parseResultPlatform(row.task.platform);
+  const platformLabel = resultPlatformLabel(platform);
+  const storeName = row.task.storeName?.trim() || "—";
+  const orderNumber = row.task.orderNumber?.trim() || "—";
 
   return (
     <div className={styles.decisionLayout}>
@@ -98,29 +108,62 @@ export default function AuditDecisionSummary({
         aria-label="顶部结论"
       >
         <div className={styles.decisionHeroTopline}>
+          <span
+            className={`${styles.platformBadge} ${
+              platform ? styles[`platformBadge_${platform}`] : ""
+            }`}
+          >
+            <i aria-hidden="true" />
+            {platformLabel}
+          </span>
           <span className={styles.decisionEyebrow}>审核结论</span>
           <strong className={styles.decisionTitle}>{conclusion}</strong>
         </div>
-        {!unavailable ? (
-          <div className={styles.decisionOwnership}>
-            <div>
-              <span>产品</span>
-              <strong>{row.task.product.name}</strong>
-            </div>
-            <div>
-              <span>活动</span>
-              <strong>{row.task.campaign.name}</strong>
-            </div>
-            <div>
-              <span>阶段</span>
-              <strong>{productStageTopicLabel(row.task.productStage)}</strong>
-            </div>
-            <div className={styles.decisionTitleField}>
-              <span>标题</span>
-              <strong>{row.note.title || "未获取标题"}</strong>
-            </div>
+        <div className={styles.decisionOwnership}>
+          <div>
+            <span>产品</span>
+            <strong>{row.task.product.name || "—"}</strong>
           </div>
-        ) : null}
+          <div>
+            <span>活动</span>
+            <strong>{row.task.campaign.name || "—"}</strong>
+          </div>
+          <div>
+            <span>阶段</span>
+            <strong>{productStageTopicLabel(row.task.productStage) || "—"}</strong>
+          </div>
+          <div className={styles.decisionSourceField}>
+            <span>来源信息</span>
+            <strong className={styles.sourceInformation}>
+              <span>{platformLabel}</span>
+              <b aria-hidden="true">·</b>
+              <Tooltip title={storeName === "—" ? undefined : storeName}>
+                <span className={styles.storeName}>{storeName}</span>
+              </Tooltip>
+            </strong>
+          </div>
+          <div>
+            <span>订单编号</span>
+            {orderNumber === "—" ? (
+              <strong>—</strong>
+            ) : (
+              <Typography.Text
+                className={styles.orderNumber}
+                copyable={{ text: orderNumber, tooltips: ["复制订单编号", "已复制"] }}
+              >
+                {orderNumber}
+              </Typography.Text>
+            )}
+          </div>
+          <div>
+            <span>实际审核时间</span>
+            <strong>{formatAuditTime(row.auditedAt)}</strong>
+          </div>
+          <div className={styles.decisionTitleField}>
+            <span>标题</span>
+            <strong>{row.note.title || "未获取标题"}</strong>
+          </div>
+        </div>
         {!unavailable ? (
           <div className={styles.decisionMetrics}>
             <span>有效正文：{row.effectiveBodyLength ?? 0} 个字符</span>

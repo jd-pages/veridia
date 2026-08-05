@@ -53,6 +53,11 @@ describe("审核详情展示过滤", () => {
     expect(decision).toContain('aria-label="审核明细"');
     expect(decision).toContain('aria-label="链接操作"');
     expect(decision).toContain('aria-label="人工复核记录"');
+    expect(decision).toContain("row.task.platform");
+    expect(decision).toContain("row.task.storeName");
+    expect(decision).toContain("row.task.orderNumber");
+    expect(decision).toContain("formatAuditTime(row.auditedAt)");
+    expect(decision).toContain("复制订单编号");
   });
 
   it("从逐条规则证据和失败原因中过滤隐藏项并保留真实审核项", () => {

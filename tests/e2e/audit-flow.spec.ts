@@ -565,6 +565,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       task: {
         status: string;
         failureCode: string | null;
+        platform: string | null;
         product: { id: string };
         campaign: { id: string };
       };
@@ -851,6 +852,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     dateType: "AUDITED_AT",
     productId: failedSample.task.product.id,
     campaignId: failedSample.task.campaign.id,
+    platform: failedSample.task.platform || "XIAOHONGSHU",
     status: "PROCESS_FAILED",
     manualStatus: "PENDING",
     pageStatus: failedSample.pageStatus,
@@ -858,15 +860,10 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     topicsStatus: failedSample.topicsCompliant
       ? "COMPLIANT"
       : "NON_COMPLIANT",
-    clickableStatus: failedSample.clickableCompliant
-      ? "COMPLIANT"
-      : "NON_COMPLIANT",
     imageStatus: failedSample.imageStatus,
     noteType: failedSample.noteType,
     reason: "人工确认",
-    ruleVersion: String(failedSample.ruleVersion),
     publicStatus: failedSample.publicStatus,
-    retentionStatus: failedSample.retentionStatus,
     keyword: `result-coverage=${resultCoverageSuffix}`,
     format: "csv",
   });

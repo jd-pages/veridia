@@ -4,11 +4,14 @@ import {
   buildResultRiskWhere,
   parseResultRiskType,
 } from "@/lib/result-risk";
+import { parseResultPlatform } from "@/lib/result-source";
 
 export interface ResultQueryFilters {
   ids?: string[];
   productId?: string;
   campaignId?: string;
+  platform?: string;
+  orderNumber?: string;
   batchId?: string;
   month?: string;
   startDate?: string;
@@ -22,11 +25,8 @@ export interface ResultQueryFilters {
   pageStatus?: string;
   bodyStatus?: string;
   topicsStatus?: string;
-  clickableStatus?: string;
   noteType?: string;
-  ruleVersion?: string;
   publicStatus?: string;
-  retentionStatus?: string;
   riskType?: string;
 }
 
@@ -43,6 +43,8 @@ export function readResultQueryFilters(
       .slice(0, 100),
     productId: value("productId"),
     campaignId: value("campaignId"),
+    platform: value("platform"),
+    orderNumber: value("orderNumber"),
     batchId: value("batchId"),
     month: value("month"),
     startDate: value("startDate"),
@@ -56,11 +58,8 @@ export function readResultQueryFilters(
     pageStatus: value("pageStatus"),
     bodyStatus: value("bodyStatus"),
     topicsStatus: value("topicsStatus"),
-    clickableStatus: value("clickableStatus"),
     noteType: value("noteType"),
-    ruleVersion: value("ruleVersion"),
     publicStatus: value("publicStatus"),
-    retentionStatus: value("retentionStatus"),
     riskType: value("riskType"),
   };
 }
@@ -111,6 +110,13 @@ export function buildAuditResultWhere(
   filters: ResultQueryFilters,
 ): Prisma.AuditResultWhereInput {
   const and: Prisma.AuditResultWhereInput[] = [];
+
+  const platform = filters.platform
+    ? parseResultPlatform(filters.platform)
+    : null;
+  if (filters.platform && !platform) {
+    throw new Error("平台筛选条件不正确");
+  }
 
   if (filters.riskType) {
     const riskType = parseResultRiskType(filters.riskType);
@@ -173,27 +179,9 @@ export function buildAuditResultWhere(
       topicsCompliant: filters.topicsStatus === "COMPLIANT",
     });
   }
-  if (filters.clickableStatus) {
-    and.push({
-      clickableCompliant:
-        filters.clickableStatus === "COMPLIANT",
-    });
-  }
   if (filters.noteType) and.push({ noteType: filters.noteType });
-  if (filters.ruleVersion) {
-    const numericRuleVersion = Number(
-      filters.ruleVersion.trim().replace(/^v/iu, ""),
-    );
-    if (!Number.isInteger(numericRuleVersion) || numericRuleVersion < 1) {
-      throw new Error("规则版本格式不正确");
-    }
-    and.push({ ruleVersion: numericRuleVersion });
-  }
   if (filters.publicStatus) {
     and.push({ publicStatus: filters.publicStatus });
-  }
-  if (filters.retentionStatus) {
-    and.push({ retentionStatus: filters.retentionStatus });
   }
   if (filters.reason) {
     and.push({ failureReasons: { contains: filters.reason } });
@@ -203,7 +191,9 @@ export function buildAuditResultWhere(
     filters.productId ||
     filters.campaignId ||
     filters.batchId ||
-    filters.month
+    filters.month ||
+    platform ||
+    filters.orderNumber
   ) {
     and.push({
       task: {
@@ -211,6 +201,10 @@ export function buildAuditResultWhere(
         ...(filters.campaignId ? { campaignId: filters.campaignId } : {}),
         ...(filters.batchId ? { batchId: filters.batchId } : {}),
         ...(filters.month ? { campaign: { month: filters.month } } : {}),
+        ...(platform ? { platform } : {}),
+        ...(filters.orderNumber
+          ? { orderNumber: { contains: filters.orderNumber.trim() } }
+          : {}),
       },
     });
   }

@@ -156,6 +156,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
           productStage: effectiveProductStage,
           milkType: stageRule?.milkType || null,
           notes: body.notes?.trim() || null,
+          platform: "XIAOHONGSHU",
           createdBy: user.id,
           source: "MANUAL",
           softwareVersion: packageJson.version,

@@ -27,12 +27,14 @@ import styles from "./results-workbench.module.css";
 function FilterField({
   label,
   children,
+  className,
 }: {
   label: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <div className={styles.filterField}>
+    <div className={`${styles.filterField} ${className || ""}`}>
       <label className={styles.fieldLabel}>{label}</label>
       {children}
     </div>
@@ -88,7 +90,7 @@ export default function AuditFilterPanel({
         ) : null}
       </div>
 
-      <div className={styles.filterGrid}>
+      <div className={`${styles.filterGrid} ${styles.primaryFilterGrid}`}>
         <FilterField label="产品">
           <Select
             allowClear
@@ -119,6 +121,19 @@ export default function AuditFilterPanel({
               )
               .map((item) => ({ value: item.id, label: item.name }))}
             onChange={(value) => update("campaignId", value || "")}
+          />
+        </FilterField>
+        <FilterField label="平台">
+          <Select
+            allowClear
+            aria-label="平台"
+            placeholder="全部平台"
+            value={filters.platform || undefined}
+            options={[
+              { value: "XIAOHONGSHU", label: "小红书" },
+              { value: "DOUYIN", label: "抖音" },
+            ]}
+            onChange={(value) => update("platform", value || "")}
           />
         </FilterField>
         <FilterField label="日期范围">
@@ -183,6 +198,9 @@ export default function AuditFilterPanel({
             />
           </Space.Compact>
         </FilterField>
+      </div>
+
+      <div className={`${styles.filterGrid} ${styles.secondaryFilterGrid}`}>
         <FilterField label="综合审核结果">
           <Select
             allowClear
@@ -212,6 +230,17 @@ export default function AuditFilterPanel({
               { value: "NOT_REQUIRED", label: "无需复核" },
             ]}
             onChange={(value) => update("manualStatus", value || "")}
+          />
+        </FilterField>
+        <FilterField label="订单编号">
+          <Input
+            allowClear
+            aria-label="订单编号"
+            placeholder="输入完整或部分订单编号"
+            value={filters.orderNumber}
+            onChange={(event) => update("orderNumber", event.target.value)}
+            onBlur={(event) => update("orderNumber", event.target.value.trim())}
+            onPressEnter={onSearch}
           />
         </FilterField>
       </div>
@@ -298,20 +327,6 @@ export default function AuditFilterPanel({
                 }
               />
             </FilterField>
-            <FilterField label="蓝色话题可点击状态">
-              <Select
-                allowClear
-                placeholder="全部可点击状态"
-                value={advancedFilters.clickableStatus || undefined}
-                options={[
-                  { value: "COMPLIANT", label: "全部可点击" },
-                  { value: "NON_COMPLIANT", label: "存在不可点击" },
-                ]}
-                onChange={(value) =>
-                  updateAdvanced("clickableStatus", value || "")
-                }
-              />
-            </FilterField>
             <FilterField label="图片数量状态">
               <Select
                 allowClear
@@ -350,27 +365,6 @@ export default function AuditFilterPanel({
                 }
               />
             </FilterField>
-            <FilterField label="不通过原因">
-              <Input
-                allowClear
-                aria-label="不通过原因"
-                placeholder="输入原因关键词"
-                value={filters.reason}
-                onChange={(event) => update("reason", event.target.value)}
-                onPressEnter={onSearch}
-              />
-            </FilterField>
-            <FilterField label="规则版本">
-              <Input
-                allowClear
-                aria-label="规则版本"
-                placeholder="例如：1"
-                value={advancedFilters.ruleVersion}
-                onChange={(event) =>
-                  updateAdvanced("ruleVersion", event.target.value)
-                }
-              />
-            </FilterField>
             <FilterField label="公开状态">
               <Select
                 allowClear
@@ -386,19 +380,14 @@ export default function AuditFilterPanel({
                 }
               />
             </FilterField>
-            <FilterField label="留存验证状态">
-              <Select
+            <FilterField label="不通过原因" className={styles.advancedReasonField}>
+              <Input
                 allowClear
-                placeholder="全部留存状态"
-                value={advancedFilters.retentionStatus || undefined}
-                options={[
-                  { value: "SATISFIED", label: "已满足" },
-                  { value: "PENDING", label: "待验证" },
-                  { value: "NOT_SATISFIED", label: "未满足" },
-                ]}
-                onChange={(value) =>
-                  updateAdvanced("retentionStatus", value || "")
-                }
+                aria-label="不通过原因"
+                placeholder="输入原因关键词"
+                value={filters.reason}
+                onChange={(event) => update("reason", event.target.value)}
+                onPressEnter={onSearch}
               />
             </FilterField>
           </div>

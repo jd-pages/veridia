@@ -61,6 +61,8 @@ import styles from "@/components/results/results-workbench.module.css";
 const defaultFilters: ResultFilters = {
   productId: "",
   campaignId: "",
+  platform: "",
+  orderNumber: "",
   startDate: dayjs().startOf("month").format("YYYY-MM-DD"),
   endDate: dayjs().endOf("month").format("YYYY-MM-DD"),
   dateType: "AUDITED_AT",
@@ -76,11 +78,8 @@ const emptyAdvancedFilters: AdvancedResultFilters = {
   pageStatus: "",
   bodyStatus: "",
   topicsStatus: "",
-  clickableStatus: "",
   noteType: "",
-  ruleVersion: "",
   publicStatus: "",
-  retentionStatus: "",
 };
 
 function filtersFromSearchParams(searchParams: URLSearchParams) {
@@ -97,6 +96,8 @@ function filtersFromSearchParams(searchParams: URLSearchParams) {
     ...defaultFilters,
     productId: value("productId"),
     campaignId: value("campaignId"),
+    platform: value("platform"),
+    orderNumber: value("orderNumber"),
     startDate:
       value("startDate") ||
       validMonth?.startOf("month").format("YYYY-MM-DD") ||
@@ -118,11 +119,8 @@ function filtersFromSearchParams(searchParams: URLSearchParams) {
     pageStatus: value("pageStatus"),
     bodyStatus: value("bodyStatus"),
     topicsStatus: value("topicsStatus"),
-    clickableStatus: value("clickableStatus"),
     noteType: value("noteType"),
-    ruleVersion: value("ruleVersion"),
     publicStatus: value("publicStatus"),
-    retentionStatus: value("retentionStatus"),
   };
   return { filters, advanced };
 }
@@ -141,6 +139,8 @@ function buildQuery(
   const supported = {
     productId: filters.productId,
     campaignId: filters.campaignId,
+    platform: filters.platform,
+    orderNumber: filters.orderNumber.trim(),
     startDate: filters.startDate,
     endDate: filters.endDate,
     dateType: filters.dateType,
@@ -153,11 +153,8 @@ function buildQuery(
     pageStatus: advanced.pageStatus,
     bodyStatus: advanced.bodyStatus,
     topicsStatus: advanced.topicsStatus,
-    clickableStatus: advanced.clickableStatus,
     noteType: advanced.noteType,
-    ruleVersion: advanced.ruleVersion,
     publicStatus: advanced.publicStatus,
-    retentionStatus: advanced.retentionStatus,
   };
   Object.entries(supported).forEach(([key, value]) => {
     if (value) query.set(key, value);

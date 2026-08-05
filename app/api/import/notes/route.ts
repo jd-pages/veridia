@@ -333,6 +333,9 @@ export async function POST(request: Request) {
             milkType: row.milkType,
             source: "EXCEL",
             notes: row.notes,
+            platform: row.platform,
+            storeName: row.shopName,
+            orderNumber: row.orderNumber,
           }));
           const batch = await createAutomaticBatchInTransaction(
             tx,

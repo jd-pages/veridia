@@ -156,12 +156,25 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
     ).toBe(true);
     expect(startBox!.x + startBox!.width).toBeLessThanOrEqual(separatorBox!.x);
     expect(separatorBox!.x + separatorBox!.width).toBeLessThanOrEqual(endBox!.x);
+    expect(
+      await page
+        .getByRole("region", { name: "审核结果筛选" })
+        .evaluate((panel) => panel.scrollWidth <= panel.clientWidth),
+    ).toBe(true);
   }
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page
+      .getByRole("region", { name: "审核结果筛选" })
+      .evaluate((panel) => panel.scrollWidth <= panel.clientWidth),
+  ).toBe(true);
   await page.setViewportSize({ width: 1366, height: 768 });
 
   await expect(
     page.getByText("查看自动审核结论、异常原因及人工复核记录"),
   ).toBeVisible();
+  await expect(page.getByText("平台", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("订单编号")).toBeVisible();
   for (const label of ["结果总数", "审核通过", "审核不通过", "待人工复核"]) {
     await expect(page.getByRole("button", { name: new RegExp(label) })).toBeVisible();
   }
@@ -192,7 +205,13 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
 
   await page.getByRole("button", { name: /高级筛选/ }).click();
   await expect(page.getByLabel("不通过原因")).toBeVisible();
-  await expect(page.getByText("留存验证状态", { exact: true })).toBeVisible();
+  for (const removedFilter of [
+    "蓝色话题可点击状态",
+    "规则版本",
+    "留存验证状态",
+  ]) {
+    await expect(page.getByText(removedFilter, { exact: true })).toHaveCount(0);
+  }
 
   await page.getByRole("combobox", { name: "页面状态" }).click();
   await page.getByText("页面正常", { exact: true }).last().click();
@@ -305,6 +324,9 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await expect(drawer.getByRole("region", { name: "审核明细" })).toBeVisible();
   await expect(drawer.getByRole("region", { name: "链接操作" })).toBeVisible();
   await expect(drawer.getByRole("region", { name: "人工复核记录" })).toBeVisible();
+  for (const label of ["来源信息", "订单编号", "实际审核时间"]) {
+    await expect(drawer.getByText(label, { exact: true })).toBeVisible();
+  }
   await expect(drawer.getByText("笔记基础信息", { exact: true })).toHaveCount(0);
   await expect(drawer.getByText(/笔记ID/u)).toHaveCount(0);
   await expect(page).toHaveURL(/\/results$/u);
@@ -347,6 +369,50 @@ test("审核详情只展示业务判断卡片并隐藏自动取证技术字段",
     await expect(page.getByText(hidden, { exact: true })).toHaveCount(0);
   }
   await expect(page.getByText(/笔记ID/u)).toHaveCount(0);
+  await expect(page.getByText("小红书", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.getByText("京东健康进口超市 Playwright 测试长店铺名称", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(`ORDER-${evidenceFixture!.note.platformNoteId}`, {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/^\d{2}月\d{2}日 \d{2}:\d{2}$/u),
+  ).toBeVisible();
+});
+
+test("平台和订单编号常用筛选使用独立任务字段并可重置", async ({ page }) => {
+  await login(page);
+  await page.goto("/results?startDate=2026-08-01&endDate=2026-08-31");
+  const resultRequests: URL[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/results") resultRequests.push(url);
+  });
+
+  await page.getByRole("combobox", { name: "平台" }).click();
+  await page.getByText("小红书", { exact: true }).last().click();
+  await page.getByLabel("订单编号").fill("  ORDER-isolated-fixture-15  ");
+  await page.getByRole("button", { name: "查询" }).click();
+  await expect(page.getByText("当前筛选共 1 条", { exact: true })).toBeVisible();
+  await expect
+    .poll(() =>
+      resultRequests.some(
+        (url) =>
+          url.searchParams.get("platform") === "XIAOHONGSHU" &&
+          url.searchParams.get("orderNumber") === "ORDER-isolated-fixture-15",
+      ),
+    )
+    .toBe(true);
+
+  await page.getByRole("button", { name: "重置" }).click();
+  await expect(page.getByLabel("订单编号")).toHaveValue("");
+  await expect(page.getByRole("combobox", { name: "平台" })).toHaveValue("");
+  await expect(page.locator(".ant-table-row").first()).toBeVisible();
 });
 
 test("审核详情区分原笔记链接与最终链接并复制完整原始 URL", async ({

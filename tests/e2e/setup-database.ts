@@ -197,6 +197,9 @@ async function main() {
           productStage: "IFFO_2",
           source: "SEED",
           notes: "Playwright isolated fixture",
+          platform: "XIAOHONGSHU",
+          storeName: "京东健康进口超市 Playwright 测试长店铺名称",
+          orderNumber: `ORDER-${payload.noteId}`,
         },
       });
       await runAuditTask(task.id, payload);

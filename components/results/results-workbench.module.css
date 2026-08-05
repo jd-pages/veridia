@@ -158,13 +158,23 @@
 
 .filterGrid {
   display: grid;
-  grid-template-columns:
-    minmax(160px, 0.9fr)
-    minmax(210px, 1.25fr)
-    minmax(300px, 1.35fr)
-    minmax(160px, 0.85fr)
-    minmax(170px, 0.9fr);
   gap: 12px;
+}
+
+.primaryFilterGrid {
+  grid-template-columns:
+    minmax(170px, 0.9fr)
+    minmax(220px, 1.25fr)
+    minmax(135px, 0.7fr)
+    minmax(320px, 1.45fr);
+}
+
+.secondaryFilterGrid {
+  grid-template-columns:
+    minmax(190px, 0.8fr)
+    minmax(190px, 0.8fr)
+    minmax(280px, 1.4fr);
+  margin-top: 12px;
 }
 
 .filterField {
@@ -238,7 +248,7 @@
 .advancedGrid {
   padding-top: 18px;
   display: grid;
-  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  grid-template-columns: repeat(4, minmax(170px, 1fr));
   gap: 12px;
   border-top: 1px solid #edf0f4;
 }
@@ -694,8 +704,54 @@
 
 .decisionHeroTopline {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
+}
+
+.advancedReasonField {
+  grid-column: span 2;
+}
+
+.platformBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 3px 9px;
+  color: #475467;
+  background: #f2f4f7;
+  border: 1px solid #e4e7ec;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.platformBadge i {
+  width: 7px;
+  height: 7px;
+  background: #98a2b3;
+  border-radius: 50%;
+}
+
+.platformBadge_XIAOHONGSHU {
+  color: #704b55;
+  background: #fff7f8;
+  border-color: #f0dfe3;
+}
+
+.platformBadge_XIAOHONGSHU i {
+  background: #b96576;
+}
+
+.platformBadge_DOUYIN {
+  color: #344054;
+  background: #f4f4f6;
+  border-color: #dedee5;
+}
+
+.platformBadge_DOUYIN i {
+  background: #33343b;
 }
 
 .decisionEyebrow {
@@ -712,7 +768,7 @@
 
 .decisionOwnership {
   display: grid;
-  grid-template-columns: minmax(160px, 0.8fr) minmax(240px, 1.5fr) minmax(100px, 0.5fr);
+  grid-template-columns: minmax(150px, 0.85fr) minmax(220px, 1.35fr) minmax(120px, 0.65fr);
   gap: 12px;
   margin-top: 18px;
 }
@@ -736,6 +792,41 @@
   color: #344054;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.decisionSourceField {
+  min-width: 0;
+}
+
+.sourceInformation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sourceInformation b {
+  color: #98a2b3;
+  font-weight: 400;
+}
+
+.storeName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orderNumber {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: #344054;
+  font-weight: 650;
+}
+
+.orderNumber :global(.ant-typography-copy) {
+  flex: 0 0 auto;
 }
 
 .decisionTitleField {
@@ -942,10 +1033,6 @@
 }
 
 @media (max-width: 1500px) {
-  .filterGrid {
-    grid-template-columns: repeat(3, minmax(170px, 1fr));
-  }
-
   .advancedGrid {
     grid-template-columns: repeat(4, minmax(150px, 1fr));
   }
@@ -974,12 +1061,8 @@
     padding: 18px;
   }
 
-  .filterGrid {
+  .secondaryFilterGrid {
     grid-template-columns: repeat(3, minmax(155px, 1fr));
-  }
-
-  .advancedGrid {
-    grid-template-columns: repeat(3, minmax(150px, 1fr));
   }
 
   .floatingScroll {
@@ -992,8 +1075,13 @@
 }
 
 @media (max-width: 1200px) {
-  .filterGrid {
+  .primaryFilterGrid,
+  .secondaryFilterGrid {
     grid-template-columns: repeat(2, minmax(288px, 1fr));
+  }
+
+  .advancedGrid {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
   }
 }
 
@@ -1002,13 +1090,18 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .filterGrid,
+  .primaryFilterGrid,
+  .secondaryFilterGrid,
   .advancedGrid {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
 
   .filterActions {
     grid-template-columns: 1fr;
+  }
+
+  .advancedReasonField {
+    grid-column: auto;
   }
 
   .filterButtonGroup {
@@ -1026,5 +1119,25 @@
 
   .auditDetailCards {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .primaryFilterGrid,
+  .secondaryFilterGrid,
+  .advancedGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .dateRangeControl {
+    min-width: 0;
+  }
+
+  .decisionHeroTopline {
+    gap: 8px;
+  }
+
+  .decisionTitle {
+    font-size: 21px;
   }
 }

@@ -64,6 +64,9 @@ export interface ResultRow {
     failureCode: string | null;
     failureMessage: string | null;
     failureEvidence?: string | null;
+    platform: string | null;
+    storeName: string | null;
+    orderNumber: string | null;
     product: ProductOption;
     campaign: CampaignOption;
   };
@@ -86,6 +89,8 @@ export interface ResultPageData {
 export interface ResultFilters {
   productId: string;
   campaignId: string;
+  platform: string;
+  orderNumber: string;
   startDate: string;
   endDate: string;
   dateType: "AUDITED_AT" | "CREATED_AT";
@@ -101,11 +106,8 @@ export interface AdvancedResultFilters {
   pageStatus: string;
   bodyStatus: string;
   topicsStatus: string;
-  clickableStatus: string;
   noteType: string;
-  ruleVersion: string;
   publicStatus: string;
-  retentionStatus: string;
 }
 
 export interface ResultSummary {

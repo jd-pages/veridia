@@ -270,6 +270,9 @@ model AuditTask {
   redirectChain      String             @default("[]")
   failureEvidence    String?
   notes              String?
+  platform           String?
+  storeName          String?
+  orderNumber        String?
   softwareVersion    String?
   rulePackageVersion String?
   createdBy          String?
@@ -288,6 +291,8 @@ model AuditTask {
   @@index([batchId, status, queueOrder])
   @@index([campaignId, status])
   @@index([normalizedUrl])
+  @@index([platform])
+  @@index([orderNumber])
   @@map("audit_tasks")
 }
 

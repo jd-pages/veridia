@@ -102,22 +102,21 @@ describe("处理失败结果口径", () => {
     expect(buildLocalDateRange()).toEqual({});
   });
 
-  it("日期与产品、结果和全部高级筛选叠加", () => {
+  it("日期与产品、平台、订单号、结果和保留的高级筛选叠加", () => {
     const where = buildAuditResultWhere({
       startDate: "2026-07-01",
       endDate: "2026-07-31",
       productId: "product-1",
+      platform: "XIAOHONGSHU",
+      orderNumber: " ORDER-10 ",
       status: "FAILED",
       pageStatus: "NORMAL",
       bodyStatus: "PRESENT",
       topicsStatus: "NON_COMPLIANT",
-      clickableStatus: "COMPLIANT",
       imageStatus: "NON_COMPLIANT",
       noteType: "IMAGE_TEXT",
       reason: "缺少话题",
-      ruleVersion: "v2",
       publicStatus: "PUBLIC",
-      retentionStatus: "PENDING",
     });
     expect(where).toMatchObject({
       AND: expect.arrayContaining([
@@ -125,15 +124,33 @@ describe("处理失败结果口径", () => {
         { pageStatus: "NORMAL" },
         { bodyStatus: "PRESENT" },
         { topicsCompliant: false },
-        { clickableCompliant: true },
         { imageStatus: "NON_COMPLIANT" },
         { noteType: "IMAGE_TEXT" },
-        { ruleVersion: 2 },
         { publicStatus: "PUBLIC" },
-        { retentionStatus: "PENDING" },
-        { task: { productId: "product-1" } },
+        {
+          task: {
+            productId: "product-1",
+            platform: "XIAOHONGSHU",
+            orderNumber: { contains: "ORDER-10" },
+          },
+        },
       ]),
     });
+  });
+
+  it("旧高级筛选参数不再参与查询，平台参数必须使用受支持枚举", () => {
+    const filters = readResultQueryFilters(
+      new URLSearchParams(
+        "clickableStatus=COMPLIANT&ruleVersion=2&retentionStatus=PENDING",
+      ),
+    );
+    expect(filters).not.toHaveProperty("clickableStatus");
+    expect(filters).not.toHaveProperty("ruleVersion");
+    expect(filters).not.toHaveProperty("retentionStatus");
+    expect(buildAuditResultWhere(filters)).toEqual({});
+    expect(() => buildAuditResultWhere({ platform: "UNKNOWN" })).toThrow(
+      "平台筛选条件不正确",
+    );
   });
 
   it("拒绝无效日期和反向范围", () => {
