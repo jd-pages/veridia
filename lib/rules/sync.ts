@@ -32,8 +32,20 @@ const BUNDLED_LOCAL_PRODUCT_KEYS = [
   "product_kabrita_netherlands",
   "product_kabrita_hongkong",
 ];
-const BUNDLED_LOCAL_CAMPAIGN_KEYS = ["activity_kabrita_2026_08"];
+const BUNDLED_LOCAL_CAMPAIGN_KEYS = [
+  "activity_kabrita_2026_08",
+  "activity_danone_2026_08",
+];
 const BUNDLED_LOCAL_TOPIC_KEYS = [
+  "topic_danone_202608_brand",
+  "topic_danone_202608_au",
+  "topic_danone_202608_de",
+  "topic_danone_202608_zhiyi",
+  "topic_danone_202608_qinyi",
+  "topic_danone_202608_green",
+  "topic_danone_202608_iffo_p1",
+  "topic_danone_202608_iffo_2",
+  "topic_danone_202608_gum",
   "topic_kabrita_required_campaign",
   "topic_kabrita_product_netherlands",
   "topic_kabrita_product_hongkong",

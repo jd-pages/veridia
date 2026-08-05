@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { E2E_ORIGIN } from "./e2e-origin";
 
-test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", async ({
+test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
   page,
 }) => {
   const loginResponse = await page.request.post("/api/auth/login", {
@@ -33,6 +33,26 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
     item.name.includes("爱他美2026年7月"),
   );
   expect(campaign).toBeTruthy();
+  const augustCampaign = campaigns.find((item) =>
+    item.name.includes("爱他美2026年8月"),
+  );
+  expect(augustCampaign).toBeTruthy();
+  const augustRequirementsResponse = await page.request.get(
+    `/api/campaigns/${augustCampaign!.id}/requirements?productId=${product.id}&stage=IFFO_2`,
+  );
+  expect(augustRequirementsResponse.ok()).toBeTruthy();
+  const augustContext = (await augustRequirementsResponse.json()).data.context as {
+    ruleMonth: string;
+    productStage: string;
+    rules: Array<{ topic: string; topicCategory: string }>;
+  };
+  expect(augustContext.ruleMonth).toBe("2026-08");
+  expect(augustContext.productStage).toBe("IFFO_2");
+  expect(
+    augustContext.rules
+      .filter((rule) => rule.topicCategory === "PRODUCT_STAGE")
+      .map((rule) => rule.topic),
+  ).toEqual(["#二段奶粉推荐"]);
 
   await page.getByRole("combobox", { name: "所属活动" }).click();
   await page
@@ -112,6 +132,7 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
     {
       data: {
         brandName: "达能",
+        campaignId: campaign!.id,
         bodyTerms: ["2段"],
         requireBodyStage: false,
         requiredTopic: "#二段奶粉推荐",
@@ -293,15 +314,15 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   const stageSummaryRows = stageSummaryCard.locator(
     ".ant-table-tbody .ant-table-row",
   );
-  await expect(stageSummaryRows).toHaveCount(2);
-  const iffoSummaryRow = stageSummaryRows.filter({ hasText: "IFFO" });
-  const gumSummaryRow = stageSummaryRows.filter({ hasText: "GUM" });
-  await expect(iffoSummaryRow).toHaveCount(1);
-  await expect(iffoSummaryRow).toContainText(
-    "#新生儿奶粉 / #二段奶粉推荐",
+  await expect(stageSummaryRows).toHaveCount(3);
+  await expect(stageSummaryRows.nth(0)).toContainText("IFFO 新生儿组（P段/1段）");
+  await expect(stageSummaryRows.nth(0)).toContainText("#新生儿奶粉");
+  await expect(stageSummaryRows.nth(1)).toContainText("IFFO 二段组（2段）");
+  await expect(stageSummaryRows.nth(1)).toContainText("#二段奶粉推荐");
+  await expect(stageSummaryRows.nth(2)).toContainText(
+    "GUM 成长组（3段/4段/1+段/2+段）",
   );
-  await expect(gumSummaryRow).toHaveCount(1);
-  await expect(gumSummaryRow).toContainText("#三段奶粉推荐");
+  await expect(stageSummaryRows.nth(2)).toContainText("#三段奶粉推荐");
   await expect(
     stageSummaryCard.getByText("正文段位校验", { exact: true }),
   ).toHaveCount(0);
@@ -313,11 +334,7 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
   await expect(standardTopicTable).toContainText("#新生儿奶粉");
   await expect(standardTopicTable).toContainText("#二段奶粉推荐");
   await expect(standardTopicTable).toContainText("#三段奶粉推荐");
-  await expect(page.locator("body")).not.toContainText("IFFO：P段/1段");
-  await expect(page.locator("body")).not.toContainText("IFFO：2段");
-  await expect(page.locator("body")).not.toContainText(
-    "GUM：3段/4段/1+段/2+段",
-  );
+  await expect(page.getByTitle("2026年8月")).toBeVisible();
 });
 
 test("佳贝艾特活动过滤产品、隐藏阶段并允许无阶段创建任务", async ({

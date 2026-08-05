@@ -11,7 +11,11 @@ import {
 } from "@/lib/automation/batch-service";
 import { kickAutomaticAuditQueue } from "@/lib/automation/queue";
 import {
+  campaignUsesDetailedProductStages,
   compatibleStageRuleValues,
+  detailedProductStageLabel,
+  detailedProductStagePhase,
+  normalizeDetailedProductStageValue,
   normalizeImportedProductStageTopicValue,
   productStageTopicLabel,
 } from "@/lib/product-stage";
@@ -68,6 +72,7 @@ interface CheckedRow {
   month: string;
   specification: string;
   stageInput: string;
+  stageDetailInput: string;
   productStage: string;
   stageGroup: string;
   notes: string;
@@ -78,6 +83,11 @@ interface CheckedRow {
 }
 
 const IMPORT_PREVIEW_ROW_LIMIT = 100;
+
+function inferRuleMonth(value: string | null | undefined) {
+  const match = String(value || "").match(/(20\d{2})[-/.年](\d{1,2})/u);
+  return match ? `${match[1]}-${match[2].padStart(2, "0")}` : "";
+}
 
 export async function POST(request: Request) {
   const user = await requireApiUser(BUSINESS_ROLES);
@@ -181,11 +191,16 @@ export async function POST(request: Request) {
           : values.productName || "",
         purchaseProductLine,
         campaignName: values.activityName || "",
-        month: values.activityMonth || "",
+        month: values.activityMonth || inferRuleMonth(
+          isKabritaTemplate ? values.purchaseTime : values.publishTime,
+        ),
         specification: values.specification || "",
         stageInput: isKabritaTemplate
           ? inferKabritaProductStage(purchaseProductLine)
           : values.productStage || "",
+        stageDetailInput: isKabritaTemplate
+          ? ""
+          : values.productStageDetail || "",
         productStage: "",
         stageGroup: "",
         notes: buildImportedTaskNotes({
@@ -257,7 +272,11 @@ export async function POST(request: Request) {
         ? [product.id, checked.campaignName, checked.month].join("\u0000")
         : "";
       let campaign = product ? campaignCache.get(campaignKey) : null;
-      if (product && !campaignCache.has(campaignKey)) {
+      if (
+        product &&
+        (checked.campaignName || checked.month) &&
+        !campaignCache.has(campaignKey)
+      ) {
         campaign = await prisma.campaign.findFirst({
           where: {
             ...(checked.campaignName ? { name: checked.campaignName } : {}),
@@ -268,27 +287,56 @@ export async function POST(request: Request) {
               { products: { some: { productId: product.id } } },
             ],
           },
-          orderBy: [{ endDate: "desc" }, { updatedAt: "desc" }],
         });
         campaignCache.set(campaignKey, campaign);
       }
       if (!campaign) {
-        checked.errors.push("活动不存在或与产品不匹配");
+        checked.errors.push(
+          checked.campaignName || checked.month
+            ? "活动不存在、规则月份未匹配或与产品不匹配"
+            : "规则月份未匹配，请填写活动、活动月份或有效发帖时间",
+        );
       } else {
         checked.campaignId = campaign.id;
         checked.campaignName = campaign.name;
         checked.month = campaign.month;
       }
 
-      const importedStage = normalizeImportedProductStageTopicValue(
+      const usesDetailedProductStages = Boolean(
+        campaign && product && campaignUsesDetailedProductStages(
+          product.brandName,
+          campaign.month,
+        ),
+      );
+      const importedPhase = normalizeImportedProductStageTopicValue(
         checked.stageInput,
       );
+      const importedDetailedStage = usesDetailedProductStages
+        ? normalizeDetailedProductStageValue(checked.stageDetailInput)
+        : null;
+      const importedStage = usesDetailedProductStages
+        ? importedDetailedStage
+        : importedPhase;
       checked.productStage = importedStage || "";
       checked.stageGroup = importedStage
-        ? productStageTopicLabel(importedStage)
+        ? (usesDetailedProductStages
+            ? detailedProductStageLabel(importedStage)
+            : productStageTopicLabel(importedStage))
         : "";
-      if (!isKabritaTemplate && !importedStage) {
+      if (!isKabritaTemplate && !importedPhase) {
         checked.errors.push("产品阶段话题请填写 IFFO 或 GUM。");
+      }
+      if (!isKabritaTemplate && usesDetailedProductStages && !importedDetailedStage) {
+        checked.errors.push("段位请填写 P段、1段、2段、3段、4段、1+段或2+段。");
+      }
+      if (
+        importedPhase &&
+        importedDetailedStage &&
+        detailedProductStagePhase(importedDetailedStage) !== importedPhase
+      ) {
+        checked.errors.push(
+          `阶段与段位不一致：${importedPhase} 不包含 ${checked.stageDetailInput.trim()}`,
+        );
       }
       const stageRulesKey = campaign?.id || "";
       let stageRules = stageRulesCache.get(stageRulesKey) || [];
@@ -317,6 +365,15 @@ export async function POST(request: Request) {
       if (stageRules.length && importedStage && !stageRule) {
         checked.errors.push(
           `活动未配置 ${productStageTopicLabel(importedStage)} 的产品阶段话题规则`,
+        );
+      }
+      if (
+        stageRule?.milkType &&
+        importedPhase &&
+        stageRule.milkType !== importedPhase
+      ) {
+        checked.errors.push(
+          `阶段与段位不一致：${importedPhase} 与 ${checked.stageGroup} 冲突`,
         );
       }
       checked.milkType = stageRule?.milkType || undefined;

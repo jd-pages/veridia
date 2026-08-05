@@ -255,6 +255,19 @@ export async function parseTabularPreview(input: {
       displayName: displayName(templates, field, kabritaTemplate),
     });
   });
+  // 兼容旧模板仅用“段位”列承载 IFFO/GUM；新模板同时存在“阶段”和“段位”时，
+  // 两列保持独立，不进行回退映射。
+  if (!occupied.has("productStage") && occupied.has("productStageDetail")) {
+    const legacyMatch = recognizedFields.find(
+      (match) => match.field === "productStageDetail",
+    );
+    if (legacyMatch) {
+      legacyMatch.field = "productStage";
+      legacyMatch.displayName = displayName(templates, "productStage", kabritaTemplate);
+      occupied.set("productStage", occupied.get("productStageDetail") || legacyMatch.header);
+      occupied.delete("productStageDetail");
+    }
+  }
   const legacyLayout = !kabritaTemplate && !["customerName", "publishTime"].some(
     (field) => occupied.has(field as StandardField),
   );

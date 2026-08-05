@@ -17,18 +17,38 @@ export async function POST(
   const source = await prisma.campaign.findUnique({
     where: { id },
     include: {
-      products: true,
+      products: { include: { product: { select: { brandName: true } } } },
       topicRules: { where: { status: "ACTIVE" } },
     },
   });
   if (!source) return fail("源活动不存在", 404);
   const targetMonth = body.month || dayjs(source.month).add(1, "month").format("YYYY-MM");
+  if (!/^\d{4}-\d{2}$/u.test(targetMonth)) return fail("规则月份格式应为 YYYY-MM");
+  const brandName = source.products[0]?.product.brandName;
+  if (!brandName) return fail("源活动未关联有效品牌");
+  const existing = await prisma.campaign.findFirst({
+    where: {
+      month: targetMonth,
+      deletedAt: null,
+      OR: [
+        { product: { is: { brandName } } },
+        { products: { some: { product: { brandName } } } },
+      ],
+    },
+    select: { id: true },
+  });
+  if (existing) return fail(`${brandName}${targetMonth} 规则已存在。`, 409);
+  const [targetYear, targetMonthNumber] = targetMonth.split("-");
+  const defaultName = source.name.replace(
+    /\d{4}年\d{1,2}月/u,
+    `${targetYear}年${Number(targetMonthNumber)}月`,
+  );
   try {
     const copied = await prisma.campaign.create({
       data: {
         ruleSource: "LOCAL_DRAFT",
         productId: source.productId,
-        name: body.name?.trim() || `${source.name}（${targetMonth}复制）`,
+        name: body.name?.trim() || defaultName,
         month: targetMonth,
         year: Number(targetMonth.slice(0, 4)),
         startDate: dayjs(`${targetMonth}-01`).startOf("month").toDate(),

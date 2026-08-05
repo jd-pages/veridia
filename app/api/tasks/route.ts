@@ -4,8 +4,9 @@ import { extractSupportedNoteUrls, isSupportedNoteUrl, normalizeUrl } from "@/li
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import {
+  campaignUsesDetailedProductStages,
   compatibleStageRuleValues,
-  normalizeProductStageTopicValue,
+  normalizeConfiguredProductStageValue,
 } from "@/lib/product-stage";
 import packageJson from "@/package.json";
 import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
@@ -93,19 +94,28 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     skipDuplicates?: boolean;
   };
   if (!body.productId || !body.campaignId) return fail("请选择产品和活动");
-  const productStage = normalizeProductStageTopicValue(body.productStage);
-  const campaign = await prisma.campaign.findFirst({
-    where: {
-      id: body.campaignId,
-      status: "ACTIVE",
-      deletedAt: null,
-      OR: [
-        { productId: body.productId },
-        { products: { some: { productId: body.productId } } },
-      ],
-    },
-  });
-  if (!campaign) return fail("活动不存在或与产品不匹配");
+  const [campaign, product] = await Promise.all([
+    prisma.campaign.findFirst({
+      where: {
+        id: body.campaignId,
+        status: "ACTIVE",
+        deletedAt: null,
+        OR: [
+          { productId: body.productId },
+          { products: { some: { productId: body.productId } } },
+        ],
+      },
+    }),
+    prisma.product.findFirst({
+      where: { id: body.productId, status: "ACTIVE", deletedAt: null },
+      select: { brandName: true },
+    }),
+  ]);
+  if (!campaign || !product) return fail("活动不存在或与产品不匹配");
+  const productStage = normalizeConfiguredProductStageValue(
+    body.productStage,
+    campaignUsesDetailedProductStages(product.brandName, campaign.month),
+  );
   const campaignRules = await prisma.topicRule.findMany({
     where: {
       campaignId: body.campaignId,

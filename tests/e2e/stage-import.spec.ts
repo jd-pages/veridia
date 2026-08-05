@@ -48,7 +48,9 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
   const campaign =
     campaigns.find((item) => item.name.includes("爱他美2026年7月")) ||
     campaigns[0];
+  const augustCampaign = campaigns.find((item) => item.month === "2026-08");
   expect(campaign).toBeTruthy();
+  expect(augustCampaign).toBeTruthy();
 
   const suffix = Date.now();
   const tasksBeforePreview = (
@@ -333,6 +335,7 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     "客户名（必填）",
     "产品系列（必填）",
     "阶段（IFFO/GUM）",
+    "段位",
     "订单编号",
     "内容渠道",
     "链接（必填）",
@@ -345,6 +348,7 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     "E2E 客户",
     product.name,
     "IFFO",
+    "2段",
     `ORDER-${suffix}`,
     "小红书",
     newTemplateUrl,
@@ -377,7 +381,7 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     }>
   ).find((task) => task.url === newTemplateUrl);
   expect(committedNewTemplateTask).toMatchObject({
-    campaignId: campaign.id,
+    campaignId: augustCampaign!.id,
   });
   expect(committedNewTemplateTask?.notes).toContain("平台：京东");
   expect(committedNewTemplateTask?.notes).toContain("店铺名称：京东健康官方进口超市");
@@ -449,4 +453,69 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     expect(stageRules.every((rule) => rule.exactMatch)).toBe(true);
     expect(stageRules.every((rule) => rule.clickableRequired)).toBe(true);
   }
+});
+
+test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", async ({ page }) => {
+  expect((await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  })).ok()).toBeTruthy();
+  const products = (await (await page.request.get("/api/products")).json()).data as Array<{
+    name: string;
+  }>;
+  const product = products.find((item) => item.name.includes("澳洲白金版"))!;
+  const campaigns = (await (await page.request.get("/api/campaigns")).json()).data as Array<{
+    name: string;
+  }>;
+  const campaign = campaigns.find((item) => item.name.includes("爱他美2026年8月"))!;
+  const header = [
+    "平台",
+    "店铺名称",
+    "客户名",
+    "产品系列",
+    "阶段",
+    "段位",
+    "订单编号",
+    "内容渠道",
+    "链接",
+    "发帖时间",
+    "活动名称",
+  ];
+  const base = [
+    "京东",
+    "京东健康官方进口超市",
+    "八月段位测试",
+    product.name,
+  ];
+  const suffix = Date.now();
+  const rows = [
+    [...base, "IFFO", "2段", "AUG-2", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-2`, "2026-08-05", campaign.name],
+    [...base, "IFFO", "P段", "AUG-P", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-p`, "2026-08-05", campaign.name],
+    [...base, "GUM", "2段", "AUG-CONFLICT", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-conflict`, "2026-08-05", campaign.name],
+  ];
+  const csv = [header, ...rows].map((row) => row.join(",")).join("\r\n");
+  const response = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: { name: "danone-august-stage.csv", mimeType: "text/csv", buffer: Buffer.from(`\uFEFF${csv}`) },
+      commit: "false",
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const preview = (await response.json()).data as {
+    validCount: number;
+    invalidCount: number;
+    rows: Array<{ productStage: string; stageGroup: string; errors: string[] }>;
+  };
+  expect(preview.validCount).toBe(2);
+  expect(preview.invalidCount).toBe(1);
+  expect(preview.rows[0]).toMatchObject({
+    productStage: "IFFO_2",
+    stageGroup: "IFFO 二段组（2段）",
+    errors: [],
+  });
+  expect(preview.rows[1]).toMatchObject({
+    productStage: "IFFO_P1",
+    stageGroup: "IFFO 新生儿组（P段/1段）",
+    errors: [],
+  });
+  expect(preview.rows[2].errors.join("；")).toContain("阶段与段位不一致");
 });

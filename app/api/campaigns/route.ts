@@ -3,6 +3,11 @@ import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
+import {
+  campaignUsesDetailedProductStages,
+  DETAILED_PRODUCT_STAGE_OPTIONS,
+  PRODUCT_STAGE_TOPIC_OPTIONS,
+} from "@/lib/product-stage";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -32,6 +37,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
           campaignId: true,
           topicCategory: true,
           applicableStage: true,
+          milkType: true,
           topic: true,
         },
       },
@@ -40,10 +46,26 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     orderBy: [{ month: "desc" }, { updatedAt: "desc" }],
   });
   return ok(
-    campaigns.map(({ topicRules, ...campaign }) => ({
-      ...campaign,
-      requiresProductStage: campaignRequiresProductStage(topicRules),
-    })),
+    campaigns.map(({ topicRules, ...campaign }) => {
+      const brandName = campaign.product?.brandName ||
+        campaign.products[0]?.product.brandName || null;
+      const requiresProductStage = campaignRequiresProductStage(topicRules);
+      const detailed = campaignUsesDetailedProductStages(brandName, campaign.month);
+      return {
+        ...campaign,
+        requiresProductStage,
+        stageOptions: requiresProductStage
+          ? (detailed ? DETAILED_PRODUCT_STAGE_OPTIONS : PRODUCT_STAGE_TOPIC_OPTIONS)
+              .filter((option) => topicRules.some((rule) =>
+                rule.topicCategory === "PRODUCT_STAGE" &&
+                (detailed
+                  ? rule.applicableStage === option.value
+                  : rule.milkType === option.value),
+              ))
+              .map((option) => ({ value: option.value, label: option.label }))
+          : [],
+      };
+    }),
   );
 }, "读取活动列表");
 
@@ -74,6 +96,28 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   ];
   if (!productIds.length || !body.name?.trim() || !body.month) {
     return fail("至少一个产品、活动名称和月份为必填项");
+  }
+  const linkedProducts = await prisma.product.findMany({
+    where: { id: { in: productIds }, deletedAt: null },
+    select: { id: true, brandName: true },
+  });
+  const brands = [...new Set(linkedProducts.map((product) => product.brandName))];
+  if (linkedProducts.length !== productIds.length || brands.length !== 1) {
+    return fail("月度规则关联产品必须存在且属于同一品牌");
+  }
+  const existingMonthlyRuleSet = await prisma.campaign.findFirst({
+    where: {
+      month: body.month,
+      deletedAt: null,
+      OR: [
+        { product: { is: { brandName: brands[0] } } },
+        { products: { some: { product: { brandName: brands[0] } } } },
+      ],
+    },
+    select: { id: true },
+  });
+  if (existingMonthlyRuleSet) {
+    return fail(`${brands[0]}${body.month} 规则已存在。`, 409);
   }
   try {
     const campaign = await prisma.campaign.create({

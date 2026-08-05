@@ -35,8 +35,9 @@ import type { SessionUser } from "@/lib/auth";
 import { canAccessBusiness } from "@/lib/permissions";
 import {
   aggregateProductStageTopicRows,
+  aggregateDetailedProductStageTopicRows,
+  campaignUsesDetailedProductStages,
   productStageTopicLabel,
-  type ProductStageTopicDisplayRow,
 } from "@/lib/product-stage";
 import { rulesRequireAnyProductStage } from "@/lib/campaign-stage-requirement";
 
@@ -54,6 +55,8 @@ interface Campaign {
   month: string;
   product: Product;
   products?: Array<{ product: Product }>;
+  ruleVersion?: number;
+  status?: string;
 }
 
 interface Rule {
@@ -97,17 +100,42 @@ interface StageGroup {
   ruleSource: string;
 }
 
+interface StageDisplayRow {
+  key: string;
+  label?: string;
+  requiredTopics: string[];
+  ruleSources: string[];
+  members: StageGroup[];
+}
+
+function monthLabel(value: string) {
+  const [year, month] = value.split("-");
+  return `${year}年${Number(month)}月`;
+}
+
+function updateRulePageUrl(brandName?: string, month?: string) {
+  const url = new URL(window.location.href);
+  if (brandName) url.searchParams.set("brand", brandName);
+  else url.searchParams.delete("brand");
+  if (month) url.searchParams.set("month", month);
+  else url.searchParams.delete("month");
+  window.history.replaceState(window.history.state, "", url);
+}
+
 export default function RulesPage() {
   const { message } = App.useApp();
   const [brands, setBrands] = useState<RuleBrand[]>([]);
   const [selectedBrand, setSelectedBrand] = useState<string>();
+  const [selectedMonth, setSelectedMonth] = useState<string>();
   const [rules, setRules] = useState<Rule[]>([]);
   const [stageGroups, setStageGroups] = useState<StageGroup[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [brandCampaigns, setBrandCampaigns] = useState<Campaign[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [campaignId, setCampaignId] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
+  const [monthOpen, setMonthOpen] = useState(false);
   const [editing, setEditing] = useState<Rule | null>(null);
   const [editingStage, setEditingStage] = useState<StageGroup | null>(null);
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
@@ -115,6 +143,8 @@ export default function RulesPage() {
   );
   const [form] = Form.useForm();
   const [stageForm] = Form.useForm();
+  const [monthForm] = Form.useForm();
+  const copyExistingMonth = Form.useWatch("copyExisting", monthForm);
   const scope = Form.useWatch("scope", form);
   const canManageBusiness = canAccessBusiness(currentRole);
   const showProductStageModule = useMemo(
@@ -129,8 +159,8 @@ export default function RulesPage() {
     [rules, showProductStageModule],
   );
   const displayedStageGroups = useMemo(
-    () =>
-      aggregateProductStageTopicRows(
+    () => {
+      const source =
         stageGroups.map((group) => ({
           ...group,
           requiredTopic:
@@ -139,9 +169,12 @@ export default function RulesPage() {
                 rule.topicCategory === "PRODUCT_STAGE" &&
                 rule.applicableStage === group.key,
             )?.topic || "未配置",
-        })),
-      ),
-    [rules, stageGroups],
+        }));
+      return campaignUsesDetailedProductStages(selectedBrand, selectedMonth)
+        ? aggregateDetailedProductStageTopicRows(source)
+        : aggregateProductStageTopicRows(source);
+    },
+    [rules, selectedBrand, selectedMonth, stageGroups],
   );
 
   const loadBrands = useCallback(async () => {
@@ -155,31 +188,45 @@ export default function RulesPage() {
     }
   }, [message]);
 
-  const load = useCallback(async () => {
-    if (!selectedBrand) return;
+  const load = useCallback(async (options?: { brand?: string; month?: string }) => {
+    const activeBrand = options?.brand || selectedBrand;
+    if (!activeBrand) return;
     setLoading(true);
     try {
-      const [ruleData, campaignData, productData, stageData] = await Promise.all([
-        apiFetch<Rule[]>(
-          `/api/rules?brandName=${encodeURIComponent(selectedBrand)}${
-            campaignId ? `&campaignId=${campaignId}` : ""
-          }`,
-        ),
+      const [campaignData, productData, stageData] = await Promise.all([
         apiFetch<Campaign[]>("/api/campaigns"),
         apiFetch<Product[]>("/api/products"),
         apiFetch<StageGroup[]>("/api/rule-stage-groups"),
       ]);
-      setRules(ruleData);
-      setCampaigns(
-        campaignData.filter((campaign) =>
-          [
-            campaign.product?.brandName,
-            ...(campaign.products || []).map(({ product }) => product.brandName),
-          ].includes(selectedBrand),
-        ),
+      const matchingCampaigns = campaignData.filter((campaign) =>
+        [
+          campaign.product?.brandName,
+          ...(campaign.products || []).map(({ product }) => product.brandName),
+        ].includes(activeBrand),
       );
+      const requestedMonth = options?.month || selectedMonth ||
+        new URLSearchParams(window.location.search).get("month") ||
+        matchingCampaigns[0]?.month;
+      const monthlyCampaigns = matchingCampaigns.filter(
+        (campaign) => campaign.month === requestedMonth,
+      );
+      const ruleData = requestedMonth
+        ? await apiFetch<Rule[]>(
+            `/api/rules?brandName=${encodeURIComponent(activeBrand)}&month=${encodeURIComponent(requestedMonth)}`,
+          )
+        : [];
+      setRules(ruleData);
+      setBrandCampaigns(matchingCampaigns);
+      setCampaigns(monthlyCampaigns);
+      if (requestedMonth && requestedMonth !== selectedMonth) {
+        setSelectedMonth(requestedMonth);
+        updateRulePageUrl(activeBrand, requestedMonth);
+      }
+      if (campaignId && !monthlyCampaigns.some((item) => item.id === campaignId)) {
+        setCampaignId(undefined);
+      }
       setProducts(
-        productData.filter((product) => product.brandName === selectedBrand),
+        productData.filter((product) => product.brandName === activeBrand),
       );
       setStageGroups(stageData);
     } catch (error) {
@@ -187,9 +234,12 @@ export default function RulesPage() {
     } finally {
       setLoading(false);
     }
-  }, [campaignId, message, selectedBrand]);
+  }, [campaignId, message, selectedBrand, selectedMonth]);
 
   useEffect(() => {
+    const search = new URLSearchParams(window.location.search);
+    setSelectedBrand(search.get("brand") || undefined);
+    setSelectedMonth(search.get("month") || undefined);
     void loadBrands();
     void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
       setCurrentRole(user?.role || null),
@@ -220,7 +270,11 @@ export default function RulesPage() {
                     key="enter"
                     type="link"
                     icon={<RightOutlined />}
-                    onClick={() => setSelectedBrand(brand.brandName)}
+                    onClick={() => {
+                      setSelectedBrand(brand.brandName);
+                      setSelectedMonth(undefined);
+                      updateRulePageUrl(brand.brandName);
+                    }}
                   >
                     进入规则
                   </Button>,
@@ -255,7 +309,11 @@ export default function RulesPage() {
     <>
       <PageHeader
         title={`${selectedBrand}话题规则`}
-        breadcrumbItems={["话题规则", selectedBrand]}
+        breadcrumbItems={[
+          "话题规则",
+          selectedBrand,
+          ...(selectedMonth ? [monthLabel(selectedMonth)] : []),
+        ]}
         description={
           showProductStageModule
             ? "产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #"
@@ -267,13 +325,33 @@ export default function RulesPage() {
               icon={<ArrowLeftOutlined />}
               onClick={() => {
                 setSelectedBrand(undefined);
+                setSelectedMonth(undefined);
                 setCampaignId(undefined);
+                updateRulePageUrl();
                 void loadBrands();
               }}
             >
               返回品牌列表
             </Button>
             {canManageBusiness ? (
+              <Button
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  setMonthOpen(true);
+                  window.setTimeout(() => {
+                    monthForm.resetFields();
+                    monthForm.setFieldsValue({
+                      copyExisting: true,
+                      sourceCampaignId:
+                        campaigns[0]?.id || brandCampaigns[0]?.id,
+                    });
+                  });
+                }}
+              >
+                新增月份规则
+              </Button>
+            ) : null}
+            {canManageBusiness && campaigns.length ? (
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
@@ -300,13 +378,56 @@ export default function RulesPage() {
           </Space>
         )}
       />
+      <Card className="surface-card" style={{ marginBottom: 16 }}>
+        <Space wrap size="large">
+          <Typography.Text strong>规则月份</Typography.Text>
+          <Select
+            value={selectedMonth}
+            placeholder="选择规则月份"
+            style={{ width: 180 }}
+            onChange={(month) => {
+              setLoading(true);
+              setCampaignId(undefined);
+              setSelectedMonth(month);
+              updateRulePageUrl(selectedBrand, month);
+            }}
+            options={[
+              ...new Set([
+                ...brandCampaigns.map((campaign) => campaign.month),
+                ...(selectedMonth ? [selectedMonth] : []),
+              ]),
+            ].sort().reverse().map((month) => ({
+              value: month,
+              label: monthLabel(month),
+            }))}
+          />
+          <Statistic title="产品" value={[
+            ...new Set(campaigns.flatMap((campaign) => [
+              campaign.product?.id,
+              ...(campaign.products || []).map(({ product }) => product.id),
+            ]).filter(Boolean)),
+          ].length} suffix="个" />
+          <Statistic title="活动" value={campaigns.length} suffix="个" />
+          <Statistic title="规则" value={rules.length} suffix="条" />
+          <Statistic title="规则版本" value={campaigns[0]?.ruleVersion || 0} prefix="v" />
+          <StatusTag value={campaigns[0]?.status || "INACTIVE"} />
+        </Space>
+      </Card>
+      {!campaigns.length ? (
+        <Card className="surface-card" style={{ marginBottom: 16, textAlign: "center" }}>
+          <Typography.Title level={4}>当前月份暂无规则</Typography.Title>
+          <Typography.Paragraph type="secondary">
+            可通过“新增月份规则”创建空白规则集，或复制已有月份规则。
+          </Typography.Paragraph>
+        </Card>
+      ) : null}
       {showProductStageModule ? (
         <Card
           className="surface-card"
           title="产品阶段与要求话题"
           style={{ marginBottom: 16 }}
         >
-          <Table<ProductStageTopicDisplayRow<StageGroup>>
+          <Table<StageDisplayRow>
             rowKey="key"
             dataSource={displayedStageGroups}
             pagination={false}
@@ -314,7 +435,7 @@ export default function RulesPage() {
             {
               title: "产品阶段话题",
               width: 180,
-              render: (_value, row) => productStageTopicLabel(row.key),
+              render: (_value, row) => row.label || productStageTopicLabel(row.key),
             },
             {
               title: "要求阶段话题",
@@ -489,6 +610,83 @@ export default function RulesPage() {
         />
       </Card>
       <Modal
+        open={monthOpen}
+        title="新增月份规则"
+        okText="创建"
+        onCancel={() => setMonthOpen(false)}
+        onOk={() => monthForm.submit()}
+      >
+        <Form
+          form={monthForm}
+          layout="vertical"
+          onFinish={async (values: {
+            month: string;
+            copyExisting?: boolean;
+            sourceCampaignId?: string;
+          }) => {
+            if (values.copyExisting) {
+              if (!values.sourceCampaignId) {
+                message.error("请选择复制来源月份");
+                return;
+              }
+              await apiFetch(`/api/campaigns/${values.sourceCampaignId}/copy`, {
+                method: "POST",
+                body: JSON.stringify({ month: values.month }),
+              });
+            } else {
+              const namePrefix = selectedBrand === "达能" ? "爱他美" : selectedBrand;
+              await apiFetch("/api/campaigns", {
+                method: "POST",
+                body: JSON.stringify({
+                  name: `${namePrefix}${monthLabel(values.month)}小红书种草审核`,
+                  month: values.month,
+                  productIds: products.map((product) => product.id),
+                }),
+              });
+            }
+            message.success(`${monthLabel(values.month)}规则已独立创建`);
+            setMonthOpen(false);
+            setCampaignId(undefined);
+            setSelectedMonth(values.month);
+            updateRulePageUrl(selectedBrand, values.month);
+            await load({ brand: selectedBrand, month: values.month });
+          }}
+        >
+          <Form.Item
+            name="month"
+            label="规则月份"
+            rules={[
+              { required: true, message: "请选择规则月份" },
+              { pattern: /^\d{4}-\d{2}$/u, message: "月份格式应为 YYYY-MM" },
+            ]}
+          >
+            <Input type="month" />
+          </Form.Item>
+          <Form.Item
+            name="copyExisting"
+            label="复制已有月份规则"
+            valuePropName="checked"
+          >
+            <Switch checkedChildren="复制" unCheckedChildren="空白" />
+          </Form.Item>
+          {copyExistingMonth ? (
+            <Form.Item
+              name="sourceCampaignId"
+              label="复制来源月份"
+              rules={[{ required: true }]}
+              extra="复制会创建新的活动和规则 ID；修改新月份不会影响来源月份。"
+            >
+              <Select
+                options={brandCampaigns.map((campaign) => ({
+                  value: campaign.id,
+                  label: `${monthLabel(campaign.month)} · ${campaign.name}`,
+                }))}
+              />
+            </Form.Item>
+          ) : null}
+        </Form>
+      </Modal>
+      <Modal
         open={open}
         title={editing ? "编辑话题规则" : "新增话题规则"}
         onCancel={() => setOpen(false)}
@@ -630,6 +828,7 @@ export default function RulesPage() {
               method: "PUT",
               body: JSON.stringify({
                 brandName: selectedBrand,
+                campaignId: campaigns[0]?.id,
                 bodyTerms: editingStage.bodyTerms,
                 requireBodyStage: Boolean(values.requireBodyStage),
                 requiredTopic: values.requiredTopic,

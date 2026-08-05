@@ -8,8 +8,9 @@ import {
 } from "@/lib/automation/batch-service";
 import { kickAutomaticAuditQueue } from "@/lib/automation/queue";
 import {
+  campaignUsesDetailedProductStages,
   compatibleStageRuleValues,
-  normalizeProductStageTopicValue,
+  normalizeConfiguredProductStageValue,
 } from "@/lib/product-stage";
 import {
   auditNoteIdentity,
@@ -55,19 +56,29 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     intervalMs?: number;
   };
   if (!body.productId || !body.campaignId) return fail("请选择产品和活动");
-  const productStage = normalizeProductStageTopicValue(body.productStage);
-  const campaign = await prisma.campaign.findFirst({
-    where: {
-      id: body.campaignId,
-      status: "ACTIVE",
-      deletedAt: null,
-      OR: [
-        { productId: body.productId },
-        { products: { some: { productId: body.productId } } },
-      ],
-    },
-  });
+  const [campaign, product] = await Promise.all([
+    prisma.campaign.findFirst({
+      where: {
+        id: body.campaignId,
+        status: "ACTIVE",
+        deletedAt: null,
+        OR: [
+          { productId: body.productId },
+          { products: { some: { productId: body.productId } } },
+        ],
+      },
+    }),
+    prisma.product.findUnique({
+      where: { id: body.productId },
+      select: { brandName: true },
+    }),
+  ]);
   if (!campaign) return fail("活动不存在或与产品不匹配");
+  if (!product) return fail("产品不存在");
+  const productStage = normalizeConfiguredProductStageValue(
+    body.productStage,
+    campaignUsesDetailedProductStages(product.brandName, campaign.month),
+  );
   const campaignRules = await prisma.topicRule.findMany({
     where: {
       campaignId: body.campaignId,

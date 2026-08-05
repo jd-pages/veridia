@@ -92,6 +92,7 @@ export interface AuditContext {
   productId: string;
   campaignId: string;
   campaignName: string;
+  ruleMonth?: string;
   brandName?: string;
   basicRewardRequired?: boolean;
   requiresProductStage?: boolean;

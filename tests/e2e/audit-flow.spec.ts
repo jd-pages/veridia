@@ -90,7 +90,14 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     products[0];
   expect(product).toBeTruthy();
   const campaignsResponse = await page.request.get(`/api/campaigns?productId=${product.id}`);
-  const campaign = ((await campaignsResponse.json()).data as Array<{ id: string; name: string; month: string }>)[0];
+  const availableCampaigns = (await campaignsResponse.json()).data as Array<{
+    id: string;
+    name: string;
+    month: string;
+  }>;
+  const campaign =
+    availableCampaigns.find((item) => item.month === "2026-07") ||
+    availableCampaigns[0];
   expect(campaign).toBeTruthy();
 
   const ruleTemplateWorkbook = new ExcelJS.Workbook();
@@ -295,6 +302,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "客户名（必填）",
     "产品系列（必填）",
     "阶段（IFFO/GUM）",
+    "段位",
     "订单编号",
     "内容渠道",
     "链接（必填）",
@@ -308,6 +316,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       "E2E 客户",
       product.name,
       "IFFO",
+      "2段",
       "",
       "小红书",
       `${E2E_ORIGIN}/mock/xhs?case=passed&preview-layout=${suffix}-${index}`,
@@ -350,6 +359,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "E2E 客户",
     product.name,
     "IFFO",
+    "2段",
     "",
     "小红书",
     `${E2E_ORIGIN}/mock/xhs?case=passed&minimal-template=${suffix}`,

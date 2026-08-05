@@ -10,8 +10,14 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const campaignId = searchParams.get("campaignId") || undefined;
   const productId = searchParams.get("productId") || undefined;
   const brandName = searchParams.get("brandName")?.trim() || undefined;
+  const month = searchParams.get("month")?.trim() || undefined;
   const rules = await prisma.topicRule.findMany({
-    where: { campaignId, productId, brandName },
+    where: {
+      campaignId,
+      productId,
+      brandName,
+      ...(month ? { campaign: { is: { month, deletedAt: null } } } : {}),
+    },
     include: { campaign: true, product: true },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });

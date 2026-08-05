@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   PRODUCT_STAGE_TOPIC_OPTIONS,
+  DETAILED_PRODUCT_STAGE_OPTIONS,
   aggregateProductStageTopicRows,
+  aggregateDetailedProductStageTopicRows,
   bodyStageRequiredFromRuleSnapshot,
   detectBodyProductStages,
   detectProductStage,
   compatibleStageRuleValues,
+  campaignUsesDetailedProductStages,
+  detailedProductStagePhase,
+  normalizeDetailedProductStageValue,
   normalizeImportedProductStageTopicValue,
   normalizeProductStage,
   normalizeProductStageTopicValue,
@@ -42,6 +47,43 @@ describe("product stage topic mapping", () => {
       { key: "GUM", requiredTopics: ["#三段奶粉推荐"] },
     ]);
     expect(rows[0].members).toHaveLength(2);
+  });
+
+  it("达能 2026 年 8 月按三个具体段位组展示和匹配", () => {
+    expect(campaignUsesDetailedProductStages("达能", "2026-08")).toBe(true);
+    expect(campaignUsesDetailedProductStages("达能", "2026-07")).toBe(false);
+    expect(DETAILED_PRODUCT_STAGE_OPTIONS.map((item) => item.value)).toEqual([
+      "IFFO_P1",
+      "IFFO_2",
+      "GUM_3_4_1PLUS_2PLUS",
+    ]);
+    expect(aggregateDetailedProductStageTopicRows([
+      { key: "IFFO_P1", requiredTopic: "#新生儿奶粉" },
+      { key: "IFFO_2", requiredTopic: "#二段奶粉推荐" },
+      { key: "GUM_3_4_1PLUS_2PLUS", requiredTopic: "#三段奶粉推荐" },
+    ])).toHaveLength(3);
+  });
+
+  it.each([
+    ["P段", "IFFO_P1", "IFFO"],
+    ["1段", "IFFO_P1", "IFFO"],
+    ["2段", "IFFO_2", "IFFO"],
+    ["3段", "GUM_3_4_1PLUS_2PLUS", "GUM"],
+    ["4段", "GUM_3_4_1PLUS_2PLUS", "GUM"],
+    ["1+段", "GUM_3_4_1PLUS_2PLUS", "GUM"],
+    ["2+段", "GUM_3_4_1PLUS_2PLUS", "GUM"],
+  ])("具体段位 %s 只映射到 %s", (stage, expected, phase) => {
+    expect(normalizeDetailedProductStageValue(stage)).toBe(expected);
+    expect(detailedProductStagePhase(stage)).toBe(phase);
+    expect(compatibleStageRuleValues(stage)).toEqual(
+      expect.arrayContaining([expected]),
+    );
+  });
+
+  it("8 月 IFFO 二段不会叠加新生儿组", () => {
+    const values = compatibleStageRuleValues("IFFO_2");
+    expect(values).toContain("IFFO_2");
+    expect(values).not.toContain("IFFO_P1");
   });
 
   it("任务规则提示收集所选阶段组全部候选话题", () => {
@@ -131,7 +173,7 @@ describe("product stage topic mapping", () => {
     expect(normalizeProductStageTopicValue("GUM_3_4_1PLUS_2PLUS")).toBe(
       "GUM",
     );
-    expect(productStageTopicLabel("IFFO_P1")).toBe("IFFO");
+    expect(productStageTopicLabel("IFFO_P1")).toBe("IFFO 新生儿组（P段/1段）");
     expect(productStageTopicLabel("GUM：3段/4段/1+段/2+段")).toBe("GUM");
   });
 

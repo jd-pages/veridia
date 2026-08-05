@@ -46,6 +46,7 @@ export type StandardField =
   | "contentChannel"
   | "specification"
   | "productStage"
+  | "productStageDetail"
   | "source"
   | "productStageTopic"
   | "allowedBodyStages"

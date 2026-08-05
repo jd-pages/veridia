@@ -638,7 +638,7 @@ describe("audit engine", () => {
     const result = evaluateAudit(note, stageContext);
     expect(result.autoStatus).toBe("FAILED");
     expect(result.failureReasons).toContain(
-      "正文段位不属于当前产品阶段话题：GUM",
+      "正文段位不属于当前产品阶段话题：GUM 成长组（3段/4段/1+段/2+段）",
     );
     expect(result.failureReasons.join("；")).not.toContain("缺少阶段话题");
   });
@@ -727,7 +727,7 @@ describe("audit engine", () => {
     );
     note.topics = [];
     expect(evaluateAudit(note, stageContext).failureReasons.join("；")).toContain(
-      "IFFO 阶段话题未命中",
+      "IFFO 新生儿组（P段/1段） 阶段话题未命中",
     );
   });
 

@@ -19,12 +19,14 @@ export async function PUT(
   if (!ALLOWED_KEYS.has(key)) return fail("产品阶段话题无效");
   const body = (await request.json()) as {
     brandName?: string;
+    campaignId?: string;
     bodyTerms?: string[];
     requireBodyStage?: boolean;
     requiredTopic?: string;
   };
   const brandName = body.brandName?.trim();
   if (!brandName) return fail("产品阶段话题必须归属品牌");
+  if (!body.campaignId) return fail("请选择规则月份对应的活动");
   const bodyTerms = [
     ...new Set(
       (body.bodyTerms || []).map((item) => item.trim()).filter(Boolean),
@@ -35,37 +37,41 @@ export async function PUT(
   if (!requiredTopic || requiredTopic === "#") {
     return fail("要求阶段话题不能为空");
   }
-  const [currentVersion, currentGroup] = await Promise.all([
-    prisma.ruleSyncState.findUnique({
-      where: { id: "active" },
-      select: { currentVersion: true },
-    }),
+  const [currentGroup, campaign] = await Promise.all([
     prisma.ruleStageGroup.findUnique({ where: { key } }),
+    prisma.campaign.findFirst({
+      where: {
+        id: body.campaignId,
+        deletedAt: null,
+        OR: [
+          { product: { is: { brandName } } },
+          { products: { some: { product: { brandName } } } },
+        ],
+      },
+    }),
   ]);
   if (!currentGroup) return fail("产品阶段话题不存在", 404);
+  if (!campaign) return fail("规则月份对应的活动不存在", 404);
   const canonicalStages = JSON.parse(currentGroup.canonicalStages) as string[];
   const updated = await prisma.$transaction(async (tx) => {
-    const group = await tx.ruleStageGroup.update({
-      where: { key },
-      data: {
-        bodyTerms: JSON.stringify(bodyTerms),
-        requireBodyStage: body.requireBodyStage === true,
-        ruleSource: "LOCAL_DRAFT",
-        ruleVersion: `${currentVersion?.currentVersion || "local"}-draft`,
-      },
+    const versionedCampaign = await tx.campaign.update({
+      where: { id: campaign.id },
+      data: { ruleSource: "LOCAL_DRAFT", ruleVersion: { increment: 1 } },
     });
-    await tx.topicRule.updateMany({
+    const rules = await tx.topicRule.updateMany({
       where: {
         brandName,
+        campaignId: campaign.id,
         topicCategory: "PRODUCT_STAGE",
         applicableStage: { in: [key, ...canonicalStages] },
       },
       data: {
         topic: requiredTopic,
         ruleSource: "LOCAL_DRAFT",
+        version: versionedCampaign.ruleVersion,
       },
     });
-    return group;
+    return { campaign: versionedCampaign, updatedRuleCount: rules.count };
   });
   return ok(updated);
 }

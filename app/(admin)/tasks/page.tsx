@@ -88,6 +88,7 @@ interface Campaign {
   product?: Product | null;
   products?: Array<{ product: Product }>;
   requiresProductStage: boolean;
+  stageOptions?: Array<{ value: string; label: string }>;
 }
 
 interface AuditRequirements {
@@ -1103,14 +1104,24 @@ export default function TasksPage() {
                           name="productStage"
                           label="产品阶段话题"
                           rules={[{ required: true }]}
-                          extra="请选择 IFFO 或 GUM。"
+                          extra={
+                            selectedCampaignDefinition?.stageOptions?.some(
+                              (item) => item.value.includes("_"),
+                            )
+                              ? "请选择与具体段位对应的阶段组。"
+                              : "请选择 IFFO 或 GUM。"
+                          }
                         >
                           <Select
                             placeholder="选择产品阶段话题"
-                            options={PRODUCT_STAGE_TOPIC_OPTIONS.map((item) => ({
-                              value: item.value,
-                              label: item.label,
-                            }))}
+                            options={
+                              selectedCampaignDefinition?.stageOptions?.length
+                                ? selectedCampaignDefinition.stageOptions
+                                : PRODUCT_STAGE_TOPIC_OPTIONS.map((item) => ({
+                                    value: item.value,
+                                    label: item.label,
+                                  }))
+                            }
                           />
                         </Form.Item>
                       ) : null}

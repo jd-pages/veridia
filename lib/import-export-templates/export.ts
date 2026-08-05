@@ -767,6 +767,23 @@ export async function buildImportTemplateWorkbook(
       };
     }
   }
+  const productStageDetailColumn = fields.indexOf("productStageDetail") + 1;
+  if (productStageDetailColumn > 0) {
+    for (
+      let rowNumber = 2;
+      rowNumber <= templates.dataValidation.maxRows + 1;
+      rowNumber += 1
+    ) {
+      sheet.getCell(rowNumber, productStageDetailColumn).dataValidation = {
+        type: "list",
+        allowBlank: true,
+        formulae: ['"P段,1段,2段,3段,4段,1+段,2+段"'],
+        showErrorMessage: true,
+        errorTitle: "产品段位无效",
+        error: "段位请填写 P段、1段、2段、3段、4段、1+段或2+段。",
+      };
+    }
+  }
   const header = sheet.getRow(1);
   header.font = { bold: true, color: { argb: "FF000000" } };
   header.fill = {

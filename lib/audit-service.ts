@@ -9,8 +9,9 @@ import type { AuditContext, ExtractedNote } from "@/lib/types";
 import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
 import { completedAuditTaskUpdate } from "@/lib/automation/task-lifecycle";
 import {
+  campaignUsesDetailedProductStages,
   compatibleStageRuleValues,
-  normalizeProductStageTopicValue,
+  normalizeConfiguredProductStageValue,
   productStageTopicLabel,
 } from "@/lib/product-stage";
 
@@ -19,9 +20,6 @@ export async function getAuditContext(
   campaignId: string,
   productStage?: string | null,
 ): Promise<AuditContext> {
-  const normalizedProductStage =
-    normalizeProductStageTopicValue(productStage);
-  const compatibleStages = compatibleStageRuleValues(normalizedProductStage);
   const [product, campaign] = await Promise.all([
     prisma.product.findFirst({
       where: { id: productId, status: "ACTIVE", deletedAt: null },
@@ -42,6 +40,18 @@ export async function getAuditContext(
   if (!campaign) throw new Error("活动不存在、已停用或与所选产品不匹配");
   const brandName = product?.brandName.trim();
   if (!brandName) throw new Error("所选产品未配置品牌，无法加载话题规则");
+  if (!/^\d{4}-\d{2}$/u.test(campaign.month)) {
+    throw new Error("规则月份未匹配，无法开始自动审核");
+  }
+  const usesDetailedProductStages = campaignUsesDetailedProductStages(
+    brandName,
+    campaign.month,
+  );
+  const normalizedProductStage = normalizeConfiguredProductStageValue(
+    productStage,
+    usesDetailedProductStages,
+  );
+  const compatibleStages = compatibleStageRuleValues(normalizedProductStage);
 
   const rules = await prisma.topicRule.findMany({
     where: {
@@ -118,6 +128,7 @@ export async function getAuditContext(
     productId,
     campaignId,
     campaignName: campaign.name,
+    ruleMonth: campaign.month,
     brandName,
     basicRewardRequired:
       brandName === "佳贝艾特" &&

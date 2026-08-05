@@ -42,9 +42,28 @@ describe("规则发布来源", () => {
     expect(payload.campaigns.map((campaign) => campaign.name)).toEqual(
       expect.arrayContaining([
         "爱他美2026年7月小红书种草审核",
+        "爱他美2026年8月小红书种草审核",
         "佳贝艾特2026年8月小红书种草审核",
       ]),
     );
+    const danoneMonthlyCampaigns = payload.campaigns.filter((campaign) =>
+      campaign.name.startsWith("爱他美2026年"),
+    );
+    expect(danoneMonthlyCampaigns.map((campaign) => campaign.month)).toEqual([
+      "2026-07",
+      "2026-08",
+    ]);
+    expect(new Set(danoneMonthlyCampaigns.map((campaign) => campaign.key)).size).toBe(2);
+    const augustStageRules = payload.topicRules.filter(
+      (rule) =>
+        rule.campaignKey === "activity_danone_2026_08" &&
+        rule.topicCategory === "PRODUCT_STAGE",
+    );
+    expect(augustStageRules.map((rule) => [rule.applicableStage, rule.topic])).toEqual([
+      ["IFFO_P1", "#新生儿奶粉"],
+      ["IFFO_2", "#二段奶粉推荐"],
+      ["GUM_3_4_1PLUS_2PLUS", "#三段奶粉推荐"],
+    ]);
   });
 
   it("显式数据库路径优先于项目规则源", async () => {

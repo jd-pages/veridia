@@ -520,6 +520,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       "客户名（必填）",
       "产品系列（必填）",
       "阶段（IFFO/GUM）",
+      "段位",
       "订单编号",
       "内容渠道（必填）",
       "链接（必填）",
@@ -531,6 +532,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       "示例客户",
       "爱他美奇迹绿罐",
       "IFFO",
+      "2段",
       "",
       "小红书",
       "https://xhslink.com/required-fields",
@@ -541,8 +543,8 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       [2, "客户名（必填）"],
       [3, "产品系列（必填）"],
       [4, "阶段（IFFO/GUM）"],
-      [7, "链接（必填）"],
-      [8, "发帖时间（必填）"],
+      [8, "链接（必填）"],
+      [9, "发帖时间（必填）"],
     ] as const;
 
     for (const [index, displayName] of required) {
@@ -624,7 +626,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
 });
 
 describe("模板驱动导出", () => {
-  it("下载模板按线下表格顺序生成九列并保留筛选和模板版本", async () => {
+  it("下载模板按线下表格顺序生成阶段与段位十列并保留筛选和模板版本", async () => {
     const bytes = await buildImportTemplateWorkbook(templates);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes);
@@ -647,6 +649,7 @@ describe("模板驱动导出", () => {
       "客户名（必填）",
       "产品系列（必填）",
       "阶段（IFFO/GUM）",
+      "段位",
       "订单编号",
       "内容渠道",
       "链接（必填）",
@@ -659,16 +662,21 @@ describe("模板驱动导出", () => {
       formulae: ['"IFFO,GUM"'],
       error: "产品阶段话题请填写 IFFO 或 GUM。",
     });
-    expect(workbook.getWorksheet("笔记导入")?.getCell("G2").text).toBe(
+    expect(workbook.getWorksheet("笔记导入")?.getCell("F2").dataValidation)
+      .toMatchObject({
+        type: "list",
+        formulae: ['"P段,1段,2段,3段,4段,1+段,2+段"'],
+      });
+    expect(workbook.getWorksheet("笔记导入")?.getCell("H2").text).toBe(
       "小红书",
     );
-    expect(workbook.getWorksheet("填写说明")?.getCell("B8").text).toBe(
+    expect(workbook.getWorksheet("填写说明")?.getCell("B9").text).toBe(
       "订单编号",
     );
-    expect(workbook.getWorksheet("填写说明")?.getCell("C8").text).toBe(
+    expect(workbook.getWorksheet("填写说明")?.getCell("C9").text).toBe(
       "否",
     );
-    expect(workbook.getWorksheet("笔记导入")?.getColumn(9).numFmt).toBe(
+    expect(workbook.getWorksheet("笔记导入")?.getColumn(10).numFmt).toBe(
       "yyyy-mm-dd hh:mm:ss",
     );
     expect(workbook.getWorksheet("笔记导入")?.autoFilter).toBeTruthy();
@@ -693,7 +701,7 @@ describe("模板驱动导出", () => {
     }
   });
 
-  it("仓库内标准模板同步九列、筛选和 IFFO / GUM 校验", async () => {
+  it("仓库内标准模板同步十列、筛选及阶段与段位校验", async () => {
     const noteWorkbook = new ExcelJS.Workbook();
     await noteWorkbook.xlsx.load(
       (await readFile("templates/笔记导入模板.xlsx")) as unknown as ExcelJS.Buffer,
@@ -705,6 +713,7 @@ describe("模板驱动导出", () => {
       "客户名（必填）",
       "产品系列（必填）",
       "阶段（IFFO/GUM）",
+      "段位",
       "订单编号",
       "内容渠道（必填）",
       "链接（必填）",
@@ -715,8 +724,13 @@ describe("模板驱动导出", () => {
       type: "list",
       formulae: ['"IFFO,GUM"'],
     });
-    expect(noteSheet.getCell("G2").text).toBe("小红书");
-    expect(noteSheet.getColumn(9).numFmt).toBe("yyyy-mm-dd hh:mm:ss");
+    expect(noteSheet.getCell("F2").text).toBe("2段");
+    expect(noteSheet.getCell("F2").dataValidation).toMatchObject({
+      type: "list",
+      formulae: ['"P段,1段,2段,3段,4段,1+段,2+段"'],
+    });
+    expect(noteSheet.getCell("H2").text).toBe("小红书");
+    expect(noteSheet.getCell("J2").numFmt).toBe("yyyy-mm-dd hh:mm:ss");
     expect(Boolean(noteSheet.autoFilter) || noteSheet.getTables().length > 0).toBe(
       true,
     );

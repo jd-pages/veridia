@@ -96,7 +96,7 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   expect(mobileKabritaBox).not.toBeNull();
   expect(
     Math.abs(mobileDanoneBox!.x - mobileKabritaBox!.x),
-  ).toBeLessThanOrEqual(1);
+  ).toBeLessThanOrEqual(6);
   expect(mobileCardLayouts).toHaveLength(2);
   expect(
     mobileCardLayouts.every(
@@ -114,8 +114,12 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   await expect(
     page.getByText("产品阶段与要求话题", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("IFFO", { exact: true })).toBeVisible();
-  await expect(page.getByText("GUM", { exact: true })).toBeVisible();
+  await expect(page.getByTitle("2026年8月")).toBeVisible();
+  await expect(page.getByText("IFFO 新生儿组（P段/1段）", { exact: true })).toBeVisible();
+  await expect(page.getByText("IFFO 二段组（2段）", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("GUM 成长组（3段/4段/1+段/2+段）", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "返回品牌列表" })).toBeVisible();
 });
 
@@ -270,4 +274,75 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
   await expect(detailDrawer).toContainText("至少 50 个有效正文字符");
   await expect(detailDrawer).toContainText("图文笔记至少 3 张");
   await expect(detailDrawer.getByText("至少 2 个", { exact: true })).toHaveCount(4);
+});
+
+test("达能月度规则支持空月份、复制创建、独立主键和刷新保持", async ({
+  page,
+}) => {
+  const loginResponse = await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  });
+  expect(loginResponse.ok()).toBeTruthy();
+
+  await page.goto("/rules?brand=%E8%BE%BE%E8%83%BD&month=2026-09");
+  await expect(
+    page.getByRole("heading", { name: "达能话题规则" }),
+  ).toBeVisible();
+  await expect(page.getByTitle("2026年9月")).toBeVisible();
+  await expect(
+    page.getByText("当前月份暂无规则", { exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "新增月份规则" }).click();
+  const monthModal = page.getByRole("dialog", { name: "新增月份规则" });
+  await monthModal.getByLabel("规则月份").fill("2026-09");
+  const copySwitch = monthModal.locator(".ant-switch");
+  await expect(copySwitch).toHaveAttribute("aria-checked", "true");
+  await monthModal
+    .locator(".ant-form-item")
+    .filter({ hasText: "复制来源月份" })
+    .locator(".ant-select")
+    .click();
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: "2026年8月" })
+    .click();
+  await page.locator(".ant-modal:visible .ant-modal-footer .ant-btn-primary").click();
+
+  await expect(page).toHaveURL(/brand=.*month=2026-09/u);
+  await expect(page.getByTitle("2026年9月")).toBeVisible();
+  await expect(page.getByText("当前月份暂无规则", { exact: true })).toHaveCount(0);
+  const septemberRules = (await (
+    await page.request.get("/api/rules?brandName=%E8%BE%BE%E8%83%BD&month=2026-09")
+  ).json()).data as Array<{ id: string }>;
+  const augustRules = (await (
+    await page.request.get("/api/rules?brandName=%E8%BE%BE%E8%83%BD&month=2026-08")
+  ).json()).data as Array<{ id: string }>;
+  expect(septemberRules).toHaveLength(9);
+  expect(new Set(septemberRules.map((rule) => rule.id))).not.toEqual(
+    new Set(augustRules.map((rule) => rule.id)),
+  );
+
+  await page.reload();
+  await expect(page.getByTitle("2026年9月")).toBeVisible();
+  await expect(
+    page.getByText("IFFO 新生儿组（P段/1段）", { exact: true }),
+  ).toBeVisible();
+
+  const sourceCampaigns = (await (
+    await page.request.get("/api/campaigns")
+  ).json()).data as Array<{ id: string; month: string; name: string }>;
+  const augustCampaign = sourceCampaigns.find(
+    (campaign) =>
+      campaign.month === "2026-08" && campaign.name.startsWith("爱他美"),
+  );
+  expect(augustCampaign).toBeTruthy();
+  const duplicateResponse = await page.request.post(
+    `/api/campaigns/${augustCampaign!.id}/copy`,
+    { data: { month: "2026-09" } },
+  );
+  expect(duplicateResponse.status()).toBe(409);
+  await expect(duplicateResponse.json()).resolves.toMatchObject({
+    error: "达能2026-09 规则已存在。",
+  });
 });

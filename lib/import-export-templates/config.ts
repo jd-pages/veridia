@@ -22,6 +22,7 @@ export const IMPORT_TEMPLATE_FIELDS: StandardField[] = [
   "customerName",
   "productName",
   "productStage",
+  "productStageDetail",
   "orderNumber",
   "contentChannel",
   "noteUrl",
@@ -71,6 +72,11 @@ function normalizeBusinessTemplates(
     displayName: "阶段（IFFO/GUM）",
     type: "string",
     description: "必填，只填写 IFFO 或 GUM",
+  };
+  output.fieldDefinitions.productStageDetail = {
+    displayName: "段位",
+    type: "string",
+    description: "达能 2026 年 8 月起必填：P段、1段、2段、3段、4段、1+段或2+段",
   };
   output.fieldDefinitions.orderNumber = {
     displayName: "订单编号",
@@ -182,10 +188,18 @@ function normalizeBusinessTemplates(
   ];
   output.fieldAliases.productStage = [
     ...new Set([
-      ...(output.fieldAliases.productStage || []),
+      ...(output.fieldAliases.productStage || []).filter(
+        (alias) => alias !== "段位" && alias !== "产品段位" && alias !== "奶粉段位",
+      ),
       "阶段",
       "阶段（IFFO/GUM）",
     ]),
+  ];
+  output.fieldAliases.productStageDetail = [
+    "段位",
+    "产品段位",
+    "奶粉段位",
+    "productStageDetail",
   ];
   output.fieldAliases.publishTime = [
     ...new Set([
@@ -199,6 +213,7 @@ function normalizeBusinessTemplates(
   output.examples.shopName = "京东健康官方进口超市";
   output.examples.customerName = "示例客户";
   output.examples.productStage = "IFFO";
+  output.examples.productStageDetail = "2段";
   output.examples.orderNumber = "JD202608030001";
   output.examples.contentChannel = "小红书";
   output.examples.noteUrl = "https://xhslink.com/示例短链";
@@ -219,6 +234,7 @@ function normalizeBusinessTemplates(
       "orderNumber" as const,
       "commercePlatform" as const,
       "contentChannel" as const,
+      "productStageDetail" as const,
       "activityName" as const,
       "effectiveBodyLength" as const,
       "publicStatus" as const,

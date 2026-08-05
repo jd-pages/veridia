@@ -19,6 +19,34 @@ export type ProductStageTopicValue =
   (typeof PRODUCT_STAGE_TOPIC_OPTIONS)[number]["value"];
 export type ProductStageGroup = ProductStageTopicValue;
 
+export const DETAILED_PRODUCT_STAGE_OPTIONS = [
+  {
+    value: "IFFO_P1",
+    label: "IFFO 新生儿组（P段/1段）",
+    phase: "IFFO",
+    stages: ["P段", "1段"],
+  },
+  {
+    value: "IFFO_2",
+    label: "IFFO 二段组（2段）",
+    phase: "IFFO",
+    stages: ["2段"],
+  },
+  {
+    value: "GUM_3_4_1PLUS_2PLUS",
+    label: "GUM 成长组（3段/4段/1+段/2+段）",
+    phase: "GUM",
+    stages: ["3段", "4段", "1+段", "2+段"],
+  },
+] as const;
+
+export type DetailedProductStageValue =
+  (typeof DETAILED_PRODUCT_STAGE_OPTIONS)[number]["value"];
+
+const DETAILED_STAGE_BY_VALUE = Object.fromEntries(
+  DETAILED_PRODUCT_STAGE_OPTIONS.map((item) => [item.value, item]),
+) as Record<DetailedProductStageValue, (typeof DETAILED_PRODUCT_STAGE_OPTIONS)[number]>;
+
 export const PRODUCT_STAGE_TOPIC_VALUES = PRODUCT_STAGE_TOPIC_OPTIONS.map(
   (item) => item.value,
 );
@@ -104,6 +132,16 @@ export interface ProductStageTopicDisplayRow<
   members: T[];
 }
 
+export interface DetailedProductStageTopicDisplayRow<
+  T extends StageTopicDisplaySource = StageTopicDisplaySource,
+> {
+  key: DetailedProductStageValue;
+  label: string;
+  requiredTopics: string[];
+  ruleSources: string[];
+  members: T[];
+}
+
 export interface ProductStageTopicRuleSource {
   topic: string;
   topicCategory?: string | null;
@@ -159,6 +197,51 @@ function normalizedGroupInput(value: string | null | undefined) {
     .replace(/：/gu, ":");
 }
 
+export function normalizeDetailedProductStageValue(
+  value: string | null | undefined,
+): DetailedProductStageValue | null {
+  const compact = normalizedGroupInput(value);
+  if (!compact) return null;
+  if (compact in DETAILED_STAGE_BY_VALUE) {
+    return compact as DetailedProductStageValue;
+  }
+  const normalizedStage = normalizeProductStage(compact);
+  if (!normalizedStage) return null;
+  return DETAILED_PRODUCT_STAGE_OPTIONS.find((item) =>
+    (item.stages as readonly string[]).includes(normalizedStage),
+  )?.value || null;
+}
+
+export function detailedProductStagePhase(
+  value: string | null | undefined,
+): ProductStageTopicValue | null {
+  const detailed = normalizeDetailedProductStageValue(value);
+  return detailed ? DETAILED_STAGE_BY_VALUE[detailed].phase : null;
+}
+
+export function detailedProductStageLabel(
+  value: string | null | undefined,
+): string {
+  const detailed = normalizeDetailedProductStageValue(value);
+  return detailed ? DETAILED_STAGE_BY_VALUE[detailed].label : productStageTopicLabel(value);
+}
+
+export function campaignUsesDetailedProductStages(
+  brandName: string | null | undefined,
+  month: string | null | undefined,
+): boolean {
+  return brandName?.trim() === "达能" && Boolean(month && month >= "2026-08");
+}
+
+export function normalizeConfiguredProductStageValue(
+  value: string | null | undefined,
+  detailed: boolean,
+): string | null {
+  return detailed
+    ? normalizeDetailedProductStageValue(value)
+    : normalizeProductStageTopicValue(value);
+}
+
 export function normalizeImportedProductStageTopicValue(
   value: string | null | undefined,
 ): ProductStageTopicValue | null {
@@ -187,8 +270,28 @@ export function normalizeProductStageTopicValue(
 export function productStageTopicLabel(
   value: string | null | undefined,
 ): string {
+  const detailed = normalizeDetailedProductStageValue(value);
+  if (detailed) return DETAILED_STAGE_BY_VALUE[detailed].label;
   const normalized = normalizeProductStageTopicValue(value);
   return normalized ? GROUP_LABELS[normalized] : value || "段位未识别";
+}
+
+export function aggregateDetailedProductStageTopicRows<
+  T extends StageTopicDisplaySource,
+>(rows: T[]): DetailedProductStageTopicDisplayRow<T>[] {
+  return DETAILED_PRODUCT_STAGE_OPTIONS.flatMap((option) => {
+    const members = rows.filter(
+      (row) => normalizeDetailedProductStageValue(row.key) === option.value,
+    );
+    if (!members.length) return [];
+    return [{
+      key: option.value,
+      label: option.label,
+      requiredTopics: [...new Set(members.map((member) => member.requiredTopic.trim()).filter(Boolean))],
+      ruleSources: [...new Set(members.map((member) => member.ruleSource || "").filter(Boolean))],
+      members,
+    }];
+  });
 }
 
 export function aggregateProductStageTopicRows<
@@ -293,6 +396,10 @@ export function bodyStageRequiredFromRuleSnapshot(
 export function compatibleStageRuleValues(
   value: string | null | undefined,
 ): string[] {
+  const detailed = normalizeDetailedProductStageValue(value);
+  if (detailed) {
+    return [detailed, ...DETAILED_STAGE_BY_VALUE[detailed].stages];
+  }
   const normalized = normalizeProductStageTopicValue(value);
   if (!normalized) return [];
   return normalized === "IFFO"
