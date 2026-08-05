@@ -370,7 +370,12 @@ async function processBatch(batchId: string) {
         });
         await recordProcessingFailureResult({
           taskId: processingTask.id,
-          status: technicalReadFailure ? "READ_FAILED" : "FAILED",
+          status:
+            extractionError.code === "NOTE_NOT_FOUND"
+              ? "COMPLETED"
+              : technicalReadFailure
+                ? "READ_FAILED"
+                : "FAILED",
           failureCode: extractionError.code,
           failureMessage: extractionError.message,
         });

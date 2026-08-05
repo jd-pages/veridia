@@ -12,8 +12,8 @@ import {
 
 describe("处理失败结果口径", () => {
   it("将页面异常映射为明确的页面状态和人工复核原因", () => {
-    expect(pageStatusForProcessingFailure("PAGE_NOT_FOUND")).toBe(
-      "NOT_FOUND",
+    expect(pageStatusForProcessingFailure("NOTE_NOT_FOUND")).toBe(
+      "NOTE_NOT_FOUND",
     );
     expect(pageStatusForProcessingFailure("LOGIN_REQUIRED")).toBe(
       "LOGIN_EXPIRED",
@@ -135,6 +135,25 @@ describe("处理失败结果口径", () => {
           },
         },
       ]),
+    });
+  });
+
+  it("笔记不存在使用独立筛选并从普通不通过、待复核中排除", () => {
+    expect(buildAuditResultWhere({ status: "NOTE_NOT_FOUND" })).toMatchObject({
+      AND: [
+        {
+          OR: expect.arrayContaining([
+            { autoStatus: "NOTE_NOT_FOUND" },
+            { pageStatus: { in: ["NOTE_NOT_FOUND", "NOT_FOUND", "DELETED"] } },
+          ]),
+        },
+      ],
+    });
+    expect(buildAuditResultWhere({ status: "FAILED" })).toMatchObject({
+      AND: [{ autoStatus: "FAILED" }, { NOT: expect.any(Object) }],
+    });
+    expect(buildAuditResultWhere({ status: "NEEDS_REVIEW" })).toMatchObject({
+      AND: [{ autoStatus: "NEEDS_REVIEW" }, { NOT: expect.any(Object) }],
     });
   });
 

@@ -70,7 +70,7 @@ describe("audit engine", () => {
         "TOPICS_NOT_RECOGNIZED",
       ];
       const result = evaluateAudit(note, context);
-      expect(result.autoStatus).toBe("NEEDS_REVIEW");
+      expect(result.autoStatus).toBe("NOTE_NOT_FOUND");
       expect(result.bodyStatus).toBe("UNKNOWN");
       expect(result.imageStatus).toBe("NOT_REQUIRED");
       expect(result.topicsCompliant).toBe(true);
@@ -508,9 +508,9 @@ describe("audit engine", () => {
     );
 
     const unavailablePage = structuredClone(compliantNote);
-    unavailablePage.pageStatus = "NOT_FOUND";
+    unavailablePage.pageStatus = "NOTE_NOT_FOUND";
     expect(evaluateAudit(unavailablePage, kabritaContext).autoStatus).toBe(
-      "FAILED",
+      "NOTE_NOT_FOUND",
     );
   });
 

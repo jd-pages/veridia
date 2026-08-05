@@ -15,14 +15,15 @@ function source(relativePath: string) {
 
 const expectedDisplay = {
   contentStatus: "笔记不存在",
-  topicAudit: "无",
-  imageStatus: "无",
+  topicAudit: "未审核",
+  imageStatus: "未审核",
   auditConclusion: "笔记不存在",
 };
 
 describe("页面不存在类审核结果展示", () => {
   it.each([
     ["PAGE_NOT_FOUND", { task: { failureCode: "PAGE_NOT_FOUND" } }],
+    ["NOTE_NOT_FOUND", { pageStatus: "NOTE_NOT_FOUND" }],
     ["NOTE_DELETED", { task: { failureCode: "NOTE_DELETED" } }],
     ["PAGE_UNAVAILABLE", { errorCode: "PAGE_UNAVAILABLE" }],
     ["ERROR_PAGE", { noteType: "ERROR_PAGE" }],
@@ -42,7 +43,7 @@ describe("页面不存在类审核结果展示", () => {
     expect(isUnavailableNoteResult(result)).toBe(true);
     expect(auditResultListDisplay(result)).toEqual(expectedDisplay);
     expect(unavailableNoteDetailReason(result)).toBe(
-      "小红书页面提示“你访问的页面不见了”，疑似笔记已删除或链接失效。",
+      "小红书页面提示“你访问的页面不见了”",
     );
   });
 

@@ -1,8 +1,8 @@
 import { prisma } from "@/lib/db";
-import { runAuditTask } from "@/lib/audit-service";
-import type { ExtractedNote } from "@/lib/types";
 import { fail, ok, requireApiUser } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
+import { createAutomaticBatch } from "@/lib/automation/batch-service";
+import { kickAutomaticAuditQueue } from "@/lib/automation/queue";
 
 export async function POST(request: Request) {
   const user = await requireApiUser(BUSINESS_ROLES);
@@ -16,29 +16,56 @@ export async function POST(request: Request) {
   if (!ids.length || !body.action) return fail("请选择结果和批量操作");
   const results = await prisma.auditResult.findMany({
     where: { id: { in: ids } },
-    include: {
-      task: true,
-      note: { include: { extractions: { orderBy: { extractedAt: "desc" }, take: 1 } } },
-    },
+    include: { task: true },
   });
+  if (body.action === "RE_AUDIT") {
+    try {
+      const batch = await createAutomaticBatch({
+        name: `重新审核 ${results.length} 条`,
+        source: "RE_AUDIT",
+        createdBy: user.id,
+        tasks: results.map((result) => ({
+          url: result.task.url,
+          originalInput: result.task.originalInput,
+          productId: result.task.productId,
+          campaignId: result.task.campaignId,
+          productStage: result.task.productStage,
+          milkType: result.task.milkType,
+          notes: result.task.notes,
+          platform: result.task.platform,
+          storeName: result.task.storeName,
+          orderNumber: result.task.orderNumber,
+          source: "RE_AUDIT",
+          replacesResultId: result.id,
+        })),
+      });
+      await prisma.operationLog.create({
+        data: {
+          userId: user.id,
+          action: "BULK_RE_AUDIT",
+          entityType: "AUDIT_RESULT",
+          summary: `已将 ${results.length} 条原结果加入重新审核队列`,
+          metadata: JSON.stringify({ ids, batchId: batch.id }),
+        },
+      });
+      kickAutomaticAuditQueue();
+      return ok({ completed: results.length, errors: [], batchId: batch.id });
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : "重新审核启动失败", 409);
+    }
+  }
   let completed = 0;
   const errors: Array<{ id: string; reason: string }> = [];
   for (const result of results) {
     try {
-      if (body.action === "RE_AUDIT") {
-        const raw = result.note.extractions[0]?.rawData;
-        if (!raw) throw new Error("没有可用的提取快照");
-        await runAuditTask(result.task.id, JSON.parse(raw) as ExtractedNote);
-      } else {
-        await prisma.manualReview.create({
-          data: {
-            auditResultId: result.id,
-            reviewerId: user.id,
-            result: body.action === "MANUAL_PASS" ? "PASSED" : "FAILED",
-            comment: body.comment?.trim() || "批量人工复核",
-          },
-        });
-      }
+      await prisma.manualReview.create({
+        data: {
+          auditResultId: result.id,
+          reviewerId: user.id,
+          result: body.action === "MANUAL_PASS" ? "PASSED" : "FAILED",
+          comment: body.comment?.trim() || "批量人工复核",
+        },
+      });
       completed += 1;
     } catch (error) {
       errors.push({

@@ -37,7 +37,7 @@ interface RuleSnapshotForPresentation {
 }
 
 const technicalStatePattern =
-  /\b(?:ERROR_PAGE|APP_LAUNCH|NOTE_DETAIL|PAGE_NOT_FOUND|NOTE_DELETED|PAGE_UNAVAILABLE|NOT_FOUND|NOT_ACCESSIBLE|READ_FAILED)\b/iu;
+  /\b(?:ERROR_PAGE|APP_LAUNCH|NOTE_DETAIL|NOTE_NOT_FOUND|PAGE_NOT_FOUND|NOTE_DELETED|PAGE_UNAVAILABLE|NOT_FOUND|NOT_ACCESSIBLE|READ_FAILED)\b/iu;
 
 function ruleSnapshotForPresentation(value?: string) {
   try {
@@ -146,8 +146,8 @@ function unavailableReason(input: DetailPresentationInput) {
         !/^(?:笔记不存在|页面无法访问)$/u.test(value),
     );
   return candidates.length
-    ? `页面无法访问：${candidates[0]}`
-    : "页面无法访问：小红书页面不存在、已失效或无权查看";
+    ? candidates[0]
+    : "小红书页面提示“你访问的页面不见了”";
 }
 
 export function auditConclusionCardLabel(input: DetailPresentationInput) {
@@ -165,8 +165,9 @@ export function auditConclusionCardLabel(input: DetailPresentationInput) {
 
 export function auditConclusionCardTone(input: DetailPresentationInput) {
   const label = auditConclusionCardLabel(input);
+  if (label === "笔记不存在") return "neutral";
   if (label.includes("通过") && !label.includes("不通过")) return "success";
-  if (label === "审核不通过" || label === "人工不通过" || label === "笔记不存在") {
+  if (label === "审核不通过" || label === "人工不通过") {
     return "danger";
   }
   return "warning";

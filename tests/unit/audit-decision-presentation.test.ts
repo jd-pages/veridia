@@ -41,17 +41,17 @@ describe("审核结论卡片展示映射", () => {
 
   it("笔记不存在时只展示笔记不存在，不泄露技术状态", () => {
     const unavailable = input({
-      pageStatus: "NOT_FOUND",
+      pageStatus: "NOTE_NOT_FOUND",
       failureReasons: JSON.stringify([
         "ERROR_PAGE",
         "有效正文字数不足",
         "图片数量不足（0/2）",
       ]),
-      task: { failureCode: "PAGE_NOT_FOUND", failureMessage: "APP_LAUNCH" },
+      task: { failureCode: "NOTE_NOT_FOUND", failureMessage: "APP_LAUNCH" },
     });
     expect(auditConclusionCardLabel(unavailable)).toBe("笔记不存在");
     expect(auditConclusionFailureReasons(unavailable)).toEqual([
-      "页面无法访问：小红书页面不存在、已失效或无权查看",
+      "小红书页面提示“你访问的页面不见了”",
     ]);
   });
 

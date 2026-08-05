@@ -30,6 +30,27 @@ export interface ResultQueryFilters {
   riskType?: string;
 }
 
+const noteNotFoundWhere: Prisma.AuditResultWhereInput = {
+  OR: [
+    { autoStatus: "NOTE_NOT_FOUND" },
+    { pageStatus: { in: ["NOTE_NOT_FOUND", "NOT_FOUND", "DELETED"] } },
+    {
+      task: {
+        failureCode: {
+          in: ["NOTE_NOT_FOUND", "PAGE_NOT_FOUND", "NOTE_DELETED"],
+        },
+      },
+    },
+  ],
+};
+
+const noteNotFoundStoredStatusWhere: Prisma.AuditResultWhereInput = {
+  OR: [
+    { autoStatus: "NOTE_NOT_FOUND" },
+    { pageStatus: { in: ["NOTE_NOT_FOUND", "NOT_FOUND", "DELETED"] } },
+  ],
+};
+
 export function readResultQueryFilters(
   searchParams: URLSearchParams,
 ): ResultQueryFilters {
@@ -146,14 +167,20 @@ export function buildAuditResultWhere(
     and.push({
       task: { status: { in: [...processingFailureTaskStatuses] } },
     });
+  } else if (filters.status === "NOTE_NOT_FOUND") {
+    and.push(noteNotFoundWhere);
   } else if (filters.status) {
     and.push({ autoStatus: filters.status });
+    if (["PASSED", "FAILED", "NEEDS_REVIEW"].includes(filters.status)) {
+      and.push({ NOT: noteNotFoundStoredStatusWhere });
+    }
   }
 
   if (filters.manualStatus === "PENDING") {
     and.push({
       autoStatus: "NEEDS_REVIEW",
       manualReviews: { none: {} },
+      NOT: noteNotFoundStoredStatusWhere,
     });
   } else if (
     filters.manualStatus === "PASSED" ||
@@ -172,7 +199,11 @@ export function buildAuditResultWhere(
   if (filters.imageStatus) {
     and.push({ imageStatus: filters.imageStatus });
   }
-  if (filters.pageStatus) and.push({ pageStatus: filters.pageStatus });
+  if (filters.pageStatus === "NOTE_NOT_FOUND") {
+    and.push(noteNotFoundWhere);
+  } else if (filters.pageStatus) {
+    and.push({ pageStatus: filters.pageStatus });
+  }
   if (filters.bodyStatus) and.push({ bodyStatus: filters.bodyStatus });
   if (filters.topicsStatus) {
     and.push({

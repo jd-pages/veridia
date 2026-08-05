@@ -7,16 +7,28 @@ export type AutomaticPageType =
   | "SHORT_LINK"
   | "UNKNOWN";
 
+export type XhsPageState =
+  | "NORMAL"
+  | "NOTE_NOT_FOUND"
+  | "NOT_LOGGED_IN"
+  | "SECURITY_RESTRICTED"
+  | "NETWORK_ERROR"
+  | "PAGE_LOAD_TIMEOUT"
+  | "UNKNOWN";
+
 export interface PageClassificationInput {
   url: string;
   title: string;
   visibleText: string;
+  httpStatus?: number | null;
+  notFoundDomMarker?: string | null;
 }
 
 export interface UnavailablePageEvidence {
-  status: "NOT_FOUND" | "DELETED";
+  status: "NOTE_NOT_FOUND";
   matchedText: string;
-  source: "TITLE" | "BODY" | "URL";
+  source: "TITLE" | "BODY" | "URL" | "HTTP_STATUS" | "DOM";
+  errorCode?: string | null;
 }
 
 const DELETED_PAGE_PATTERN =
@@ -32,7 +44,27 @@ export function detectUnavailableXhsPage({
   url,
   title,
   visibleText,
+  httpStatus,
+  notFoundDomMarker,
 }: PageClassificationInput): UnavailablePageEvidence | null {
+  if (httpStatus === 404) {
+    return {
+      status: "NOTE_NOT_FOUND",
+      matchedText: "HTTP 404",
+      source: "HTTP_STATUS",
+    };
+  }
+  if (notFoundDomMarker?.trim()) {
+    const markerText = notFoundDomMarker.trim();
+    return {
+      status: "NOTE_NOT_FOUND",
+      matchedText:
+        firstPatternMatch(markerText, DELETED_PAGE_PATTERN) ||
+        firstPatternMatch(markerText, NOT_FOUND_PAGE_PATTERN) ||
+        markerText,
+      source: "DOM",
+    };
+  }
   const sources = [
     { source: "TITLE" as const, value: title },
     { source: "BODY" as const, value: visibleText },
@@ -40,12 +72,16 @@ export function detectUnavailableXhsPage({
   for (const item of sources) {
     const deleted = firstPatternMatch(item.value, DELETED_PAGE_PATTERN);
     if (deleted) {
-      return { status: "DELETED", matchedText: deleted, source: item.source };
+      return {
+        status: "NOTE_NOT_FOUND",
+        matchedText: deleted,
+        source: item.source,
+      };
     }
     const notFound = firstPatternMatch(item.value, NOT_FOUND_PAGE_PATTERN);
     if (notFound) {
       return {
-        status: "NOT_FOUND",
+        status: "NOTE_NOT_FOUND",
         matchedText: notFound,
         source: item.source,
       };
@@ -54,6 +90,7 @@ export function detectUnavailableXhsPage({
 
   try {
     const parsed = new URL(url);
+    const errorCode = parsed.searchParams.get("errorCode");
     if (
       !/^\/website-login\/error(?:\/|$)/iu.test(parsed.pathname) &&
       /(?:^|\/)(?:404|not[-_]?found|error(?:-page)?)(?:\/|$)/iu.test(
@@ -61,9 +98,10 @@ export function detectUnavailableXhsPage({
       )
     ) {
       return {
-        status: "NOT_FOUND",
+        status: "NOTE_NOT_FOUND",
         matchedText: parsed.pathname,
         source: "URL",
+        errorCode,
       };
     }
   } catch {
@@ -75,9 +113,7 @@ export function detectUnavailableXhsPage({
 export function unavailablePageFailureMessage(
   evidence: UnavailablePageEvidence,
 ) {
-  const description =
-    evidence.status === "DELETED" ? "疑似笔记已删除或链接失效" : "疑似笔记不存在或链接失效";
-  return `小红书页面提示“${evidence.matchedText}”，${description}`;
+  return `小红书页面提示“${evidence.matchedText}”`;
 }
 
 export function isShortXiaohongshuUrl(value: string) {
@@ -157,6 +193,19 @@ export function classifyAutomaticPage({
   }
   if (isXiaohongshuNoteDetailUrl(url)) return "NOTE_DETAIL";
   if (isShortXiaohongshuUrl(url)) return "SHORT_LINK";
+  return "UNKNOWN";
+}
+
+export function detectXhsPageState(
+  input: PageClassificationInput,
+  operationalFailure?: "NETWORK_ERROR" | "PAGE_LOAD_TIMEOUT",
+): XhsPageState {
+  if (operationalFailure) return operationalFailure;
+  const pageType = classifyAutomaticPage(input);
+  if (pageType === "SECURITY_CHECK") return "SECURITY_RESTRICTED";
+  if (pageType === "LOGIN") return "NOT_LOGGED_IN";
+  if (detectUnavailableXhsPage(input)) return "NOTE_NOT_FOUND";
+  if (pageType === "NOTE_DETAIL") return "NORMAL";
   return "UNKNOWN";
 }
 

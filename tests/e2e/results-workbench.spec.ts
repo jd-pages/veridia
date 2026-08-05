@@ -175,7 +175,7 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   ).toBeVisible();
   await expect(page.getByText("平台", { exact: true })).toBeVisible();
   await expect(page.getByLabel("订单编号")).toBeVisible();
-  for (const label of ["结果总数", "审核通过", "审核不通过", "待人工复核"]) {
+  for (const label of ["结果总数", "审核通过", "审核不通过", "笔记不存在", "待人工复核"]) {
     await expect(page.getByRole("button", { name: new RegExp(label) })).toBeVisible();
   }
 
@@ -185,6 +185,7 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
     "归属信息",
     "话题审核",
     "图片",
+    "正文审核",
     "审核结论",
     "操作",
   ]);

@@ -114,6 +114,7 @@ export interface ResultSummary {
   total: number;
   passed: number;
   failed: number;
+  notFound: number;
   review: number;
 }
 

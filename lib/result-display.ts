@@ -21,12 +21,13 @@ export interface AuditResultDisplayInput {
 
 export const unavailableNoteListDisplay = {
   contentStatus: "笔记不存在",
-  topicAudit: "无",
-  imageStatus: "无",
+  topicAudit: "未审核",
+  imageStatus: "未审核",
   auditConclusion: "笔记不存在",
 } as const;
 
 const unavailableStates = new Set([
+  "NOTE_NOT_FOUND",
   "PAGE_NOT_FOUND",
   "NOTE_DELETED",
   "PAGE_UNAVAILABLE",
@@ -128,5 +129,5 @@ export function unavailableNoteDetailReason(
   result: AuditResultDisplayInput,
 ) {
   const matchedText = inferredUnavailableReasonText(result);
-  return `小红书页面提示“${matchedText}”，疑似笔记已删除或链接失效。`;
+  return `小红书页面提示“${matchedText}”`;
 }

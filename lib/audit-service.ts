@@ -291,53 +291,75 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
       },
     });
 
-    const auditResult = await tx.auditResult.create({
-      data: {
-        auditTaskId: task.id,
-        noteId: note.id,
-        ruleVersion: context.ruleVersion,
-        softwareVersion: packageJson.version,
-        rulePackageVersion: context.rulePackageVersion,
-        ruleSnapshot: JSON.stringify(context),
-        pageStatus: evaluation.pageStatus,
-        bodyStatus: evaluation.bodyStatus,
-        effectiveBodyLength: evaluation.effectiveBodyLength,
-        bodyCompliant: evaluation.bodyCompliant,
-        noteType: evaluation.noteType,
-        imageExtractionStatus: evaluation.imageExtractionStatus,
-        imageStatus: evaluation.imageStatus,
-        imageCount: evaluation.imageCount ?? 0,
-        imageCompliant: evaluation.imageCompliant ?? true,
-        topicsCompliant: evaluation.topicsCompliant,
-        clickableCompliant: evaluation.clickableCompliant,
-        missingTopics: JSON.stringify(evaluation.missingTopics),
-        forbiddenTopics: JSON.stringify(evaluation.forbiddenTopics),
-        autoStatus: evaluation.autoStatus,
-        publicStatus: evaluation.publicStatus,
-        retentionStatus: evaluation.retentionStatus,
-        retentionDueAt: evaluation.retentionDueAt
-          ? new Date(evaluation.retentionDueAt)
-          : null,
-        visualReviewStatus: "NOT_REQUIRED",
-        visualReviewDetails: "{}",
-        failureReasons: JSON.stringify(evaluation.failureReasons),
-        aiStatus: ai.status,
-        aiRelevance: ai.relevance,
-        aiReason: ai.reason,
-        ruleResults: {
-          create: evaluation.ruleResults.map((item) => ({
-            ruleKey: item.ruleKey,
-            ruleName: item.ruleName,
-            expectedValue: item.expectedValue,
-            actualValue: item.actualValue,
-            passed: item.passed,
-            failureReason: item.failureReason,
-            evidence: JSON.stringify(item.evidence),
-          })),
+    const auditResultData = {
+      auditTaskId: task.id,
+      noteId: note.id,
+      ruleVersion: context.ruleVersion,
+      softwareVersion: packageJson.version,
+      rulePackageVersion: context.rulePackageVersion,
+      ruleSnapshot: JSON.stringify(context),
+      pageStatus: evaluation.pageStatus,
+      bodyStatus: evaluation.bodyStatus,
+      effectiveBodyLength: evaluation.effectiveBodyLength,
+      bodyCompliant: evaluation.bodyCompliant,
+      noteType: evaluation.noteType,
+      imageExtractionStatus: evaluation.imageExtractionStatus,
+      imageStatus: evaluation.imageStatus,
+      imageCount: evaluation.imageCount ?? 0,
+      imageCompliant: evaluation.imageCompliant ?? true,
+      topicsCompliant: evaluation.topicsCompliant,
+      clickableCompliant: evaluation.clickableCompliant,
+      missingTopics: JSON.stringify(evaluation.missingTopics),
+      forbiddenTopics: JSON.stringify(evaluation.forbiddenTopics),
+      autoStatus: evaluation.autoStatus,
+      publicStatus: evaluation.publicStatus,
+      retentionStatus: evaluation.retentionStatus,
+      retentionDueAt: evaluation.retentionDueAt
+        ? new Date(evaluation.retentionDueAt)
+        : null,
+      visualReviewStatus: "NOT_REQUIRED",
+      visualReviewDetails: "{}",
+      failureReasons: JSON.stringify(evaluation.failureReasons),
+      aiStatus: ai.status,
+      aiRelevance: ai.relevance,
+      aiReason: ai.reason,
+    };
+    const ruleResultData = evaluation.ruleResults.map((item) => ({
+      ruleKey: item.ruleKey,
+      ruleName: item.ruleName,
+      expectedValue: item.expectedValue,
+      actualValue: item.actualValue,
+      passed: item.passed,
+      failureReason: item.failureReason,
+      evidence: JSON.stringify(item.evidence),
+    }));
+    let auditResult;
+    if (task.replacesResultId) {
+      const target = await tx.auditResult.findUnique({
+        where: { id: task.replacesResultId },
+        select: { id: true },
+      });
+      if (!target) throw new Error("待重新审核的原结果不存在");
+      await tx.ruleResult.deleteMany({
+        where: { auditResultId: task.replacesResultId },
+      });
+      auditResult = await tx.auditResult.update({
+        where: { id: task.replacesResultId },
+        data: {
+          ...auditResultData,
+          ruleResults: { create: ruleResultData },
         },
-      },
-      include: { ruleResults: true },
-    });
+        include: { ruleResults: true },
+      });
+    } else {
+      auditResult = await tx.auditResult.create({
+        data: {
+          ...auditResultData,
+          ruleResults: { create: ruleResultData },
+        },
+        include: { ruleResults: true },
+      });
+    }
 
     await tx.auditTask.update({
       where: { id: task.id },

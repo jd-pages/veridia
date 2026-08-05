@@ -22,6 +22,7 @@ const colors: Record<string, string> = {
   READ_FAILED: "volcano",
   NORMAL: "green",
   NOT_FOUND: "red",
+  NOTE_NOT_FOUND: "default",
   NO_PERMISSION: "orange",
   LOGIN_EXPIRED: "orange",
   LOGIN_REQUIRED: "orange",

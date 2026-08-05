@@ -17,6 +17,7 @@ export interface AutomaticTaskInput {
   storeName?: string | null;
   orderNumber?: string | null;
   source?: string;
+  replacesResultId?: string | null;
 }
 
 export interface CreateAutomaticBatchInput {
@@ -88,6 +89,7 @@ export async function createAutomaticBatchInTransaction(
       source: task.source || input.source,
       status: "PENDING",
       queueOrder: index,
+      replacesResultId: task.replacesResultId || null,
       notes: task.notes?.trim() || null,
       platform: task.platform?.trim() || null,
       storeName: task.storeName?.trim() || null,

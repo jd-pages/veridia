@@ -19,11 +19,10 @@ export default async function MockXhsPage({
         title: "页面暂时无法读取",
         detail: "这是用于验证单条读取失败不阻断队列的模拟页面。",
       },
-      NOT_FOUND: {
+      NOTE_NOT_FOUND: {
         title: "小红书 - 你访问的页面不见了",
         detail: "页面不存在，该笔记链接不存在。",
       },
-      DELETED: { title: "笔记已删除", detail: "该笔记已被作者删除。" },
       NO_PERMISSION: { title: "无权限访问", detail: "当前账号无权查看该笔记。" },
       LOGIN_EXPIRED: { title: "登录已失效", detail: "请重新登录后继续审核。" },
       SECURITY_VERIFICATION: {

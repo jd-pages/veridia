@@ -31,7 +31,7 @@
 
 .summaryGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 20px;
 }
@@ -700,6 +700,15 @@
 
 .decisionHero_warning::before {
   background: #d98b21;
+}
+
+.decisionHero_neutral::before {
+  background: #8c8c8c;
+}
+
+.summaryIconNeutral {
+  color: #667085;
+  background: #f2f4f7;
 }
 
 .decisionHeroTopline {

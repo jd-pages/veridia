@@ -185,6 +185,7 @@ export default function ResultsPage() {
     total: 0,
     passed: 0,
     failed: 0,
+    notFound: 0,
     review: 0,
   });
   const [loading, setLoading] = useState(true);
@@ -209,7 +210,7 @@ export default function ResultsPage() {
     targetAdvancedFilters: AdvancedResultFilters,
   ) => {
     const summaryBase = { ...targetFilters, status: "" };
-    const [all, passed, failed, review] = await Promise.all([
+    const [all, passed, failed, notFound, review] = await Promise.all([
       apiFetch<ResultPageData>(
         `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "")}`,
       ),
@@ -220,6 +221,9 @@ export default function ResultsPage() {
         `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "FAILED")}`,
       ),
       apiFetch<ResultPageData>(
+        `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "NOTE_NOT_FOUND")}`,
+      ),
+      apiFetch<ResultPageData>(
         `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "NEEDS_REVIEW")}`,
       ),
     ]);
@@ -227,6 +231,7 @@ export default function ResultsPage() {
       total: all.total,
       passed: passed.total,
       failed: failed.total,
+      notFound: notFound.total,
       review: review.total,
     });
   }, []);
@@ -612,6 +617,37 @@ export default function ResultsPage() {
       render: (_value, row) => <ImageAuditCell row={row} />,
     },
     {
+      title: "正文审核",
+      key: "body",
+      width: 130,
+      render: (_value, row) => {
+        const unavailable =
+          row.autoStatus === "NOTE_NOT_FOUND" ||
+          ["NOTE_NOT_FOUND", "NOT_FOUND", "DELETED"].includes(row.pageStatus) ||
+          ["NOTE_NOT_FOUND", "PAGE_NOT_FOUND", "NOTE_DELETED"].includes(
+            row.task.failureCode || "",
+          );
+        return (
+          <div className={styles.stack}>
+            <strong className={styles.cellPrimary}>
+              {unavailable
+                ? "未审核"
+                : row.bodyStatus === "UNKNOWN"
+                  ? "待人工确认"
+                  : row.bodyCompliant
+                    ? "合规"
+                    : "不合规"}
+            </strong>
+            {!unavailable && row.bodyStatus !== "UNKNOWN" ? (
+              <span className={styles.cellSecondary}>
+                {row.effectiveBodyLength} 个字符
+              </span>
+            ) : null}
+          </div>
+        );
+      },
+    },
+    {
       title: "审核结论",
       key: "conclusion",
       width: 250,
@@ -743,7 +779,7 @@ export default function ResultsPage() {
             } : undefined}
             columns={columns}
             tableLayout="fixed"
-            scroll={{ x: 1280 }}
+            scroll={{ x: 1410 }}
             sticky={{ offsetHeader: 64, offsetScroll: 10 }}
             pagination={{
               current: data.page,

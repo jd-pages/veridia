@@ -197,10 +197,16 @@ export default function AuditDecisionSummary({
       <section className={styles.decisionSection} aria-label="审核明细">
         <h3>审核明细</h3>
         <div className={styles.auditDetailCards}>
+          {unavailable ? (
+            <article className={styles.auditDetailCard}>
+              <h4>页面审核</h4>
+              <strong>笔记不存在</strong>
+            </article>
+          ) : null}
           <article className={styles.auditDetailCard}>
             <h4>话题审核</h4>
             {unavailable ? (
-              <strong>无</strong>
+              <strong>未审核</strong>
             ) : (
               <div className={styles.auditDetailList}>
                 <div>
@@ -243,7 +249,7 @@ export default function AuditDecisionSummary({
           <article className={styles.auditDetailCard}>
             <h4>图片审核</h4>
             {unavailable ? (
-              <strong>无</strong>
+              <strong>未审核</strong>
             ) : (
               <div className={styles.auditDetailList}>
                 <div>
@@ -269,6 +275,19 @@ export default function AuditDecisionSummary({
               </div>
             )}
           </article>
+
+          {unavailable ? (
+            <>
+              <article className={styles.auditDetailCard}>
+                <h4>正文审核</h4>
+                <strong>未审核</strong>
+              </article>
+              <article className={styles.auditDetailCard}>
+                <h4>公开状态</h4>
+                <strong>无法确认</strong>
+              </article>
+            </>
+          ) : null}
 
           {!unavailable ? (
             <>

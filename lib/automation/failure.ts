@@ -1,6 +1,5 @@
 export type AutomaticFailureCode =
-  | "PAGE_NOT_FOUND"
-  | "NOTE_DELETED"
+  | "NOTE_NOT_FOUND"
   | "NO_PERMISSION"
   | "LOGIN_EXPIRED"
   | "LOGIN_REQUIRED"
@@ -16,8 +15,7 @@ export type AutomaticFailureCode =
   | "CANCELLED";
 
 export const automaticFailureLabels: Record<AutomaticFailureCode, string> = {
-  PAGE_NOT_FOUND: "页面不存在",
-  NOTE_DELETED: "笔记已删除",
+  NOTE_NOT_FOUND: "笔记不存在",
   NO_PERMISSION: "无权限访问",
   LOGIN_EXPIRED: "小红书登录失效",
   LOGIN_REQUIRED: "需要重新登录小红书",

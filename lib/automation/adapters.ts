@@ -319,9 +319,9 @@ export class PlaywrightXiaohongshuAdapter
       } else if (/验证码|安全验证|完成验证|滑块验证/.test(visibleText)) {
         pageStatus = "SECURITY_VERIFICATION";
       } else if (/笔记已删除|内容已删除|作者已删除/.test(visibleText)) {
-        pageStatus = "DELETED";
+        pageStatus = "NOTE_NOT_FOUND";
       } else if (/内容不存在|笔记不存在|页面不存在/.test(visibleText)) {
-        pageStatus = "NOT_FOUND";
+        pageStatus = "NOTE_NOT_FOUND";
       } else if (/暂无权限|无权查看|仅作者可见/.test(visibleText)) {
         pageStatus = "NO_PERMISSION";
       }

@@ -8,8 +8,9 @@ export type ProcessingFailureStatus =
   (typeof processingFailureTaskStatuses)[number];
 
 export function pageStatusForProcessingFailure(code: string | null) {
-  if (code === "PAGE_NOT_FOUND") return "NOT_FOUND";
-  if (code === "NOTE_DELETED") return "DELETED";
+  if (["NOTE_NOT_FOUND", "PAGE_NOT_FOUND", "NOTE_DELETED"].includes(code || "")) {
+    return "NOTE_NOT_FOUND";
+  }
   if (code === "NO_PERMISSION") return "NO_PERMISSION";
   if (code === "LOGIN_EXPIRED" || code === "LOGIN_REQUIRED") {
     return "LOGIN_EXPIRED";
@@ -25,7 +26,7 @@ export function processingFailureReason(
   message: string | null,
 ) {
   if (
-    (code === "PAGE_NOT_FOUND" || code === "NOTE_DELETED") &&
+    ["NOTE_NOT_FOUND", "PAGE_NOT_FOUND", "NOTE_DELETED"].includes(code || "") &&
     message?.trim()
   ) {
     return message.trim();
@@ -38,6 +39,7 @@ export function processingFailureReason(
     return "页面结构异常，未提取到标题或正文，请人工确认。";
   }
   const reasons: Record<string, string> = {
+    NOTE_NOT_FOUND: "笔记不存在",
     PAGE_NOT_FOUND: "当前笔记无法浏览：页面不存在，需人工确认",
     NOTE_DELETED: "当前笔记无法浏览：笔记已删除，需人工确认",
     NO_PERMISSION: "当前笔记无法浏览：无权限访问，需人工确认",

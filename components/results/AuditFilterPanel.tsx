@@ -210,6 +210,10 @@ export default function AuditFilterPanel({
               { value: "PASSED", label: auditResultLabels.PASSED },
               { value: "FAILED", label: auditResultLabels.FAILED },
               {
+                value: "NOTE_NOT_FOUND",
+                label: auditResultLabels.NOTE_NOT_FOUND,
+              },
+              {
                 value: "NEEDS_REVIEW",
                 label: auditResultLabels.NEEDS_REVIEW,
               },
@@ -291,7 +295,7 @@ export default function AuditFilterPanel({
                 options={[
                   { value: "NORMAL", label: "页面正常" },
                   { value: "READ_FAILED", label: "读取失败" },
-                  { value: "NOT_FOUND", label: "页面不存在" },
+                  { value: "NOTE_NOT_FOUND", label: "笔记不存在" },
                   { value: "NO_PERMISSION", label: "不可访问" },
                 ]}
                 onChange={(value) =>

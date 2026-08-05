@@ -17,6 +17,7 @@ const resultMeta: Record<
 > = {
   PASSED: { className: styles.dotSuccess, label: "审核通过" },
   FAILED: { className: styles.dotDanger, label: "审核不通过" },
+  NOTE_NOT_FOUND: { className: styles.dotInfo, label: "笔记不存在" },
   NEEDS_REVIEW: { className: styles.dotWarning, label: "待人工复核" },
   READ_FAILED: { className: styles.dotWarning, label: "读取失败" },
   PROCESSING: { className: styles.dotInfo, label: "处理中" },
@@ -36,7 +37,7 @@ export default function AuditConclusionCell({
       <div className={styles.stack}>
         <div className={styles.conclusionLine}>
           <span
-            className={`${styles.conclusionDot} ${styles.dotDanger}`}
+            className={`${styles.conclusionDot} ${styles.dotInfo}`}
             aria-hidden="true"
           />
           <strong className={styles.cellPrimary}>

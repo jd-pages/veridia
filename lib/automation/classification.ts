@@ -7,8 +7,7 @@ export function failureCodeForPageStatus(
   const statusMap: Partial<
     Record<ExtractedNote["pageStatus"], AutomaticFailureCode>
   > = {
-    NOT_FOUND: "PAGE_NOT_FOUND",
-    DELETED: "NOTE_DELETED",
+    NOTE_NOT_FOUND: "NOTE_NOT_FOUND",
     NO_PERMISSION: "NO_PERMISSION",
     LOGIN_EXPIRED: "LOGIN_REQUIRED",
     SECURITY_VERIFICATION: "SECURITY_CHECK",

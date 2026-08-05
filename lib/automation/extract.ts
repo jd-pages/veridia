@@ -44,6 +44,8 @@ interface PageIdentity {
   pageTitle: string;
   pageType: AutomaticPageType;
   visibleText: string;
+  httpStatus: number | null;
+  notFoundDomMarker: string | null;
 }
 
 const KEY_ELEMENT_SELECTOR = [
@@ -90,13 +92,23 @@ function throwForPageStatus(status: ExtractedNote["pageStatus"]) {
   if (code) throw new AutomaticExtractionError(code);
 }
 
-async function readPageIdentity(page: Page): Promise<PageIdentity> {
+async function readPageIdentity(
+  page: Page,
+  httpStatus: number | null = null,
+): Promise<PageIdentity> {
   const finalUrl = page.url();
-  const [pageTitle, visibleText] = await Promise.all([
+  const [pageTitle, visibleText, notFoundDomMarker] = await Promise.all([
     page.title().catch(() => ""),
     page
       .locator("body")
       .innerText({ timeout: 2_000 })
+      .catch(() => ""),
+    page
+      .locator(
+        "[data-xhs-page-status='NOTE_NOT_FOUND'], [data-xhs-page-status='NOT_FOUND'], [data-page-status='404'], [data-testid*='not-found'], [class*='not-found']",
+      )
+      .first()
+      .innerText({ timeout: 500 })
       .catch(() => ""),
   ]);
   return {
@@ -106,8 +118,12 @@ async function readPageIdentity(page: Page): Promise<PageIdentity> {
       url: finalUrl,
       title: pageTitle,
       visibleText,
+      httpStatus,
+      notFoundDomMarker,
     }),
     visibleText,
+    httpStatus,
+    notFoundDomMarker: notFoundDomMarker || null,
   };
 }
 
@@ -309,6 +325,8 @@ export async function extractAuditTaskAutomatically(
     pageTitle: "",
     pageType: isShortXiaohongshuUrl(pageUrl) ? "SHORT_LINK" : "UNKNOWN",
     visibleText: "",
+    httpStatus: null,
+    notFoundDomMarker: null,
   };
 
   const recordNavigation = (frame: Frame) => {
@@ -327,11 +345,13 @@ export async function extractAuditTaskAutomatically(
     }
 
     let responseUrl = "";
+    let navigationHttpStatus: number | null = null;
     try {
       const response = await page.goto(pageUrl, {
         waitUntil: "domcontentloaded",
         timeout: Number(process.env.AUTOMATION_PAGE_TIMEOUT_MS || 30_000),
       });
+      navigationHttpStatus = response?.status() ?? null;
       responseUrl = response?.url() || "";
       if (responseUrl) redirectChain.push(responseUrl);
       if (!mock) {
@@ -352,7 +372,7 @@ export async function extractAuditTaskAutomatically(
     if (delay > 0) await page.waitForTimeout(Math.min(delay, 10_000));
 
     responseCandidates = await responseCollector.snapshot();
-    identity = await readPageIdentity(page);
+    identity = await readPageIdentity(page, navigationHttpStatus);
     if (
       responseCandidates.loginEvidence.some((item) =>
         /安全|风险|验证|限制/u.test(item),
@@ -384,12 +404,26 @@ export async function extractAuditTaskAutomatically(
       url: identity.finalUrl,
       title: identity.pageTitle,
       visibleText: identity.visibleText,
+      httpStatus: identity.httpStatus,
+      notFoundDomMarker: identity.notFoundDomMarker,
     });
     if (unavailablePage) {
+      console.info(
+        "[自动审核] 笔记不存在",
+        JSON.stringify({
+          taskId: task.id,
+          originalUrl: safePageLogUrl(task.url),
+          finalUrl: safePageLogUrl(identity.finalUrl),
+          pageTitle: identity.pageTitle,
+          matchedCondition: unavailablePage.source,
+          matchedText: unavailablePage.matchedText,
+          errorCode: unavailablePage.errorCode || null,
+          detectedAt: new Date().toISOString(),
+          status: "NOTE_NOT_FOUND",
+        }),
+      );
       throw new AutomaticExtractionError(
-        unavailablePage.status === "DELETED"
-          ? "NOTE_DELETED"
-          : "PAGE_NOT_FOUND",
+        "NOTE_NOT_FOUND",
         unavailablePageFailureMessage(unavailablePage),
         {
           unavailablePage: {

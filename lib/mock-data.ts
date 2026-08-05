@@ -115,7 +115,7 @@ export function createMockNote(
         imageExtractionStatus: "NOT_CHECKED",
         imageCount: undefined,
         topics: [],
-        pageStatus: "NOT_FOUND",
+        pageStatus: "NOTE_NOT_FOUND",
       };
     case "deleted":
       return {
@@ -126,7 +126,7 @@ export function createMockNote(
         imageExtractionStatus: "NOT_CHECKED",
         imageCount: undefined,
         topics: [],
-        pageStatus: "DELETED",
+        pageStatus: "NOTE_NOT_FOUND",
       };
     case "no-permission":
       return {

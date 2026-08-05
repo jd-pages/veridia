@@ -15,6 +15,7 @@ export const resultRiskLabels: Record<ResultRiskType, string> = {
 };
 
 const unavailableStates = [
+  "NOTE_NOT_FOUND",
   "PAGE_NOT_FOUND",
   "NOTE_DELETED",
   "PAGE_UNAVAILABLE",

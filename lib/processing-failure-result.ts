@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/db";
 import { getAuditContext } from "@/lib/audit-service";
+import { safePageLogUrl } from "@/lib/automation/page-classification";
 import {
   pageStatusForProcessingFailure,
   processingFailureReason,
@@ -25,7 +26,7 @@ function hasProcessingFailureMarker(ruleSnapshot: string) {
 
 export async function recordProcessingFailureResult(input: {
   taskId: string;
-  status: ProcessingFailureStatus;
+  status: ProcessingFailureStatus | "COMPLETED";
   failureCode: string | null;
   failureMessage: string | null;
   finishedAt?: Date;
@@ -35,6 +36,11 @@ export async function recordProcessingFailureResult(input: {
     input.failureMessage,
   );
   const finishedAt = input.finishedAt || new Date();
+  const noteNotFound = [
+    "NOTE_NOT_FOUND",
+    "PAGE_NOT_FOUND",
+    "NOTE_DELETED",
+  ].includes(input.failureCode || "");
   const taskScope = await prisma.auditTask.findUnique({
     where: { id: input.taskId },
     select: { productId: true, campaignId: true, productStage: true },
@@ -74,19 +80,32 @@ export async function recordProcessingFailureResult(input: {
     const existingNote = await tx.noteRecord.findUnique({
       where: { url: task.url },
     });
-    const note =
-      existingNote ||
-      (await tx.noteRecord.create({
-        data: {
-        url: task.url,
-        finalUrl: task.finalUrl,
-        title: task.pageTitle,
-        pageStatus: pageStatusForProcessingFailure(input.failureCode),
-        noteType: task.pageType || "UNKNOWN",
-        imageExtractionStatus: "NOT_CHECKED",
-        imageCount: 0,
-      },
-      }));
+    const note = existingNote
+      ? await tx.noteRecord.update({
+          where: { id: existingNote.id },
+          data: {
+            finalUrl: task.finalUrl,
+            title: task.pageTitle,
+            body: noteNotFound ? null : undefined,
+            pageStatus: pageStatusForProcessingFailure(input.failureCode),
+            isPublic: noteNotFound ? null : undefined,
+            noteType: task.pageType || "UNKNOWN",
+            imageExtractionStatus: "NOT_CHECKED",
+            imageCount: 0,
+            lastCapturedAt: finishedAt,
+          },
+        })
+      : await tx.noteRecord.create({
+          data: {
+            url: task.url,
+            finalUrl: task.finalUrl,
+            title: task.pageTitle,
+            pageStatus: pageStatusForProcessingFailure(input.failureCode),
+            noteType: task.pageType || "UNKNOWN",
+            imageExtractionStatus: "NOT_CHECKED",
+            imageCount: 0,
+          },
+        });
 
     if (task.failureEvidence) {
       const existingEvidence = await tx.extractionRecord.findFirst({
@@ -151,33 +170,63 @@ export async function recordProcessingFailureResult(input: {
       clickableCompliant: true,
       missingTopics: "[]",
       forbiddenTopics: "[]",
-      autoStatus: "NEEDS_REVIEW",
+      autoStatus: noteNotFound ? "NOTE_NOT_FOUND" : "NEEDS_REVIEW",
       publicStatus: "UNKNOWN",
-      retentionStatus: "PENDING",
+      retentionStatus: noteNotFound ? "NOT_REQUIRED" : "PENDING",
       visualReviewStatus: "NOT_REQUIRED",
       visualReviewDetails: "{}",
       failureReasons: JSON.stringify([reason]),
       aiStatus: "DISABLED",
       auditedAt: finishedAt,
     };
-    const latestResult = task.auditResults[0];
+    const replacementResult = task.replacesResultId
+      ? await tx.auditResult.findUnique({
+          where: { id: task.replacesResultId },
+        })
+      : null;
+    const latestResult = replacementResult || task.auditResults[0];
 
-    if (
+    let savedResult;
+    if (replacementResult) {
+      await tx.ruleResult.deleteMany({
+        where: { auditResultId: replacementResult.id },
+      });
+      savedResult = await tx.auditResult.update({
+        where: { id: replacementResult.id },
+        data: { ...resultData, auditTaskId: task.id },
+      });
+    } else if (
       latestResult &&
       hasProcessingFailureMarker(latestResult.ruleSnapshot)
     ) {
-      return tx.auditResult.update({
+      savedResult = await tx.auditResult.update({
         where: { id: latestResult.id },
         data: resultData,
       });
+    } else {
+      savedResult = await tx.auditResult.create({
+        data: {
+          auditTaskId: task.id,
+          ...resultData,
+        },
+      });
     }
-
-    return tx.auditResult.create({
-      data: {
-        auditTaskId: task.id,
-        ...resultData,
-      },
-    });
+    if (noteNotFound) {
+      console.info(
+        "[自动审核] 笔记不存在结果已保存",
+        JSON.stringify({
+          taskId: task.id,
+          resultId: savedResult.id,
+          originalUrl: safePageLogUrl(task.url),
+          finalUrl: task.finalUrl ? safePageLogUrl(task.finalUrl) : null,
+          pageTitle: task.pageTitle,
+          failureCode: "NOTE_NOT_FOUND",
+          recordedAt: finishedAt.toISOString(),
+          status: "NOTE_NOT_FOUND",
+        }),
+      );
+    }
+    return savedResult;
   });
 }
 

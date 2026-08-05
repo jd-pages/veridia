@@ -39,8 +39,7 @@ export const DEFAULT_PAGE_STATUS_RULES = {
     "READ_FAILED",
     "LOGIN_EXPIRED",
     "SECURITY_VERIFICATION",
-    "NOT_FOUND",
-    "DELETED",
+    "NOTE_NOT_FOUND",
     "NO_PERMISSION",
   ],
 };

@@ -4,6 +4,7 @@ import {
   AuditOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  FileUnknownOutlined,
   UserSwitchOutlined,
 } from "@ant-design/icons";
 import type { ResultSummary } from "./types";
@@ -30,6 +31,13 @@ const items = [
     label: "审核不通过",
     icon: <CloseCircleOutlined />,
     iconClass: styles.summaryIconFailed,
+  },
+  {
+    key: "NOTE_NOT_FOUND",
+    metric: "notFound" as const,
+    label: "笔记不存在",
+    icon: <FileUnknownOutlined />,
+    iconClass: styles.summaryIconNeutral,
   },
   {
     key: "NEEDS_REVIEW",

@@ -259,6 +259,7 @@ model AuditTask {
   source             String             @default("MANUAL")
   status             String             @default("PENDING")
   queueOrder         Int                @default(0)
+  replacesResultId   String?
   attempts           Int                @default(0)
   failureCode        String?
   failureMessage     String?
@@ -289,6 +290,7 @@ model AuditTask {
   @@index([batchId, status, queueOrder])
   @@index([campaignId, status])
   @@index([normalizedUrl])
+  @@index([replacesResultId])
   @@index([platform])
   @@index([orderNumber])
   @@map("audit_tasks")

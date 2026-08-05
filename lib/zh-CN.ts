@@ -19,6 +19,7 @@ export const processStatusLabels: Record<string, string> = {
 export const auditResultLabels: Record<string, string> = {
   PASSED: "审核通过",
   FAILED: "审核不通过",
+  NOTE_NOT_FOUND: "笔记不存在",
   NEEDS_REVIEW: "待人工复核",
   READ_FAILED: "暂无结论",
   PENDING: "暂无结论",
@@ -33,6 +34,7 @@ export const sourceLabels: Record<string, string> = {
   PLUGIN: "插件补审",
   EXTENSION: "插件补审",
   RETENTION_RECHECK: "公开留存复查",
+  RE_AUDIT: "重新审核",
 };
 
 export const sessionStatusLabels: Record<string, string> = {
@@ -52,6 +54,7 @@ export const commonStatusLabels: Record<string, string> = {
   ...processStatusLabels,
   ...auditResultLabels,
   NORMAL: "正常",
+  NOTE_NOT_FOUND: "笔记不存在",
   NOT_FOUND: "页面失效",
   DELETED: "笔记已删除",
   NO_PERMISSION: "无权限访问",
@@ -90,6 +93,7 @@ export const pageTypeLabels: Record<string, string> = {
 };
 
 export const failureReasonLabels: Record<string, string> = {
+  NOTE_NOT_FOUND: "笔记不存在",
   PAGE_NOT_FOUND: "页面异常（页面失效）",
   NOTE_DELETED: "页面异常（笔记已删除）",
   NO_PERMISSION: "无权限访问",

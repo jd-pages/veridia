@@ -7,6 +7,7 @@ import {
 import {
   classifyAutomaticPage,
   detectUnavailableXhsPage,
+  detectXhsPageState,
   isShortXiaohongshuUrl,
   isXiaohongshuNoteDetailUrl,
   safePageLogUrl,
@@ -14,8 +15,7 @@ import {
 
 describe("自动批量审核提取分类", () => {
   it("区分页面不存在、删除、无权限、登录失效和安全验证", () => {
-    expect(failureCodeForPageStatus("NOT_FOUND")).toBe("PAGE_NOT_FOUND");
-    expect(failureCodeForPageStatus("DELETED")).toBe("NOTE_DELETED");
+    expect(failureCodeForPageStatus("NOTE_NOT_FOUND")).toBe("NOTE_NOT_FOUND");
     expect(failureCodeForPageStatus("NO_PERMISSION")).toBe("NO_PERMISSION");
     expect(failureCodeForPageStatus("LOGIN_EXPIRED")).toBe("LOGIN_REQUIRED");
     expect(failureCodeForPageStatus("SECURITY_VERIFICATION")).toBe(
@@ -53,27 +53,27 @@ describe("当前小红书页面分类", () => {
     {
       title: "错误页 · 小红书 - 你访问的页面不见了",
       visibleText: "",
-      expected: "NOT_FOUND",
+      expected: "NOTE_NOT_FOUND",
     },
     {
       title: "小红书",
       visibleText: "你访问的页面不见了",
-      expected: "NOT_FOUND",
+      expected: "NOTE_NOT_FOUND",
     },
     {
       title: "小红书",
       visibleText: "当前笔记无法浏览",
-      expected: "NOT_FOUND",
+      expected: "NOTE_NOT_FOUND",
     },
     {
       title: "小红书",
       visibleText: "该内容无法查看",
-      expected: "NOT_FOUND",
+      expected: "NOTE_NOT_FOUND",
     },
     {
       title: "小红书",
       visibleText: "笔记已删除",
-      expected: "DELETED",
+      expected: "NOTE_NOT_FOUND",
     },
   ])("识别错误页文案：$visibleText$title", ({ expected, ...input }) => {
     const evidence = detectUnavailableXhsPage({
@@ -96,7 +96,7 @@ describe("当前小红书页面分类", () => {
         title: "小红书",
         visibleText: "",
       })?.status,
-    ).toBe("NOT_FOUND");
+    ).toBe("NOTE_NOT_FOUND");
     expect(
       detectUnavailableXhsPage({
         url: "https://www.xiaohongshu.com/website-login/error",
@@ -104,6 +104,55 @@ describe("当前小红书页面分类", () => {
         visibleText: "IP存在风险",
       }),
     ).toBeNull();
+  });
+
+  it("使用明确 HTTP 404 或不存在 DOM 标记识别笔记不存在", () => {
+    expect(
+      detectUnavailableXhsPage({
+        url: "https://www.xiaohongshu.com/explore/note",
+        title: "小红书",
+        visibleText: "",
+        httpStatus: 404,
+      })?.source,
+    ).toBe("HTTP_STATUS");
+    expect(
+      detectUnavailableXhsPage({
+        url: "https://www.xiaohongshu.com/explore/note",
+        title: "小红书",
+        visibleText: "",
+        notFoundDomMarker: "你访问的页面不见了",
+      })?.status,
+    ).toBe("NOTE_NOT_FOUND");
+  });
+
+  it("正常空正文、登录、安全验证、超时分别保持独立状态", () => {
+    expect(
+      detectXhsPageState({
+        url: "https://www.xiaohongshu.com/explore/6a5cb375000000000301c549",
+        title: "正常笔记",
+        visibleText: "",
+      }),
+    ).toBe("NORMAL");
+    expect(
+      detectXhsPageState({
+        url: "https://www.xiaohongshu.com/login",
+        title: "登录小红书",
+        visibleText: "请先登录",
+      }),
+    ).toBe("NOT_LOGGED_IN");
+    expect(
+      detectXhsPageState({
+        url: "https://www.xiaohongshu.com/website-login/captcha",
+        title: "安全验证",
+        visibleText: "请完成验证",
+      }),
+    ).toBe("SECURITY_RESTRICTED");
+    expect(
+      detectXhsPageState(
+        { url: "https://www.xiaohongshu.com/explore/note", title: "", visibleText: "" },
+        "PAGE_LOAD_TIMEOUT",
+      ),
+    ).toBe("PAGE_LOAD_TIMEOUT");
   });
 });
 

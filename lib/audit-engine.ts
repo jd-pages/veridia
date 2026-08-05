@@ -18,8 +18,7 @@ import {
 import { BASIC_REWARD_MIN_INTERACTIONS } from "@/lib/interaction-metrics";
 
 const pageFailureLabels: Record<string, string> = {
-  NOT_FOUND: "笔记页面不存在",
-  DELETED: "笔记已删除",
+  NOTE_NOT_FOUND: "笔记不存在",
   NO_PERMISSION: "当前账号无权访问笔记",
   LOGIN_EXPIRED: "登录状态已失效",
   SECURITY_VERIFICATION: "页面要求验证码或安全验证",
@@ -131,11 +130,6 @@ export function evaluateAudit(
   if (!pagePassed) failures.push(pageFailureLabels[note.pageStatus] ?? "页面状态异常");
 
   if (!pagePassed) {
-    const unavailableForKabritaReward =
-      context.basicRewardRequired === true &&
-      ["NOT_FOUND", "DELETED", "NO_PERMISSION", "READ_FAILED"].includes(
-        note.pageStatus,
-      );
     return {
       pageStatus: note.pageStatus,
       bodyStatus: "UNKNOWN",
@@ -153,8 +147,8 @@ export function evaluateAudit(
       retentionDueAt: null,
       missingTopics: [],
       forbiddenTopics: [],
-      autoStatus: unavailableForKabritaReward
-        ? "FAILED"
+      autoStatus: note.pageStatus === "NOTE_NOT_FOUND"
+        ? "NOTE_NOT_FOUND"
         : note.pageStatus === "READ_FAILED"
           ? "READ_FAILED"
           : "NEEDS_REVIEW",

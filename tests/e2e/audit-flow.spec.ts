@@ -635,7 +635,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const unavailableBatchId = (
     await unavailableBatchResponse.json()
   ).data.batchId as string;
-  await waitForBatch(page, unavailableBatchId, ["COMPLETED_WITH_ERRORS"]);
+  await waitForBatch(page, unavailableBatchId, ["COMPLETED"]);
   const unavailableResultsResponse = await page.request.get(
     `/api/results?batchId=${unavailableBatchId}`,
   );
@@ -643,6 +643,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const unavailableResult = (await unavailableResultsResponse.json()).data
     .items[0] as {
     id: string;
+    autoStatus: string;
     pageStatus: string;
     bodyStatus: string;
     imageStatus: string;
@@ -655,11 +656,12 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       failureMessage: string;
     };
   };
-  expect(unavailableResult.pageStatus).toBe("NOT_FOUND");
+  expect(unavailableResult.autoStatus).toBe("NOTE_NOT_FOUND");
+  expect(unavailableResult.pageStatus).toBe("NOTE_NOT_FOUND");
   expect(unavailableResult.bodyStatus).toBe("UNKNOWN");
   expect(unavailableResult.imageStatus).toBe("NOT_REQUIRED");
   expect(JSON.parse(unavailableResult.missingTopics)).toEqual([]);
-  expect(unavailableResult.task.failureCode).toBe("PAGE_NOT_FOUND");
+  expect(unavailableResult.task.failureCode).toBe("NOTE_NOT_FOUND");
   expect(unavailableResult.task.failureMessage).toContain(
     "你访问的页面不见了",
   );
@@ -681,7 +683,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   };
   expect(unavailableEvidence.visibleTextPreview).toContain("页面不存在");
   expect(unavailableEvidence.unavailablePage).toMatchObject({
-    status: "NOT_FOUND",
+    status: "NOTE_NOT_FOUND",
     matchedText: "你访问的页面不见了",
   });
 
@@ -691,11 +693,14 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const unavailableRow = page.locator(".ant-table-tbody .ant-table-row").first();
   await expect(unavailableRow).toBeVisible();
   const unavailableCells = unavailableRow.locator("td");
-  await expect(unavailableCells.nth(3)).toHaveText("无");
-  await expect(unavailableCells.nth(4)).toHaveText("无");
-  await expect(unavailableCells.nth(5)).toContainText("笔记不存在");
+  await expect(unavailableCells.nth(3)).toHaveText("未审核");
+  await expect(unavailableCells.nth(4)).toHaveText("未审核");
   await expect(unavailableCells.nth(5)).toContainText(
-    "页面无法访问：小红书页面提示",
+    "未审核",
+  );
+  await expect(unavailableCells.nth(6)).toContainText("笔记不存在");
+  await expect(unavailableCells.nth(6)).toContainText(
+    "小红书页面提示",
   );
   await expect(unavailableRow).not.toContainText(
     /ERROR_PAGE|APP_LAUNCH|页面失效|未提取到正文|暂无结论|未执行话题审核|未执行图片数量审核|处理失败|待人工复核|项异常|缺少精准话题|有效正文字符不足|图片数量不足/u,
@@ -713,8 +718,11 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const unavailableDrawerImage = unavailableDrawer
     .getByRole("heading", { name: "图片审核" })
     .locator("..");
-  await expect(unavailableDrawerTopic).toContainText("无");
-  await expect(unavailableDrawerImage).toContainText("无");
+  await expect(unavailableDrawerTopic).toContainText("未审核");
+  await expect(unavailableDrawerImage).toContainText("未审核");
+  await expect(unavailableDrawer.getByText("页面审核", { exact: true })).toBeVisible();
+  await expect(unavailableDrawer.getByText("正文审核", { exact: true })).toBeVisible();
+  await expect(unavailableDrawer.getByText("无法确认", { exact: true })).toBeVisible();
   await expect(unavailableDrawer.getByRole("heading", { name: "失败原因" })).toHaveCount(1);
   await expect(
     unavailableDrawer.getByRole("link", {
@@ -747,10 +755,31 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(page.getByText(/笔记ID/u)).toHaveCount(0);
   await expect(page.getByText(unavailableResult.task.url, { exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "失败原因" })).toHaveCount(1);
-  await expect(page.getByText("笔记不存在", { exact: true })).toHaveCount(1);
+  await expect(page.getByText("笔记不存在", { exact: true })).toHaveCount(2);
   await expect(
-    page.getByText(/页面无法访问：小红书页面提示/u),
+    page.getByText(/小红书页面提示/u),
   ).toBeVisible();
+
+  const notFoundFilterResponse = await page.request.get(
+    "/api/results?status=NOTE_NOT_FOUND",
+  );
+  expect(notFoundFilterResponse.ok()).toBeTruthy();
+  expect((await notFoundFilterResponse.json()).data.items).toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: unavailableResult.id })]),
+  );
+
+  const reAuditResponse = await page.request.post("/api/results/bulk", {
+    data: { ids: [unavailableResult.id], action: "RE_AUDIT" },
+  });
+  expect(reAuditResponse.ok()).toBeTruthy();
+  const reAuditBatchId = (await reAuditResponse.json()).data.batchId as string;
+  await waitForBatch(page, reAuditBatchId, ["COMPLETED"]);
+  const reAuditedResults = await page.request.get(
+    `/api/results?keyword=${encodeURIComponent(unavailableSuffix)}`,
+  );
+  const reAuditedData = (await reAuditedResults.json()).data;
+  expect(reAuditedData.total).toBe(1);
+  expect(reAuditedData.items[0].id).toBe(unavailableResult.id);
 
   const auditedDate = new Date(resultCoverage.items[0].auditedAt);
   const auditDay = [

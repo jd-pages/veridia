@@ -1,14 +1,18 @@
 export type PageStatus =
   | "NORMAL"
-  | "NOT_FOUND"
-  | "DELETED"
+  | "NOTE_NOT_FOUND"
   | "NO_PERMISSION"
   | "LOGIN_EXPIRED"
   | "SECURITY_VERIFICATION"
   | "READ_FAILED"
   | "NEEDS_CONFIRMATION";
 
-export type AuditStatus = "PASSED" | "FAILED" | "NEEDS_REVIEW" | "READ_FAILED";
+export type AuditStatus =
+  | "PASSED"
+  | "FAILED"
+  | "NOTE_NOT_FOUND"
+  | "NEEDS_REVIEW"
+  | "READ_FAILED";
 export type NoteType = "IMAGE_TEXT" | "VIDEO_NOTE" | "UNKNOWN";
 export type ImageExtractionStatus =
   | "SUCCESS"
