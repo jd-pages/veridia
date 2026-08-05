@@ -6,6 +6,7 @@ import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
 import type { AuditContext, ExtractedNote } from "@/lib/types";
 import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
+import { completedAuditTaskUpdate } from "@/lib/automation/task-lifecycle";
 import {
   compatibleStageRuleValues,
   normalizeProductStageTopicValue,
@@ -363,9 +364,10 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
 
     await tx.auditTask.update({
       where: { id: task.id },
-      data: {
-        status: evaluation.autoStatus === "READ_FAILED" ? "READ_FAILED" : "COMPLETED",
-      },
+      data:
+        evaluation.autoStatus === "READ_FAILED"
+          ? { status: "READ_FAILED", finishedAt: new Date() }
+          : completedAuditTaskUpdate(),
     });
 
     return auditResult;

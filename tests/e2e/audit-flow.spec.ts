@@ -24,9 +24,11 @@ async function waitForBatch(
         const batches = (await response.json()).data as Array<{
           id: string;
           status: string;
+          finishedAt: string | null;
           stats: Record<string, number>;
           tasks: Array<{
             status: string;
+            finishedAt: string | null;
             attempts: number;
             failureCode: string | null;
             auditResults: Array<{ id: string }>;
@@ -540,6 +542,12 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   );
   expect(resultCoverageBatch.stats.succeeded).toBe(1);
   expect(resultCoverageBatch.stats.failed).toBe(2);
+  expect(resultCoverageBatch.finishedAt).toBeTruthy();
+  expect(
+    resultCoverageBatch.tasks.every(
+      (task: { finishedAt: string | null }) => Boolean(task.finishedAt),
+    ),
+  ).toBe(true);
   const resultCoverageQuery = new URLSearchParams({
     batchId: resultCoverageBatchId,
   });

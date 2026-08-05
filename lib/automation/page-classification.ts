@@ -47,23 +47,34 @@ export function detectUnavailableXhsPage({
   httpStatus,
   notFoundDomMarker,
 }: PageClassificationInput): UnavailablePageEvidence | null {
+  let finalUrlErrorCode: string | null = null;
+  try {
+    finalUrlErrorCode = new URL(url).searchParams.get("errorCode")?.trim() || null;
+  } catch {
+    finalUrlErrorCode = null;
+  }
+  const withErrorCode = (
+    evidence: Omit<UnavailablePageEvidence, "errorCode">,
+  ): UnavailablePageEvidence =>
+    finalUrlErrorCode ? { ...evidence, errorCode: finalUrlErrorCode } : evidence;
+
   if (httpStatus === 404) {
-    return {
+    return withErrorCode({
       status: "NOTE_NOT_FOUND",
       matchedText: "HTTP 404",
       source: "HTTP_STATUS",
-    };
+    });
   }
   if (notFoundDomMarker?.trim()) {
     const markerText = notFoundDomMarker.trim();
-    return {
+    return withErrorCode({
       status: "NOTE_NOT_FOUND",
       matchedText:
         firstPatternMatch(markerText, DELETED_PAGE_PATTERN) ||
         firstPatternMatch(markerText, NOT_FOUND_PAGE_PATTERN) ||
         markerText,
       source: "DOM",
-    };
+    });
   }
   const sources = [
     { source: "TITLE" as const, value: title },
@@ -72,37 +83,35 @@ export function detectUnavailableXhsPage({
   for (const item of sources) {
     const deleted = firstPatternMatch(item.value, DELETED_PAGE_PATTERN);
     if (deleted) {
-      return {
+      return withErrorCode({
         status: "NOTE_NOT_FOUND",
         matchedText: deleted,
         source: item.source,
-      };
+      });
     }
     const notFound = firstPatternMatch(item.value, NOT_FOUND_PAGE_PATTERN);
     if (notFound) {
-      return {
+      return withErrorCode({
         status: "NOTE_NOT_FOUND",
         matchedText: notFound,
         source: item.source,
-      };
+      });
     }
   }
 
   try {
     const parsed = new URL(url);
-    const errorCode = parsed.searchParams.get("errorCode");
     if (
       !/^\/website-login\/error(?:\/|$)/iu.test(parsed.pathname) &&
       /(?:^|\/)(?:404|not[-_]?found|error(?:-page)?)(?:\/|$)/iu.test(
         parsed.pathname,
       )
     ) {
-      return {
+      return withErrorCode({
         status: "NOTE_NOT_FOUND",
         matchedText: parsed.pathname,
         source: "URL",
-        errorCode,
-      };
+      });
     }
   } catch {
     return null;

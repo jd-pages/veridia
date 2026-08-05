@@ -125,6 +125,20 @@ describe("当前小红书页面分类", () => {
     ).toBe("NOTE_NOT_FOUND");
   });
 
+  it("标题先命中笔记不存在时仍保留最终 URL 错误码", () => {
+    expect(
+      detectUnavailableXhsPage({
+        url: "https://www.xiaohongshu.com/404?noteId=note-1&errorCode=-510000",
+        title: "小红书 - 你访问的页面不见了",
+        visibleText: "你访问的页面不见了",
+      }),
+    ).toMatchObject({
+      status: "NOTE_NOT_FOUND",
+      source: "TITLE",
+      errorCode: "-510000",
+    });
+  });
+
   it("正常空正文、登录、安全验证、超时分别保持独立状态", () => {
     expect(
       detectXhsPageState({

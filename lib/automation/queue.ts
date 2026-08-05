@@ -13,6 +13,7 @@ import {
 } from "./browser";
 import { recordProcessingFailureResult } from "@/lib/processing-failure-result";
 import { getXhsPacingSettings, jitteredDelay } from "./pacing";
+import { completedAuditBatchUpdate } from "./task-lifecycle";
 
 type QueueState = {
   runner?: Promise<void>;
@@ -108,15 +109,17 @@ async function finalizeBatch(batchId: string) {
   const loginExpired = await prisma.auditTask.count({
     where: { batchId, status: "LOGIN_EXPIRED" },
   });
-  await prisma.auditBatch.updateMany({
-    where: { id: batchId, status: "RUNNING" },
-    data: {
-      status:
-        failed || loginExpired ? "COMPLETED_WITH_ERRORS" : "COMPLETED",
-      currentTaskId: null,
-      finishedAt: new Date(),
-    },
-  });
+  const finishedAt = new Date();
+  await prisma.$transaction([
+    prisma.auditTask.updateMany({
+      where: { batchId, status: "COMPLETED", finishedAt: null },
+      data: { finishedAt },
+    }),
+    prisma.auditBatch.updateMany({
+      where: { id: batchId, status: "RUNNING" },
+      data: completedAuditBatchUpdate(Boolean(failed || loginExpired), finishedAt),
+    }),
+  ]);
 }
 
 async function processBatch(batchId: string) {

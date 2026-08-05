@@ -430,6 +430,7 @@ export async function extractAuditTaskAutomatically(
             status: unavailablePage.status,
             matchedText: unavailablePage.matchedText,
             source: unavailablePage.source,
+            errorCode: unavailablePage.errorCode || null,
           },
         },
       );
