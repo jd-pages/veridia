@@ -243,6 +243,7 @@
 .statCard {
   position: relative;
   display: flex;
+  width: 100%;
   min-width: 0;
   gap: 11px;
   padding: 16px;
@@ -250,6 +251,33 @@
   border: 1px solid #e5e9ef;
   border-radius: 10px;
   background: #fbfcfd;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.statCard:hover {
+  border-color: #b8c7dd;
+  box-shadow: 0 6px 18px rgb(15 23 42 / 7%);
+  transform: translateY(-1px);
+}
+
+.statCard:focus-visible {
+  outline: 3px solid rgb(37 99 235 / 20%);
+  outline-offset: 2px;
+}
+
+.statCardSelected,
+.statCardSelected:hover {
+  border-color: #3b82f6;
+  background: #eff6ff;
+  box-shadow: 0 0 0 2px rgb(59 130 246 / 12%);
 }
 
 .statIcon {

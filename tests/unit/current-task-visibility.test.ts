@@ -14,10 +14,11 @@ describe("审核任务页面当前队列展示", () => {
     expect(taskPage).toContain("batchQuery.set(\"batchIds\"");
     expect(taskPage).toContain("apiFetch<TaskPage>(`/api/tasks?${query}`)");
     expect(taskPage).toContain("pageSize: String(requestedPageSize)");
+    expect(taskPage).toContain("executionStatus: requestedExecutionFilter");
     expect(taskPage).not.toContain('apiFetch<Task[]>("/api/tasks")');
     expect(taskPage.match(/dataSource=\{tasks\}/gu)).toHaveLength(2);
     expect(taskPage).toContain('locale={{ emptyText: "本次任务暂无笔记" }}');
-    expect(taskPage).toContain('locale={{ emptyText: "当前队列暂无执行记录" }}');
+    expect(taskPage).toContain("locale={{ emptyText: taskExecutionEmptyText }}");
   });
 
   it("批次和任务 API 同时支持 batchId 与 batchIds 服务端过滤", () => {
@@ -33,6 +34,27 @@ describe("审核任务页面当前队列展示", () => {
     expect(taskRoute).toContain('searchParams.get("batchIds")');
     expect(taskRoute).toContain("{ batchId: { in: batchIds } }");
     expect(taskRoute).toContain("pageSize");
+    expect(taskRoute).toContain('searchParams.get("executionStatus")');
+    expect(taskRoute).toContain("buildTaskExecutionFilterWhere");
+  });
+
+  it("六张统计卡使用服务端筛选并在切换时重置分页", () => {
+    const taskPage = source("app/(admin)/tasks/page.tsx");
+
+    for (const filter of [
+      "ALL",
+      "WAITING",
+      "PROCESSING",
+      "SUCCEEDED",
+      "FAILED",
+      "NEEDS_REVIEW",
+    ]) {
+      expect(taskPage).toContain(`filter: "${filter}" as const`);
+    }
+    expect(taskPage).toContain("aria-pressed={taskExecutionFilter === item.filter}");
+    expect(taskPage).toContain("onClick={() => applyTaskExecutionFilter(item.filter)}");
+    expect(taskPage).toContain("setTaskPage(1)");
+    expect(taskPage).toContain("taskExecutionFilterLabels[taskExecutionFilter]");
   });
 
   it("大批量任务按 50 条分片写入且预检响应最多返回 100 行", () => {

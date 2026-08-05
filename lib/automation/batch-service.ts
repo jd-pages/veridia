@@ -4,6 +4,11 @@ import { prisma } from "@/lib/db";
 import { normalizeUrl } from "@/lib/topic";
 import packageJson from "@/package.json";
 import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
+import {
+  buildTaskExecutionFilterWhere,
+  countTaskStatuses,
+  taskExecutionStatusGroups,
+} from "@/lib/automation/task-execution-filter";
 
 export interface AutomaticTaskInput {
   url: string;
@@ -146,19 +151,31 @@ export interface AutomaticBatchQuery {
 function batchStats(
   totalCount: number,
   counts: ReadonlyMap<string, number>,
+  pendingManualReviewCount?: number,
 ) {
   const count = (status: string) => counts.get(status) || 0;
-  const waiting = count("PENDING");
-  const processing = count("PROCESSING");
-  const succeeded = count("COMPLETED");
+  const observedTotal = [...counts.values()].reduce(
+    (total, value) => total + value,
+    0,
+  );
+  const total = observedTotal || totalCount;
+  const waiting = countTaskStatuses(counts, taskExecutionStatusGroups.WAITING);
+  const processing = countTaskStatuses(
+    counts,
+    taskExecutionStatusGroups.PROCESSING,
+  );
+  const succeeded = countTaskStatuses(
+    counts,
+    taskExecutionStatusGroups.SUCCEEDED,
+  );
   const readFailed = count("READ_FAILED");
-  const failed = count("FAILED") + readFailed;
+  const failed = countTaskStatuses(counts, taskExecutionStatusGroups.FAILED);
   const loginExpired = count("LOGIN_EXPIRED");
-  const needsReview = count("NEEDS_REVIEW");
+  const needsReview = pendingManualReviewCount ?? count("NEEDS_REVIEW");
   const cancelled = count("CANCELLED");
-  const completed = succeeded + failed + needsReview + cancelled;
+  const completed = total - waiting - processing - loginExpired;
   return {
-    total: totalCount,
+    total,
     waiting,
     processing,
     succeeded,
@@ -169,9 +186,26 @@ function batchStats(
     cancelled,
     completed,
     remaining: waiting + processing + loginExpired,
-    progress:
-      totalCount > 0 ? Math.round((completed / totalCount) * 100) : 0,
+    progress: total > 0 ? Math.round((completed / total) * 100) : 0,
   };
+}
+
+async function countPendingManualReviewsByBatch(batchIds: string[]) {
+  const counts = new Map<string, number>();
+  if (!batchIds.length) return counts;
+  const rows = await prisma.auditTask.groupBy({
+    by: ["batchId"],
+    where: {
+      batchId: { in: batchIds },
+      ...buildTaskExecutionFilterWhere("NEEDS_REVIEW"),
+    },
+    _count: { _all: true },
+  });
+  for (const row of rows) {
+    if (!row.batchId) continue;
+    counts.set(row.batchId, row._count._all);
+  }
+  return counts;
 }
 
 export async function getAutomaticBatches(
@@ -199,13 +233,16 @@ export async function getAutomaticBatches(
       take,
     });
     const ids = batches.map((batch) => batch.id);
-    const grouped = ids.length
-      ? await prisma.auditTask.groupBy({
-          by: ["batchId", "status"],
-          where: { batchId: { in: ids } },
-          _count: { _all: true },
-        })
-      : [];
+    const [grouped, pendingManualReviewCounts] = await Promise.all([
+      ids.length
+        ? prisma.auditTask.groupBy({
+            by: ["batchId", "status"],
+            where: { batchId: { in: ids } },
+            _count: { _all: true },
+          })
+        : [],
+      countPendingManualReviewsByBatch(ids),
+    ]);
     const countsByBatch = new Map<string, Map<string, number>>();
     for (const group of grouped) {
       if (!group.batchId) continue;
@@ -246,6 +283,7 @@ export async function getAutomaticBatches(
       stats: batchStats(
         batch.totalCount,
         countsByBatch.get(batch.id) || new Map(),
+        pendingManualReviewCounts.get(batch.id) || 0,
       ),
       currentTask: batch.currentTaskId
         ? currentTaskById.get(batch.currentTaskId) || null
@@ -279,6 +317,9 @@ export async function getAutomaticBatches(
     orderBy: { createdAt: "desc" },
     take,
   });
+  const pendingManualReviewCounts = await countPendingManualReviewsByBatch(
+    batches.map((batch) => batch.id),
+  );
 
   return batches.map((batch) => {
     const counts = new Map<string, number>();
@@ -287,7 +328,11 @@ export async function getAutomaticBatches(
     }
     return {
       ...batch,
-      stats: batchStats(batch.totalCount, counts),
+      stats: batchStats(
+        batch.totalCount,
+        counts,
+        pendingManualReviewCounts.get(batch.id) || 0,
+      ),
       currentTask:
         batch.tasks.find((task) => task.id === batch.currentTaskId) || null,
     };

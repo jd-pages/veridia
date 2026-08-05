@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { extractSupportedNoteUrls, isSupportedNoteUrl, normalizeUrl } from "@/lib/topic";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
@@ -14,12 +15,20 @@ import {
   auditTaskDuplicateMessages,
   findBlockingAuditTask,
 } from "@/lib/audit-task-deduplication";
+import {
+  buildTaskExecutionFilterWhere,
+  parseTaskExecutionFilter,
+} from "@/lib/automation/task-execution-filter";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status") || undefined;
+  const executionStatus = parseTaskExecutionFilter(
+    searchParams.get("executionStatus"),
+  );
+  if (!executionStatus) return fail("执行状态筛选条件不正确");
   const batchId = searchParams.get("batchId")?.trim() || undefined;
   const batchIds = (searchParams.get("batchIds") || "")
     .split(",")
@@ -37,12 +46,17 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const paginated =
     searchParams.has("page") ||
     searchParams.has("pageSize") ||
+    searchParams.has("executionStatus") ||
     batchIds.length > 0;
-  const where = {
-    status,
+  const executionWhere = buildTaskExecutionFilterWhere(executionStatus);
+  const filters: Prisma.AuditTaskWhereInput[] = [];
+  if (status) filters.push({ status });
+  if (Object.keys(executionWhere).length) filters.push(executionWhere);
+  const where: Prisma.AuditTaskWhereInput = {
     ...(batchIds.length
       ? { batchId: { in: batchIds } }
       : { batchId }),
+    ...(filters.length ? { AND: filters } : {}),
   };
   await backfillMissingProcessingFailureResults();
   const [tasks, total] = await Promise.all([

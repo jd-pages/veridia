@@ -268,6 +268,159 @@ test("运行中阻止第二批次，暂停后可创建并汇总筛选", async ({
   await expect(
     executionCard.locator(".ant-table-tbody .ant-table-row"),
   ).toHaveCount(3);
+
+  await page.getByRole("button", { name: "筛选处理失败记录" }).click();
+  await expect(
+    page.getByRole("button", { name: "筛选处理失败记录" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByText("当前批次暂无处理失败记录", { exact: true }),
+  ).toBeVisible();
+  const batchSelector = executionCard.locator(".ant-select").filter({
+    has: page.getByRole("combobox", { name: "执行记录批次筛选" }),
+  });
+  await batchSelector.click({ force: true });
+  await page
+    .locator(".ant-select-dropdown:not(.ant-select-dropdown-hidden)")
+    .getByText(`德白批次-${suffix}（2 条）`, { exact: true })
+    .click({ force: true });
+  await expect(
+    page.getByRole("button", { name: "筛选处理失败记录" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByText("当前批次暂无处理失败记录", { exact: true }),
+  ).toBeVisible();
+});
+
+test("自动审核进度卡片按执行状态和人工复核状态筛选", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  });
+  const products = (
+    await (await page.request.get("/api/products")).json()
+  ).data as Array<{ id: string; name: string }>;
+  const product =
+    products.find((item) => item.name.includes("澳洲白金版")) || products[0];
+  const campaigns = (
+    await (
+      await page.request.get(`/api/campaigns?productId=${product.id}`)
+    ).json()
+  ).data as Array<{ id: string; name: string }>;
+  const campaign = campaigns.find((item) =>
+    item.name.includes("爱他美2026年7月"),
+  ) || campaigns[0];
+  const suffix = Date.now();
+  const urls = {
+    succeeded: `${E2E_ORIGIN}/mock/xhs?case=failed&status-filter=${suffix}-success`,
+    failed: `${E2E_ORIGIN}/mock/xhs?case=read-failed&status-filter=${suffix}-failed`,
+    needsReview: `${E2E_ORIGIN}/mock/xhs?case=no-images&status-filter=${suffix}-review`,
+  };
+  const response = await page.request.post("/api/automation/batches", {
+    data: {
+      name: `状态筛选-${suffix}`,
+      productId: product.id,
+      campaignId: campaign.id,
+      productStage: "IFFO",
+      urls: Object.values(urls).join("\n"),
+      intervalMs: 1000,
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const batchId = (await response.json()).data.batchId as string;
+
+  await expect
+    .poll(
+      async () => {
+        const result = await page.request.get(
+          `/api/tasks?batchIds=${batchId}&page=1&pageSize=50`,
+        );
+        const data = (await result.json()).data as {
+          items: Array<{ status: string }>;
+        };
+        return data.items.map((item) => item.status).sort();
+      },
+      { timeout: 75_000 },
+    )
+    .toEqual(["COMPLETED", "COMPLETED", "READ_FAILED"]);
+
+  const loadFilteredTasks = async (executionStatus: string) => {
+    const result = await page.request.get(
+      `/api/tasks?batchIds=${batchId}&page=1&pageSize=50&executionStatus=${executionStatus}`,
+    );
+    expect(result.ok()).toBeTruthy();
+    return (await result.json()).data as {
+      items: Array<{
+        status: string;
+        url: string;
+        auditResults: Array<{ id: string; autoStatus: string }>;
+      }>;
+      total: number;
+    };
+  };
+
+  const allTasks = await loadFilteredTasks("ALL");
+  expect(allTasks.total).toBe(3);
+  const pendingManualResult = allTasks.items.find(
+    (item) => item.url === urls.needsReview,
+  )?.auditResults[0];
+  expect(pendingManualResult).toBeTruthy();
+  const manualReviewResponse = await page.request.post(
+    `/api/results/${pendingManualResult!.id}/review`,
+    { data: { result: "NEEDS_REVIEW", comment: "状态筛选验收" } },
+  );
+  expect(manualReviewResponse.ok()).toBeTruthy();
+  expect((await loadFilteredTasks("WAITING")).total).toBe(0);
+  expect((await loadFilteredTasks("PROCESSING")).total).toBe(0);
+  const succeeded = await loadFilteredTasks("SUCCEEDED");
+  expect(succeeded.total).toBe(2);
+  expect(succeeded.items.some((item) => item.url === urls.succeeded)).toBe(true);
+  expect(
+    succeeded.items.find((item) => item.url === urls.succeeded)?.auditResults[0]
+      .autoStatus,
+  ).toBe("FAILED");
+  const failed = await loadFilteredTasks("FAILED");
+  expect(failed.total).toBe(1);
+  expect(failed.items[0].url).toBe(urls.failed);
+  const needsReview = await loadFilteredTasks("NEEDS_REVIEW");
+  expect(needsReview.total).toBe(2);
+  expect(new Set(needsReview.items.map((item) => item.url))).toEqual(
+    new Set([urls.failed, urls.needsReview]),
+  );
+
+  await page.goto(`/tasks?batchId=${batchId}`);
+  const executionCard = page.locator(".ant-card").filter({
+    has: page.getByRole("heading", { name: "自动审核进度", exact: true }),
+  });
+  await expect(
+    page.getByRole("button", { name: "筛选全部记录" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("当前显示 3 条记录", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "筛选成功记录" }).click();
+  await expect(page.getByText("当前显示 2 条记录", { exact: true })).toBeVisible();
+  await expect(executionCard.getByRole("link", { name: urls.succeeded })).toBeVisible();
+  await expect(
+    executionCard.getByText("审核不通过", { exact: true }).first(),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "筛选处理失败记录" }).click();
+  await expect(page.getByText("当前显示 1 条记录", { exact: true })).toBeVisible();
+  await expect(executionCard.getByRole("link", { name: urls.failed })).toBeVisible();
+
+  await page.getByRole("button", { name: "筛选待人工复核记录" }).click();
+  await expect(page.getByText("当前显示 2 条记录", { exact: true })).toBeVisible();
+  await expect(executionCard.getByRole("link", { name: urls.failed })).toBeVisible();
+  await expect(
+    executionCard.getByRole("link", { name: urls.needsReview }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "筛选等待中记录" }).click();
+  await expect(
+    page.getByText("当前批次暂无等待中记录", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "筛选全部记录" }).click();
+  await expect(page.getByText("当前显示 3 条记录", { exact: true })).toBeVisible();
 });
 
 test("300 条任务分片入队且执行记录只读取当前页", async ({ page }) => {

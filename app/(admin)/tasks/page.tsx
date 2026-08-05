@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   App,
@@ -66,6 +66,10 @@ import styles from "./tasks.module.css";
 import type { SessionUser } from "@/lib/auth";
 import { canAccessBusiness } from "@/lib/permissions";
 import { extractNoteLinksFromText } from "@/lib/note-links";
+import {
+  taskExecutionFilterLabels,
+  type TaskExecutionFilter,
+} from "@/lib/automation/task-execution-filter";
 
 interface Product {
   id: string;
@@ -316,6 +320,9 @@ export default function TasksPage() {
   const [selectedBatchId, setSelectedBatchId] = useState(
     ALL_CURRENT_BATCHES,
   );
+  const [taskExecutionFilter, setTaskExecutionFilter] =
+    useState<TaskExecutionFilter>("ALL");
+  const loadSequence = useRef(0);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
@@ -364,7 +371,9 @@ export default function TasksPage() {
       requestedPage = 1,
       requestedPageSize = 50,
       requestedSelection = ALL_CURRENT_BATCHES,
+      requestedExecutionFilter: TaskExecutionFilter = "ALL",
     ) => {
+      const requestSequence = ++loadSequence.current;
       if (!quiet) setLoading(true);
       const batchQuery = new URLSearchParams({
         includeTasks: "false",
@@ -377,6 +386,7 @@ export default function TasksPage() {
         apiFetch<AuditBatch[]>(`/api/automation/batches?${batchQuery}`),
         apiFetch<AutomationSession>("/api/automation/session"),
       ]);
+      if (requestSequence !== loadSequence.current) return;
       let dataFailure: PromiseRejectedResult | undefined;
       if (!quiet) {
         const [productResult, campaignResult] = await Promise.allSettled([
@@ -423,8 +433,10 @@ export default function TasksPage() {
               batchIds: taskBatchIds.join(","),
               page: String(requestedPage),
               pageSize: String(requestedPageSize),
+              executionStatus: requestedExecutionFilter,
             });
             const currentTasks = await apiFetch<TaskPage>(`/api/tasks?${query}`);
+            if (requestSequence !== loadSequence.current) return;
             setTasks((previous) =>
               JSON.stringify(previous) === JSON.stringify(currentTasks.items)
                 ? previous
@@ -467,7 +479,7 @@ export default function TasksPage() {
             : "数据读取失败，请刷新或重启 VERIDIA。",
         );
       }
-      if (!quiet) setLoading(false);
+      setLoading(false);
     },
     [message],
   );
@@ -490,6 +502,7 @@ export default function TasksPage() {
       1,
       50,
       requestedBatchId || ALL_CURRENT_BATCHES,
+      "ALL",
     );
     void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
       setCurrentRole(user?.role || null),
@@ -543,6 +556,7 @@ export default function TasksPage() {
           taskPage,
           taskPageSize,
           selectedBatchId,
+          taskExecutionFilter,
         );
       }
     }, 2000);
@@ -553,6 +567,7 @@ export default function TasksPage() {
     selectedBatchId,
     taskPage,
     taskPageSize,
+    taskExecutionFilter,
     trackedBatchIds,
   ]);
 
@@ -607,6 +622,22 @@ export default function TasksPage() {
     } satisfies AuditBatch;
   }, [batches, selectedBatchId]);
   const isCombinedQueue = selectedBatch?.id === ALL_CURRENT_BATCHES;
+  const taskExecutionEmptyText =
+    taskExecutionFilter === "ALL"
+      ? "当前批次暂无执行记录"
+      : `当前批次暂无${taskExecutionFilterLabels[taskExecutionFilter]}记录`;
+  const applyTaskExecutionFilter = (filter: TaskExecutionFilter) => {
+    setTaskExecutionFilter(filter);
+    setTaskPage(1);
+    void load(
+      true,
+      trackedBatchIds,
+      1,
+      taskPageSize,
+      selectedBatchId,
+      filter,
+    );
+  };
   const currentTaskSummary = useMemo(
     () => ({
       passed: selectedBatch?.stats.succeeded || 0,
@@ -662,7 +693,14 @@ export default function TasksPage() {
         );
       }
       form.setFieldValue("urls", "");
-      await load(true, nextBatchIds, 1, taskPageSize, ALL_CURRENT_BATCHES);
+      await load(
+        true,
+        nextBatchIds,
+        1,
+        taskPageSize,
+        ALL_CURRENT_BATCHES,
+        taskExecutionFilter,
+      );
     } catch (error) {
       message.error(error instanceof Error ? error.message : "创建批次失败");
     } finally {
@@ -695,7 +733,14 @@ export default function TasksPage() {
         setSelectedBatchId(ALL_CURRENT_BATCHES);
         setTaskPage(1);
         message.success(`已导入 ${result.imported} 条，自动审核已开始`);
-        await load(true, nextBatchIds, 1, taskPageSize, ALL_CURRENT_BATCHES);
+        await load(
+          true,
+          nextBatchIds,
+          1,
+          taskPageSize,
+          ALL_CURRENT_BATCHES,
+          taskExecutionFilter,
+        );
       } else {
         message.success("预检查完成");
       }
@@ -729,6 +774,7 @@ export default function TasksPage() {
         taskPage,
         taskPageSize,
         selectedBatch.id,
+        taskExecutionFilter,
       );
     } catch (error) {
       message.error(error instanceof Error ? error.message : "队列操作失败");
@@ -814,7 +860,19 @@ export default function TasksPage() {
             >
               <Button icon={<DownloadOutlined />}>导出</Button>
             </Dropdown>
-            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() =>
+                void load(
+                  false,
+                  trackedBatchIds,
+                  taskPage,
+                  taskPageSize,
+                  selectedBatchId,
+                  taskExecutionFilter,
+                )
+              }
+            >
               刷新数据
             </Button>
           </Space>
@@ -1405,6 +1463,7 @@ export default function TasksPage() {
             <div className={styles.statsGrid}>
               {[
                 {
+                  filter: "ALL" as const,
                   label: "全部",
                   name: "总链接数",
                   value: selectedBatch.stats.total,
@@ -1412,6 +1471,7 @@ export default function TasksPage() {
                   icon: <DatabaseOutlined />,
                 },
                 {
+                  filter: "WAITING" as const,
                   label: "等待中",
                   name: "等待数量",
                   value: selectedBatch.stats.waiting,
@@ -1419,6 +1479,7 @@ export default function TasksPage() {
                   icon: <ClockCircleOutlined />,
                 },
                 {
+                  filter: "PROCESSING" as const,
                   label: "处理中",
                   name: "处理中",
                   value: selectedBatch.stats.processing,
@@ -1426,6 +1487,7 @@ export default function TasksPage() {
                   icon: <SyncOutlined spin={selectedBatch.stats.processing > 0} />,
                 },
                 {
+                  filter: "SUCCEEDED" as const,
                   label: "成功",
                   name: "成功数量",
                   value: selectedBatch.stats.succeeded,
@@ -1433,6 +1495,7 @@ export default function TasksPage() {
                   icon: <CheckCircleOutlined />,
                 },
                 {
+                  filter: "FAILED" as const,
                   label: "处理失败",
                   name: "失败数量",
                   value: selectedBatch.stats.failed,
@@ -1440,6 +1503,7 @@ export default function TasksPage() {
                   icon: <CloseCircleOutlined />,
                 },
                 {
+                  filter: "NEEDS_REVIEW" as const,
                   label: "待人工复核",
                   name: "人工复核",
                   value: selectedBatch.stats.needsReview,
@@ -1447,9 +1511,17 @@ export default function TasksPage() {
                   icon: <UserSwitchOutlined />,
                 },
               ].map((item) => (
-                <div
+                <button
+                  type="button"
                   key={item.label}
-                  className={`${styles.statCard} ${styles[item.tone]}`}
+                  aria-label={`筛选${item.label}记录`}
+                  aria-pressed={taskExecutionFilter === item.filter}
+                  className={`${styles.statCard} ${styles[item.tone]} ${
+                    taskExecutionFilter === item.filter
+                      ? styles.statCardSelected
+                      : ""
+                  }`}
+                  onClick={() => applyTaskExecutionFilter(item.filter)}
                 >
                   <span className={styles.statIcon}>{item.icon}</span>
                   <div>
@@ -1457,7 +1529,7 @@ export default function TasksPage() {
                     <strong>{item.value}</strong>
                     <small>{item.name}</small>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
 
@@ -1595,6 +1667,7 @@ export default function TasksPage() {
                       1,
                       taskPageSize,
                       value,
+                      taskExecutionFilter,
                     );
                   }}
                 />
@@ -1609,7 +1682,7 @@ export default function TasksPage() {
               size="small"
               dataSource={tasks}
               loading={loading}
-              locale={{ emptyText: "当前队列暂无执行记录" }}
+              locale={{ emptyText: taskExecutionEmptyText }}
               sticky={{ offsetHeader: 64 }}
               scroll={{ x: 1180 }}
               columns={[
@@ -1758,6 +1831,7 @@ export default function TasksPage() {
                     page,
                     pageSize,
                     selectedBatchId,
+                    taskExecutionFilter,
                   );
                 },
               }}
