@@ -5,7 +5,13 @@ import type { AuditTask } from "@prisma/client";
 import type { Frame, Page } from "playwright";
 import { prisma } from "@/lib/db";
 import type { ExtractedNote } from "@/lib/types";
-import { getAutomationSession, getWorkerBrowserContext } from "./browser";
+import {
+  getAutomationSession,
+  getXhsAuditPage,
+  getXhsAuditPageDiagnostics,
+  showXhsManualIntervention,
+  startXiaohongshuLogin,
+} from "./browser";
 import {
   AutomaticExtractionError,
   type AutomaticFailureCode,
@@ -300,12 +306,14 @@ export async function extractAuditTaskAutomatically(
   if (!mock) {
     const session = await getAutomationSession();
     if (session.status === "LOGIN_REQUIRED") {
+      await startXiaohongshuLogin();
       throw new AutomaticExtractionError(
         "LOGIN_REQUIRED",
         "请先在专用浏览器中登录小红书",
       );
     }
     if (session.status === "SECURITY_CHECK") {
+      await startXiaohongshuLogin();
       throw new AutomaticExtractionError(
         "SECURITY_CHECK",
         "请先在专用浏览器中完成人工安全验证",
@@ -313,8 +321,34 @@ export async function extractAuditTaskAutomatically(
     }
   }
 
-  const context = await getWorkerBrowserContext();
-  const page = await context.newPage();
+  let page: Page;
+  try {
+    page = await getXhsAuditPage({ taskId: task.id, url: task.url });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/专用浏览器已关闭|context or browser has been closed/iu.test(message)) {
+      throw new AutomaticExtractionError(
+        "LOGIN_REQUIRED",
+        "小红书专用浏览器已关闭，审核任务已暂停。请重新打开浏览器后继续审核。",
+      );
+    }
+    throw error;
+  }
+  const diagnosticsBefore = await getXhsAuditPageDiagnostics();
+  console.info(
+    "[自动审核] 审核页面导航前",
+    JSON.stringify({
+      taskId: task.id,
+      currentUrl: safePageLogUrl(task.url),
+      pageCount: diagnosticsBefore.pageCount,
+      auditPageCreateCount: diagnosticsBefore.auditPageCreateCount,
+      auditPageReuseCount: diagnosticsBefore.auditPageReuseCount,
+      windowState: diagnosticsBefore.windowState,
+      bringToFrontCalled: false,
+      focusCalled: false,
+      restoreCalled: false,
+    }),
+  );
   const responseCollector = createXhsResponseCollector(page);
   const pageUrl = mock ? effectiveMockUrl(task) : task.url;
   const redirectChain = [task.url];
@@ -359,6 +393,25 @@ export async function extractAuditTaskAutomatically(
       }
     } catch (error) {
       if (error instanceof AutomaticExtractionError) throw error;
+      if (
+        error instanceof Error &&
+        /Target page, context or browser has been closed|Browser has been closed/iu.test(
+          error.message,
+        )
+      ) {
+        console.error(
+          "[自动审核] 隐藏审核页面连接中断",
+          JSON.stringify({
+            taskId: task.id,
+            message: error.message,
+            pageClosed: page.isClosed(),
+          }),
+        );
+        throw new AutomaticExtractionError(
+          "LOGIN_REQUIRED",
+          "小红书专用浏览器已关闭，审核任务已暂停。请重新打开浏览器后继续审核。",
+        );
+      }
       if (error instanceof Error && /Timeout/i.test(error.message)) {
         throw new AutomaticExtractionError("LOAD_TIMEOUT");
       }
@@ -389,12 +442,14 @@ export async function extractAuditTaskAutomatically(
     logPageIdentity(task, identity);
 
     if (identity.pageType === "LOGIN") {
+      await showXhsManualIntervention(page, "LOGIN_REQUIRED");
       throw new AutomaticExtractionError(
         "LOGIN_REQUIRED",
         `页面需要登录：${identity.pageTitle || "无标题"}`,
       );
     }
     if (identity.pageType === "SECURITY_CHECK") {
+      await showXhsManualIntervention(page, "SECURITY_RESTRICTED");
       throw new AutomaticExtractionError(
         "SECURITY_CHECK",
         `页面要求安全验证：${identity.pageTitle || "无标题"}`,
@@ -541,6 +596,21 @@ export async function extractAuditTaskAutomatically(
   } finally {
     responseCollector.dispose();
     page.off("framenavigated", recordNavigation);
-    await page.close().catch(() => undefined);
+    const diagnosticsAfter = await getXhsAuditPageDiagnostics();
+    console.info(
+      "[自动审核] 审核页面导航后",
+      JSON.stringify({
+        taskId: task.id,
+        currentUrl: safePageLogUrl(page.url()),
+        pageCount: diagnosticsAfter.pageCount,
+        auditPageCreateCount: diagnosticsAfter.auditPageCreateCount,
+        auditPageReuseCount: diagnosticsAfter.auditPageReuseCount,
+        windowState: diagnosticsAfter.windowState,
+        auditPageKeptOpen: !page.isClosed(),
+        bringToFrontCalled: false,
+        focusCalled: false,
+        restoreCalled: false,
+      }),
+    );
   }
 }

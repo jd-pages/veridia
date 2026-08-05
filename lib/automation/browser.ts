@@ -1,9 +1,20 @@
 import "server-only";
 import os from "node:os";
 import path from "node:path";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import type {
+  Browser,
+  BrowserContext,
+  BrowserType,
+  CDPSession,
+  Page,
+} from "playwright";
 import { prisma } from "@/lib/db";
 import { classifyAutomaticPage } from "./page-classification";
+import {
+  createHiddenAuditPage,
+  launchWindowsHiddenChromium,
+  pageHasUiWindow,
+} from "./windows-hidden-chromium";
 
 const SESSION_ID = "xiaohongshu";
 const DEFAULT_PROFILE_DIRECTORY = path.join(
@@ -35,7 +46,14 @@ type AuditLock = {
 };
 
 type XhsBrowserState = {
+  browser?: Browser;
   context?: BrowserContext;
+  closeBrowser?: () => Promise<void>;
+  browserProcessId?: number | null;
+  reusedBrowserProcess?: boolean;
+  auditPage?: Page;
+  auditTargetSession?: CDPSession;
+  auditPagePromise?: Promise<Page>;
   loginPage?: Page;
   launchPromise?: Promise<BrowserContext>;
   sessionState: XhsSessionState;
@@ -44,6 +62,12 @@ type XhsBrowserState = {
   lastInvalidReason?: string;
   profileLocked: boolean;
   auditLock?: AuditLock;
+  closingContext: boolean;
+  contextClosedUnexpectedly: boolean;
+  contextLaunchCount: number;
+  auditPageCreateCount: number;
+  auditPageReuseCount: number;
+  auditPageRequestCount: number;
 };
 
 const globalForAutomation = globalThis as typeof globalThis & {
@@ -55,7 +79,19 @@ const state =
   (globalForAutomation.xhsBrowserManagerState = {
     sessionState: "UNKNOWN",
     profileLocked: false,
+    closingContext: false,
+    contextClosedUnexpectedly: false,
+    contextLaunchCount: 0,
+    auditPageCreateCount: 0,
+    auditPageReuseCount: 0,
+    auditPageRequestCount: 0,
   });
+state.closingContext ??= false;
+state.contextClosedUnexpectedly ??= false;
+state.contextLaunchCount ??= 0;
+state.auditPageCreateCount ??= 0;
+state.auditPageReuseCount ??= 0;
+state.auditPageRequestCount ??= 0;
 
 function persistentOptions() {
   const channel = process.env.PLAYWRIGHT_BROWSER_CHANNEL?.trim();
@@ -69,6 +105,65 @@ function persistentOptions() {
     timezoneId: "Asia/Shanghai",
     viewport: { width: 1440, height: 960 },
   };
+}
+
+let chromiumPromise: Promise<BrowserType> | undefined;
+
+function getChromium() {
+  if (!chromiumPromise) {
+    // 隐藏 CDP Target 在 Chromium 中属于 other target；必须在加载 Playwright 前启用。
+    process.env.PW_CHROMIUM_ATTACH_TO_OTHER = "1";
+    chromiumPromise = import("playwright").then((module) => module.chromium);
+  }
+  return chromiumPromise;
+}
+
+function safeDiagnosticUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return value.slice(0, 200);
+  }
+}
+
+async function chromiumWindowState(page: Page) {
+  try {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const result = await session.send("Browser.getWindowForTarget");
+      return result.bounds.windowState || "normal";
+    } finally {
+      await session.detach().catch(() => undefined);
+    }
+  } catch {
+    return "unknown";
+  }
+}
+
+async function setChromiumWindowState(
+  page: Page,
+  windowState: "minimized" | "normal",
+) {
+  try {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const { windowId } = await session.send("Browser.getWindowForTarget");
+      await session.send("Browser.setWindowBounds", {
+        windowId,
+        bounds: { windowState },
+      });
+      return true;
+    } finally {
+      await session.detach().catch(() => undefined);
+    }
+  } catch (error) {
+    console.warn(
+      "[小红书浏览器] 调整窗口状态失败",
+      error instanceof Error ? error.message : String(error),
+    );
+    return false;
+  }
 }
 
 function isProfileLockError(error: unknown) {
@@ -131,18 +226,89 @@ export async function getAutomationSession() {
   });
 }
 
-async function ensureBrowserContext() {
+async function ensureBrowserContext(allowRelaunch = false) {
   if (state.context) return state.context;
   if (state.launchPromise) return state.launchPromise;
+  if (state.contextClosedUnexpectedly && !allowRelaunch) {
+    throw new Error(
+      "小红书专用浏览器已关闭，审核任务已暂停。请重新打开浏览器后继续审核。",
+    );
+  }
   await getAutomationSession();
-  state.launchPromise = chromium
-    .launchPersistentContext(PROFILE_DIRECTORY, persistentOptions())
+  const launchStartedAt = new Date();
+  console.info(
+    "[小红书浏览器] 启动 Persistent Context",
+    JSON.stringify({
+      startedAt: launchStartedAt.toISOString(),
+      profilePath: PROFILE_DIRECTORY,
+      browserInstanceCount: 0,
+    }),
+  );
+  state.launchPromise = (async () => {
+    const chromium = await getChromium();
+    if (process.platform === "win32") {
+      const connection = await launchWindowsHiddenChromium(
+        chromium,
+        PROFILE_DIRECTORY,
+      );
+      state.browser = connection.browser;
+      state.closeBrowser = connection.close;
+      state.browserProcessId = connection.processId;
+      state.reusedBrowserProcess = connection.reusedProcess;
+      return connection.context;
+    }
+    const context = await chromium.launchPersistentContext(
+      PROFILE_DIRECTORY,
+      persistentOptions(),
+    );
+    state.browser = context.browser() || undefined;
+    state.closeBrowser = () => context.close();
+    state.browserProcessId = null;
+    state.reusedBrowserProcess = false;
+    return context;
+  })()
     .then((context) => {
       state.context = context;
       state.profileLocked = false;
+      state.contextClosedUnexpectedly = false;
+      state.contextLaunchCount += 1;
+      console.info(
+        "[小红书浏览器] Persistent Context 已就绪",
+        JSON.stringify({
+          startedAt: launchStartedAt.toISOString(),
+          readyAt: new Date().toISOString(),
+          browserInstanceCount: 1,
+          browserProcessId: state.browserProcessId ?? null,
+          reusedBrowserProcess: state.reusedBrowserProcess ?? false,
+          contextLaunchCount: state.contextLaunchCount,
+          pageCount: context.pages().length,
+        }),
+      );
       context.once("close", () => {
+        const unexpected = !state.closingContext;
         state.context = undefined;
+        state.browser = undefined;
+        state.closeBrowser = undefined;
+        state.browserProcessId = null;
+        state.auditPage = undefined;
+        state.auditTargetSession = undefined;
+        state.auditPagePromise = undefined;
         state.loginPage = undefined;
+        state.contextClosedUnexpectedly = unexpected;
+        console.warn(
+          "[小红书浏览器] Persistent Context 已关闭",
+          JSON.stringify({
+            closedAt: new Date().toISOString(),
+            unexpected,
+            browserInstanceCount: 0,
+          }),
+        );
+        if (unexpected) {
+          void persistSessionState(
+            "LOGGED_OUT",
+            "小红书专用浏览器已关闭，审核任务已暂停。请重新打开浏览器后继续审核。",
+          ).catch(() => undefined);
+        }
       });
       return context;
     })
@@ -162,15 +328,196 @@ async function ensureBrowserContext() {
   return state.launchPromise;
 }
 
-export async function getWorkerBrowserContext() {
-  return ensureBrowserContext();
+export async function getXhsAuditPage(input?: {
+  taskId?: string;
+  url?: string;
+}) {
+  state.auditPageRequestCount += 1;
+  const existing = livingPage(state.auditPage);
+  if (existing) {
+    state.auditPageReuseCount += 1;
+    console.info(
+      "[小红书浏览器] 复用自动审核页面",
+      JSON.stringify({
+        taskId: input?.taskId || null,
+        currentUrl: input?.url ? safeDiagnosticUrl(input.url) : null,
+        browserInstanceCount: state.context ? 1 : 0,
+        pageCount: state.context?.pages().length || 0,
+        auditPageReused: true,
+        bringToFrontCalled: false,
+        focusCalled: false,
+        restoreCalled: false,
+      }),
+    );
+    return existing;
+  }
+  if (state.auditPagePromise) {
+    state.auditPageReuseCount += 1;
+    return state.auditPagePromise;
+  }
+
+  state.auditPagePromise = (async () => {
+    const context = await ensureBrowserContext();
+    const pageCountBefore = context.pages().length;
+    let page: Page | undefined;
+    if (process.platform === "win32") {
+      for (const candidate of context.pages()) {
+        if (
+          candidate.isClosed() ||
+          candidate === livingPage(state.loginPage)
+        ) {
+          continue;
+        }
+        if (!(await pageHasUiWindow(candidate))) {
+          page = candidate;
+          break;
+        }
+        // 应用异常退出后可能遗留人工窗口；自动审核恢复前先关闭专用 Profile 的可见页。
+        await candidate.close().catch(() => undefined);
+      }
+      if (!page) {
+        if (!state.browser) throw new Error("专用 Chromium 尚未连接");
+        const hiddenPage = await createHiddenAuditPage(state.browser, context);
+        page = hiddenPage.page;
+        state.auditTargetSession = hiddenPage.keepAliveSession;
+      }
+    } else {
+      page =
+        context
+          .pages()
+          .find(
+            (candidate) =>
+              !candidate.isClosed() && candidate !== livingPage(state.loginPage),
+          ) || (await context.newPage());
+    }
+    state.auditPage = page;
+    state.auditPageCreateCount += 1;
+    page.once("close", () => {
+      console.warn(
+        "[小红书浏览器] 隐藏自动审核页面已关闭",
+        JSON.stringify({
+          closedAt: new Date().toISOString(),
+          browserConnected: state.browser?.isConnected() ?? false,
+          contextPageCount: state.context?.pages().length ?? 0,
+        }),
+      );
+      if (state.auditPage === page) {
+        state.auditPage = undefined;
+        void state.auditTargetSession?.detach().catch(() => undefined);
+        state.auditTargetSession = undefined;
+      }
+      if (state.loginPage === page) state.loginPage = undefined;
+    });
+    const windowState =
+      process.platform === "win32" && !(await pageHasUiWindow(page))
+        ? "hidden"
+        : await chromiumWindowState(page);
+    console.info(
+      "[小红书浏览器] 创建自动审核页面",
+      JSON.stringify({
+        taskId: input?.taskId || null,
+        currentUrl: input?.url ? safeDiagnosticUrl(input.url) : null,
+        browserInstanceCount: 1,
+        pageCountBefore,
+        pageCountAfter: context.pages().length,
+        auditPageCreateCount: state.auditPageCreateCount,
+        auditPageReused: false,
+        bringToFrontCalled: false,
+        focusCalled: false,
+        restoreCalled: false,
+        windowState,
+      }),
+    );
+    return page;
+  })().finally(() => {
+    state.auditPagePromise = undefined;
+  });
+  return state.auditPagePromise;
+}
+
+export async function showXhsManualIntervention(
+  page: Page,
+  reason: "LOGIN_REQUIRED" | "SECURITY_RESTRICTED" | "USER_REQUESTED",
+) {
+  let interactivePage = livingPage(state.loginPage);
+  if (!interactivePage) {
+    const hiddenAuditPage =
+      process.platform === "win32" && !(await pageHasUiWindow(page));
+    if (hiddenAuditPage) {
+      interactivePage = await page.context().newPage();
+      if (page.url() !== "about:blank") {
+        await interactivePage.goto(page.url(), {
+          waitUntil: "domcontentloaded",
+          timeout: 30_000,
+        });
+      }
+    } else {
+      interactivePage = page;
+    }
+    state.loginPage = interactivePage;
+    interactivePage.once("close", () => {
+      if (state.loginPage === interactivePage) state.loginPage = undefined;
+    });
+  }
+  await setChromiumWindowState(interactivePage, "normal");
+  await interactivePage.bringToFront();
+  console.info(
+    "[小红书浏览器] 显示人工交互页面",
+    JSON.stringify({
+      reason,
+      pageCount: interactivePage.context().pages().length,
+      currentUrl: safeDiagnosticUrl(interactivePage.url()),
+      bringToFrontCalled: true,
+      windowState: await chromiumWindowState(interactivePage),
+    }),
+  );
+}
+
+export async function getXhsAuditPageDiagnostics() {
+  const page = livingPage(state.auditPage);
+  const interactivePage = livingPage(state.loginPage);
+  const windowState = page
+    ? process.platform === "win32" && !(await pageHasUiWindow(page))
+      ? "hidden"
+      : await chromiumWindowState(page)
+    : "closed";
+  return {
+    browserInstanceCount: state.context ? 1 : 0,
+    browserProcessId: state.browserProcessId ?? null,
+    reusedBrowserProcess: state.reusedBrowserProcess ?? false,
+    pageCount: state.context?.pages().filter((item) => !item.isClosed()).length || 0,
+    auditPageOpen: Boolean(page),
+    auditPageCreateCount: state.auditPageCreateCount,
+    auditPageReuseCount: state.auditPageReuseCount,
+    auditPageRequestCount: state.auditPageRequestCount,
+    auditPageUrl: page ? safeDiagnosticUrl(page.url()) : null,
+    interactivePageOpen: Boolean(interactivePage),
+    interactivePageIsAuditPage: Boolean(
+      page && interactivePage && page === interactivePage,
+    ),
+    windowState,
+  };
 }
 
 export async function closeXhsBrowserContext() {
   const context = state.context;
+  const closeBrowser = state.closeBrowser;
+  state.closingContext = true;
+  state.browser = undefined;
   state.context = undefined;
+  state.closeBrowser = undefined;
+  state.browserProcessId = null;
+  state.auditPage = undefined;
+  state.auditTargetSession = undefined;
+  state.auditPagePromise = undefined;
   state.loginPage = undefined;
-  if (context) await context.close().catch(() => undefined);
+  try {
+    if (closeBrowser) await closeBrowser().catch(() => undefined);
+    else if (context) await context.close().catch(() => undefined);
+  } finally {
+    state.closingContext = false;
+    state.contextClosedUnexpectedly = false;
+  }
 }
 
 function livingPage(page: Page | undefined) {
@@ -179,12 +526,14 @@ function livingPage(page: Page | undefined) {
 
 async function sessionCheckPage(preferredPage?: Page) {
   const context = await ensureBrowserContext();
-  return (
+  const existing =
     livingPage(preferredPage) ||
     livingPage(state.loginPage) ||
-    context.pages().find((page) => !page.isClosed()) ||
-    (await context.newPage())
-  );
+    livingPage(state.auditPage) ||
+    context.pages().find((page) => !page.isClosed());
+  if (existing) return existing;
+  if (process.platform === "win32") return getXhsAuditPage();
+  return context.newPage();
 }
 
 export async function checkXhsSessionState(preferredPage?: Page) {
@@ -241,10 +590,11 @@ export async function checkXhsSessionState(preferredPage?: Page) {
 }
 
 export async function startXiaohongshuLogin() {
-  const context = await ensureBrowserContext();
+  state.contextClosedUnexpectedly = false;
+  const context = await ensureBrowserContext(true);
   const existingPage = livingPage(state.loginPage);
   if (existingPage) {
-    await existingPage.bringToFront();
+    await showXhsManualIntervention(existingPage, "USER_REQUESTED");
     return getXhsSessionDiagnostics();
   }
   state.loginPage = await context.newPage();
@@ -259,7 +609,7 @@ export async function startXiaohongshuLogin() {
     waitUntil: "domcontentloaded",
     timeout: 30_000,
   });
-  await state.loginPage.bringToFront();
+  await showXhsManualIntervention(state.loginPage, "USER_REQUESTED");
   return getXhsSessionDiagnostics();
 }
 
@@ -271,14 +621,27 @@ export async function completeXiaohongshuLogin() {
   }
   await page.waitForTimeout(1_200);
   await checkXhsSessionState(page);
-  // 只关闭登录 Page，不关闭 persistent context 和 Profile。
-  if (state.sessionState === "LOGGED_IN") await page.close().catch(() => undefined);
+  // 登录/验证完成后保留自动审核 Page，仅关闭独立人工登录 Page。
+  if (state.sessionState === "LOGGED_IN") {
+    state.loginPage = undefined;
+    if (page === livingPage(state.auditPage)) {
+      if (process.platform !== "win32") {
+        await setChromiumWindowState(page, "minimized");
+      }
+    } else {
+      await page.close().catch(() => undefined);
+      const auditPage = livingPage(state.auditPage);
+      if (auditPage && process.platform !== "win32") {
+        await setChromiumWindowState(auditPage, "minimized");
+      }
+    }
+  }
   return getXhsSessionDiagnostics();
 }
 
 export async function restartXhsBrowser() {
   await closeXhsBrowserContext();
-  await ensureBrowserContext();
+  await ensureBrowserContext(true);
   return getXhsSessionDiagnostics();
 }
 
@@ -335,18 +698,21 @@ export function clearXhsAuditLockForBatch(batchId: string) {
 
 export async function getXhsSessionDiagnostics() {
   const session = await getAutomationSession();
+  const auditPageDiagnostics = await getXhsAuditPageDiagnostics();
   return {
     ...session,
     sessionState: state.sessionState,
     profilePath: PROFILE_DIRECTORY,
     partition: "Playwright persistent context",
     browserRunning: Boolean(state.context),
-    pageCount: state.context?.pages().filter((page) => !page.isClosed()).length || 0,
     lastCheckedAt: state.lastCheckedAt?.toISOString() || session.lastCheckedAt,
     lastVerificationAt: state.lastVerificationAt?.toISOString() || null,
     lastInvalidReason: state.lastInvalidReason || session.lastError,
     profileLocked: state.profileLocked,
     currentAuditTaskId: state.auditLock?.taskId || null,
     auditLock: state.auditLock || null,
+    contextClosedUnexpectedly: state.contextClosedUnexpectedly,
+    contextLaunchCount: state.contextLaunchCount,
+    ...auditPageDiagnostics,
   };
 }

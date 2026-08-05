@@ -16,12 +16,53 @@ async function waitForBatchToStop(page: Page, batchId: string) {
     .toMatch(/^(?:COMPLETED|COMPLETED_WITH_ERRORS)$/u);
 }
 
+async function clearVisibleE2eBatches(page: Page) {
+  const response = await page.request.get(
+    "/api/automation/batches?includeTasks=false",
+  );
+  const batches = (await response.json()).data as Array<{
+    id: string;
+    status: string;
+  }>;
+  const clearable = new Set([
+    "COMPLETED",
+    "COMPLETED_WITH_ERRORS",
+    "FAILED",
+    "READ_FAILED",
+    "CANCELLED",
+    "PAUSED",
+    "LOGIN_EXPIRED",
+    "SECURITY_RESTRICTED",
+  ]);
+  for (const batch of batches) {
+    if (!clearable.has(batch.status)) {
+      await page.request.post(`/api/automation/batches/${batch.id}/control`, {
+        data: { action: "CANCEL" },
+      });
+      await expect
+        .poll(async () => {
+          const current = await page.request.get(
+            `/api/automation/batches?batchId=${batch.id}&includeTasks=false`,
+          );
+          return ((await current.json()).data as Array<{ status: string }>)[0]
+            ?.status;
+        })
+        .toBe("CANCELLED");
+    }
+    const clearResponse = await page.request.post(
+      `/api/automation/batches/${batch.id}/clear`,
+    );
+    expect(clearResponse.ok()).toBeTruthy();
+  }
+}
+
 test("清除当前批次仅移出任务页并保留正式审核结果", async ({ page }) => {
   test.setTimeout(180_000);
   const loginResponse = await page.request.post("/api/auth/login", {
     data: { username: "admin", password: "Admin123!" },
   });
   expect(loginResponse.ok()).toBeTruthy();
+  await clearVisibleE2eBatches(page);
 
   const products = (
     await (await page.request.get("/api/products")).json()

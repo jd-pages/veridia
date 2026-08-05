@@ -67,10 +67,27 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   ).toBeLessThanOrEqual(1);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  const [mobileDanoneBox, mobileKabritaBox, hasHorizontalOverflow] =
-    await Promise.all([
+  const [
+    mobileDanoneBox,
+    mobileKabritaBox,
+    mobileCardLayouts,
+    hasHorizontalOverflow,
+  ] = await Promise.all([
       danoneBrandCard.boundingBox(),
       kabritaBrandCard.boundingBox(),
+      Promise.all(
+        [danoneBrandCard, kabritaBrandCard].map((cardLocator) =>
+          cardLocator.evaluate((card) => {
+            const column = card.parentElement!;
+            const columnStyle = window.getComputedStyle(column);
+            return {
+              flexBasis: columnStyle.flexBasis,
+              maxWidth: columnStyle.maxWidth,
+              cardWidth: window.getComputedStyle(card).width,
+            };
+          }),
+        ),
+      ),
       page.evaluate(
         () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
       ),
@@ -78,8 +95,15 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   expect(mobileDanoneBox).not.toBeNull();
   expect(mobileKabritaBox).not.toBeNull();
   expect(
-    Math.abs(mobileDanoneBox!.width - mobileKabritaBox!.width),
+    Math.abs(mobileDanoneBox!.x - mobileKabritaBox!.x),
   ).toBeLessThanOrEqual(1);
+  expect(mobileCardLayouts).toHaveLength(2);
+  expect(
+    mobileCardLayouts.every(
+      (item) => item.flexBasis === "100%" && item.maxWidth === "100%",
+    ),
+  ).toBe(true);
+  expect(mobileCardLayouts.every((item) => item.cardWidth !== "auto")).toBe(true);
   expect(hasHorizontalOverflow).toBe(false);
 
   await danoneBrandCard.getByRole("button", { name: "进入规则" }).click();

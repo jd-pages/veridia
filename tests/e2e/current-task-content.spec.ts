@@ -1,6 +1,38 @@
 import { expect, test } from "@playwright/test";
 import { E2E_ORIGIN } from "./e2e-origin";
 
+const cleanupBatchIds: string[] = [];
+
+test.afterEach(async ({ page }) => {
+  for (const batchId of [...new Set(cleanupBatchIds)].reverse()) {
+    await page.request
+      .post(`/api/automation/batches/${batchId}/control`, {
+        data: { action: "CANCEL" },
+      })
+      .catch(() => undefined);
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.get(
+            `/api/automation/batches?batchId=${batchId}&includeTasks=false`,
+          );
+          const batch = (
+            (await response.json()).data as Array<{ status: string }>
+          )[0];
+          return batch?.status || "CLEARED";
+        },
+        { timeout: 15_000 },
+      )
+      .toMatch(
+        /^(?:CANCELLED|COMPLETED|COMPLETED_WITH_ERRORS|FAILED|READ_FAILED|PAUSED|LOGIN_EXPIRED|SECURITY_RESTRICTED|CLEARED)$/u,
+      );
+    await page.request
+      .post(`/api/automation/batches/${batchId}/clear`)
+      .catch(() => undefined);
+  }
+  cleanupBatchIds.length = 0;
+});
+
 test("审核任务页只展示当前批次的执行记录和笔记", async ({ page }) => {
   const loginResponse = await page.request.post("/api/auth/login", {
     data: { username: "admin", password: "Admin123!" },
@@ -39,6 +71,7 @@ test("审核任务页只展示当前批次的执行记录和笔记", async ({ pa
   });
   expect(historyResponse.ok()).toBeTruthy();
   const historyBatchId = (await historyResponse.json()).data.batchId as string;
+  cleanupBatchIds.push(historyBatchId);
   await page.request.post(`/api/automation/batches/${historyBatchId}/control`, {
     data: { action: "CANCEL" },
   });
@@ -55,6 +88,7 @@ test("审核任务页只展示当前批次的执行记录和笔记", async ({ pa
   });
   expect(currentResponse.ok()).toBeTruthy();
   const currentBatchId = (await currentResponse.json()).data.batchId as string;
+  cleanupBatchIds.push(currentBatchId);
 
   const currentTaskResponse = await page.request.get(
     `/api/tasks?batchId=${currentBatchId}`,
@@ -198,6 +232,7 @@ test("运行中阻止第二批次，暂停后可创建并汇总筛选", async ({
   );
   expect(firstResponse.ok()).toBeTruthy();
   const firstBatchId = (await firstResponse.json()).data.batchId as string;
+  cleanupBatchIds.push(firstBatchId);
   const blockedResponse = await requestBatch(
     `澳白批次-${suffix}`,
     3,
@@ -217,6 +252,7 @@ test("运行中阻止第二批次，暂停后可创建并汇总筛选", async ({
   );
   expect(secondResponse.ok()).toBeTruthy();
   const secondBatchId = (await secondResponse.json()).data.batchId as string;
+  cleanupBatchIds.push(secondBatchId);
   const batchIds = [firstBatchId, secondBatchId];
 
   const summary = (
@@ -283,7 +319,7 @@ test("运行中阻止第二批次，暂停后可创建并汇总筛选", async ({
   await page
     .locator(".ant-select-dropdown:not(.ant-select-dropdown-hidden)")
     .getByText(`德白批次-${suffix}（2 条）`, { exact: true })
-    .click({ force: true });
+    .evaluate((element) => (element as HTMLElement).click());
   await expect(
     page.getByRole("button", { name: "筛选处理失败记录" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -328,6 +364,7 @@ test("自动审核进度卡片按执行状态和人工复核状态筛选", async
   });
   expect(response.ok()).toBeTruthy();
   const batchId = (await response.json()).data.batchId as string;
+  cleanupBatchIds.push(batchId);
 
   await expect
     .poll(
@@ -461,6 +498,7 @@ test("300 条任务分片入队且执行记录只读取当前页", async ({ page
     batchId: string;
     created: number;
   };
+  cleanupBatchIds.push(payload.batchId);
   expect(payload.created).toBe(300);
 
   const firstPage = (
