@@ -9,6 +9,7 @@ import { getActiveImportExportTemplates } from "@/lib/import-export-templates/co
 import {
   auditResultToCompactExportRecord,
   auditResultToKabritaExportRecord,
+  buildBrandedAuditResultsCsv,
   buildConfiguredCsv,
   buildConfiguredWorkbook,
 } from "@/lib/import-export-templates/export";
@@ -19,6 +20,7 @@ import {
   readResultQueryFilters,
 } from "@/lib/result-query";
 import { auditResultExportFileName } from "@/lib/result-export-file-name";
+import { sortAuditResultsByImportOrder } from "@/lib/result-export-order";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser(BUSINESS_ROLES);
@@ -37,15 +39,18 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       400,
     );
   }
-  const rows = await prisma.auditResult.findMany({
+  const foundRows = await prisma.auditResult.findMany({
     where,
     include: {
-      note: true,
-      task: { include: { product: true, campaign: true } },
+      note: { include: { topics: true } },
+      task: {
+        include: { product: true, campaign: true, batch: true },
+      },
       manualReviews: { orderBy: { createdAt: "desc" }, take: 1 },
     },
-    orderBy: { auditedAt: "desc" },
+    orderBy: { createdAt: "asc" },
   });
+  const rows = sortAuditResultsByImportOrder(foundRows);
   if (!rows.length) {
     console.info(
       "[审核结果导出] 未生成文件",
@@ -65,15 +70,21 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     );
   }
   const { templates } = await getActiveImportExportTemplates();
-  const useKabritaTemplate = rows.every(
+  const kabritaRows = rows.filter(
     (row) => row.task.product.brandName?.trim() === KABRITA_BRAND_NAME,
   );
+  const danoneRows = rows.filter(
+    (row) => row.task.product.brandName?.trim() !== KABRITA_BRAND_NAME,
+  );
+  const useKabritaTemplate = kabritaRows.length === rows.length;
+  const mixedBrands = kabritaRows.length > 0 && danoneRows.length > 0;
   const templateBrand = useKabritaTemplate
     ? KABRITA_BRAND_NAME
     : undefined;
   const records = useKabritaTemplate
-    ? rows.map(auditResultToKabritaExportRecord)
-    : rows.map(auditResultToCompactExportRecord);
+    ? kabritaRows.map(auditResultToKabritaExportRecord)
+    : danoneRows.map(auditResultToCompactExportRecord);
+  const kabritaRecords = kabritaRows.map(auditResultToKabritaExportRecord);
   const format = searchParams.get("format") === "csv" ? "csv" : "xlsx";
   const fileName = auditResultExportFileName({
     kabrita: useKabritaTemplate,
@@ -95,12 +106,24 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       }),
     );
   if (format === "csv") {
-    const csv = buildConfiguredCsv({
-      templates,
-      kind: "auditResults",
-      records,
-      templateBrand,
-    });
+    const csv = mixedBrands
+      ? buildBrandedAuditResultsCsv({
+          templates,
+          sections: [
+            { title: "达能审核结果", records },
+            {
+              title: "佳贝艾特审核结果",
+              records: kabritaRecords,
+              templateBrand: KABRITA_BRAND_NAME,
+            },
+          ],
+        })
+      : buildConfiguredCsv({
+          templates,
+          kind: "auditResults",
+          records,
+          templateBrand,
+        });
     const byteLength = new TextEncoder().encode(csv).byteLength;
     if (byteLength < 1) {
       return fail("导出文件生成异常，请稍后重试", 500, "EMPTY_EXPORT_FILE");
@@ -123,6 +146,18 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     kind: "auditResults",
     records,
     templateBrand,
+    ...(mixedBrands
+      ? {
+          sections: [
+            { sheetName: "达能审核结果", records },
+            {
+              sheetName: "佳贝艾特审核结果",
+              records: kabritaRecords,
+              templateBrand: KABRITA_BRAND_NAME,
+            },
+          ],
+        }
+      : {}),
   });
   const bytes = new Uint8Array(buffer as ArrayBuffer);
   if (bytes.byteLength < 1_024) {

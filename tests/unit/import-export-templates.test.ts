@@ -28,12 +28,13 @@ import {
 } from "@/lib/import-task-metadata";
 import {
   KABRITA_BRAND_NAME,
-  KABRITA_TEMPLATE_FIELDS,
+  KABRITA_EXPORT_FIELDS,
+  KABRITA_IMPORT_FIELDS,
 } from "@/lib/import-export-templates/kabrita";
 
 const templates = validateImportExportTemplates(builtinTemplates);
 
-const kabritaHeaders = [
+const kabritaImportHeaders = [
   "登记时间",
   "渠道",
   "店铺名称",
@@ -46,8 +47,9 @@ const kabritaHeaders = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
-  "是否符合",
 ];
+
+const kabritaExportHeaders = [...kabritaImportHeaders, "自审"];
 
 describe("远程表格模板配置", () => {
   it("内置模板包含必填字段、标准别名和本地数据源", () => {
@@ -94,7 +96,7 @@ describe("远程表格模板配置", () => {
 });
 
 describe("佳贝艾特专属导入导出模板", () => {
-  it("严格生成指定13列表头并可识别模板品牌", async () => {
+  it("严格生成不含是否符合的12列表头并可识别模板品牌", async () => {
     const bytes = await buildImportTemplateWorkbook(templates, {
       templateBrand: KABRITA_BRAND_NAME,
     });
@@ -102,17 +104,19 @@ describe("佳贝艾特专属导入导出模板", () => {
     await workbook.xlsx.load(bytes);
     expect(
       (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
-    ).toEqual(kabritaHeaders);
-    expect(KABRITA_TEMPLATE_FIELDS).toHaveLength(13);
+    ).toEqual(kabritaImportHeaders);
+    expect(KABRITA_IMPORT_FIELDS).toHaveLength(12);
 
     const csv = buildImportTemplateCsv(templates, {
       templateBrand: KABRITA_BRAND_NAME,
     });
-    expect(csv.slice(1).split("\r\n")[0].split(",")).toEqual(kabritaHeaders);
+    expect(csv.slice(1).split("\r\n")[0].split(",")).toEqual(
+      kabritaImportHeaders,
+    );
 
     const preview = await parseTabularPreview({
       bytes: Buffer.from([
-        kabritaHeaders.join(","),
+        kabritaImportHeaders.join(","),
         [
           "2026-08-04 10:00:00",
           "小红书",
@@ -126,7 +130,6 @@ describe("佳贝艾特专属导入导出模板", () => {
           "kabrita-user",
           "97【示例笔记】https://www.xiaohongshu.com/explore/kabrita-1",
           "荷兰佳贝1",
-          "",
         ].join(","),
       ].join("\r\n")),
       fileName: "佳贝艾特.csv",
@@ -136,7 +139,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     expect(preview.templateBrand).toBe("佳贝艾特");
     expect(preview.sourceLabel).toBe("佳贝艾特 Excel");
     expect(preview.recognizedFields.map((field) => field.header)).toEqual(
-      kabritaHeaders,
+      kabritaImportHeaders,
     );
     expect(preview.missingRequiredFields).toEqual([]);
     expect(preview.validCount).toBe(1);
@@ -151,7 +154,7 @@ describe("佳贝艾特专属导入导出模板", () => {
   });
 
   it("只把小红书发布链接和购买产品线作为必填字段", async () => {
-    const withoutLink = kabritaHeaders.filter(
+    const withoutLink = kabritaImportHeaders.filter(
       (header) => header !== "小红书发布链接",
     );
     const linkMissing = await parseTabularPreview({
@@ -171,7 +174,7 @@ describe("佳贝艾特专属导入导出模板", () => {
 
     const blankProductLine = await parseTabularPreview({
       bytes: Buffer.from(
-        `${kabritaHeaders.join(",")}\r\n${kabritaHeaders
+        `${kabritaImportHeaders.join(",")}\r\n${kabritaImportHeaders
           .map((header) =>
             header === "小红书发布链接"
               ? "https://www.xiaohongshu.com/explore/kabrita-blank"
@@ -191,17 +194,15 @@ describe("佳贝艾特专属导入导出模板", () => {
     );
   });
 
-  it("保存13列原值并用系统审核结论生成13列佳贝艾特导出", async () => {
+  it("保存12列原值并用系统审核结论生成12列加自审的佳贝艾特导出", async () => {
     const rawValues = Object.fromEntries(
-      KABRITA_TEMPLATE_FIELDS.map((field, index) => [
+      KABRITA_IMPORT_FIELDS.map((field, index) => [
         field,
         field === "xiaohongshuPublishLink"
           ? "标题 https://www.xiaohongshu.com/explore/kabrita-export"
           : field === "purchaseProductLine"
             ? "港版佳贝3"
-            : field === "complianceResult"
-              ? "历史值"
-              : `原值-${index + 1}`,
+            : `原值-${index + 1}`,
       ]),
     );
     const notes = buildImportedTaskNotes({
@@ -247,12 +248,14 @@ describe("佳贝艾特专属导入导出模板", () => {
       manualReviews: [],
     };
     const record = auditResultToKabritaExportRecord(row);
-    expect(Object.keys(record)).toEqual(KABRITA_TEMPLATE_FIELDS);
+    expect(Object.keys(record)).toEqual(KABRITA_EXPORT_FIELDS);
     expect(record.purchaseProductLine).toBe("港版佳贝3");
     expect(record.xiaohongshuPublishLink).toBe(
       "标题 https://www.xiaohongshu.com/explore/kabrita-export",
     );
-    expect(record.complianceResult).toBe("N-图片不足");
+    expect(record.selfReview).toBe(
+      "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张",
+    );
 
     expect(
       auditResultToKabritaExportRecord({
@@ -260,7 +263,7 @@ describe("佳贝艾特专属导入导出模板", () => {
         autoStatus: "PASSED",
         imageStatus: "COMPLIANT",
         failureReasons: "[]",
-      }).complianceResult,
+      }).selfReview,
     ).toBe("Y");
     expect(
       auditResultToKabritaExportRecord({
@@ -268,15 +271,15 @@ describe("佳贝艾特专属导入导出模板", () => {
         autoStatus: "FAILED",
         imageStatus: "COMPLIANT",
         failureReasons: '["基础奖励未达成：互动合计 9"]',
-      }).complianceResult,
-    ).toBe("N-其他不合规");
+      }).selfReview,
+    ).toBe("N-其他不合规；基础奖励未达成：互动合计 9");
     expect(
       auditResultToKabritaExportRecord({
         ...row,
         autoStatus: "NEEDS_REVIEW",
         imageStatus: "COMPLIANT",
         failureReasons: '["基础奖励互动数据无法确认，需人工复核"]',
-      }).complianceResult,
+      }).selfReview,
     ).toBe("");
     expect(
       auditResultToKabritaExportRecord({
@@ -284,8 +287,8 @@ describe("佳贝艾特专属导入导出模板", () => {
         autoStatus: "FAILED",
         pageStatus: "NO_PERMISSION",
         failureReasons: '["当前账号无权访问笔记"]',
-      }).complianceResult,
-    ).toBe("N-帖子无法查看");
+      }).selfReview,
+    ).toBe("N-帖子无法查看；页面无法访问：当前账号无权访问笔记");
 
     const exportBytes = await buildConfiguredWorkbook({
       templates,
@@ -297,13 +300,69 @@ describe("佳贝艾特专属导入导出模板", () => {
     await exportWorkbook.xlsx.load(exportBytes);
     const sheet = exportWorkbook.worksheets[0];
     const headers = (sheet.getRow(1).values as unknown[]).slice(1);
-    expect(headers).toEqual(kabritaHeaders);
+    expect(headers).toEqual(kabritaExportHeaders);
     expect(headers).not.toEqual(
-      expect.arrayContaining(["自审", "阶段", "内容渠道"]),
+      expect.arrayContaining(["是否符合", "阶段", "IFFO", "GUM", "产品阶段话题"]),
     );
-    expect(sheet.getCell("M2").text).toBe("N-图片不足");
+    expect(sheet.getCell("M2").text).toBe(
+      "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张",
+    );
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
     expect(sheet.autoFilter).toBeTruthy();
+  });
+
+  it("混合品牌导出使用互不污染的达能和佳贝艾特工作表", async () => {
+    const bytes = await buildConfiguredWorkbook({
+      templates,
+      kind: "auditResults",
+      records: [],
+      sections: [
+        {
+          sheetName: "达能审核结果",
+          records: [{
+            platform: "小红书",
+            productName: "爱他美澳洲白金版",
+            productStageTopic: "IFFO",
+            selfReview: "Y",
+          }],
+        },
+        {
+          sheetName: "佳贝艾特审核结果",
+          templateBrand: "佳贝艾特",
+          records: [{
+            purchaseProductLine: "荷兰佳贝1",
+            xiaohongshuPublishLink: "https://xhslink.com/kabrita",
+            selfReview: "Y",
+          }],
+        },
+      ],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+      "达能审核结果",
+      "佳贝艾特审核结果",
+    ]);
+    expect(
+      (workbook.getWorksheet("达能审核结果")!.getRow(1).values as unknown[])
+        .slice(1),
+    ).toEqual([
+      "平台",
+      "店铺名称",
+      "客户名",
+      "产品系列",
+      "阶段",
+      "订单编号",
+      "内容渠道",
+      "链接",
+      "发帖时间",
+      "自审",
+    ]);
+    expect(
+      (workbook.getWorksheet("佳贝艾特审核结果")!.getRow(1).values as unknown[])
+        .slice(1),
+    ).toEqual(kabritaExportHeaders);
   });
 });
 
@@ -879,20 +938,20 @@ describe("模板驱动导出", () => {
       autoStatus: "FAILED",
       bodyStatus: "EMPTY",
       failureReasons: '["有效正文字数不足（29/30）"]',
-    })).toBe("N-字数不够");
+    })).toBe("N-字数不够；正文字数不足：当前 29 字，要求 ≥30 字");
     expect(selfReview({
       autoStatus: "FAILED",
       imageStatus: "NON_COMPLIANT",
       failureReasons: '["图片数量不足（1/2）"]',
-    })).toBe("N-图片不足");
+    })).toBe("N-图片不足；图片数量不足：当前 1 张，要求 ≥2 张");
     expect(selfReview({
       autoStatus: "FAILED",
       failureReasons: '["正文段位不属于当前产品阶段话题：IFFO"]',
-    })).toBe("N-阶段不符");
+    })).toBe("N-阶段不符；正文段位不属于当前产品阶段话题：IFFO");
     expect(selfReview({
       autoStatus: "FAILED",
       failureReasons: '["笔记当前未公开"]',
-    })).toBe("N-其他不合规");
+    })).toBe("N-其他不合规；笔记当前未公开");
     expect(selfReview({
       autoStatus: "NEEDS_REVIEW",
       imageExtractionStatus: "IMAGES_READ_FAILED",
@@ -910,7 +969,7 @@ describe("模板驱动导出", () => {
         ...compactSource.task,
         notes: buildImportedTaskNotes({ contentChannel: "抖音" }),
       },
-    })).toBe("N-帖子无法查看");
+    })).toBe("N-帖子无法查看；页面无法访问：页面不存在");
     expect(selfReview({
       autoStatus: "FAILED",
       topicsCompliant: false,

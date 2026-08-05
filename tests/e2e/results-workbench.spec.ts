@@ -27,7 +27,7 @@ const kabritaResultExportHeaders = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
-  "是否符合",
+  "自审",
 ];
 
 const removedResultExportHeaders = [
@@ -236,7 +236,12 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   ).json()).data as { total: number };
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile((await download.path())!);
-  expect(workbook.worksheets[0].rowCount - 1).toBe(filteredList.total);
+  expect(
+    workbook.worksheets.reduce(
+      (total, worksheet) => total + Math.max(worksheet.rowCount - 1, 0),
+      0,
+    ),
+  ).toBe(filteredList.total);
   const exportHeaders = workbook.worksheets[0]
     .getRow(1)
     .values as unknown[];
@@ -393,7 +398,7 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
   await expect(
     page
       .getByRole("region", { name: "失败原因" })
-      .getByText(`缺少精准话题：${missingTopic}`, { exact: true }),
+      .getByText(`缺少必带话题：${missingTopic}`, { exact: true }),
   ).toBeVisible();
   await linkActions
     .getByRole("button", { name: "复制原链接", exact: true })
@@ -438,7 +443,7 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
   await expect(
     drawer
       .getByRole("region", { name: "失败原因" })
-      .getByText(`缺少精准话题：${missingTopic}`, { exact: true }),
+      .getByText(`缺少必带话题：${missingTopic}`, { exact: true }),
   ).toBeVisible();
 });
 

@@ -1,15 +1,11 @@
 "use client";
 
 import { Tooltip } from "antd";
-import { parseJsonArray } from "@/lib/client";
-import {
-  auditResultLabels,
-  businessFailureReasonLabel,
-} from "@/lib/zh-CN";
+import { auditResultLabels } from "@/lib/zh-CN";
 import {
   auditDetailStatusLabel,
-  filterAuditDetailReasons,
 } from "@/lib/audit-detail-visibility";
+import { auditConclusionFailureReasons } from "@/lib/result-detail-presentation";
 import { auditResultListDisplay } from "@/lib/result-display";
 import AuditStatusTag from "./AuditStatusTag";
 import type { ResultRow } from "./types";
@@ -35,26 +31,28 @@ export default function AuditConclusionCell({
 }) {
   const unavailableDisplay = auditResultListDisplay(row);
   if (unavailableDisplay) {
+    const reasons = auditConclusionFailureReasons(row);
     return (
-      <div className={styles.conclusionLine}>
-        <span
-          className={`${styles.conclusionDot} ${styles.dotDanger}`}
-          aria-hidden="true"
-        />
-        <strong className={styles.cellPrimary}>
-          {unavailableDisplay.auditConclusion}
-        </strong>
+      <div className={styles.stack}>
+        <div className={styles.conclusionLine}>
+          <span
+            className={`${styles.conclusionDot} ${styles.dotDanger}`}
+            aria-hidden="true"
+          />
+          <strong className={styles.cellPrimary}>
+            {unavailableDisplay.auditConclusion}
+          </strong>
+        </div>
+        {reasons.length ? (
+          <Tooltip title={reasons.join("；")}>
+            <div className={styles.reasonText}>{reasons.join("；")}</div>
+          </Tooltip>
+        ) : null}
       </div>
     );
   }
 
-  const rawReasons = parseJsonArray(row.failureReasons).filter(
-    (reason) =>
-      !/首图|视觉|产品实拍|合照|罐体|平台导向|图片内容/u.test(reason),
-  );
-  const reasons = detailView
-    ? filterAuditDetailReasons(rawReasons)
-    : rawReasons.map(businessFailureReasonLabel);
+  const reasons = auditConclusionFailureReasons(row);
   const manual = row.manualReviews[0];
   const autoMeta = resultMeta[row.autoStatus] || {
     className: styles.dotInfo,

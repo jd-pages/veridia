@@ -145,6 +145,7 @@ function aliasIndex(templates: ImportExportTemplates) {
   const fields = new Set<StandardField>([
     ...templates.columnOrder.import,
     ...KABRITA_TEMPLATE_FIELDS,
+    "complianceResult",
     // 兼容旧版四列表格；新模板不再要求活动列，但已有文件仍可指定活动。
     "activityName",
   ]);

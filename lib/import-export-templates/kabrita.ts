@@ -4,7 +4,7 @@ import { normalizeTemplateHeader } from "./validation";
 export const KABRITA_BRAND_NAME = "佳贝艾特" as const;
 export const DANONE_BRAND_NAME = "达能" as const;
 
-export const KABRITA_TEMPLATE_FIELDS = [
+export const KABRITA_IMPORT_FIELDS = [
   "registrationTime",
   "channel",
   "shopName",
@@ -17,11 +17,24 @@ export const KABRITA_TEMPLATE_FIELDS = [
   "xiaohongshuAccount",
   "xiaohongshuPublishLink",
   "purchaseProductLine",
-  "complianceResult",
 ] as const satisfies readonly StandardField[];
 
-export type KabritaTemplateField = (typeof KABRITA_TEMPLATE_FIELDS)[number];
-export type KabritaRawValues = Partial<Record<KabritaTemplateField, string>>;
+export const KABRITA_EXPORT_FIELDS = [
+  ...KABRITA_IMPORT_FIELDS,
+  "selfReview",
+] as const satisfies readonly StandardField[];
+
+// 保留旧名称供历史导入代码读取；它现在只代表佳贝艾特导入字段。
+export const KABRITA_TEMPLATE_FIELDS = KABRITA_IMPORT_FIELDS;
+
+export type KabritaTemplateField = (typeof KABRITA_IMPORT_FIELDS)[number];
+type KabritaKnownField =
+  | KabritaTemplateField
+  | "selfReview"
+  | "complianceResult";
+export type KabritaRawValues = Partial<
+  Record<KabritaTemplateField | "complianceResult", string>
+>;
 
 export const KABRITA_REQUIRED_FIELDS = [
   "xiaohongshuPublishLink",
@@ -29,7 +42,7 @@ export const KABRITA_REQUIRED_FIELDS = [
 ] as const satisfies readonly KabritaTemplateField[];
 
 export const KABRITA_FIELD_DEFINITIONS: Record<
-  KabritaTemplateField,
+  KabritaKnownField,
   ImportExportTemplates["fieldDefinitions"][string]
 > = {
   registrationTime: {
@@ -92,6 +105,11 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
     type: "string",
     description: "用于匹配佳贝艾特荷兰版或港版产品",
   },
+  selfReview: {
+    displayName: "自审",
+    type: "string",
+    description: "系统最终审核结论及具体不通过原因",
+  },
   complianceResult: {
     displayName: "是否符合",
     type: "string",
@@ -112,16 +130,14 @@ export const KABRITA_TEMPLATE_EXAMPLES: KabritaRawValues = {
   xiaohongshuAccount: "示例账号",
   xiaohongshuPublishLink: "https://xhslink.com/示例短链",
   purchaseProductLine: "荷兰佳贝1",
-  complianceResult: "",
 };
 
 const KABRITA_CORE_HEADERS = [
   "购买产品线",
   "小红书发布链接",
-  "是否符合",
 ].map(normalizeTemplateHeader);
 
-const KABRITA_ALL_HEADERS = KABRITA_TEMPLATE_FIELDS.map(
+const KABRITA_ALL_HEADERS = ([...KABRITA_IMPORT_FIELDS, "complianceResult"] as const).map(
   (field) => normalizeTemplateHeader(KABRITA_FIELD_DEFINITIONS[field].displayName),
 );
 
@@ -136,7 +152,7 @@ export function isKabritaTemplateHeader(headers: readonly string[]) {
   const fieldMatches = KABRITA_ALL_HEADERS.filter((header) =>
     normalized.has(header),
   ).length;
-  return coreMatches >= 2 && fieldMatches >= 5 &&
+  return coreMatches >= 1 && fieldMatches >= 5 &&
     !DANONE_CORE_HEADERS.some((header) => normalized.has(header));
 }
 
@@ -152,7 +168,7 @@ export function kabritaRawValues(
   values: Partial<Record<StandardField, string>>,
 ): KabritaRawValues {
   return Object.fromEntries(
-    KABRITA_TEMPLATE_FIELDS.map((field) => [field, values[field] || ""]),
+    KABRITA_IMPORT_FIELDS.map((field) => [field, values[field] || ""]),
   ) as KabritaRawValues;
 }
 

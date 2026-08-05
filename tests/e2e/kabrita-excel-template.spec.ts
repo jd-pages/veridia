@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import ExcelJS from "exceljs";
 import { E2E_ORIGIN } from "./e2e-origin";
 
-const headers = [
+const importHeaders = [
   "登记时间",
   "渠道",
   "店铺名称",
@@ -15,10 +15,11 @@ const headers = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
-  "是否符合",
 ];
 
-test("佳贝艾特13列模板下载、识别和六种购买产品线预检", async ({
+const exportHeaders = [...importHeaders, "自审"];
+
+test("佳贝艾特12列导入模板下载、识别和六种购买产品线预检", async ({
   page,
 }) => {
   const login = await page.request.post("/api/auth/login", {
@@ -36,11 +37,11 @@ test("佳贝艾特13列模板下载、识别和六种购买产品线预检", asy
   );
   expect(
     (templateWorkbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
-  ).toEqual(headers);
+  ).toEqual(importHeaders);
 
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("佳贝艾特导入");
-  sheet.addRow(headers);
+  sheet.addRow(importHeaders);
   const productLines = [
     "荷兰佳贝1",
     "荷兰佳贝2",
@@ -63,7 +64,6 @@ test("佳贝艾特13列模板下载、识别和六种购买产品线预检", asy
       "",
       `标题 ${E2E_ORIGIN}/mock/xhs?case=passed&kabrita=${index + 1}`,
       productLine,
-      "",
     ]);
   });
 
@@ -102,7 +102,9 @@ test("佳贝艾特13列模板下载、识别和六种购买产品线预检", asy
     validCount: 6,
     invalidCount: 0,
   });
-  expect(preview.recognizedFields.map((field) => field.header)).toEqual(headers);
+  expect(preview.recognizedFields.map((field) => field.header)).toEqual(
+    importHeaders,
+  );
   expect(preview.rows.map((row) => row.purchaseProductLine)).toEqual(
     productLines,
   );
@@ -265,10 +267,13 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和13列导
 
   const expectedExports = [
     [passed.id, "Y"],
-    [below.id, "N-其他不合规"],
-    [contentFailed.id, "N-缺少话题"],
+    [below.id, "N-其他不合规；基础奖励未达成：互动合计 9"],
+    [
+      contentFailed.id,
+      "N-缺少话题；缺少必带话题：#佳贝艾特荷兰版",
+    ],
     [unreadable.id, ""],
-    [unavailable.id, "N-帖子无法查看"],
+    [unavailable.id, "N-帖子无法查看；页面无法访问：笔记页面不存在"],
   ] as const;
   for (const [id, expected] of expectedExports) {
     const exportResponse = await page.request.get(`/api/results/export?ids=${id}`);
@@ -279,7 +284,7 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和13列导
     );
     expect(
       (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
-    ).toEqual(headers);
+    ).toEqual(exportHeaders);
     expect(workbook.worksheets[0].getCell("M2").text).toBe(expected);
   }
 

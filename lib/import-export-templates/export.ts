@@ -12,6 +12,7 @@ import {
   stageTopicFromRuleSnapshot,
 } from "@/lib/product-stage";
 import { isUnavailableNoteResult } from "@/lib/result-display";
+import { auditConclusionFailureReasons } from "@/lib/result-detail-presentation";
 import {
   importedPublishTimeValue,
   importedTaskMetadataFromNotes,
@@ -25,10 +26,11 @@ import type {
 import { utf8BomCsv } from "./tabular";
 import {
   KABRITA_BRAND_NAME,
+  KABRITA_EXPORT_FIELDS,
   KABRITA_FIELD_DEFINITIONS,
+  KABRITA_IMPORT_FIELDS,
   KABRITA_REQUIRED_FIELDS,
   KABRITA_TEMPLATE_EXAMPLES,
-  KABRITA_TEMPLATE_FIELDS,
   kabritaFieldDefinition,
 } from "./kabrita";
 
@@ -40,6 +42,9 @@ export interface CompactAuditResultExportSourceRow {
   bodyStatus: string;
   topicsCompliant: boolean;
   failureReasons: string;
+  ruleSnapshot?: string;
+  effectiveBodyLength?: number;
+  imageCount?: number;
   imageExtractionStatus: string;
   imageStatus: string;
   task: {
@@ -62,6 +67,7 @@ export interface CompactAuditResultExportSourceRow {
     publishedAt: Date | null;
     title: string | null;
     body: string | null;
+    topics?: Array<{ displayText: string }>;
   };
   manualReviews: Array<{ result: string }>;
 }
@@ -100,7 +106,7 @@ function columns(
   templateBrand?: ImportTemplateBrand,
 ) {
   if (kind === "auditResults" && templateBrand === KABRITA_BRAND_NAME) {
-    return KABRITA_TEMPLATE_FIELDS.map((field) => ({
+    return KABRITA_EXPORT_FIELDS.map((field) => ({
       field,
       displayName: KABRITA_FIELD_DEFINITIONS[field].displayName,
     }));
@@ -181,6 +187,7 @@ function compactSelfReview(row: CompactAuditResultExportSourceRow) {
 
   if (
     unavailable ||
+    row.pageStatus === "NO_PERMISSION" ||
     /PAGE_NOT_FOUND|PAGE_UNAVAILABLE|NOT_ACCESSIBLE|HTTP[_ -]?404|\b404\b|页面(?:无法访问|不见了|不存在)|笔记不存在|无法浏览|链接失效|该内容无法查看/iu.test(
       evidence,
     )
@@ -229,6 +236,25 @@ function compactSelfReview(row: CompactAuditResultExportSourceRow) {
   return "N-其他不合规";
 }
 
+export function detailedSelfReview(row: CompactAuditResultExportSourceRow) {
+  const summary = compactSelfReview(row);
+  if (!summary || summary === "Y") return summary;
+  let details = auditConclusionFailureReasons(row).filter(
+    (reason) =>
+      !/^(?:话题缺少|缺少话题|缺少指定话题|话题未命中|字数不足|图片不足|阶段不符|不合规|审核失败)$/u.test(
+        reason,
+      ),
+  );
+  if (summary === "N-帖子无法查看") {
+    details = details.map((reason) =>
+      reason.startsWith("页面无法访问：")
+        ? reason
+        : `页面无法访问：${reason}`,
+    );
+  }
+  return details.length ? `${summary}；${details.join("；")}` : summary;
+}
+
 /**
  * 审核结果下载固定为十列，只读取这十列实际需要的数据。
  * 历史结果中的规则快照或技术审核字段即使不完整，也不应阻断人工导出。
@@ -249,7 +275,7 @@ export function auditResultToCompactExportRecord(
     publishTime: importedMetadata.publishTime
       ? importedPublishTimeValue(importedMetadata.publishTime)
       : row.note.publishedAt,
-    selfReview: compactSelfReview(row),
+    selfReview: detailedSelfReview(row),
   };
 }
 
@@ -276,11 +302,7 @@ export function auditResultToKabritaExportRecord(
       raw.purchaseProductLine ||
       row.task.product.seriesName ||
       row.task.product.name,
-    complianceResult: ["NOT_FOUND", "DELETED", "NO_PERMISSION", "READ_FAILED"].includes(
-      row.pageStatus,
-    )
-      ? "N-帖子无法查看"
-      : compactSelfReview(row),
+    selfReview: detailedSelfReview(row),
   };
 }
 
@@ -359,6 +381,9 @@ export function auditResultToExportRecord(row: {
       )
     : null;
   const failureReasonList = list(row.failureReasons, separator);
+  const detailedFailureReasonList = auditConclusionFailureReasons(row).join(
+    separator,
+  );
   const autoAuditResult = businessStatusLabel(row.autoStatus, "audit");
   const manualAuditResult = manual
     ? businessStatusLabel(manual.result, "audit")
@@ -442,6 +467,7 @@ export function auditResultToExportRecord(row: {
       ? businessFailureReasonLabel(row.task.failureCode)
       : "无异常",
     failureReason:
+      detailedFailureReasonList ||
       failureReasonList ||
       businessFailureReasonLabel(row.task.failureMessage || ""),
     needsManualReview: requiresManualReview ? "是" : "否",
@@ -457,8 +483,8 @@ export function auditResultToExportRecord(row: {
         ? "审核创建时间"
         : "审核完成时间",
     failedReasons: unavailable
-      ? "笔记不存在"
-      : list(row.failureReasons, separator),
+      ? detailedFailureReasonList
+      : detailedFailureReasonList || list(row.failureReasons, separator),
     selfReview,
     matchedRules: row.ruleResults
       .filter((rule) => rule.passed)
@@ -476,14 +502,25 @@ export async function buildConfiguredWorkbook(input: {
   kind: "auditResults" | "auditTasks";
   records: ExportValueRecord[];
   templateBrand?: ImportTemplateBrand;
+  sections?: Array<{
+    sheetName: string;
+    records: ExportValueRecord[];
+    templateBrand?: ImportTemplateBrand;
+  }>;
 }) {
-  const { templates, kind, records, templateBrand } = input;
+  const { templates, kind } = input;
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "VERIDIA";
   workbook.created = new Date();
-  const sheetName =
-    templates.exportTemplates[kind]?.sheetName ||
-    (kind === "auditResults" ? "审核结果" : "审核任务");
+  const sections = input.sections || [{
+    sheetName:
+      templates.exportTemplates[kind]?.sheetName ||
+      (kind === "auditResults" ? "审核结果" : "审核任务"),
+    records: input.records,
+    templateBrand: input.templateBrand,
+  }];
+  for (const section of sections) {
+  const { records, templateBrand, sheetName } = section;
   const sheet = workbook.addWorksheet(sheetName);
   const selected = columns(templates, kind, templateBrand);
   const widths: Partial<Record<StandardField, number>> = {
@@ -563,9 +600,7 @@ export async function buildConfiguredWorkbook(input: {
       sheet.getColumn(field).numFmt = "yyyy-mm-dd hh:mm:ss";
     }
   }
-  const resultField = templateBrand === KABRITA_BRAND_NAME
-    ? "complianceResult"
-    : "selfReview";
+  const resultField = "selfReview";
   const selfReviewColumn =
     selected.findIndex((column) => column.field === resultField) + 1;
   if (selfReviewColumn > 0) {
@@ -577,10 +612,7 @@ export async function buildConfiguredWorkbook(input: {
           '"Y,N-帖子无法查看,N-内容渠道不支持,N-缺少话题,N-字数不够,N-图片不足,N-阶段不符,N-其他不合规"',
         ],
         showErrorMessage: true,
-        errorTitle:
-          templateBrand === KABRITA_BRAND_NAME
-            ? "是否符合值无效"
-            : "自审值无效",
+        errorTitle: "自审值无效",
         error:
           "请选择 Y 或一个预设的 N 类原因，也可以留空。",
       };
@@ -591,6 +623,7 @@ export async function buildConfiguredWorkbook(input: {
     from: { row: 1, column: 1 },
     to: { row: Math.max(1, sheet.rowCount), column: sheet.columnCount },
   };
+  }
   return workbook.xlsx.writeBuffer();
 }
 
@@ -633,7 +666,7 @@ export async function buildImportTemplateWorkbook(
   );
   const fields: readonly StandardField[] =
     options?.templateBrand === KABRITA_BRAND_NAME
-      ? KABRITA_TEMPLATE_FIELDS
+      ? KABRITA_IMPORT_FIELDS
       : templates.columnOrder.import;
   const widths: Partial<Record<StandardField, number>> = {
     platform: 16,
@@ -788,7 +821,7 @@ export function buildImportTemplateCsv(
 ) {
   const fields: readonly StandardField[] =
     options?.templateBrand === KABRITA_BRAND_NAME
-      ? KABRITA_TEMPLATE_FIELDS
+      ? KABRITA_IMPORT_FIELDS
       : templates.columnOrder.import;
   return utf8BomCsv(
     fields.map(
@@ -805,4 +838,24 @@ export function buildImportTemplateCsv(
       ),
     ],
   );
+}
+
+export function buildBrandedAuditResultsCsv(input: {
+  templates: ImportExportTemplates;
+  sections: Array<{
+    title: string;
+    records: ExportValueRecord[];
+    templateBrand?: ImportTemplateBrand;
+  }>;
+}) {
+  const sections = input.sections.map((section) => {
+    const csv = buildConfiguredCsv({
+      templates: input.templates,
+      kind: "auditResults",
+      records: section.records,
+      templateBrand: section.templateBrand,
+    }).replace(/^\uFEFF/u, "");
+    return `${section.title}\r\n${csv}`;
+  });
+  return `\uFEFF${sections.join("\r\n\r\n")}`;
 }
