@@ -11,6 +11,7 @@ import {
   Dropdown,
   Form,
   Input,
+  Modal,
   Progress,
   Result,
   Row,
@@ -27,6 +28,7 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   DatabaseOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   FileSearchOutlined,
   InboxOutlined,
@@ -70,6 +72,7 @@ import {
   taskExecutionFilterLabels,
   type TaskExecutionFilter,
 } from "@/lib/automation/task-execution-filter";
+import { canClearAutomaticBatch } from "@/lib/automation/task-view";
 
 interface Product {
   id: string;
@@ -228,6 +231,21 @@ const activeBatchStatuses = new Set([
   "SECURITY_RESTRICTED",
 ]);
 
+const emptyBatchStats: BatchStats = {
+  total: 0,
+  waiting: 0,
+  processing: 0,
+  succeeded: 0,
+  failed: 0,
+  readFailed: 0,
+  loginExpired: 0,
+  needsReview: 0,
+  cancelled: 0,
+  completed: 0,
+  remaining: 0,
+  progress: 0,
+};
+
 const ALL_CURRENT_BATCHES = "__ALL_CURRENT_BATCHES__";
 
 interface TaskPage {
@@ -235,6 +253,14 @@ interface TaskPage {
   total: number;
   page: number;
   pageSize: number;
+}
+
+interface ClearBatchResponse {
+  clearedBatchId: string;
+  clearedTaskCount: number;
+  retainedAuditResultCount: number;
+  nextBatchId: string | null;
+  clearedAt: string;
 }
 
 const governanceTone: Record<
@@ -323,6 +349,9 @@ export default function TasksPage() {
   const [taskExecutionFilter, setTaskExecutionFilter] =
     useState<TaskExecutionFilter>("ALL");
   const loadSequence = useRef(0);
+  const [batchPendingClear, setBatchPendingClear] =
+    useState<AuditBatch | null>(null);
+  const [clearingBatchId, setClearingBatchId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
@@ -549,7 +578,10 @@ export default function TasksPage() {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      if (batches.some((batch) => activeBatchStatuses.has(batch.status))) {
+      if (
+        !clearingBatchId &&
+        batches.some((batch) => activeBatchStatuses.has(batch.status))
+      ) {
         void load(
           true,
           trackedBatchIds,
@@ -563,6 +595,7 @@ export default function TasksPage() {
     return () => window.clearInterval(timer);
   }, [
     batches,
+    clearingBatchId,
     load,
     selectedBatchId,
     taskPage,
@@ -622,6 +655,7 @@ export default function TasksPage() {
     } satisfies AuditBatch;
   }, [batches, selectedBatchId]);
   const isCombinedQueue = selectedBatch?.id === ALL_CURRENT_BATCHES;
+  const displayBatchStats = selectedBatch?.stats || emptyBatchStats;
   const taskExecutionEmptyText =
     taskExecutionFilter === "ALL"
       ? "当前批次暂无执行记录"
@@ -778,6 +812,62 @@ export default function TasksPage() {
       );
     } catch (error) {
       message.error(error instanceof Error ? error.message : "队列操作失败");
+    }
+  };
+
+  const requestClearSelectedBatch = () => {
+    if (!selectedBatch || isCombinedQueue || clearingBatchId) return;
+    if (!canClearAutomaticBatch({
+      status: selectedBatch.status,
+      processingTaskCount: selectedBatch.stats.processing,
+      currentTaskId: selectedBatch.currentTask?.id,
+    })) {
+      message.warning("当前批次仍在运行，请先暂停或取消任务后再清除。");
+      return;
+    }
+    setBatchPendingClear(selectedBatch);
+  };
+
+  const confirmClearSelectedBatch = async () => {
+    const target = batchPendingClear;
+    if (!target || clearingBatchId) return;
+    loadSequence.current += 1;
+    setClearingBatchId(target.id);
+    try {
+      const result = await apiFetch<ClearBatchResponse>(
+        `/api/automation/batches/${target.id}/clear`,
+        { method: "POST" },
+      );
+      const nextBatchIds = result.nextBatchId ? [result.nextBatchId] : [];
+      setBatches((current) =>
+        current.filter((batch) => batch.id !== result.clearedBatchId),
+      );
+      setTrackedBatchIds(nextBatchIds);
+      setSelectedBatchId(result.nextBatchId || ALL_CURRENT_BATCHES);
+      setTaskExecutionFilter("ALL");
+      setTaskPage(1);
+      setTasks([]);
+      setTaskTotal(0);
+      rememberCurrentBatches(nextBatchIds);
+      setBatchPendingClear(null);
+      if (result.nextBatchId) {
+        await load(
+          true,
+          nextBatchIds,
+          1,
+          taskPageSize,
+          result.nextBatchId,
+          "ALL",
+        );
+      }
+      message.success(
+        `已清除当前批次，保留 ${result.retainedAuditResultCount} 条正式审核结果。`,
+      );
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "清除当前批次失败");
+      throw error;
+    } finally {
+      setClearingBatchId(null);
     }
   };
 
@@ -1458,15 +1548,13 @@ export default function TasksPage() {
             </Tag>
           ) : null}
         </div>
-        {selectedBatch ? (
-          <>
-            <div className={styles.statsGrid}>
+        <div className={styles.statsGrid}>
               {[
                 {
                   filter: "ALL" as const,
                   label: "全部",
                   name: "总链接数",
-                  value: selectedBatch.stats.total,
+                  value: displayBatchStats.total,
                   tone: "slate",
                   icon: <DatabaseOutlined />,
                 },
@@ -1474,7 +1562,7 @@ export default function TasksPage() {
                   filter: "WAITING" as const,
                   label: "等待中",
                   name: "等待数量",
-                  value: selectedBatch.stats.waiting,
+                  value: displayBatchStats.waiting,
                   tone: "neutral",
                   icon: <ClockCircleOutlined />,
                 },
@@ -1482,15 +1570,15 @@ export default function TasksPage() {
                   filter: "PROCESSING" as const,
                   label: "处理中",
                   name: "处理中",
-                  value: selectedBatch.stats.processing,
+                  value: displayBatchStats.processing,
                   tone: "blue",
-                  icon: <SyncOutlined spin={selectedBatch.stats.processing > 0} />,
+                  icon: <SyncOutlined spin={displayBatchStats.processing > 0} />,
                 },
                 {
                   filter: "SUCCEEDED" as const,
                   label: "成功",
                   name: "成功数量",
-                  value: selectedBatch.stats.succeeded,
+                  value: displayBatchStats.succeeded,
                   tone: "green",
                   icon: <CheckCircleOutlined />,
                 },
@@ -1498,7 +1586,7 @@ export default function TasksPage() {
                   filter: "FAILED" as const,
                   label: "处理失败",
                   name: "失败数量",
-                  value: selectedBatch.stats.failed,
+                  value: displayBatchStats.failed,
                   tone: "red",
                   icon: <CloseCircleOutlined />,
                 },
@@ -1506,7 +1594,7 @@ export default function TasksPage() {
                   filter: "NEEDS_REVIEW" as const,
                   label: "待人工复核",
                   name: "人工复核",
-                  value: selectedBatch.stats.needsReview,
+                  value: displayBatchStats.needsReview,
                   tone: "amber",
                   icon: <UserSwitchOutlined />,
                 },
@@ -1516,6 +1604,7 @@ export default function TasksPage() {
                   key={item.label}
                   aria-label={`筛选${item.label}记录`}
                   aria-pressed={taskExecutionFilter === item.filter}
+                  disabled={!selectedBatch}
                   className={`${styles.statCard} ${styles[item.tone]} ${
                     taskExecutionFilter === item.filter
                       ? styles.statCardSelected
@@ -1531,8 +1620,9 @@ export default function TasksPage() {
                   </div>
                 </button>
               ))}
-            </div>
-
+        </div>
+        {selectedBatch ? (
+          <>
             <div className={styles.batchOverview}>
               <div className={styles.batchHeading}>
                 <div>
@@ -1548,10 +1638,26 @@ export default function TasksPage() {
                     <span>{selectedBatch.currentTask?.url || "无"}</span>
                   </p>
                 </div>
-                <span className={styles.remainingCount}>
-                  {businessUiText.remaining}
-                  <strong>{selectedBatch.stats.remaining}</strong>
-                </span>
+                <div className={styles.batchHeadingActions}>
+                  <span className={styles.remainingCount}>
+                    {businessUiText.remaining}
+                    <strong>{selectedBatch.stats.remaining}</strong>
+                  </span>
+                  <Button
+                    danger
+                    icon={<DeleteOutlined />}
+                    loading={clearingBatchId === selectedBatch.id}
+                    disabled={!canOperate || isCombinedQueue}
+                    title={
+                      isCombinedQueue
+                        ? "请先从批次下拉框选择一个批次"
+                        : "清除当前选中的审核批次"
+                    }
+                    onClick={requestClearSelectedBatch}
+                  >
+                    清除当前批次
+                  </Button>
+                </div>
               </div>
               <Progress
                 percent={selectedBatch.stats.progress}
@@ -1840,8 +1946,8 @@ export default function TasksPage() {
         ) : (
           <Result
             status="info"
-            title="暂无自动审核批次"
-            subTitle="粘贴链接或导入 Excel 后，系统会自动开始逐条审核"
+            title="暂无审核任务"
+            subTitle="创建审核任务后，审核进度和执行记录将在这里显示。"
           />
         )}
       </Card>
@@ -1858,6 +1964,7 @@ export default function TasksPage() {
           <FileSearchOutlined className={styles.headerIcon} />
         </div>
         {selectedBatch ? (
+          <>
           <Descriptions
             className={styles.currentTaskSummary}
             size="small"
@@ -1905,8 +2012,7 @@ export default function TasksPage() {
               {formatDateTime(selectedBatch.finishedAt)}
             </Descriptions.Item>
           </Descriptions>
-        ) : null}
-        <Table<Task>
+          <Table<Task>
           className={styles.enterpriseTable}
           rowKey="id"
           loading={loading}
@@ -1993,8 +2099,36 @@ export default function TasksPage() {
             },
           ]}
           pagination={{ pageSize: 8 }}
-        />
+          />
+          </>
+        ) : (
+          <Result
+            status="info"
+            title="暂无审核任务"
+            subTitle="创建审核任务后，审核进度和执行记录将在这里显示。"
+          />
+        )}
       </Card>
+      <Modal
+        title="清除当前批次？"
+        open={Boolean(batchPendingClear)}
+        okText="确认清除"
+        cancelText="取消"
+        okButtonProps={{ danger: true }}
+        cancelButtonProps={{ disabled: Boolean(clearingBatchId) }}
+        confirmLoading={Boolean(clearingBatchId)}
+        closable={!clearingBatchId}
+        maskClosable={!clearingBatchId}
+        destroyOnHidden
+        onOk={() => confirmClearSelectedBatch()}
+        onCancel={() => {
+          if (!clearingBatchId) setBatchPendingClear(null);
+        }}
+      >
+        <p>
+          清除后，该批次的审核进度、执行记录和任务内容将从审核任务页面移除。此操作不可撤销。
+        </p>
+      </Modal>
     </div>
   );
 }

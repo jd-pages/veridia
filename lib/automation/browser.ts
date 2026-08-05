@@ -327,6 +327,12 @@ export function heartbeatXhsAuditLock(batchId: string, status: string) {
   };
 }
 
+export function clearXhsAuditLockForBatch(batchId: string) {
+  if (state.auditLock?.batchId !== batchId) return false;
+  state.auditLock = undefined;
+  return true;
+}
+
 export async function getXhsSessionDiagnostics() {
   const session = await getAutomationSession();
   return {

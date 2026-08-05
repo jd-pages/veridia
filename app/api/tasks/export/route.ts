@@ -7,6 +7,7 @@ import {
   buildConfiguredWorkbook,
   type ExportValueRecord,
 } from "@/lib/import-export-templates/export";
+import { visibleAuditTaskWhere } from "@/lib/automation/task-view";
 
 export async function GET(request: Request) {
   const user = await requireApiUser(["ADMIN", "OPERATOR", "VIEWER"]);
@@ -14,7 +15,12 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const batchId = searchParams.get("batchId") || undefined;
   const tasks = await prisma.auditTask.findMany({
-    where: batchId ? { batchId } : {},
+    where: {
+      AND: [
+        visibleAuditTaskWhere,
+        ...(batchId ? [{ batchId }] : []),
+      ],
+    },
     include: {
       product: { select: { name: true } },
       campaign: { select: { name: true } },

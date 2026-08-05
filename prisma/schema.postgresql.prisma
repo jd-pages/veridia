@@ -322,6 +322,8 @@ model AuditBatch {
   finishedAt       DateTime?
   pausedAt         DateTime?
   cancelledAt      DateTime?
+  clearedAt        DateTime?
+  clearedBy        String?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
   product          Product?    @relation(fields: [productId], references: [id])
@@ -331,6 +333,7 @@ model AuditBatch {
 
   @@index([status, createdAt])
   @@index([createdBy, createdAt])
+  @@index([clearedAt, createdAt])
   @@map("audit_batches")
 }
 

@@ -59,6 +59,7 @@ export async function createAutomaticBatchInTransaction(
           "SECURITY_RESTRICTED",
         ],
       },
+      clearedAt: null,
     },
     select: { id: true },
   });
@@ -220,7 +221,10 @@ export async function getAutomaticBatches(
   const requestedIds = [batchId, ...batchIds].filter(
     (value): value is string => Boolean(value),
   );
-  const where = requestedIds.length ? { id: { in: requestedIds } } : undefined;
+  const where: Prisma.AuditBatchWhereInput = {
+    clearedAt: null,
+    ...(requestedIds.length ? { id: { in: requestedIds } } : {}),
+  };
   const take = Math.min(Math.max(limit, 1), 50);
   if (!includeTasks) {
     const batches = await prisma.auditBatch.findMany({

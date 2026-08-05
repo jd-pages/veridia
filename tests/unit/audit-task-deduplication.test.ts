@@ -112,6 +112,13 @@ describe("审核任务按本地自然日去重", () => {
       expect.objectContaining({
         where: {
           AND: [
+            {
+              OR: [
+                { batchId: null },
+                { batch: { clearedAt: null } },
+                { auditResults: { some: {} } },
+              ],
+            },
             expect.objectContaining({ OR: expect.any(Array) }),
             {
               OR: [

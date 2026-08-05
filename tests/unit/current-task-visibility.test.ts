@@ -29,7 +29,13 @@ describe("审核任务页面当前队列展示", () => {
     expect(batchRoute).toContain('searchParams.get("batchId")');
     expect(batchRoute).toContain('searchParams.get("batchIds")');
     expect(batchService).toContain("const requestedIds = [batchId, ...batchIds]");
-    expect(batchService).toContain("const where = requestedIds.length");
+    expect(batchService).toContain(
+      "const where: Prisma.AuditBatchWhereInput = {",
+    );
+    expect(batchService).toContain("clearedAt: null");
+    expect(batchService).toContain(
+      "...(requestedIds.length ? { id: { in: requestedIds } } : {}),",
+    );
     expect(taskRoute).toContain('searchParams.get("batchId")');
     expect(taskRoute).toContain('searchParams.get("batchIds")');
     expect(taskRoute).toContain("{ batchId: { in: batchIds } }");

@@ -7,6 +7,7 @@ import {
   toAutomaticExtractionError,
 } from "./failure";
 import {
+  clearXhsAuditLockForBatch,
   heartbeatXhsAuditLock,
   markXhsSessionIssue,
   updateXhsAuditLock,
@@ -460,12 +461,18 @@ async function runQueue() {
   await ensureRecovered();
   while (true) {
     const sessionBlockedBatch = await prisma.auditBatch.findFirst({
-      where: { status: { in: ["LOGIN_EXPIRED", "SECURITY_RESTRICTED"] } },
+      where: {
+        clearedAt: null,
+        status: { in: ["LOGIN_EXPIRED", "SECURITY_RESTRICTED"] },
+      },
       select: { id: true },
     });
     if (sessionBlockedBatch) return;
     const batch = await prisma.auditBatch.findFirst({
-      where: { status: { in: ["QUEUED", "RUNNING"] } },
+      where: {
+        clearedAt: null,
+        status: { in: ["QUEUED", "RUNNING"] },
+      },
       orderBy: { createdAt: "asc" },
     });
     if (!batch) return;
@@ -490,11 +497,20 @@ export function kickAutomaticAuditQueue() {
   }
 }
 
+export function clearAutomaticBatchRuntime(batchId: string) {
+  if (queueState.activeBatchId === batchId) {
+    queueState.activeBatchId = undefined;
+  }
+  return clearXhsAuditLockForBatch(batchId);
+}
+
 export async function controlAutomaticBatch(
   batchId: string,
   action: "PAUSE" | "CONTINUE" | "CANCEL" | "RETRY_FAILED",
 ) {
-  const batch = await prisma.auditBatch.findUnique({ where: { id: batchId } });
+  const batch = await prisma.auditBatch.findFirst({
+    where: { id: batchId, clearedAt: null },
+  });
   if (!batch) throw new Error("自动审核批次不存在");
 
   if (

@@ -19,6 +19,7 @@ import {
   buildTaskExecutionFilterWhere,
   parseTaskExecutionFilter,
 } from "@/lib/automation/task-execution-filter";
+import { visibleAuditTaskWhere } from "@/lib/automation/task-view";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -49,7 +50,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     searchParams.has("executionStatus") ||
     batchIds.length > 0;
   const executionWhere = buildTaskExecutionFilterWhere(executionStatus);
-  const filters: Prisma.AuditTaskWhereInput[] = [];
+  const filters: Prisma.AuditTaskWhereInput[] = [visibleAuditTaskWhere];
   if (status) filters.push({ status });
   if (Object.keys(executionWhere).length) filters.push(executionWhere);
   const where: Prisma.AuditTaskWhereInput = {

@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeUrl } from "@/lib/topic";
+import { duplicateRelevantAuditTaskWhere } from "@/lib/automation/task-view";
 
 export type AuditTaskDuplicateReason = "TODAY_DUPLICATE";
 
@@ -135,6 +136,7 @@ export async function findBlockingAuditTask(input: {
   const candidates = await prisma.auditTask.findMany({
     where: {
       AND: [
+        duplicateRelevantAuditTaskWhere,
         { OR: candidateWhere(input.url) },
         {
           OR: [
@@ -205,12 +207,17 @@ export async function findBlockingAuditTasks(input: {
   const { start, end } = localNaturalDayRange(input.now);
   const candidates = await prisma.auditTask.findMany({
     where: {
-      OR: [
-        { createdAt: { gte: start, lt: end } },
+      AND: [
+        duplicateRelevantAuditTaskWhere,
         {
-          auditResults: {
-            some: { auditedAt: { gte: start, lt: end } },
-          },
+          OR: [
+            { createdAt: { gte: start, lt: end } },
+            {
+              auditResults: {
+                some: { auditedAt: { gte: start, lt: end } },
+              },
+            },
+          ],
         },
       ],
     },
