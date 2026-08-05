@@ -53,7 +53,7 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
   channel: {
     displayName: "渠道",
     type: "string",
-    description: "原始渠道，可留空",
+    description: "成交平台渠道，用于匹配店铺话题规则",
   },
   shopName: {
     displayName: "店铺名称",
@@ -119,7 +119,7 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
 
 export const KABRITA_TEMPLATE_EXAMPLES: KabritaRawValues = {
   registrationTime: "2026-08-04 10:00:00",
-  channel: "小红书",
+  channel: "京东",
   shopName: "佳贝艾特(Kabrita)海外专卖店",
   customerRemark: "",
   buyerPurchaseId: "BUYER-001",

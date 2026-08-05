@@ -19,6 +19,14 @@ const accountKeyRoot = path.join(
 );
 const accountPublicKeyPath = path.join(accountKeyRoot, "public.pem");
 const accountPrivateKeyPath = path.join(accountKeyRoot, "private.pem");
+const defaultE2eProfilePath = path.resolve(
+  process.cwd(),
+  ".playwright",
+  "xhs-e2e-profile",
+);
+const e2eProfilePath = path.resolve(
+  process.env.E2E_XHS_PROFILE_PATH?.trim() || defaultE2eProfilePath,
+);
 
 async function prepareEphemeralAccountKey() {
   const pair = generateKeyPairSync("ed25519");
@@ -76,8 +84,18 @@ async function resetDefaultDatabase() {
   await rm(databasePath, { force: true });
 }
 
+async function resetE2eBrowserProfile() {
+  const playwrightRoot = path.resolve(process.cwd(), ".playwright");
+  const relative = path.relative(playwrightRoot, e2eProfilePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("E2E 小红书 Profile 必须位于项目 .playwright 目录内");
+  }
+  await rm(e2eProfilePath, { recursive: true, force: true });
+}
+
 async function main() {
   await resetDefaultDatabase();
+  await resetE2eBrowserProfile();
   const accountPrivateKey = await prepareEphemeralAccountKey();
   process.env.DATABASE_URL = databaseUrl;
 

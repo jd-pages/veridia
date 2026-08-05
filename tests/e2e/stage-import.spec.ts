@@ -488,7 +488,7 @@ test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", as
   ];
   const suffix = Date.now();
   const rows = [
-    [...base, "IFFO", "2段", "AUG-2", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-2`, "2026-08-05", campaign.name],
+    [...base, "IFFO", "2段", "AUG-2", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-2`, "2026-08-05", ""],
     [...base, "IFFO", "P段", "AUG-P", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-p`, "2026-08-05", campaign.name],
     [...base, "GUM", "2段", "AUG-CONFLICT", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-conflict`, "2026-08-05", campaign.name],
   ];

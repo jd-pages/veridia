@@ -373,18 +373,19 @@ test("审核详情只展示业务判断卡片并隐藏自动取证技术字段",
   }
   await expect(page.getByText(/笔记ID/u)).toHaveCount(0);
   await expect(page.getByText("小红书", { exact: true }).first()).toBeVisible();
+  const topConclusion = page.getByRole("region", { name: "顶部结论" });
   await expect(
-    page.getByText("京东健康进口超市 Playwright 测试长店铺名称", {
+    topConclusion.getByText("京东健康进口超市 Playwright 测试长店铺名称", {
       exact: true,
     }),
   ).toBeVisible();
   await expect(
-    page.getByText(`ORDER-${evidenceFixture!.note.platformNoteId}`, {
+    topConclusion.getByText(`ORDER-${evidenceFixture!.note.platformNoteId}`, {
       exact: true,
     }),
   ).toBeVisible();
   await expect(
-    page.getByText(/^\d{2}月\d{2}日 \d{2}:\d{2}$/u),
+    topConclusion.getByText(/^\d{2}月\d{2}日 \d{2}:\d{2}$/u),
   ).toBeVisible();
 });
 

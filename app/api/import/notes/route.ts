@@ -144,12 +144,14 @@ export async function POST(request: Request) {
         : parsed.hyperlinks?.noteUrl || "";
       const declaredChannel = String(
         (isKabritaTemplate
-          ? values.channel
+          ? ""
           : values.contentChannel || values.channel) || "",
       ).trim();
       const importedStoreName = String(values.shopName || "").trim();
       const importedCommercePlatform = String(
-        values.commercePlatform || values.platform || "",
+        (isKabritaTemplate
+          ? values.channel
+          : values.commercePlatform || values.platform) || "",
       ).trim();
       const storeResolution = resolveStoreTopicConfig(
         activeStoreTopicRules,
@@ -182,9 +184,7 @@ export async function POST(request: Request) {
         orderNumber: isKabritaTemplate
           ? values.purchaseOrderNumber || ""
           : values.orderNumber || "",
-        publishTime: isKabritaTemplate
-          ? values.purchaseTime || ""
-          : values.publishTime || "",
+        publishTime: isKabritaTemplate ? "" : values.publishTime || "",
         platform: linkResolution.platform,
         channel: linkResolution.platform,
         commercePlatform: storeResolution.commercePlatform || "",
@@ -200,9 +200,7 @@ export async function POST(request: Request) {
           : values.productName || "",
         purchaseProductLine,
         campaignName: values.activityName || "",
-        month: values.activityMonth || inferRuleMonth(
-          isKabritaTemplate ? values.purchaseTime : values.publishTime,
-        ),
+        month: values.activityMonth || inferRuleMonth(values.publishTime),
         specification: values.specification || "",
         stageInput: isKabritaTemplate
           ? inferKabritaProductStage(purchaseProductLine)
@@ -225,9 +223,7 @@ export async function POST(request: Request) {
             ? values.purchaseOrderNumber
             : values.orderNumber,
           contentChannel: contentChannelLabel(linkResolution.platform),
-          publishTime: isKabritaTemplate
-            ? values.purchaseTime
-            : values.publishTime,
+          publishTime: isKabritaTemplate ? undefined : values.publishTime,
           notes: values.remark,
           ...(isKabritaTemplate
             ? {
@@ -278,32 +274,37 @@ export async function POST(request: Request) {
       }
 
       const campaignKey = product
-        ? [product.id, checked.campaignName, checked.month].join("\u0000")
+        ? [
+            product.id,
+            checked.campaignName ? "NAME" : checked.month ? "MONTH" : "UNIQUE",
+            checked.campaignName || checked.month,
+          ].join("\u0000")
         : "";
       let campaign = product ? campaignCache.get(campaignKey) : null;
-      if (
-        product &&
-        (checked.campaignName || checked.month) &&
-        !campaignCache.has(campaignKey)
-      ) {
-        campaign = await prisma.campaign.findFirst({
+      if (product && !campaignCache.has(campaignKey)) {
+        const campaignCandidates = await prisma.campaign.findMany({
           where: {
             ...(checked.campaignName ? { name: checked.campaignName } : {}),
-            ...(checked.month ? { month: checked.month } : {}),
+            ...(!checked.campaignName && checked.month
+              ? { month: checked.month }
+              : {}),
             status: "ACTIVE",
             OR: [
               { productId: product.id },
               { products: { some: { productId: product.id } } },
             ],
           },
+          take: 2,
         });
+        campaign =
+          campaignCandidates.length === 1 ? campaignCandidates[0] : null;
         campaignCache.set(campaignKey, campaign);
       }
       if (!campaign) {
         checked.errors.push(
           checked.campaignName || checked.month
             ? "活动不存在、规则月份未匹配或与产品不匹配"
-            : "规则月份未匹配，请填写活动、活动月份或有效发帖时间",
+            : "规则月份未匹配，请填写活动或有效发帖时间",
         );
       } else {
         checked.campaignId = campaign.id;

@@ -33,7 +33,9 @@ test("风险摘要只展示三类非零风险并下钻到对应结果", async ({
       await page.request.get(`/api/campaigns?productId=${product.id}`)
     ).json()
   ).data as Array<{ id: string; name: string }>;
-  const campaign = campaigns[0];
+  const campaign =
+    campaigns.find((item) => item.name.includes("爱他美2026年7月")) ||
+    campaigns[0];
   const suffix = Date.now();
   const urls = {
     unavailable: `${E2E_ORIGIN}/mock/xhs?case=not-found&dashboard-risk=${suffix}`,

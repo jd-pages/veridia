@@ -200,6 +200,8 @@ export async function createHiddenAuditPage(
     await session.send("Target.createTarget", {
       url: "about:blank",
       hidden: true,
+      background: true,
+      focus: false,
     });
     return { page: await pagePromise, keepAliveSession: session };
   } catch (error) {

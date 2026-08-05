@@ -39,6 +39,9 @@ const executablePath =
 const e2eAccountPublicKeyPath =
   process.env.VERIDIA_ACCOUNT_SIGNING_PUBLIC_KEY_PATH?.trim() ||
   path.join(os.tmpdir(), "veridia-e2e-account-signing", "public.pem");
+const e2eXhsProfilePath =
+  process.env.E2E_XHS_PROFILE_PATH?.trim() ||
+  path.join(process.cwd(), ".playwright", "xhs-e2e-profile");
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -77,6 +80,10 @@ export default defineConfig({
       EXTENSION_TOKEN:
         process.env.EXTENSION_TOKEN || "local-extension-demo-token",
       VERIDIA_ACCOUNT_SIGNING_PUBLIC_KEY_PATH: e2eAccountPublicKeyPath,
+      XHS_PROFILE_PATH: e2eXhsProfilePath,
+      // Hidden Chromium targets are reported as `other`. Playwright must opt in
+      // before the Next.js server loads the Playwright module.
+      PW_CHROMIUM_ATTACH_TO_OTHER: "1",
       ...(executablePath ? { PLAYWRIGHT_EXECUTABLE_PATH: executablePath } : {}),
     },
   },

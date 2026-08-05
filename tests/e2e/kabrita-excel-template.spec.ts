@@ -53,7 +53,7 @@ test("佳贝艾特12列导入模板下载、识别和六种购买产品线预检
   productLines.forEach((productLine, index) => {
     sheet.addRow([
       "",
-      "小红书",
+      "京东",
       "佳贝艾特(Kabrita)海外专卖店",
       "",
       "",
@@ -93,6 +93,8 @@ test("佳贝艾特12列导入模板下载、识别和六种购买产品线预检
     rows: Array<{
       purchaseProductLine: string;
       productName: string;
+      campaignName: string;
+      month: string;
       errors: string[];
     }>;
   };
@@ -119,6 +121,12 @@ test("佳贝艾特12列导入模板下载、识别和六种购买产品线预检
     "佳贝艾特港版",
   ]);
   expect(preview.rows.flatMap((row) => row.errors)).toEqual([]);
+  expect(preview.rows.every((row) => row.month === "2026-08")).toBe(true);
+  expect(
+    preview.rows.every((row) =>
+      row.campaignName.includes("佳贝艾特2026年8月"),
+    ),
+  ).toBe(true);
 });
 
 test("佳贝艾特内容合规与基础奖励共同决定最终结论和13列导出", async ({

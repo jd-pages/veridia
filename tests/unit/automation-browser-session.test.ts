@@ -26,8 +26,19 @@ describe("小红书持久会话与访问节奏", () => {
     expect(browser).toContain("auditPagePromise?: Promise<Page>");
     expect(hiddenChromium).toContain('"--no-startup-window"');
     expect(hiddenChromium).toContain('hidden: true');
+    expect(hiddenChromium).toContain('background: true');
+    expect(hiddenChromium).toContain('focus: false');
     expect(hiddenChromium).toContain('"--remote-debugging-port=0"');
     expect(browser).toContain('process.env.PW_CHROMIUM_ATTACH_TO_OTHER = "1"');
+    expect(source("playwright.config.ts")).toContain(
+      'PW_CHROMIUM_ATTACH_TO_OTHER: "1"',
+    );
+    expect(source("desktop/main.cjs")).toContain(
+      'PW_CHROMIUM_ATTACH_TO_OTHER: "1"',
+    );
+    expect(source("scripts/release.mjs")).toContain(
+      'PW_CHROMIUM_ATTACH_TO_OTHER: "1"',
+    );
     expect(browser).toContain("createHiddenAuditPage");
     expect(browser).toContain("getXhsAuditPage");
     expect(browser).toContain("auditPageCreateCount");

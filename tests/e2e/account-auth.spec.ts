@@ -345,7 +345,9 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
   });
   await expect(e2eBrandCard).toHaveCount(1);
   await e2eBrandCard.getByRole("button", { name: "进入规则" }).click();
-  await expect(page.getByRole("button", { name: "新增规则" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "新增月份规则" }),
+  ).toBeVisible();
 
   for (const endpoint of [
     "/api/settings",

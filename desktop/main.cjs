@@ -412,6 +412,7 @@ function serverEnvironment() {
     PLAYWRIGHT_BROWSER_CHANNEL: "",
     PLAYWRIGHT_BROWSERS_PATH: browserRoot,
     PLAYWRIGHT_EXECUTABLE_PATH: bundledChromium,
+    PW_CHROMIUM_ATTACH_TO_OTHER: "1",
     AI_ENABLED: "false",
   });
 }
