@@ -18,6 +18,7 @@ export type StandardField =
   | "noteUrl"
   | "noteId"
   | "platform"
+  | "commercePlatform"
   | "shopName"
   | "customerName"
   | "orderNumber"

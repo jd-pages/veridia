@@ -20,6 +20,7 @@ export type MockCase =
   | "structure-mismatch"
   | "aptamil-passed"
   | "aptamil-stage2-passed"
+  | "aptamil-stage2-store-passed"
   | "aptamil-wrong-stage"
   | "aptamil-plain-topic";
 
@@ -237,6 +238,21 @@ export function createMockNote(
           clickableTopic("#二段奶粉推荐"),
         ],
       };
+    case "aptamil-stage2-store-passed":
+      return {
+        ...base,
+        title: "京东健康官方进口超市爱他美2段真实体验",
+        body:
+          "宝宝目前正在喝爱他美澳洲白金版2段奶粉，冲调方便，适应得也不错。这里记录我们的真实喂养体验，日常状态稳定，家里人也更放心。",
+        imageCount: 2,
+        topics: [
+          clickableTopic("#爱他美新手爸妈日记"),
+          clickableTopic("#爱他美澳洲白金版"),
+          clickableTopic("#新生儿奶粉"),
+          clickableTopic("#二段奶粉推荐"),
+          clickableTopic("#京东健康官方进口超市"),
+        ],
+      };
     case "aptamil-wrong-stage":
       return {
         ...base,
@@ -284,6 +300,7 @@ export const mockCaseLabels: Record<MockCase, string> = {
   "structure-mismatch": "页面结构不匹配",
   "aptamil-passed": "爱他美规则通过",
   "aptamil-stage2-passed": "爱他美IFFO 2段规则通过",
+  "aptamil-stage2-store-passed": "爱他美IFFO 2段与店铺话题规则通过",
   "aptamil-wrong-stage": "爱他美段位话题错误",
   "aptamil-plain-topic": "正文同文但话题不可点击",
 };

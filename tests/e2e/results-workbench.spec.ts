@@ -174,6 +174,7 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
     page.getByText("查看自动审核结论、异常原因及人工复核记录"),
   ).toBeVisible();
   await expect(page.getByText("平台", { exact: true })).toBeVisible();
+  await expect(page.getByText("渠道", { exact: true }).first()).toBeVisible();
   await expect(page.getByLabel("订单编号")).toBeVisible();
   for (const label of ["结果总数", "审核通过", "审核不通过", "笔记不存在", "待人工复核"]) {
     await expect(page.getByRole("button", { name: new RegExp(label) })).toBeVisible();
@@ -183,6 +184,7 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await expect(headers).toContainText([
     "笔记对象",
     "归属信息",
+    "渠道",
     "话题审核",
     "图片",
     "正文审核",
@@ -325,7 +327,7 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await expect(drawer.getByRole("region", { name: "审核明细" })).toBeVisible();
   await expect(drawer.getByRole("region", { name: "链接操作" })).toBeVisible();
   await expect(drawer.getByRole("region", { name: "人工复核记录" })).toBeVisible();
-  for (const label of ["来源信息", "订单编号", "实际审核时间"]) {
+  for (const label of ["渠道", "平台", "店铺", "订单编号", "实际审核时间"]) {
     await expect(drawer.getByText(label, { exact: true })).toBeVisible();
   }
   await expect(drawer.getByText("笔记基础信息", { exact: true })).toHaveCount(0);
@@ -386,7 +388,7 @@ test("审核详情只展示业务判断卡片并隐藏自动取证技术字段",
   ).toBeVisible();
 });
 
-test("平台和订单编号常用筛选使用独立任务字段并可重置", async ({ page }) => {
+test("成交平台、内容渠道和订单编号可同时筛选并重置", async ({ page }) => {
   await login(page);
   await page.goto("/results?startDate=2026-08-01&endDate=2026-08-31");
   const resultRequests: URL[] = [];
@@ -396,6 +398,8 @@ test("平台和订单编号常用筛选使用独立任务字段并可重置", as
   });
 
   await page.getByRole("combobox", { name: "平台" }).click();
+  await page.getByText("京东", { exact: true }).last().click();
+  await page.getByRole("combobox", { name: "渠道" }).click();
   await page.getByText("小红书", { exact: true }).last().click();
   await page.getByLabel("订单编号").fill("  ORDER-isolated-fixture-15  ");
   await page.getByRole("button", { name: "查询" }).click();
@@ -404,7 +408,8 @@ test("平台和订单编号常用筛选使用独立任务字段并可重置", as
     .poll(() =>
       resultRequests.some(
         (url) =>
-          url.searchParams.get("platform") === "XIAOHONGSHU" &&
+          url.searchParams.get("commercePlatform") === "JD" &&
+          url.searchParams.get("channel") === "XIAOHONGSHU" &&
           url.searchParams.get("orderNumber") === "ORDER-isolated-fixture-15",
       ),
     )
@@ -413,7 +418,35 @@ test("平台和订单编号常用筛选使用独立任务字段并可重置", as
   await page.getByRole("button", { name: "重置" }).click();
   await expect(page.getByLabel("订单编号")).toHaveValue("");
   await expect(page.getByRole("combobox", { name: "平台" })).toHaveValue("");
+  await expect(page.getByRole("combobox", { name: "渠道" })).toHaveValue("");
   await expect(page.locator(".ant-table-row").first()).toBeVisible();
+});
+
+test("产品筛选从历史审核任务加载已结束活动", async ({ page }) => {
+  await login(page);
+  const response = await page.request.get("/api/results?page=1&pageSize=1");
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as {
+    data: { items: Array<{ task: {
+      product: { id: string; name: string };
+      campaign: { id: string; name: string };
+    } }> };
+  };
+  const fixture = payload.data.items[0].task;
+  await page.goto("/results?startDate=2026-08-01&endDate=2026-08-31");
+  await page.locator(".ant-spin-spinning").waitFor({ state: "detached" });
+  await page.getByText("产品", { exact: true }).locator("..").locator(".ant-select").click();
+  const campaignResponsePromise = page.waitForResponse((candidate) =>
+    candidate.url().includes(
+      `/api/results/campaign-options?productId=${encodeURIComponent(fixture.product.id)}`,
+    ),
+  );
+  await page.getByText(fixture.product.name, { exact: true }).last().click();
+  const campaignResponse = await campaignResponsePromise;
+  expect(campaignResponse.ok()).toBeTruthy();
+  await page.getByText("活动", { exact: true }).locator("..").locator(".ant-select").click();
+  await expect(page.getByText(fixture.campaign.name, { exact: true }).last()).toBeVisible();
+  await expect(page.getByText("正在加载活动...", { exact: true })).toHaveCount(0);
 });
 
 test("审核详情区分原笔记链接与最终链接并复制完整原始 URL", async ({

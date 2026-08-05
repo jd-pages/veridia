@@ -111,6 +111,13 @@ export interface AuditContext {
   customerRegistrationNotes?: string | null;
   clickableTopicRequired: boolean;
   rules: AuditRule[];
+  storeTopicRequirement?: {
+    channel: "XIAOHONGSHU" | "DOUYIN" | null;
+    storeName: string | null;
+    commercePlatform: "JD" | "DOUYIN_ECOMMERCE" | "TMALL" | "TAOBAO" | null;
+    expectedTopic: string | null;
+    mappingStatus: string;
+  } | null;
 }
 
 export interface RuleEvaluation {
@@ -135,6 +142,15 @@ export interface AuditEvaluation {
   imageCompliant: boolean | null;
   topicsCompliant: boolean;
   clickableCompliant: boolean;
+  storeTopicStatus:
+    | "NOT_REQUIRED"
+    | "NOT_CHECKED"
+    | "COMPLIANT"
+    | "NON_COMPLIANT"
+    | "UNREVIEWABLE";
+  expectedStoreTopic: string | null;
+  matchedStoreTopic: string | null;
+  storeTopicFailureReason: string | null;
   publicStatus: "NOT_REQUIRED" | "PUBLIC" | "NOT_PUBLIC" | "UNKNOWN";
   retentionStatus:
     | "NOT_REQUIRED"

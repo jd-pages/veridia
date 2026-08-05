@@ -11,6 +11,7 @@ import {
   type TopicClickabilityContext,
   type TopicClickability,
 } from "@/lib/topic-clickability";
+import { storeTopicAuditForNote } from "@/lib/store-topic-config";
 import {
   detectBodyProductStages,
   productStageTopicLabel,
@@ -142,6 +143,10 @@ export function evaluateAudit(
       imageCompliant: null,
       topicsCompliant: true,
       clickableCompliant: true,
+      storeTopicStatus: "NOT_CHECKED",
+      expectedStoreTopic: context.storeTopicRequirement?.expectedTopic || null,
+      matchedStoreTopic: null,
+      storeTopicFailureReason: null,
       publicStatus: "UNKNOWN",
       retentionStatus: "NOT_REQUIRED",
       retentionDueAt: null,
@@ -695,12 +700,38 @@ export function evaluateAudit(
   const topicEvaluations = evaluations.filter((item) =>
     item.ruleKey.startsWith("TOPIC_"),
   );
+  const storeTopicAudit = storeTopicAuditForNote(
+    note,
+    context.storeTopicRequirement || null,
+  );
+  if (storeTopicAudit.status !== "NOT_REQUIRED") {
+    const passed = storeTopicAudit.status === "COMPLIANT";
+    evaluations.push({
+      ruleKey: "STORE_TOPIC",
+      ruleName: "店铺话题审核",
+      expectedValue: storeTopicAudit.expectedTopic
+        ? `#${storeTopicAudit.expectedTopic}，且为可点击话题`
+        : "导入店铺名称需完全匹配店铺话题配置",
+      actualValue: storeTopicAudit.matchedTopic || "未命中",
+      passed: storeTopicAudit.needsReview ? true : passed,
+      failureReason: storeTopicAudit.failureReason || undefined,
+      evidence: {
+        status: storeTopicAudit.status,
+        expectedTopic: storeTopicAudit.expectedTopic,
+        matchedTopic: storeTopicAudit.matchedTopic,
+      },
+    });
+    if (!passed && storeTopicAudit.failureReason) {
+      failures.push(storeTopicAudit.failureReason);
+    }
+  }
   const bodyStageEvaluation = evaluations.find(
     (item) => item.ruleKey === "PRODUCT_STAGE_BODY",
   );
   const topicsCompliant =
     topicEvaluations.every((item) => item.passed) &&
-    (bodyStageEvaluation?.passed ?? true);
+    (bodyStageEvaluation?.passed ?? true) &&
+    storeTopicAudit.status !== "NON_COMPLIANT";
   // 目标话题缺失属于“话题存在性”问题。只有已出现的目标话题才参与
   // 蓝色可点击判断，避免把“缺少话题”误报为“可点击异常”。
   const clickableCompliant = clickableChecks.every(Boolean);
@@ -713,7 +744,11 @@ export function evaluateAudit(
   if (!pagePassed) {
     autoStatus =
       note.pageStatus === "READ_FAILED" ? "READ_FAILED" : "NEEDS_REVIEW";
-  } else if (unresolvedTechnicalWarnings.size > 0 || clickabilityNeedsReview) {
+  } else if (
+    unresolvedTechnicalWarnings.size > 0 ||
+    clickabilityNeedsReview ||
+    storeTopicAudit.needsReview
+  ) {
     autoStatus = "NEEDS_REVIEW";
   } else if (failures.length) {
     autoStatus = "FAILED";
@@ -808,6 +843,10 @@ export function evaluateAudit(
     imageCompliant,
     topicsCompliant,
     clickableCompliant,
+    storeTopicStatus: storeTopicAudit.status,
+    expectedStoreTopic: storeTopicAudit.expectedTopic,
+    matchedStoreTopic: storeTopicAudit.matchedTopic,
+    storeTopicFailureReason: storeTopicAudit.failureReason,
     publicStatus,
     retentionStatus,
     retentionDueAt,

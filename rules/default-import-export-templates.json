@@ -22,7 +22,8 @@
   "fieldDefinitions": {
     "noteUrl": { "displayName": "链接（必填）", "type": "url", "description": "小红书完整链接或 xhslink 短链接" },
     "noteId": { "displayName": "笔记ID", "type": "string", "description": "小红书笔记ID" },
-    "platform": { "displayName": "平台（必填）", "type": "string", "description": "线下表格的平台标识，仅用于记录和导出" },
+    "platform": { "displayName": "旧平台字段", "type": "string", "description": "仅用于兼容旧模板，不再作为新模板字段" },
+    "commercePlatform": { "displayName": "平台", "type": "string", "description": "订单所在成交平台；未填写时仅可由店铺全称精确推断" },
     "shopName": { "displayName": "店铺名称（必填）", "type": "string", "description": "线下表格中的店铺名称，仅用于记录和导出" },
     "customerName": { "displayName": "客户名（必填）", "type": "string", "description": "线下表格中的客户名，仅用于记录和导出" },
     "orderNumber": { "displayName": "订单编号", "type": "string", "description": "可选，用于和原始表格对照，不参与审核判断" },
@@ -58,7 +59,7 @@
     ,
     "productCode": { "displayName": "产品编码", "type": "string", "description": "可选的内部产品编码" },
     "activityMonth": { "displayName": "活动月份", "type": "string", "description": "活动月份，例如2026-07" },
-    "contentChannel": { "displayName": "内容渠道（必填）", "type": "string", "description": "原表中的内容渠道；不会扩展当前审核引擎能力" },
+    "contentChannel": { "displayName": "内容渠道", "type": "string", "description": "内容来源渠道；未填写时仅由笔记链接类型识别" },
     "specification": { "displayName": "规格", "type": "string", "description": "用于识别产品段位的规格信息" },
     "productStage": { "displayName": "阶段（IFFO/GUM）", "type": "string", "description": "必填，只填写 IFFO 或 GUM" },
     "source": { "displayName": "任务来源", "type": "string", "description": "任务创建来源" },
@@ -83,7 +84,8 @@
   "fieldAliases": {
     "noteUrl": ["笔记链接", "小红书链接", "链接", "链接（必填）", "文章链接", "笔记地址", "小红书笔记链接", "noteUrl", "url", "link"],
     "noteId": ["笔记ID", "笔记id", "noteId", "note_id", "文章ID", "内容ID"],
-    "platform": ["平台", "平台（必填）", "所属平台", "platform"],
+    "platform": ["旧平台字段", "legacyPlatform"],
+    "commercePlatform": ["平台", "平台（必填）", "成交平台", "电商平台", "订单平台", "commercePlatform"],
     "shopName": ["店铺名称", "店铺名称（必填）", "店铺", "shopName"],
     "customerName": ["客户名", "客户名（必填）", "客户名称", "customerName"],
     "orderNumber": ["订单编号", "订单号", "订单编号（必填）", "orderNumber"],
@@ -100,15 +102,15 @@
     "remark": ["备注", "说明", "备注信息", "remark", "memo"],
     "productCode": ["产品编码", "商品编码", "productCode", "sku"],
     "activityMonth": ["活动月份", "月份", "campaignMonth", "activityMonth"],
-    "contentChannel": ["内容渠道", "内容渠道（必填）", "发布渠道", "内容平台", "channel"],
+    "contentChannel": ["渠道", "内容渠道", "内容渠道（必填）", "审核渠道", "发布渠道", "内容平台", "channel"],
     "specification": ["规格", "产品规格", "商品规格", "specification"],
     "productStage": ["产品阶段话题", "产品段位", "奶粉段位", "阶段", "阶段（IFFO/GUM）", "段位", "productStage"]
   },
-  "requiredFields": ["platform", "shopName", "customerName", "productName", "productStage", "contentChannel", "noteUrl", "publishTime"],
+  "requiredFields": ["shopName", "customerName", "productName", "productStage", "noteUrl", "publishTime"],
   "optionalFields": ["orderNumber", "noteId", "activityName", "influencerName", "title", "content", "effectiveBodyLength", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark", "productCode", "activityMonth", "specification", "publicStatus", "selfReview"],
   "columnOrder": {
-    "import": ["platform", "shopName", "customerName", "productName", "productStage", "orderNumber", "contentChannel", "noteUrl", "publishTime"],
-    "auditResults": ["platform", "shopName", "customerName", "productName", "productStageTopic", "orderNumber", "contentChannel", "originalUrl", "publishTime", "selfReview"],
+    "import": ["commercePlatform", "shopName", "customerName", "productName", "productStage", "orderNumber", "contentChannel", "noteUrl", "publishTime"],
+    "auditResults": ["commercePlatform", "shopName", "customerName", "productName", "productStageTopic", "orderNumber", "contentChannel", "originalUrl", "publishTime", "selfReview"],
     "auditTasks": ["noteUrl", "noteId", "productName", "activityName", "auditStatus", "auditResult", "ruleVersion", "reviewedAt", "remark"]
   },
   "dataValidation": {
@@ -119,7 +121,8 @@
     "caseInsensitiveHeaders": true
   },
   "examples": {
-    "platform": "小红书",
+    "platform": "XIAOHONGSHU",
+    "commercePlatform": "京东",
     "shopName": "示例店铺",
     "customerName": "示例客户",
     "noteUrl": "https://www.xiaohongshu.com/explore/示例笔记ID",

@@ -53,8 +53,8 @@ test("佳贝艾特12列导入模板下载、识别和六种购买产品线预检
   productLines.forEach((productLine, index) => {
     sheet.addRow([
       "",
-      "",
-      "",
+      "小红书",
+      "佳贝艾特(Kabrita)海外专卖店",
       "",
       "",
       "",
@@ -162,7 +162,7 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和13列导
     commentCount?: number | null;
     interactionExtractionStatus?: "SUCCESS" | "UNAVAILABLE";
     topics?: string[];
-    pageStatus?: "NORMAL" | "NOT_FOUND";
+    pageStatus?: "NORMAL" | "NOTE_NOT_FOUND";
   }) => {
     const url = `${E2E_ORIGIN}/mock/xhs?case=passed&kabrita-reward=${marker}-${Date.now()}`;
     const createResponse = await page.request.post("/api/tasks", {
@@ -260,10 +260,10 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和13列导
 
   const unavailable = await audit({
     marker: "not-found",
-    pageStatus: "NOT_FOUND",
+    pageStatus: "NOTE_NOT_FOUND",
     interactionExtractionStatus: "UNAVAILABLE",
   });
-  expect(unavailable.autoStatus).toBe("FAILED");
+  expect(unavailable.autoStatus).toBe("NOTE_NOT_FOUND");
 
   const expectedExports = [
     [passed.id, "Y"],
@@ -273,7 +273,7 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和13列导
       "N-缺少话题；缺少必带话题：#佳贝艾特荷兰版",
     ],
     [unreadable.id, ""],
-    [unavailable.id, "N-帖子无法查看；页面无法访问：笔记页面不存在"],
+    [unavailable.id, "N-帖子无法查看；页面无法访问：小红书页面提示“你访问的页面不见了”"],
   ] as const;
   for (const [id, expected] of expectedExports) {
     const exportResponse = await page.request.get(`/api/results/export?ids=${id}`);

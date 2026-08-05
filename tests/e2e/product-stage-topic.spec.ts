@@ -256,7 +256,7 @@ test("产品阶段话题只显示 IFFO / GUM，并匹配底层对应话题", asy
     page.getByText("本次使用的规则快照（内部技术字段）", { exact: true }),
   ).toHaveCount(0);
   const topicAuditCard = page
-    .getByRole("heading", { name: "话题审核" })
+    .getByRole("heading", { name: "话题审核", exact: true })
     .locator("..");
   await expect(topicAuditCard).toContainText("3 / 3 合规");
   await expect(topicAuditCard).toContainText("已命中 #二段奶粉推荐");

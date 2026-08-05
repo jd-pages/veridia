@@ -255,7 +255,7 @@ export async function parseTabularPreview(input: {
       displayName: displayName(templates, field, kabritaTemplate),
     });
   });
-  const legacyLayout = !kabritaTemplate && !["platform", "shopName", "customerName"].some(
+  const legacyLayout = !kabritaTemplate && !["customerName", "publishTime"].some(
     (field) => occupied.has(field as StandardField),
   );
   const requiredFields: StandardField[] = kabritaTemplate

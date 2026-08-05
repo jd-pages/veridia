@@ -4,6 +4,7 @@ import { evaluateAudit } from "@/lib/audit-engine";
 import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
+import { resolveStoreTopicAuditRequirement } from "@/lib/store-topic-config";
 import type { AuditContext, ExtractedNote } from "@/lib/types";
 import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
 import { completedAuditTaskUpdate } from "@/lib/automation/task-lifecycle";
@@ -177,11 +178,15 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
   const task = await prisma.auditTask.findUnique({ where: { id: taskId } });
   if (!task) throw new Error("审核任务不存在");
 
-  const context = await getAuditContext(
+  const baseContext = await getAuditContext(
     task.productId,
     task.campaignId,
     task.productStage,
   );
+  const context = {
+    ...baseContext,
+    storeTopicRequirement: resolveStoreTopicAuditRequirement(task),
+  };
   const evaluation = evaluateAudit(payload, context);
   const sanitizedPayload = { ...payload };
   delete sanitizedPayload.imageUrls;
@@ -310,6 +315,10 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
       imageCompliant: evaluation.imageCompliant ?? true,
       topicsCompliant: evaluation.topicsCompliant,
       clickableCompliant: evaluation.clickableCompliant,
+      storeTopicStatus: evaluation.storeTopicStatus,
+      expectedStoreTopic: evaluation.expectedStoreTopic,
+      matchedStoreTopic: evaluation.matchedStoreTopic,
+      storeTopicFailureReason: evaluation.storeTopicFailureReason,
       missingTopics: JSON.stringify(evaluation.missingTopics),
       forbiddenTopics: JSON.stringify(evaluation.forbiddenTopics),
       autoStatus: evaluation.autoStatus,

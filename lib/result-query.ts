@@ -4,13 +4,18 @@ import {
   buildResultRiskWhere,
   parseResultRiskType,
 } from "@/lib/result-risk";
-import { parseResultPlatform } from "@/lib/result-source";
+import {
+  parseCommercePlatform,
+  parseContentChannel,
+} from "@/lib/result-source";
 
 export interface ResultQueryFilters {
   ids?: string[];
   productId?: string;
   campaignId?: string;
   platform?: string;
+  commercePlatform?: string;
+  channel?: string;
   orderNumber?: string;
   batchId?: string;
   month?: string;
@@ -35,11 +40,11 @@ const noteNotFoundWhere: Prisma.AuditResultWhereInput = {
     { autoStatus: "NOTE_NOT_FOUND" },
     { pageStatus: { in: ["NOTE_NOT_FOUND", "NOT_FOUND", "DELETED"] } },
     {
-      task: {
+      task: { is: {
         failureCode: {
           in: ["NOTE_NOT_FOUND", "PAGE_NOT_FOUND", "NOTE_DELETED"],
         },
-      },
+      } },
     },
   ],
 };
@@ -65,6 +70,8 @@ export function readResultQueryFilters(
     productId: value("productId"),
     campaignId: value("campaignId"),
     platform: value("platform"),
+    commercePlatform: value("commercePlatform"),
+    channel: value("channel"),
     orderNumber: value("orderNumber"),
     batchId: value("batchId"),
     month: value("month"),
@@ -132,10 +139,20 @@ export function buildAuditResultWhere(
 ): Prisma.AuditResultWhereInput {
   const and: Prisma.AuditResultWhereInput[] = [];
 
-  const platform = filters.platform
-    ? parseResultPlatform(filters.platform)
+  const legacyChannel = filters.platform
+    ? parseContentChannel(filters.platform)
     : null;
-  if (filters.platform && !platform) {
+  const commercePlatform = filters.commercePlatform
+    ? parseCommercePlatform(filters.commercePlatform)
+    : null;
+  const channel = filters.channel
+    ? parseContentChannel(filters.channel)
+    : legacyChannel;
+  if (filters.commercePlatform && !commercePlatform) {
+    throw new Error("成交平台筛选条件不正确");
+  }
+  if (filters.channel && !channel) throw new Error("内容渠道筛选条件不正确");
+  if (filters.platform && !legacyChannel) {
     throw new Error("平台筛选条件不正确");
   }
 
@@ -223,7 +240,8 @@ export function buildAuditResultWhere(
     filters.campaignId ||
     filters.batchId ||
     filters.month ||
-    platform ||
+    commercePlatform ||
+    channel ||
     filters.orderNumber
   ) {
     and.push({
@@ -232,7 +250,15 @@ export function buildAuditResultWhere(
         ...(filters.campaignId ? { campaignId: filters.campaignId } : {}),
         ...(filters.batchId ? { batchId: filters.batchId } : {}),
         ...(filters.month ? { campaign: { month: filters.month } } : {}),
-        ...(platform ? { platform } : {}),
+        ...(commercePlatform ? { commercePlatform } : {}),
+        ...(channel
+          ? {
+              OR: [
+                { channel },
+                { channel: null, platform: channel },
+              ],
+            }
+          : {}),
         ...(filters.orderNumber
           ? { orderNumber: { contains: filters.orderNumber.trim() } }
           : {}),

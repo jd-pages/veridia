@@ -46,6 +46,7 @@ export default function AuditFilterPanel({
   advancedFilters,
   products,
   campaigns,
+  campaignsLoading,
   advancedOpen,
   onFiltersChange,
   onAdvancedFiltersChange,
@@ -57,6 +58,7 @@ export default function AuditFilterPanel({
   advancedFilters: AdvancedResultFilters;
   products: ProductOption[];
   campaigns: CampaignOption[];
+  campaignsLoading: boolean;
   advancedOpen: boolean;
   onFiltersChange: (value: ResultFilters) => void;
   onAdvancedFiltersChange: (value: AdvancedResultFilters) => void;
@@ -113,13 +115,10 @@ export default function AuditFilterPanel({
           <Select
             allowClear
             placeholder="全部活动"
+            loading={campaignsLoading}
+            notFoundContent={campaignsLoading ? "正在加载活动..." : "暂无数据"}
             value={filters.campaignId || undefined}
-            options={campaigns
-              .filter(
-                (item) =>
-                  !filters.productId || item.productId === filters.productId,
-              )
-              .map((item) => ({ value: item.id, label: item.name }))}
+            options={campaigns.map((item) => ({ value: item.id, label: item.name }))}
             onChange={(value) => update("campaignId", value || "")}
           />
         </FilterField>
@@ -128,12 +127,27 @@ export default function AuditFilterPanel({
             allowClear
             aria-label="平台"
             placeholder="全部平台"
-            value={filters.platform || undefined}
+            value={filters.commercePlatform || undefined}
+            options={[
+              { value: "JD", label: "京东" },
+              { value: "DOUYIN_ECOMMERCE", label: "抖音" },
+              { value: "TMALL", label: "天猫" },
+              { value: "TAOBAO", label: "淘宝" },
+            ]}
+            onChange={(value) => update("commercePlatform", value || "")}
+          />
+        </FilterField>
+        <FilterField label="渠道">
+          <Select
+            allowClear
+            aria-label="渠道"
+            placeholder="全部渠道"
+            value={filters.channel || undefined}
             options={[
               { value: "XIAOHONGSHU", label: "小红书" },
               { value: "DOUYIN", label: "抖音" },
             ]}
-            onChange={(value) => update("platform", value || "")}
+            onChange={(value) => update("channel", value || "")}
           />
         </FilterField>
         <FilterField label="日期范围">

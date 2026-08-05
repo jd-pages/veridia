@@ -290,21 +290,21 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     noteTemplateWorkbook.worksheets[0],
   );
   expect(noteTemplateHeaders).toEqual([
-    "平台（必填）",
+    "平台",
     "店铺名称（必填）",
     "客户名（必填）",
     "产品系列（必填）",
     "阶段（IFFO/GUM）",
     "订单编号",
-    "内容渠道（必填）",
+    "内容渠道",
     "链接（必填）",
     "发帖时间（必填）",
   ]);
   const downloadedTemplateSheet = noteTemplateWorkbook.worksheets[0];
   for (let index = 0; index < 9; index += 1) {
     downloadedTemplateSheet.getRow(index + 2).values = [
-      "小红书",
-      "E2E 店铺",
+      "京东",
+      "京东健康官方进口超市",
       "E2E 客户",
       product.name,
       "IFFO",
@@ -345,8 +345,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(previewResultHeader).toBeVisible();
   downloadedTemplateSheet.spliceRows(2, 9);
   downloadedTemplateSheet.getRow(2).values = [
-    "小红书",
-    "E2E 店铺",
+    "京东",
+    "京东健康官方进口超市",
     "E2E 客户",
     product.name,
     "IFFO",
@@ -398,6 +398,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "活动月份",
     "产品阶段话题",
     "内容渠道",
+    "店铺名称",
+    "成交平台",
     "备注",
   ]);
   sheet.addRow([
@@ -408,6 +410,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     campaign.month,
     "IFFO",
     "小红书",
+    "京东健康官方进口超市",
+    "京东",
     "E2E Excel 无图片但继续审核",
   ]);
   const hyperlinkImportRow = sheet.addRow([
@@ -418,6 +422,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     campaign.month,
     "IFFO",
     "小红书",
+    "京东健康官方进口超市",
+    "京东",
     "E2E Excel 单条失败",
   ]);
   hyperlinkImportRow.getCell(1).value = {
@@ -432,6 +438,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     campaign.month,
     "IFFO",
     "",
+    "京东健康官方进口超市",
+    "京东",
     "E2E Excel 后续成功",
   ]);
   sheet.addRow([
@@ -442,6 +450,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     campaign.month,
     "IFFO",
     "抖音",
+    "京东健康官方进口超市",
+    "京东",
     "E2E 不支持平台不影响其他行",
   ]);
   const excel = Buffer.from(await workbook.xlsx.writeBuffer());
@@ -470,8 +480,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       errors: string[];
     }>;
   };
-  expect(importPreview.validCount).toBe(2);
-  expect(importPreview.invalidCount).toBe(2);
+  expect(importPreview.validCount).toBe(3);
+  expect(importPreview.invalidCount).toBe(1);
   expect(importPreview.unknownHeaders).toEqual(
     expect.arrayContaining(["产品编码", "活动月份", "备注"]),
   );
@@ -483,7 +493,10 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     recognitionStatus: "RECOGNIZED",
   });
   expect(importPreview.rows[1].url).toContain("case=read-failed");
-  expect(importPreview.rows[2].errors).toContain("内容渠道不能为空");
+  expect(importPreview.rows[2]).toMatchObject({
+    recognitionStatus: "RECOGNIZED",
+    errors: [],
+  });
   expect(importPreview.rows[3]).toMatchObject({
     recognitionStatus: "UNSUPPORTED",
     failureReason: "内容渠道为抖音，暂不支持小红书自动审核",
@@ -506,11 +519,11 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     imported: number;
     batchId: string;
   };
-  expect(committedImport.imported).toBe(2);
+  expect(committedImport.imported).toBe(3);
   const excelBatch = await waitForBatch(page, committedImport.batchId, [
     "COMPLETED_WITH_ERRORS",
   ]);
-  expect(excelBatch.stats.succeeded).toBe(1);
+  expect(excelBatch.stats.succeeded).toBe(2);
   expect(excelBatch.stats.failed).toBe(1);
   expect(excelBatch.stats.progress).toBe(100);
 
@@ -701,13 +714,13 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const unavailableRow = page.locator(".ant-table-tbody .ant-table-row").first();
   await expect(unavailableRow).toBeVisible();
   const unavailableCells = unavailableRow.locator("td");
-  await expect(unavailableCells.nth(3)).toHaveText("未审核");
   await expect(unavailableCells.nth(4)).toHaveText("未审核");
-  await expect(unavailableCells.nth(5)).toContainText(
+  await expect(unavailableCells.nth(5)).toHaveText("未审核");
+  await expect(unavailableCells.nth(6)).toContainText(
     "未审核",
   );
-  await expect(unavailableCells.nth(6)).toContainText("笔记不存在");
-  await expect(unavailableCells.nth(6)).toContainText(
+  await expect(unavailableCells.nth(7)).toContainText("笔记不存在");
+  await expect(unavailableCells.nth(7)).toContainText(
     "小红书页面提示",
   );
   await expect(unavailableRow).not.toContainText(
@@ -721,7 +734,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     unavailableDrawer.getByText("笔记不存在", { exact: true }).first(),
   ).toBeVisible();
   const unavailableDrawerTopic = unavailableDrawer
-    .getByRole("heading", { name: "话题审核" })
+    .getByRole("heading", { name: "话题审核", exact: true })
     .locator("..");
   const unavailableDrawerImage = unavailableDrawer
     .getByRole("heading", { name: "图片审核" })

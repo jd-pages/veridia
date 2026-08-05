@@ -53,6 +53,11 @@ import {
 } from "@/lib/result-export-client";
 import { productStageTopicLabel } from "@/lib/product-stage";
 import { parseResultRiskType } from "@/lib/result-risk";
+import {
+  commercePlatformLabel,
+  contentChannelLabel,
+  resolveTaskChannel,
+} from "@/lib/result-source";
 import { pageAfterResultDeletion } from "@/components/results/deletion-state";
 import type { SessionUser } from "@/lib/auth";
 import { canAccessBusiness } from "@/lib/permissions";
@@ -61,7 +66,8 @@ import styles from "@/components/results/results-workbench.module.css";
 const defaultFilters: ResultFilters = {
   productId: "",
   campaignId: "",
-  platform: "",
+  commercePlatform: "",
+  channel: "",
   orderNumber: "",
   startDate: dayjs().startOf("month").format("YYYY-MM-DD"),
   endDate: dayjs().endOf("month").format("YYYY-MM-DD"),
@@ -96,7 +102,8 @@ function filtersFromSearchParams(searchParams: URLSearchParams) {
     ...defaultFilters,
     productId: value("productId"),
     campaignId: value("campaignId"),
-    platform: value("platform"),
+    commercePlatform: value("commercePlatform"),
+    channel: value("channel") || value("platform"),
     orderNumber: value("orderNumber"),
     startDate:
       value("startDate") ||
@@ -139,7 +146,8 @@ function buildQuery(
   const supported = {
     productId: filters.productId,
     campaignId: filters.campaignId,
-    platform: filters.platform,
+    commercePlatform: filters.commercePlatform,
+    channel: filters.channel,
     orderNumber: filters.orderNumber.trim(),
     startDate: filters.startDate,
     endDate: filters.endDate,
@@ -173,6 +181,8 @@ export default function ResultsPage() {
   });
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
+  const [campaignsLoading, setCampaignsLoading] = useState(false);
+  const campaignRequestRef = useRef(0);
   const [filters, setFilters] = useState<ResultFilters>(defaultFilters);
   const [appliedFilters, setAppliedFilters] =
     useState<ResultFilters>(defaultFilters);
@@ -268,13 +278,9 @@ export default function ResultsPage() {
     void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
       setCurrentRole(user?.role || null),
     );
-    void Promise.all([
-      apiFetch<ProductOption[]>("/api/products"),
-      apiFetch<CampaignOption[]>("/api/campaigns"),
-    ])
-      .then(([productData, campaignData]) => {
+    void Promise.all([apiFetch<ProductOption[]>("/api/products")])
+      .then(([productData]) => {
         setProducts(productData);
-        setCampaigns(campaignData);
       })
       .catch((error) =>
         message.error(
@@ -293,6 +299,33 @@ export default function ResultsPage() {
     // 页面首次加载一次；后续查询由用户操作显式触发。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const requestId = ++campaignRequestRef.current;
+    setCampaignsLoading(true);
+    const query = filters.productId
+      ? `?productId=${encodeURIComponent(filters.productId)}`
+      : "";
+    void apiFetch<CampaignOption[]>(`/api/results/campaign-options${query}`)
+      .then((items) => {
+        if (requestId !== campaignRequestRef.current) return;
+        setCampaigns(items);
+        setFilters((current) =>
+          current.campaignId &&
+          !items.some((item) => item.id === current.campaignId)
+            ? { ...current, campaignId: "" }
+            : current,
+        );
+      })
+      .catch((error) => {
+        if (requestId !== campaignRequestRef.current) return;
+        setCampaigns([]);
+        message.error(error instanceof Error ? error.message : "加载活动筛选项失败");
+      })
+      .finally(() => {
+        if (requestId === campaignRequestRef.current) setCampaignsLoading(false);
+      });
+  }, [filters.productId, message]);
 
   const visibleItems = data.items;
 
@@ -601,7 +634,24 @@ export default function ResultsPage() {
               {productStageTopicLabel(row.task.productStage)}
             </Tag>
           </div>
+          {row.task.storeName ? (
+            <Tooltip title={row.task.storeName}>
+              <div className={styles.cellSecondary}>
+                {row.task.storeName} · {commercePlatformLabel(row.task.commercePlatform)}
+              </div>
+            </Tooltip>
+          ) : null}
         </div>
+      ),
+    },
+    {
+      title: "渠道",
+      key: "channel",
+      width: 90,
+      render: (_value, row) => (
+        <Tag className={`${styles.compactTag} ${styles.neutralTag}`}>
+          {contentChannelLabel(resolveTaskChannel(row.task))}
+        </Tag>
       ),
     },
     {
@@ -736,6 +786,7 @@ export default function ResultsPage() {
         advancedFilters={advancedFilters}
         products={products}
         campaigns={campaigns}
+        campaignsLoading={campaignsLoading}
         advancedOpen={advancedOpen}
         onFiltersChange={setFilters}
         onAdvancedFiltersChange={setAdvancedFilters}
@@ -779,7 +830,7 @@ export default function ResultsPage() {
             } : undefined}
             columns={columns}
             tableLayout="fixed"
-            scroll={{ x: 1410 }}
+            scroll={{ x: 1500 }}
             sticky={{ offsetHeader: 64, offsetScroll: 10 }}
             pagination={{
               current: data.page,

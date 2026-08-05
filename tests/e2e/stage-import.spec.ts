@@ -1,6 +1,23 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import ExcelJS from "exceljs";
 import { E2E_ORIGIN } from "./e2e-origin";
+
+async function waitForBatch(page: Page, batchId: string) {
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `/api/automation/batches?batchId=${batchId}`,
+        );
+        const batches = (await response.json()).data as Array<{
+          status: string;
+        }>;
+        return batches[0]?.status;
+      },
+      { timeout: 45_000 },
+    )
+    .toMatch(/COMPLETED|FAILED|CANCELLED/u);
+}
 
 test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略", async ({
   page,
@@ -48,6 +65,9 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     "活动月份",
     "产品阶段话题",
     "备注",
+    "店铺名称",
+    "成交平台",
+    "内容渠道",
   ]);
   sheet.addRow([
     `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-pre`,
@@ -58,6 +78,9 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     campaign.month,
     "IFFO",
     "新模板 IFFO",
+    "京东健康官方进口超市",
+    "京东",
+    "小红书",
   ]);
   sheet.addRow([
     `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-gum`,
@@ -68,6 +91,9 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     campaign.month,
     " gum ",
     "新模板 GUM，兼容空格和大小写",
+    "京东健康官方进口超市",
+    "京东",
+    "小红书",
   ]);
   sheet.addRow([
     `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-legacy-p1`,
@@ -78,6 +104,9 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     campaign.month,
     "IFFO：P段/1段",
     "兼容旧 IFFO P1",
+    "京东健康官方进口超市",
+    "京东",
+    "小红书",
   ]);
   sheet.addRow([
     `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-legacy-stage-2`,
@@ -88,6 +117,9 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     campaign.month,
     "IFFO：2段",
     "兼容旧 IFFO 2段",
+    "京东健康官方进口超市",
+    "京东",
+    "小红书",
   ]);
   sheet.addRow([
     `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-legacy-gum`,
@@ -98,6 +130,9 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     campaign.month,
     "GUM：3段/4段/1+段/2+段",
     "兼容旧 GUM",
+    "京东健康官方进口超市",
+    "京东",
+    "小红书",
   ]);
   sheet.addRow([
     `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-invalid-stage`,
@@ -108,6 +143,9 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     campaign.month,
     "3段",
     "具体段位应拒绝",
+    "京东健康官方进口超市",
+    "京东",
+    "小红书",
   ]);
   sheet.addRow([
     `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-missing-stage`,
@@ -118,6 +156,9 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     campaign.month,
     "",
     "阶段组必填",
+    "京东健康官方进口超市",
+    "京东",
+    "小红书",
   ]);
 
   const response = await page.request.post("/api/import/notes", {
@@ -183,7 +224,10 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
 
   const aliasWorkbook = new ExcelJS.Workbook();
   const aliasSheet = aliasWorkbook.addWorksheet("产品别名识别");
-  aliasSheet.addRow(["笔记链接", "产品", "活动", "产品阶段话题"]);
+  aliasSheet.addRow([
+    "笔记链接", "产品", "活动", "产品阶段话题",
+    "店铺名称", "成交平台", "内容渠道",
+  ]);
   const germanProduct = products.find((item) =>
     item.name.includes("德国白金版"),
   )!;
@@ -202,6 +246,9 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
       input,
       campaign.name,
       "IFFO",
+      "京东健康官方进口超市",
+      "京东",
+      "小红书",
     ]);
   });
   const aliasResponse = await page.request.post("/api/import/notes", {
@@ -237,13 +284,19 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
 
   const gumCommitWorkbook = new ExcelJS.Workbook();
   const gumCommitSheet = gumCommitWorkbook.addWorksheet("笔记导入");
-  gumCommitSheet.addRow(["笔记链接", "产品", "活动", "产品阶段话题"]);
+  gumCommitSheet.addRow([
+    "笔记链接", "产品", "活动", "产品阶段话题",
+    "店铺名称", "成交平台", "内容渠道",
+  ]);
   const gumCommitUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-gum-commit`;
   gumCommitSheet.addRow([
     gumCommitUrl,
     product.name,
     campaign.name,
     "GUM",
+    "京东健康官方进口超市",
+    "京东",
+    "小红书",
   ]);
   const gumCommitResponse = await page.request.post("/api/import/notes", {
     multipart: {
@@ -258,7 +311,12 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     },
   });
   expect(gumCommitResponse.ok()).toBeTruthy();
-  expect((await gumCommitResponse.json()).data.imported).toBe(1);
+  const gumCommitPayload = (await gumCommitResponse.json()).data as {
+    imported: number;
+    batchId: string;
+  };
+  expect(gumCommitPayload.imported).toBe(1);
+  await waitForBatch(page, gumCommitPayload.batchId);
   const committedGumTask = (
     (await (await page.request.get("/api/tasks")).json()).data as Array<{
       url: string;
@@ -270,20 +328,20 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
   const newTemplateWorkbook = new ExcelJS.Workbook();
   const newTemplateSheet = newTemplateWorkbook.addWorksheet("笔记导入模板");
   newTemplateSheet.addRow([
-    "平台（必填）",
+    "平台",
     "店铺名称（必填）",
     "客户名（必填）",
     "产品系列（必填）",
     "阶段（IFFO/GUM）",
     "订单编号",
-    "内容渠道（必填）",
+    "内容渠道",
     "链接（必填）",
     "发帖时间（必填）",
   ]);
   const newTemplateUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&new-template=${suffix}`;
   newTemplateSheet.addRow([
-    "小红书",
-    "E2E 店铺",
+    "京东",
+    "京东健康官方进口超市",
     "E2E 客户",
     product.name,
     "IFFO",
@@ -304,8 +362,13 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
       skipDuplicates: "true",
     },
   });
-  expect(newTemplateResponse.ok()).toBeTruthy();
-  expect((await newTemplateResponse.json()).data.imported).toBe(1);
+  const newTemplatePayload = await newTemplateResponse.json();
+  expect(
+    newTemplateResponse.ok(),
+    `新版模板导入失败：${JSON.stringify(newTemplatePayload)}`,
+  ).toBeTruthy();
+  expect(newTemplatePayload.data.imported).toBe(1);
+  await waitForBatch(page, newTemplatePayload.data.batchId);
   const committedNewTemplateTask = (
     (await (await page.request.get("/api/tasks")).json()).data as Array<{
       url: string;
@@ -316,8 +379,8 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
   expect(committedNewTemplateTask).toMatchObject({
     campaignId: campaign.id,
   });
-  expect(committedNewTemplateTask?.notes).toContain("平台：小红书");
-  expect(committedNewTemplateTask?.notes).toContain("店铺名称：E2E 店铺");
+  expect(committedNewTemplateTask?.notes).toContain("平台：京东");
+  expect(committedNewTemplateTask?.notes).toContain("店铺名称：京东健康官方进口超市");
   expect(committedNewTemplateTask?.notes).toContain("客户名：E2E 客户");
   expect(committedNewTemplateTask?.notes).toContain(
     `订单编号：ORDER-${suffix}`,
@@ -328,8 +391,8 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
   );
 
   const csv = [
-    "\uFEFF活动名称,段位,小红书链接,商品,额外登记列",
-    `${campaign.name},IFFO,${E2E_ORIGIN}/mock/xhs?case=passed&csv=${suffix},${product.name},忽略`,
+    "\uFEFF活动名称,段位,小红书链接,商品,额外登记列,店铺名称,成交平台,内容渠道",
+    `${campaign.name},IFFO,${E2E_ORIGIN}/mock/xhs?case=passed&csv=${suffix},${product.name},忽略,京东健康官方进口超市,京东,小红书`,
   ].join("\r\n");
   const csvResponse = await page.request.post("/api/import/notes", {
     multipart: {

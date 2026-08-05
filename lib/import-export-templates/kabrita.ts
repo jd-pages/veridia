@@ -58,7 +58,7 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
   shopName: {
     displayName: "店铺名称",
     type: "string",
-    description: "原始店铺名称，可留空",
+    description: "按店铺话题配置填写完整店铺名称",
   },
   customerRemark: {
     displayName: "客户备注",
@@ -120,7 +120,7 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
 export const KABRITA_TEMPLATE_EXAMPLES: KabritaRawValues = {
   registrationTime: "2026-08-04 10:00:00",
   channel: "小红书",
-  shopName: "示例店铺",
+  shopName: "佳贝艾特(Kabrita)海外专卖店",
   customerRemark: "",
   buyerPurchaseId: "BUYER-001",
   purchaseOrderNumber: "ORDER-001",

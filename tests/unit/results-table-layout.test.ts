@@ -30,7 +30,7 @@ describe("审核结果表格布局", () => {
     expect(page).toMatch(/title: "正文审核",[\s\S]*?width: 130/);
     expect(page).toMatch(/title: "审核结论",[\s\S]*?width: 250/);
     expect(page).toContain('tableLayout="fixed"');
-    expect(page).toContain("scroll={{ x: 1410 }}");
+    expect(page).toContain("scroll={{ x: 1500 }}");
     expect(page).not.toContain("<ContentStatusCell");
     expect(styles).toContain(".ownershipCampaign");
     expect(styles).toContain("text-overflow: ellipsis;");

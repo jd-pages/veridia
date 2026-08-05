@@ -11,9 +11,10 @@ import {
 import { isUnavailableNoteResult } from "@/lib/result-display";
 import { resultDetailLinks } from "@/lib/result-links";
 import {
+  commercePlatformLabel,
+  contentChannelLabel,
   formatAuditTime,
-  parseResultPlatform,
-  resultPlatformLabel,
+  resolveTaskChannel,
 } from "@/lib/result-source";
 import { getTopicAuditSummary } from "./TopicAuditCell";
 import ResultDetailLink from "./ResultDetailLink";
@@ -96,8 +97,9 @@ export default function AuditDecisionSummary({
     (item) => item.ruleKey === "KABRITA_BASIC_REWARD",
   );
   const basicReward = parseBasicRewardEvidence(basicRewardRule?.evidence);
-  const platform = parseResultPlatform(row.task.platform);
-  const platformLabel = resultPlatformLabel(platform);
+  const channel = resolveTaskChannel(row.task);
+  const channelLabel = contentChannelLabel(channel);
+  const platformLabel = commercePlatformLabel(row.task.commercePlatform);
   const storeName = row.task.storeName?.trim() || "—";
   const orderNumber = row.task.orderNumber?.trim() || "—";
 
@@ -110,11 +112,11 @@ export default function AuditDecisionSummary({
         <div className={styles.decisionHeroTopline}>
           <span
             className={`${styles.platformBadge} ${
-              platform ? styles[`platformBadge_${platform}`] : ""
+              channel ? styles[`platformBadge_${channel}`] : ""
             }`}
           >
             <i aria-hidden="true" />
-            {platformLabel}
+            渠道：{channelLabel}
           </span>
           <span className={styles.decisionEyebrow}>审核结论</span>
           <strong className={styles.decisionTitle}>{conclusion}</strong>
@@ -133,14 +135,18 @@ export default function AuditDecisionSummary({
             <strong>{productStageTopicLabel(row.task.productStage) || "—"}</strong>
           </div>
           <div className={styles.decisionSourceField}>
-            <span>来源信息</span>
-            <strong className={styles.sourceInformation}>
-              <span>{platformLabel}</span>
-              <b aria-hidden="true">·</b>
-              <Tooltip title={storeName === "—" ? undefined : storeName}>
-                <span className={styles.storeName}>{storeName}</span>
-              </Tooltip>
-            </strong>
+            <span>渠道</span>
+            <strong>{channelLabel}</strong>
+          </div>
+          <div className={styles.decisionSourceField}>
+            <span>平台</span>
+            <strong>{platformLabel}</strong>
+          </div>
+          <div className={styles.decisionSourceField}>
+            <span>店铺</span>
+            <Tooltip title={storeName === "—" ? undefined : storeName}>
+              <strong className={styles.storeName}>{storeName}</strong>
+            </Tooltip>
           </div>
           <div>
             <span>订单编号</span>
@@ -272,6 +278,44 @@ export default function AuditDecisionSummary({
                           : "待人工复核"}
                   </strong>
                 </div>
+              </div>
+            )}
+          </article>
+
+          <article className={styles.auditDetailCard}>
+            <h4>店铺话题审核</h4>
+            {unavailable || row.storeTopicStatus === "NOT_CHECKED" ? (
+              <strong>未审核</strong>
+            ) : row.storeTopicStatus === "NOT_REQUIRED" ? (
+              <strong>不适用</strong>
+            ) : (
+              <div className={styles.auditDetailList}>
+                <div>
+                  <span>要求话题</span>
+                  <strong>
+                    {row.expectedStoreTopic ? `#${row.expectedStoreTopic}` : "无法确认"}
+                  </strong>
+                </div>
+                <div>
+                  <span>实际命中</span>
+                  <strong>{row.matchedStoreTopic || "未命中"}</strong>
+                </div>
+                <div>
+                  <span>状态</span>
+                  <strong>
+                    {row.storeTopicStatus === "COMPLIANT"
+                      ? "合规"
+                      : row.storeTopicStatus === "NON_COMPLIANT"
+                        ? "不合规"
+                        : "无法审核"}
+                  </strong>
+                </div>
+                {row.storeTopicFailureReason ? (
+                  <div>
+                    <span>原因</span>
+                    <strong>{row.storeTopicFailureReason}</strong>
+                  </div>
+                ) : null}
               </div>
             )}
           </article>

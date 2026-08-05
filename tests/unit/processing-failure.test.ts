@@ -130,12 +130,37 @@ describe("处理失败结果口径", () => {
         {
           task: {
             productId: "product-1",
-            platform: "XIAOHONGSHU",
             orderNumber: { contains: "ORDER-10" },
+            OR: expect.arrayContaining([
+              { channel: "XIAOHONGSHU" },
+              { channel: null, platform: "XIAOHONGSHU" },
+            ]),
           },
         },
       ]),
     });
+  });
+
+  it("成交平台与内容渠道是独立条件，并兼容旧 platform 渠道", () => {
+    expect(buildAuditResultWhere({
+      commercePlatform: "JD",
+      channel: "XIAOHONGSHU",
+    })).toMatchObject({
+      AND: [{
+        task: {
+          commercePlatform: "JD",
+          OR: expect.arrayContaining([
+            { channel: "XIAOHONGSHU" },
+            { channel: null, platform: "XIAOHONGSHU" },
+          ]),
+        },
+      }],
+    });
+    expect(
+      readResultQueryFilters(
+        new URLSearchParams("commercePlatform=DOUYIN_ECOMMERCE&channel=DOUYIN"),
+      ),
+    ).toMatchObject({ commercePlatform: "DOUYIN_ECOMMERCE", channel: "DOUYIN" });
   });
 
   it("笔记不存在使用独立筛选并从普通不通过、待复核中排除", () => {

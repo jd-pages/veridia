@@ -4,7 +4,7 @@ import type { ImportExportTemplates, StandardField } from "./types";
 import { validateImportExportTemplates } from "./validation";
 
 export const RESULT_EXPORT_FIELDS: StandardField[] = [
-  "platform",
+  "commercePlatform",
   "shopName",
   "customerName",
   "productName",
@@ -17,7 +17,7 @@ export const RESULT_EXPORT_FIELDS: StandardField[] = [
 ];
 
 export const IMPORT_TEMPLATE_FIELDS: StandardField[] = [
-  "platform",
+  "commercePlatform",
   "shopName",
   "customerName",
   "productName",
@@ -42,10 +42,10 @@ function normalizeBusinessTemplates(
     type: "string",
     description: "系统中已有的产品名称、产品系列或简称",
   };
-  output.fieldDefinitions.platform = {
-    displayName: "平台（必填）",
+  output.fieldDefinitions.commercePlatform = {
+    displayName: "平台",
     type: "string",
-    description: "线下表格的平台标识，仅用于记录和导出",
+    description: "订单所在成交平台；未填写时仅可由店铺全称精确推断",
   };
   output.fieldDefinitions.shopName = {
     displayName: "店铺名称（必填）",
@@ -78,9 +78,9 @@ function normalizeBusinessTemplates(
     description: "可选，用于和原始表格对照，不参与审核判断",
   };
   output.fieldDefinitions.contentChannel = {
-    displayName: "内容渠道（必填）",
+    displayName: "内容渠道",
     type: "string",
-    description: "原表中的内容渠道；不会扩展当前审核引擎能力",
+    description: "内容来源渠道；未填写时仅由笔记链接类型识别",
   };
   output.fieldDefinitions.noteUrl = {
     displayName: "链接（必填）",
@@ -133,11 +133,13 @@ function normalizeBusinessTemplates(
     "订单编号（必填）",
     "orderNumber",
   ];
-  output.fieldAliases.platform = [
+  output.fieldAliases.commercePlatform = [
     "平台",
     "平台（必填）",
-    "所属平台",
-    "platform",
+    "成交平台",
+    "电商平台",
+    "订单平台",
+    "commercePlatform",
   ];
   output.fieldAliases.shopName = [
     "店铺名称",
@@ -157,6 +159,8 @@ function normalizeBusinessTemplates(
         ...(output.fieldAliases.contentChannel || []),
         "内容渠道",
         "内容渠道（必填）",
+        "渠道",
+        "审核渠道",
         "发布渠道",
         "channel",
       ].filter((alias) => alias !== "平台" && alias !== "platform"),
@@ -191,8 +195,8 @@ function normalizeBusinessTemplates(
       "发布时间",
     ]),
   ];
-  output.examples.platform = "小红书";
-  output.examples.shopName = "示例店铺";
+  output.examples.commercePlatform = "京东";
+  output.examples.shopName = "京东健康官方进口超市";
   output.examples.customerName = "示例客户";
   output.examples.productStage = "IFFO";
   output.examples.orderNumber = "JD202608030001";
@@ -200,13 +204,11 @@ function normalizeBusinessTemplates(
   output.examples.noteUrl = "https://xhslink.com/示例短链";
   output.examples.publishTime = "2026-08-03 12:00:00";
   output.requiredFields = [
-    "platform",
     "shopName",
     "customerName",
     "noteUrl",
     "productName",
     "productStage",
-    "contentChannel",
     "publishTime",
   ];
   output.optionalFields = [
@@ -215,6 +217,8 @@ function normalizeBusinessTemplates(
         (field) => !output.requiredFields.includes(field),
       ),
       "orderNumber" as const,
+      "commercePlatform" as const,
+      "contentChannel" as const,
       "activityName" as const,
       "effectiveBodyLength" as const,
       "publicStatus" as const,

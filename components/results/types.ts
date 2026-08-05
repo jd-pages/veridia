@@ -9,7 +9,7 @@ export interface CampaignOption {
   id: string;
   name: string;
   month: string;
-  productId: string;
+  productId?: string | null;
 }
 
 export interface AuditTopic {
@@ -37,6 +37,10 @@ export interface ResultRow {
   imageCompliant: boolean | null;
   topicsCompliant: boolean;
   clickableCompliant: boolean;
+  storeTopicStatus: string;
+  expectedStoreTopic: string | null;
+  matchedStoreTopic: string | null;
+  storeTopicFailureReason: string | null;
   missingTopics: string;
   forbiddenTopics: string;
   autoStatus: string;
@@ -65,7 +69,11 @@ export interface ResultRow {
     failureMessage: string | null;
     failureEvidence?: string | null;
     platform: string | null;
+    channel: string | null;
+    commercePlatform: string | null;
     storeName: string | null;
+    expectedStoreTopic: string | null;
+    storeMappingStatus: string | null;
     orderNumber: string | null;
     product: ProductOption;
     campaign: CampaignOption;
@@ -89,7 +97,8 @@ export interface ResultPageData {
 export interface ResultFilters {
   productId: string;
   campaignId: string;
-  platform: string;
+  commercePlatform: string;
+  channel: string;
   orderNumber: string;
   startDate: string;
   endDate: string;

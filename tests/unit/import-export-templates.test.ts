@@ -18,6 +18,7 @@ import {
 } from "@/lib/import-export-templates/tabular";
 import { validateImportExportTemplates } from "@/lib/import-export-templates/validation";
 import {
+  BUILTIN_IMPORT_EXPORT_TEMPLATES,
   IMPORT_TEMPLATE_FIELDS,
   RESULT_EXPORT_FIELDS,
 } from "@/lib/import-export-templates/config";
@@ -32,7 +33,7 @@ import {
   KABRITA_IMPORT_FIELDS,
 } from "@/lib/import-export-templates/kabrita";
 
-const templates = validateImportExportTemplates(builtinTemplates);
+const templates = BUILTIN_IMPORT_EXPORT_TEMPLATES;
 
 const kabritaImportHeaders = [
   "登记时间",
@@ -54,13 +55,11 @@ const kabritaExportHeaders = [...kabritaImportHeaders, "自审"];
 describe("远程表格模板配置", () => {
   it("内置模板包含必填字段、标准别名和本地数据源", () => {
     expect(templates.requiredFields).toEqual([
-      "platform",
       "shopName",
       "customerName",
+      "noteUrl",
       "productName",
       "productStage",
-      "contentChannel",
-      "noteUrl",
       "publishTime",
     ]);
     expect(templates.optionalFields).toContain("orderNumber");
@@ -320,7 +319,7 @@ describe("佳贝艾特专属导入导出模板", () => {
         {
           sheetName: "达能审核结果",
           records: [{
-            platform: "小红书",
+            commercePlatform: "京东",
             productName: "爱他美澳洲白金版",
             productStageTopic: "IFFO",
             selfReview: "Y",
@@ -468,7 +467,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
   it("新九列表格读取人工识别字段并继续识别小红书短链接", async () => {
     const csv = [
       "平台（必填）,店铺名称（必填）,客户名（必填）,产品系列（必填）,阶段（IFFO/GUM）,订单编号,内容渠道（必填）,链接（必填）,发帖时间（必填）",
-      "小红书,示例店铺,示例客户,爱他美奇迹绿罐,IFFO,ORDER-1001,小红书,https://xhslink.com/new-template,2026-08-03 12:00:00",
+      "京东,京东健康官方进口超市,示例客户,爱他美奇迹绿罐,IFFO,ORDER-1001,小红书,https://xhslink.com/new-template,2026-08-03 12:00:00",
     ].join("\r\n");
     const result = await parseTabularPreview({
       bytes: Buffer.from(csv),
@@ -481,8 +480,8 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
     expect(result.previewRows[0].values).toMatchObject({
       productName: "爱他美奇迹绿罐",
       productStage: "IFFO",
-      platform: "小红书",
-      shopName: "示例店铺",
+      commercePlatform: "京东",
+      shopName: "京东健康官方进口超市",
       customerName: "示例客户",
       orderNumber: "ORDER-1001",
       contentChannel: "小红书",
@@ -494,8 +493,8 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
         buildImportedTaskNotes(result.previewRows[0].values),
       ),
     ).toMatchObject({
-      platform: "小红书",
-      shopName: "示例店铺",
+      platform: "",
+      shopName: "京东健康官方进口超市",
       customerName: "示例客户",
       orderNumber: "ORDER-1001",
       contentChannel: "小红书",
@@ -514,7 +513,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
     expect(missingOrder.rows[0].values.orderNumber).toBe("");
   });
 
-  it("订单编号可留空但其余八个必填字段仍逐项拦截", async () => {
+  it("订单编号、成交平台和渠道可推断，其余必填字段逐项拦截", async () => {
     const headers = [
       "平台（必填）",
       "店铺名称（必填）",
@@ -527,8 +526,8 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       "发帖时间（必填）",
     ];
     const values = [
-      "小红书",
-      "示例店铺",
+      "京东",
+      "京东健康官方进口超市",
       "示例客户",
       "爱他美奇迹绿罐",
       "IFFO",
@@ -538,12 +537,10 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       "2026-08-03 12:00:00",
     ];
     const required = [
-      [0, "平台（必填）"],
       [1, "店铺名称（必填）"],
       [2, "客户名（必填）"],
       [3, "产品系列（必填）"],
       [4, "阶段（IFFO/GUM）"],
-      [6, "内容渠道（必填）"],
       [7, "链接（必填）"],
       [8, "发帖时间（必填）"],
     ] as const;
@@ -636,7 +633,7 @@ describe("模板驱动导出", () => {
       "填写说明",
     ]);
     expect(workbook.getWorksheet("笔记导入")?.getCell("A1").text).toBe(
-      "平台（必填）",
+      "平台",
     );
     expect(workbook.getWorksheet("填写说明")?.getCell("B2").text).toBe(
       templates.templateVersion,
@@ -645,13 +642,13 @@ describe("模板驱动导出", () => {
       .values || []) as unknown[];
     const headers = headerValues.slice(1).map(String);
     expect(headers).toEqual([
-      "平台（必填）",
+      "平台",
       "店铺名称（必填）",
       "客户名（必填）",
       "产品系列（必填）",
       "阶段（IFFO/GUM）",
       "订单编号",
-      "内容渠道（必填）",
+      "内容渠道",
       "链接（必填）",
       "发帖时间（必填）",
     ]);
@@ -806,8 +803,11 @@ describe("模板驱动导出", () => {
         pageType: "NOTE_DETAIL",
         createdAt: new Date("2026-08-03T08:00:00.000Z"),
         productStage: "IFFO",
+        platform: "XIAOHONGSHU",
+        channel: "XIAOHONGSHU",
+        commercePlatform: "JD",
         notes: buildImportedTaskNotes({
-          platform: "小红书",
+          platform: "京东",
           shopName: "示例店铺",
           customerName: "示例客户",
           orderNumber: "ORDER-1001",
@@ -834,7 +834,7 @@ describe("模板驱动导出", () => {
     expect(passed.selfReview).toBe("Y");
     expect(passed.orderNumber).toBe("ORDER-1001");
     expect(passed).toMatchObject({
-      platform: "小红书",
+      commercePlatform: "京东",
       shopName: "示例店铺",
       customerName: "示例客户",
       contentChannel: "小红书",
@@ -1027,6 +1027,22 @@ describe("模板驱动导出", () => {
       },
     });
     expect(compactWithoutOrder.orderNumber).toBe("");
+
+    const legacyChannelOnly = auditResultToCompactExportRecord({
+      ...compactSource,
+      task: {
+        ...compactSource.task,
+        channel: null,
+        commercePlatform: null,
+        platform: "XIAOHONGSHU",
+        notes: buildImportedTaskNotes({
+          platform: "小红书",
+          contentChannel: "小红书",
+        }),
+      },
+    });
+    expect(legacyChannelOnly.commercePlatform).toBe("—");
+    expect(legacyChannelOnly.contentChannel).toBe("小红书");
   });
 
   it("18条当前筛选结果严格生成十列线下处理字段", async () => {

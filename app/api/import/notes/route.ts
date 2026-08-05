@@ -35,6 +35,14 @@ import {
   resolveProductReference,
 } from "@/lib/product-matching";
 import { buildImportedTaskNotes } from "@/lib/import-task-metadata";
+import {
+  commercePlatformLabel,
+  contentChannelLabel,
+} from "@/lib/result-source";
+import {
+  resolveStoreTopicConfig,
+  type StoreMappingStatus,
+} from "@/lib/store-topic-config";
 
 interface CheckedRow {
   rowNumber: number;
@@ -47,6 +55,10 @@ interface CheckedRow {
   orderNumber: string;
   publishTime: string;
   platform: NoteLinkPlatform;
+  channel: NoteLinkPlatform;
+  commercePlatform: string;
+  expectedStoreTopic: string;
+  storeMappingStatus: StoreMappingStatus;
   recognitionStatus: "RECOGNIZED" | "UNRECOGNIZED" | "UNSUPPORTED";
   failureReason: string;
   productCode: string;
@@ -93,9 +105,6 @@ export async function POST(request: Request) {
     const rows: CheckedRow[] = [];
     const seen = new Set<string>();
     const isKabritaTemplate = tabular.templateBrand === KABRITA_BRAND_NAME;
-    const hasContentChannelColumn = tabular.recognizedFields.some(
-      (field) => field.field === "contentChannel",
-    );
     const activeProducts = await prisma.product.findMany({
       where: { status: "ACTIVE", deletedAt: null },
       include: { aliases: { select: { alias: true } } },
@@ -119,9 +128,19 @@ export async function POST(request: Request) {
       const hyperlinkTarget = isKabritaTemplate
         ? parsed.hyperlinks?.xiaohongshuPublishLink || ""
         : parsed.hyperlinks?.noteUrl || "";
-      const declaredChannel = isKabritaTemplate
-        ? ""
-        : (values.contentChannel || "").trim();
+      const declaredChannel = String(
+        (isKabritaTemplate
+          ? values.channel
+          : values.contentChannel || values.channel) || "",
+      ).trim();
+      const importedStoreName = String(values.shopName || "").trim();
+      const importedCommercePlatform = String(
+        values.commercePlatform || values.platform || "",
+      ).trim();
+      const storeResolution = resolveStoreTopicConfig({
+        storeName: importedStoreName,
+        commercePlatform: importedCommercePlatform,
+      });
       const purchaseProductLine = isKabritaTemplate
         ? values.purchaseProductLine || ""
         : "";
@@ -134,12 +153,15 @@ export async function POST(request: Request) {
         rowNumber: parsed.rowNumber,
         url: linkResolution.url,
         originalLinkContent: linkResolution.originalContent,
-        importedPlatform: isKabritaTemplate ? "小红书" : values.platform || "",
-        shopName: values.shopName || "",
+        importedPlatform:
+          storeResolution.commercePlatform
+            ? commercePlatformLabel(storeResolution.commercePlatform)
+            : importedCommercePlatform,
+        shopName: importedStoreName,
         customerName: isKabritaTemplate
           ? values.customerRemark || ""
           : values.customerName || "",
-        contentChannel: isKabritaTemplate ? "小红书" : declaredChannel,
+        contentChannel: contentChannelLabel(linkResolution.platform),
         orderNumber: isKabritaTemplate
           ? values.purchaseOrderNumber || ""
           : values.orderNumber || "",
@@ -147,6 +169,10 @@ export async function POST(request: Request) {
           ? values.purchaseTime || ""
           : values.publishTime || "",
         platform: linkResolution.platform,
+        channel: linkResolution.platform,
+        commercePlatform: storeResolution.commercePlatform || "",
+        expectedStoreTopic: storeResolution.expectedTopic || "",
+        storeMappingStatus: storeResolution.status,
         recognitionStatus: linkResolution.status,
         failureReason: linkResolution.failureReason,
         productCode: values.productCode || "",
@@ -163,7 +189,10 @@ export async function POST(request: Request) {
         productStage: "",
         stageGroup: "",
         notes: buildImportedTaskNotes({
-          platform: isKabritaTemplate ? "小红书" : values.platform,
+          platform:
+            storeResolution.commercePlatform
+              ? commercePlatformLabel(storeResolution.commercePlatform)
+              : importedCommercePlatform,
           shopName: values.shopName,
           customerName: isKabritaTemplate
             ? values.customerRemark
@@ -171,9 +200,7 @@ export async function POST(request: Request) {
           orderNumber: isKabritaTemplate
             ? values.purchaseOrderNumber
             : values.orderNumber,
-          contentChannel: isKabritaTemplate
-            ? "小红书"
-            : values.contentChannel,
+          contentChannel: contentChannelLabel(linkResolution.platform),
           publishTime: isKabritaTemplate
             ? values.purchaseTime
             : values.publishTime,
@@ -189,8 +216,10 @@ export async function POST(request: Request) {
         }),
         errors: [...parsed.errors],
       };
-      if (!isKabritaTemplate && hasContentChannelColumn && !declaredChannel) {
-        checked.errors.push("内容渠道不能为空");
+      if (storeResolution.status !== "MATCHED") {
+        checked.errors.push(
+          `${storeResolution.status}：${storeResolution.failureReason}`,
+        );
       }
       if (checked.failureReason) {
         checked.errors.push(checked.failureReason);
@@ -334,7 +363,11 @@ export async function POST(request: Request) {
             source: "EXCEL",
             notes: row.notes,
             platform: row.platform,
+            channel: row.channel,
+            commercePlatform: row.commercePlatform,
             storeName: row.shopName,
+            expectedStoreTopic: row.expectedStoreTopic,
+            storeMappingStatus: row.storeMappingStatus,
             orderNumber: row.orderNumber,
           }));
           const batch = await createAutomaticBatchInTransaction(

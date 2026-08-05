@@ -53,7 +53,8 @@ describe("审核详情展示过滤", () => {
     expect(decision).toContain('aria-label="审核明细"');
     expect(decision).toContain('aria-label="链接操作"');
     expect(decision).toContain('aria-label="人工复核记录"');
-    expect(decision).toContain("row.task.platform");
+    expect(decision).toContain("resolveTaskChannel(row.task)");
+    expect(decision).toContain("row.task.commercePlatform");
     expect(decision).toContain("row.task.storeName");
     expect(decision).toContain("row.task.orderNumber");
     expect(decision).toContain("formatAuditTime(row.auditedAt)");

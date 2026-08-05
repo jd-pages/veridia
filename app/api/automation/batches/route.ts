@@ -142,6 +142,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
         milkType: stageRule?.milkType || null,
         notes: body.notes,
         platform: "XIAOHONGSHU",
+        channel: "XIAOHONGSHU",
         source: "MANUAL",
       })),
     });

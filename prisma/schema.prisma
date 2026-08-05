@@ -270,7 +270,11 @@ model AuditTask {
   failureEvidence    String?
   notes              String?
   platform           String?
+  channel            String?
+  commercePlatform   String?
   storeName          String?
+  expectedStoreTopic String?
+  storeMappingStatus String?
   orderNumber        String?
   softwareVersion    String?
   rulePackageVersion String?
@@ -292,6 +296,8 @@ model AuditTask {
   @@index([normalizedUrl])
   @@index([replacesResultId])
   @@index([platform])
+  @@index([channel])
+  @@index([commercePlatform])
   @@index([orderNumber])
   @@map("audit_tasks")
 }
@@ -421,42 +427,46 @@ model ExtractionRecord {
 }
 
 model AuditResult {
-  id                    String         @id @default(cuid())
-  auditTaskId           String
-  noteId                String
-  ruleVersion           Int
-  softwareVersion       String         @default("unknown")
-  rulePackageVersion    String?
-  ruleSnapshot          String
-  pageStatus            String
-  bodyStatus            String
-  effectiveBodyLength   Int            @default(0)
-  bodyCompliant         Boolean        @default(true)
-  noteType              String         @default("UNKNOWN")
-  imageExtractionStatus String         @default("NOT_CHECKED")
-  imageStatus           String         @default("NOT_REQUIRED")
-  imageCount            Int
-  imageCompliant        Boolean
-  topicsCompliant       Boolean
-  clickableCompliant    Boolean
-  missingTopics         String         @default("[]")
-  forbiddenTopics       String         @default("[]")
-  autoStatus            String
-  publicStatus          String         @default("NOT_REQUIRED")
-  retentionStatus       String         @default("NOT_REQUIRED")
-  retentionDueAt        DateTime?
-  visualReviewStatus    String         @default("NOT_REQUIRED")
-  visualReviewDetails   String         @default("{}")
-  failureReasons        String         @default("[]")
-  aiStatus              String         @default("DISABLED")
-  aiRelevance           String?
-  aiReason              String?
-  auditedAt             DateTime       @default(now())
-  createdAt             DateTime       @default(now())
-  task                  AuditTask      @relation(fields: [auditTaskId], references: [id])
-  note                  NoteRecord     @relation(fields: [noteId], references: [id])
-  ruleResults           RuleResult[]
-  manualReviews         ManualReview[]
+  id                      String         @id @default(cuid())
+  auditTaskId             String
+  noteId                  String
+  ruleVersion             Int
+  softwareVersion         String         @default("unknown")
+  rulePackageVersion      String?
+  ruleSnapshot            String
+  pageStatus              String
+  bodyStatus              String
+  effectiveBodyLength     Int            @default(0)
+  bodyCompliant           Boolean        @default(true)
+  noteType                String         @default("UNKNOWN")
+  imageExtractionStatus   String         @default("NOT_CHECKED")
+  imageStatus             String         @default("NOT_REQUIRED")
+  imageCount              Int
+  imageCompliant          Boolean
+  topicsCompliant         Boolean
+  clickableCompliant      Boolean
+  storeTopicStatus        String         @default("NOT_CHECKED")
+  expectedStoreTopic      String?
+  matchedStoreTopic       String?
+  storeTopicFailureReason String?
+  missingTopics           String         @default("[]")
+  forbiddenTopics         String         @default("[]")
+  autoStatus              String
+  publicStatus            String         @default("NOT_REQUIRED")
+  retentionStatus         String         @default("NOT_REQUIRED")
+  retentionDueAt          DateTime?
+  visualReviewStatus      String         @default("NOT_REQUIRED")
+  visualReviewDetails     String         @default("{}")
+  failureReasons          String         @default("[]")
+  aiStatus                String         @default("DISABLED")
+  aiRelevance             String?
+  aiReason                String?
+  auditedAt               DateTime       @default(now())
+  createdAt               DateTime       @default(now())
+  task                    AuditTask      @relation(fields: [auditTaskId], references: [id])
+  note                    NoteRecord     @relation(fields: [noteId], references: [id])
+  ruleResults             RuleResult[]
+  manualReviews           ManualReview[]
 
   @@index([autoStatus, auditedAt])
   @@index([imageStatus, auditedAt])

@@ -198,6 +198,8 @@ async function main() {
           source: "SEED",
           notes: "Playwright isolated fixture",
           platform: "XIAOHONGSHU",
+          channel: "XIAOHONGSHU",
+          commercePlatform: "JD",
           storeName: "京东健康进口超市 Playwright 测试长店铺名称",
           orderNumber: `ORDER-${payload.noteId}`,
         },

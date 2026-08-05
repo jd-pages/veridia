@@ -14,6 +14,13 @@ import {
 import { isUnavailableNoteResult } from "@/lib/result-display";
 import { auditConclusionFailureReasons } from "@/lib/result-detail-presentation";
 import {
+  commercePlatformLabel,
+  contentChannelLabel,
+  parseCommercePlatform,
+  parseContentChannel,
+  resolveTaskChannel,
+} from "@/lib/result-source";
+import {
   importedPublishTimeValue,
   importedTaskMetadataFromNotes,
   importedTemplateMetadataFromNotes,
@@ -54,6 +61,9 @@ export interface CompactAuditResultExportSourceRow {
     pageTitle: string | null;
     pageType: string | null;
     notes: string | null;
+    platform?: string | null;
+    channel?: string | null;
+    commercePlatform?: string | null;
     productStage: string | null;
     product: {
       name: string;
@@ -112,7 +122,7 @@ function columns(
     }));
   }
   const auditResultDisplayNames: Partial<Record<StandardField, string>> = {
-    platform: "平台",
+    commercePlatform: "平台",
     shopName: "店铺名称",
     customerName: "客户名",
     productName: "产品系列",
@@ -263,14 +273,20 @@ export function auditResultToCompactExportRecord(
   row: CompactAuditResultExportSourceRow,
 ): ExportValueRecord {
   const importedMetadata = importedTaskMetadataFromNotes(row.task.notes);
+  const commercePlatform =
+    parseCommercePlatform(row.task.commercePlatform) ||
+    parseCommercePlatform(importedMetadata.platform);
+  const channel =
+    resolveTaskChannel(row.task) ||
+    parseContentChannel(importedMetadata.contentChannel);
   return {
-    platform: importedMetadata.platform || "小红书",
+    commercePlatform: commercePlatformLabel(commercePlatform),
     shopName: importedMetadata.shopName,
     customerName: importedMetadata.customerName,
     productName: row.task.product.seriesName || row.task.product.name,
     productStageTopic: productStageTopicLabel(row.task.productStage),
     orderNumber: importedMetadata.orderNumber,
-    contentChannel: importedMetadata.contentChannel || "小红书",
+    contentChannel: contentChannelLabel(channel),
     originalUrl: row.task.url,
     publishTime: importedMetadata.publishTime
       ? importedPublishTimeValue(importedMetadata.publishTime)
@@ -335,6 +351,9 @@ export function auditResultToExportRecord(row: {
     createdAt: Date;
     productStage: string | null;
     notes: string | null;
+    platform?: string | null;
+    channel?: string | null;
+    commercePlatform?: string | null;
     product: { name: string; seriesName?: string | null };
     campaign: { name: string };
   };
@@ -403,6 +422,12 @@ export function auditResultToExportRecord(row: {
   });
   const selfReview = compactSelfReview(row);
   const importedMetadata = importedTaskMetadataFromNotes(row.task.notes);
+  const commercePlatform =
+    parseCommercePlatform(row.task.commercePlatform) ||
+    parseCommercePlatform(importedMetadata.platform);
+  const channel =
+    resolveTaskChannel(row.task) ||
+    parseContentChannel(importedMetadata.contentChannel);
   const bodyStatus =
     row.bodyStatus === "PRESENT"
       ? "正文存在"
@@ -414,12 +439,12 @@ export function auditResultToExportRecord(row: {
     originalUrl: row.task.url,
     finalUrl: row.task.finalUrl || row.note.finalUrl || row.note.url,
     noteId: row.note.platformNoteId,
-    platform: importedMetadata.platform || "小红书",
+    commercePlatform: commercePlatformLabel(commercePlatform),
     shopName: importedMetadata.shopName,
     customerName: importedMetadata.customerName,
     productName: row.task.product.seriesName || row.task.product.name,
     orderNumber: importedMetadata.orderNumber,
-    contentChannel: importedMetadata.contentChannel || "小红书",
+    contentChannel: contentChannelLabel(channel),
     activityName: row.task.campaign.name,
     source: businessSourceLabel(row.task.source),
     productStageTopic: productStageTopicLabel(row.task.productStage),
@@ -524,7 +549,7 @@ export async function buildConfiguredWorkbook(input: {
   const sheet = workbook.addWorksheet(sheetName);
   const selected = columns(templates, kind, templateBrand);
   const widths: Partial<Record<StandardField, number>> = {
-    platform: 16,
+    commercePlatform: 16,
     shopName: 24,
     customerName: 20,
     productName: 24,
@@ -669,7 +694,7 @@ export async function buildImportTemplateWorkbook(
       ? KABRITA_IMPORT_FIELDS
       : templates.columnOrder.import;
   const widths: Partial<Record<StandardField, number>> = {
-    platform: 16,
+    commercePlatform: 16,
     shopName: 24,
     customerName: 20,
     productName: 26,

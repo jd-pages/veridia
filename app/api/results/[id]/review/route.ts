@@ -25,7 +25,13 @@ export async function POST(
     const productId = body.productId || auditResult.task.productId;
     const campaignId = body.campaignId || auditResult.task.campaignId;
     const campaign = await prisma.campaign.findFirst({
-      where: { id: campaignId, productId },
+      where: {
+        id: campaignId,
+        OR: [
+          { productId },
+          { products: { some: { productId } } },
+        ],
+      },
     });
     if (!campaign) return fail("活动与产品归属不匹配");
     await prisma.auditTask.update({

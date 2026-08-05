@@ -21,6 +21,7 @@ interface Campaign {
   name: string;
   productId: string;
   month: string;
+  products?: Array<{ product: { id: string } }>;
 }
 
 export default function ResultDetailPage() {
@@ -137,7 +138,11 @@ export default function ResultDetailPage() {
           >
             <Select
               options={campaigns
-                .filter((item) => item.productId === selectedProduct)
+                .filter(
+                  (item) =>
+                    item.productId === selectedProduct ||
+                    item.products?.some(({ product }) => product.id === selectedProduct),
+                )
                 .map((item) => ({ value: item.id, label: item.name }))}
             />
           </Form.Item>
