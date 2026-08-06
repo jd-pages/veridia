@@ -75,11 +75,33 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     expect(afterRules.currentVersion).toBe(beforeRules.currentVersion);
     expect(afterRules.status).toBe("FAILED");
   }
+  const builtinRules = JSON.parse(
+    await readFile(
+      new URL("../../rules/default-rules.json", import.meta.url),
+      "utf8",
+    ),
+  ) as {
+    products: unknown[];
+    campaigns: Array<{ key: string; name: string; month: string }>;
+    stageGroups: unknown[];
+    topicRules: Array<{ campaignKey: string | null }>;
+  };
+  const danoneAugustCampaign = builtinRules.campaigns.find(
+    (item) => item.key === "activity_danone_2026_08",
+  );
+  const danoneAugustRules = builtinRules.topicRules.filter(
+    (item) => item.campaignKey === danoneAugustCampaign?.key,
+  );
+  expect(danoneAugustCampaign).toMatchObject({
+    name: "爱他美2026年8月小红书种草审核",
+    month: "2026-08",
+  });
+  expect(danoneAugustRules).toHaveLength(9);
   expect(afterRules.counts).toEqual({
-    products: 7,
-    activities: 2,
-    stageGroups: 3,
-    topicRules: 19,
+    products: builtinRules.products.length,
+    activities: builtinRules.campaigns.length,
+    stageGroups: builtinRules.stageGroups.length,
+    topicRules: builtinRules.topicRules.length,
   });
 
   const productsResponse = await page.request.get("/api/products");

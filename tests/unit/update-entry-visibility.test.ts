@@ -39,9 +39,13 @@ describe("软件更新入口", () => {
     }
     expect(settings).toContain("checkForUpdates");
     expect(preload).toContain("veridia:check-update");
+    expect(preload).toContain("veridia:open-update-download-page");
     expect(preload).toContain("veridia:download-update");
     expect(preload).toContain("veridia:install-update");
     expect(updateCenter).toContain("downloadUpdate");
     expect(updateCenter).toContain("installUpdate");
+    expect(updateCenter).toContain("检查更新超时，请检查网络或稍后重试。");
+    expect(updateCenter).toContain("重新检查");
+    expect(updateCenter).toContain("打开下载页面");
   });
 });

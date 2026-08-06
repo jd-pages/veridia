@@ -27,6 +27,9 @@ const {
   writeDataLocation,
 } = require("./data-location.cjs");
 const { createExportSaveHandler } = require("./export-save.cjs");
+const {
+  createUpdateCheckController,
+} = require("./update-check.cjs");
 const { installWindowOpenPolicy } = require("./window-open-policy.cjs");
 const {
   createPrismaExecutionContext,
@@ -70,8 +73,7 @@ let quitting = false;
 let lastUpdateInfo = null;
 let lastUpdateStatus = { state: "idle" };
 let updateDownloadMode = "checking";
-let manualUpdateCheck = false;
-let updateCheckPromise;
+let updateCheckController;
 let updateDownloadPromise;
 let applicationStarted = false;
 let updaterConfigured = false;
@@ -663,27 +665,33 @@ function setupUpdater() {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowDowngrade = false;
-  autoUpdater.on("checking-for-update", () =>
-    sendUpdateStatus({ state: "checking" }),
-  );
-  autoUpdater.on("update-available", (info) => {
-    lastUpdateInfo = {
-      version: info.version,
-      releaseName: info.releaseName || `VERIDIA ${info.version}`,
-      releaseNotes: normalizedReleaseNotes(info.releaseNotes),
-      releaseDate: info.releaseDate,
-    };
-    sendUpdateStatus({ state: "available", info: lastUpdateInfo });
-    mainWindow?.show();
-    mainWindow?.focus();
+  updateCheckController = createUpdateCheckController({
+    check: () => autoUpdater.checkForUpdates(),
+    currentVersion: () => app.getVersion(),
+    sendStatus: sendUpdateStatus,
+    onResult: (result, manual) => {
+      if (result?.isUpdateAvailable) {
+        const info = result.updateInfo;
+        lastUpdateInfo = {
+          version: info.version,
+          releaseName: info.releaseName || `VERIDIA ${info.version}`,
+          releaseNotes: normalizedReleaseNotes(info.releaseNotes),
+          releaseDate: info.releaseDate,
+        };
+        sendUpdateStatus({ state: "available", info: lastUpdateInfo });
+        mainWindow?.show();
+        mainWindow?.focus();
+        return;
+      }
+      sendUpdateStatus({
+        state: "not-available",
+        version: app.getVersion(),
+        manual,
+      });
+    },
+    writeDiagnostic: (details) =>
+      writeLog(`检查更新诊断 ${JSON.stringify(details)}`),
   });
-  autoUpdater.on("update-not-available", () =>
-    sendUpdateStatus({
-      state: "not-available",
-      version: app.getVersion(),
-      manual: manualUpdateCheck,
-    }),
-  );
   autoUpdater.on("download-progress", (progress) =>
     sendUpdateStatus({
       state: "downloading",
@@ -707,18 +715,18 @@ function setupUpdater() {
   });
   autoUpdater.on("error", (error) => {
     writeLog("自动更新失败", error);
+    if (updateCheckController?.isChecking()) return;
     sendUpdateStatus({
       state: "error",
       message: error?.message || "检查更新失败",
-      manual: manualUpdateCheck,
+      manual: false,
+      errorType: typeof error?.code === "string" ? error.code : error?.name,
+      timedOut: false,
     });
-    manualUpdateCheck = false;
   });
 }
 
 async function checkForUpdates(manual = false) {
-  if (updateCheckPromise) return updateCheckPromise;
-  manualUpdateCheck = manual;
   if (!app.isPackaged) {
     sendUpdateStatus({
       state: "not-available",
@@ -727,21 +735,8 @@ async function checkForUpdates(manual = false) {
     });
     return;
   }
-  updateCheckPromise = autoUpdater
-    .checkForUpdates()
-    .catch((error) => {
-      writeLog("检查更新失败", error);
-      sendUpdateStatus({
-        state: "error",
-        message: error instanceof Error ? error.message : "检查更新失败",
-        manual,
-      });
-    })
-    .finally(() => {
-      manualUpdateCheck = false;
-      updateCheckPromise = undefined;
-    });
-  return updateCheckPromise;
+  setupUpdater();
+  return updateCheckController.checkForUpdates(manual);
 }
 
 function installDirectory() {
@@ -910,6 +905,9 @@ function registerIpc() {
     migrateDataDirectory(candidate),
   );
   ipcMain.handle("veridia:check-update", () => checkForUpdates(true));
+  ipcMain.handle("veridia:open-update-download-page", () =>
+    shell.openExternal(`https://github.com/${UPDATE_REPOSITORY}/releases/latest`),
+  );
   ipcMain.handle("veridia:download-update", async () => {
     updateDownloadMode = "checking";
     updateDownloadPromise ??= autoUpdater.downloadUpdate().finally(() => {

@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld("veridiaDesktop", {
   migrateDataDirectory: (dataDirectory) =>
     ipcRenderer.invoke("veridia:migrate-data-directory", dataDirectory),
   checkForUpdates: () => ipcRenderer.invoke("veridia:check-update"),
+  openUpdateDownloadPage: () =>
+    ipcRenderer.invoke("veridia:open-update-download-page"),
   downloadUpdate: () => ipcRenderer.invoke("veridia:download-update"),
   installUpdate: () => ipcRenderer.invoke("veridia:install-update"),
   setAutoUpdate: (enabled) =>

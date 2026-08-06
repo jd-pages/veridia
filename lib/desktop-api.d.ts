@@ -26,6 +26,8 @@ declare global {
     downloadMode?: "checking" | "differential" | "full";
     message?: string;
     manual?: boolean;
+    errorType?: string;
+    timedOut?: boolean;
   }
 
   interface VeridiaDataLocationResult {
@@ -67,6 +69,7 @@ declare global {
         dataDirectory: string,
       ): Promise<VeridiaDataLocationResult>;
       checkForUpdates(): Promise<void>;
+      openUpdateDownloadPage(): Promise<void>;
       downloadUpdate(): Promise<boolean>;
       installUpdate(): Promise<boolean>;
       setAutoUpdate(enabled: boolean): Promise<boolean>;

@@ -41,11 +41,17 @@ describe("Windows desktop automatic updates", () => {
 
   it("persists updater diagnostics and exposes the selected download mode", () => {
     const desktopMain = source("desktop/main.cjs");
+    const updateCheck = source("desktop/update-check.cjs");
 
     expect(desktopMain).toContain("autoUpdater.logger =");
     expect(desktopMain).toContain("Download block maps".toLowerCase());
     expect(desktopMain).toContain("fallback to full download");
     expect(desktopMain).toContain("downloadMode: updateDownloadMode");
+    expect(updateCheck).toContain("const UPDATE_CHECK_TIMEOUT_MS = 30_000");
+    expect(updateCheck).toContain("updateCheckPromise = undefined");
+    expect(updateCheck).toContain("manualUpdateCheck = false");
+    expect(updateCheck).toContain("UPDATE_CHECK_STARTED");
+    expect(updateCheck).toContain("durationMs");
   });
 
   it("keeps a stable installer identity and the existing install mode", () => {

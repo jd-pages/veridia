@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { App, Button, Modal, Progress, Space, Typography } from "antd";
-import { CloudDownloadOutlined, ReloadOutlined } from "@ant-design/icons";
+import {
+  CloudDownloadOutlined,
+  ExportOutlined,
+  ReloadOutlined,
+} from "@ant-design/icons";
 import {
   estimateUpdateSeconds,
   formatUpdateBytes,
@@ -41,13 +45,13 @@ export default function DesktopUpdateCenter() {
       if (["available", "downloading", "downloaded"].includes(next.state)) {
         setOpen(true);
       }
+      if (next.state === "error") {
+        setOpen(true);
+      }
       if (next.state === "not-available" && next.manual && next.message) {
         message.success(next.message);
       } else if (next.state === "not-available" && next.manual) {
         message.success("当前已是最新版本");
-      }
-      if (next.state === "error" && next.manual) {
-        message.error(`检查更新失败：${next.message || "网络连接异常"}`);
       }
     });
   }, [api, message]);
@@ -55,7 +59,11 @@ export default function DesktopUpdateCenter() {
   if (!api) return null;
 
   const title =
-    status.state === "downloaded"
+    status.state === "error"
+      ? "检查更新失败"
+      : status.state === "checking"
+        ? "正在检查更新"
+        : status.state === "downloaded"
       ? "新版本已准备完成"
       : status.state === "downloading"
         ? `正在下载 VERIDIA ${status.info?.version || ""}`
@@ -70,7 +78,25 @@ export default function DesktopUpdateCenter() {
       maskClosable={status.state !== "downloading"}
       onCancel={() => setOpen(false)}
       footer={
-        status.state === "available"
+        status.state === "error"
+          ? [
+              <Button
+                key="download-page"
+                icon={<ExportOutlined />}
+                onClick={() => void api.openUpdateDownloadPage()}
+              >
+                打开下载页面
+              </Button>,
+              <Button
+                key="retry"
+                type="primary"
+                icon={<ReloadOutlined />}
+                onClick={() => void api.checkForUpdates()}
+              >
+                重新检查
+              </Button>,
+            ]
+          : status.state === "available"
           ? [
               <Button key="later" onClick={() => setOpen(false)}>
                 稍后提醒
@@ -101,7 +127,15 @@ export default function DesktopUpdateCenter() {
             : []
       }
     >
-      {status.state === "downloading" ? (
+      {status.state === "error" ? (
+        <Typography.Paragraph type="danger" style={{ marginBottom: 0 }}>
+          {status.message || "检查更新超时，请检查网络或稍后重试。"}
+        </Typography.Paragraph>
+      ) : status.state === "checking" ? (
+        <Typography.Paragraph style={{ marginBottom: 0 }}>
+          正在连接更新服务，请稍候……
+        </Typography.Paragraph>
+      ) : status.state === "downloading" ? (
         <Space direction="vertical" size={6} style={{ width: "100%" }}>
           <Progress percent={status.percent || 0} status="active" />
           <Typography.Text>
