@@ -11,6 +11,7 @@ import {
 } from "@/lib/automation/task-execution-filter";
 
 export interface AutomaticTaskInput {
+  importRecordId?: string | null;
   url: string;
   originalInput?: string | null;
   productId: string;
@@ -34,6 +35,7 @@ export interface AutomaticTaskInput {
 }
 
 export interface CreateAutomaticBatchInput {
+  importRecordId?: string | null;
   name?: string;
   source: string;
   createdBy?: string;
@@ -45,6 +47,15 @@ export interface CreateAutomaticBatchInput {
 }
 
 export const AUTOMATIC_TASK_WRITE_CHUNK_SIZE = 50;
+
+export function commonImportRecordId(
+  tasks: ReadonlyArray<Pick<AutomaticTaskInput, "importRecordId">>,
+) {
+  const ids = [...new Set(tasks.map((task) => task.importRecordId).filter(Boolean))];
+  return ids.length === 1 && tasks.every((task) => task.importRecordId === ids[0])
+    ? ids[0]!
+    : null;
+}
 
 export async function createAutomaticBatchInTransaction(
   tx: Prisma.TransactionClient,
@@ -76,6 +87,8 @@ export async function createAutomaticBatchInTransaction(
   const batch = await tx.auditBatch.create({
     data: {
       name: input.name?.trim() || null,
+      importRecordId:
+        input.importRecordId || commonImportRecordId(input.tasks) || null,
       productId: input.productId || null,
       campaignId: input.campaignId || null,
       productStage: input.productStage || null,
@@ -93,6 +106,7 @@ export async function createAutomaticBatchInTransaction(
   const taskRows: Prisma.AuditTaskCreateManyInput[] = input.tasks.map(
     (task, index) => ({
       batchId: batch.id,
+      importRecordId: task.importRecordId || input.importRecordId || null,
       url: task.url,
       originalInput: task.originalInput?.trim() || null,
       normalizedUrl: normalizeUrl(task.url),
@@ -240,6 +254,7 @@ export async function getAutomaticBatches(
       include: {
         product: { select: { id: true, code: true, name: true } },
         campaign: { select: { id: true, name: true, month: true } },
+        importRecord: { select: { id: true, fileName: true, createdAt: true } },
       },
       orderBy: { createdAt: "desc" },
       take,
@@ -307,6 +322,7 @@ export async function getAutomaticBatches(
     include: {
       product: { select: { id: true, code: true, name: true } },
       campaign: { select: { id: true, name: true, month: true } },
+      importRecord: { select: { id: true, fileName: true, createdAt: true } },
       tasks: {
         include: {
           product: { select: { id: true, code: true, name: true } },

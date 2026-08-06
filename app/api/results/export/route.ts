@@ -27,6 +27,12 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
   const filters = readResultQueryFilters(searchParams);
+  const importBatch = filters.importRecordId
+    ? await prisma.importRecord.findUnique({
+        where: { id: filters.importRecordId },
+        select: { id: true, fileName: true, createdAt: true },
+      })
+    : null;
   await backfillMissingProcessingFailureResults();
   let where;
   try {
@@ -44,7 +50,12 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     include: {
       note: { include: { topics: true } },
       task: {
-        include: { product: true, campaign: true, batch: true },
+        include: {
+          product: true,
+          campaign: true,
+          batch: true,
+          importRecord: true,
+        },
       },
       manualReviews: { orderBy: { createdAt: "desc" }, take: 1 },
     },
@@ -90,21 +101,46 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     kabrita: useKabritaTemplate,
     selected: Boolean(filters.ids?.length),
     extension: format,
+    importBatch,
   });
-  const exportLog = (format: "csv" | "xlsx", bytes: number) =>
+  const exportLog = async (format: "csv" | "xlsx", bytes: number) => {
+    const filterKeys = Object.entries(filters)
+      .filter(([, value]) =>
+        Array.isArray(value) ? value.length > 0 : Boolean(value),
+      )
+      .map(([key]) => key);
     console.info(
       "[审核结果导出] 文件生成完成",
       JSON.stringify({
         count: rows.length,
         format,
         bytes,
-        filterKeys: Object.entries(filters)
-          .filter(([, value]) =>
-            Array.isArray(value) ? value.length > 0 : Boolean(value),
-          )
-          .map(([key]) => key),
+        importRecordId: importBatch?.id || null,
+        fileName: importBatch?.fileName || null,
+        importedAt: importBatch?.createdAt || null,
+        filterKeys,
+        operator: user.id,
       }),
     );
+    await prisma.operationLog.create({
+      data: {
+        userId: user.id,
+        action: "EXPORT_AUDIT_RESULTS",
+        entityType: importBatch ? "IMPORT_RECORD" : "AUDIT_RESULT",
+        entityId: importBatch?.id || null,
+        summary: `导出审核结果 ${rows.length} 条`,
+        metadata: JSON.stringify({
+          importRecordId: importBatch?.id || null,
+          fileName: importBatch?.fileName || null,
+          importedAt: importBatch?.createdAt || null,
+          filterKeys,
+          exportCount: rows.length,
+          format,
+          exportTime: new Date().toISOString(),
+        }),
+      },
+    });
+  };
   if (format === "csv") {
     const csv = mixedBrands
       ? buildBrandedAuditResultsCsv({
@@ -128,7 +164,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     if (byteLength < 1) {
       return fail("导出文件生成异常，请稍后重试", 500, "EMPTY_EXPORT_FILE");
     }
-    exportLog("csv", byteLength);
+    await exportLog("csv", byteLength);
     return new Response(
       csv,
       {
@@ -163,7 +199,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   if (bytes.byteLength < 1_024) {
     return fail("导出文件生成异常，请稍后重试", 500, "EMPTY_EXPORT_FILE");
   }
-  exportLog("xlsx", bytes.byteLength);
+  await exportLog("xlsx", bytes.byteLength);
   return new Response(bytes, {
     headers: {
       "Content-Type":

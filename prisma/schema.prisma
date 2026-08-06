@@ -39,6 +39,7 @@ model User {
   manualReviews           ManualReview[]
   operationLogs           OperationLog[]
   auditBatches            AuditBatch[]
+  importRecords           ImportRecord[]
   usageSummaries          LocalUsageSummary[]
   localSessions           LocalAuthSession[]
 
@@ -289,6 +290,7 @@ model TopicRule {
 model AuditTask {
   id                  String             @id @default(cuid())
   batchId             String?
+  importRecordId      String?
   url                 String
   originalInput       String?
   normalizedUrl       String
@@ -329,6 +331,7 @@ model AuditTask {
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
   batch               AuditBatch?        @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  importRecord        ImportRecord?       @relation(fields: [importRecordId], references: [id], onDelete: SetNull)
   product             Product            @relation(fields: [productId], references: [id])
   campaign            Campaign           @relation(fields: [campaignId], references: [id])
   extractions         ExtractionRecord[]
@@ -336,6 +339,7 @@ model AuditTask {
 
   @@index([status, createdAt])
   @@index([batchId, status, queueOrder])
+  @@index([importRecordId])
   @@index([campaignId, status])
   @@index([normalizedUrl])
   @@index([replacesResultId])
@@ -350,6 +354,7 @@ model AuditTask {
 model AuditBatch {
   id               String      @id @default(cuid())
   name             String?
+  importRecordId   String?
   productId        String?
   campaignId       String?
   productStage     String?
@@ -372,11 +377,13 @@ model AuditBatch {
   product          Product?    @relation(fields: [productId], references: [id])
   campaign         Campaign?   @relation(fields: [campaignId], references: [id])
   creator          User?       @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  importRecord     ImportRecord? @relation(fields: [importRecordId], references: [id], onDelete: SetNull)
   tasks            AuditTask[]
 
   @@index([status, createdAt])
   @@index([createdBy, createdAt])
   @@index([clearedAt, createdAt])
+  @@index([importRecordId])
   @@map("audit_batches")
 }
 
@@ -669,6 +676,9 @@ model ImportRecord {
   summary      String
   createdBy    String?
   createdAt    DateTime @default(now())
+  creator      User?        @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  auditBatches AuditBatch[]
+  auditTasks   AuditTask[]
 
   @@index([importType, createdAt])
   @@map("import_records")

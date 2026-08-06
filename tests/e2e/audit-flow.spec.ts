@@ -487,6 +487,11 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "E2E 不支持平台不影响其他行",
   ]);
   const excel = Buffer.from(await workbook.xlsx.writeBuffer());
+  const importBatchIdsBeforePreview = (
+    (await (
+      await page.request.get("/api/results/import-batches")
+    ).json()).data as Array<{ id: string }>
+  ).map((item) => item.id);
   const importResponse = await page.request.post("/api/import/notes", {
     multipart: {
       file: {
@@ -533,6 +538,12 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     recognitionStatus: "UNSUPPORTED",
     failureReason: "内容渠道为抖音，暂不支持小红书自动审核",
   });
+  const importBatchIdsAfterPreview = (
+    (await (
+      await page.request.get("/api/results/import-batches")
+    ).json()).data as Array<{ id: string }>
+  ).map((item) => item.id);
+  expect(importBatchIdsAfterPreview).toEqual(importBatchIdsBeforePreview);
 
   const committedImportResponse = await page.request.post("/api/import/notes", {
     multipart: {
@@ -550,14 +561,134 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const committedImport = (await committedImportResponse.json()).data as {
     imported: number;
     batchId: string;
+    auditBatchId: string;
+    importRecordId: string;
+    fileName: string;
+    importedAt: string;
+    importedCount: number;
   };
-  expect(committedImport.imported).toBe(3);
+  expect(committedImport).toMatchObject({
+    imported: 3,
+    importedCount: 3,
+    auditBatchId: committedImport.batchId,
+    fileName: "e2e-automatic-import.xlsx",
+  });
+  expect(committedImport.importRecordId).toBeTruthy();
+  expect(new Date(committedImport.importedAt).toString()).not.toBe("Invalid Date");
   const excelBatch = await waitForBatch(page, committedImport.batchId, [
     "COMPLETED_WITH_ERRORS",
   ]);
   expect(excelBatch.stats.succeeded).toBe(2);
   expect(excelBatch.stats.failed).toBe(1);
   expect(excelBatch.stats.progress).toBe(100);
+  expect(excelBatch.importRecordId).toBe(committedImport.importRecordId);
+  expect(
+    excelBatch.tasks.every(
+      (task: { importRecordId: string | null }) =>
+        task.importRecordId === committedImport.importRecordId,
+    ),
+  ).toBe(true);
+
+  const importOptionsResponse = await page.request.get(
+    "/api/results/import-batches",
+  );
+  expect(importOptionsResponse.headers()["cache-control"]).toContain("no-store");
+  const importOptions = (await importOptionsResponse.json()).data as Array<{
+    id: string;
+    fileName: string;
+    resultCount: number;
+    label: string;
+  }>;
+  expect(importOptions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: committedImport.importRecordId,
+        fileName: "e2e-automatic-import.xlsx",
+        resultCount: 3,
+        label: expect.stringContaining("导入 3 条"),
+      }),
+    ]),
+  );
+  const importResultsResponse = await page.request.get(
+    `/api/results?importRecordId=${encodeURIComponent(committedImport.importRecordId)}&page=1&pageSize=100`,
+  );
+  const importResults = (await importResultsResponse.json()).data as {
+    total: number;
+    items: Array<{ task: { importRecordId: string } }>;
+  };
+  expect(importResults.total).toBe(3);
+  expect(
+    importResults.items.every(
+      (item) => item.task.importRecordId === committedImport.importRecordId,
+    ),
+  ).toBe(true);
+
+  await page.goto(
+    `/results?importRecordId=${encodeURIComponent(committedImport.importRecordId)}`,
+  );
+  await expect(
+    page
+      .getByLabel("导入批次")
+      .first()
+      .locator(".ant-select-selection-item"),
+  ).toContainText("e2e-automatic-import.xlsx");
+  await expect(page.getByText("当前筛选共 3 条")).toBeVisible();
+
+  const clearImportedBatchResponse = await page.request.post(
+    `/api/automation/batches/${committedImport.batchId}/clear`,
+  );
+  expect(clearImportedBatchResponse.ok()).toBeTruthy();
+  const clearedBatchLookup = await page.request.get(
+    `/api/automation/batches?batchId=${committedImport.batchId}&includeTasks=false`,
+  );
+  expect((await clearedBatchLookup.json()).data).toEqual([]);
+  const retainedImportResults = await page.request.get(
+    `/api/results?importRecordId=${encodeURIComponent(committedImport.importRecordId)}&page=1&pageSize=100`,
+  );
+  expect((await retainedImportResults.json()).data.total).toBe(3);
+  const retainedImportOptions = (await (
+    await page.request.get("/api/results/import-batches")
+  ).json()).data as Array<{ id: string }>;
+  expect(retainedImportOptions.map((item) => item.id)).toContain(
+    committedImport.importRecordId,
+  );
+  const duplicateImportResponse = await page.request.post(
+    "/api/import/notes",
+    {
+      multipart: {
+        file: {
+          name: "e2e-automatic-import.xlsx",
+          mimeType:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          buffer: excel,
+        },
+        commit: "true",
+        skipDuplicates: "true",
+      },
+    },
+  );
+  expect(duplicateImportResponse.ok()).toBeTruthy();
+  const duplicateImport = (await duplicateImportResponse.json()).data as {
+    imported: number;
+    batchId: string | null;
+    importRecordId: string;
+  };
+  expect(duplicateImport).toMatchObject({ imported: 0, batchId: null });
+  expect(duplicateImport.importRecordId).not.toBe(
+    committedImport.importRecordId,
+  );
+  const sameNameImports = (
+    (await (await page.request.get("/api/imports")).json()).data as Array<{
+      id: string;
+      fileName: string;
+    }>
+  ).filter((item) => item.fileName === "e2e-automatic-import.xlsx");
+  expect(sameNameImports.map((item) => item.id)).toEqual(
+    expect.arrayContaining([
+      committedImport.importRecordId,
+      duplicateImport.importRecordId,
+    ]),
+  );
 
   const resultCoverageSuffix = `${suffix}-result-coverage`;
   const resultCoverageBatchResponse = await page.request.post(

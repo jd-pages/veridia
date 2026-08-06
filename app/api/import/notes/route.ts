@@ -412,8 +412,9 @@ export async function POST(request: Request) {
     const validRows = rows.filter((row) => row.errors.length === 0);
     let imported = 0;
     let batchId: string | null = null;
+    let importRecordId: string | null = null;
+    let importedAt: Date | null = null;
     if (commit) {
-      if (!validRows.length) return fail("没有可导入的有效数据行");
       const productIds = [...new Set(validRows.map((row) => row.productId!))];
       const campaignIds = [
         ...new Set(validRows.map((row) => row.campaignId!)),
@@ -424,7 +425,39 @@ export async function POST(request: Request) {
       });
       const committed = await prisma.$transaction(
         async (tx) => {
+          const skippedCount = skipDuplicates
+            ? rows.filter((row) =>
+                row.errors.includes(importedAuditTaskDuplicateMessage),
+              ).length
+            : 0;
+          const importRecord = await tx.importRecord.create({
+            data: {
+              fileName: file.name,
+              importType: "AUDIT_TASK",
+              totalCount: rows.length,
+              validCount: validRows.length,
+              invalidCount: Math.max(
+                0,
+                rows.length - validRows.length - skippedCount,
+              ),
+              skippedCount,
+              status: "COMPLETED",
+              summary: JSON.stringify({
+                templateVersion: tabular.templateVersion,
+                templateBrand: tabular.templateBrand,
+                sourceType,
+                errors: rows
+                  .filter((row) => row.errors.length)
+                  .map((row) => ({
+                    row: row.rowNumber,
+                    errors: row.errors,
+                  })),
+              }),
+              createdBy: user.id,
+            },
+          });
           const tasks: AutomaticTaskInput[] = validRows.map((row) => ({
+            importRecordId: importRecord.id,
             url: row.url,
             originalInput: row.originalLinkContent,
             productId: row.productId!,
@@ -445,50 +478,32 @@ export async function POST(request: Request) {
             storeMappingStatus: row.storeMappingStatus,
             orderNumber: row.orderNumber,
           }));
-          const batch = await createAutomaticBatchInTransaction(
-            tx,
-            {
-              name: `表格自动审核 · ${file.name}`,
-              source: "EXCEL",
-              createdBy: user.id,
-              productId: productIds.length === 1 ? productIds[0] : undefined,
-              campaignId: campaignIds.length === 1 ? campaignIds[0] : undefined,
-              tasks,
-            },
-            syncState?.currentVersion || null,
-          );
-          await tx.importRecord.create({
-            data: {
-              fileName: file.name,
-              importType: "AUDIT_TASK",
-              totalCount: rows.length,
-              validCount: validRows.length,
-              invalidCount: rows.length - validRows.length,
-              skippedCount: skipDuplicates
-                ? rows.length - validRows.length
-                : 0,
-              status: "COMPLETED",
-              summary: JSON.stringify({
-                templateVersion: tabular.templateVersion,
-                templateBrand: tabular.templateBrand,
-                sourceType,
-                errors: rows
-                  .filter((row) => row.errors.length)
-                  .map((row) => ({
-                    row: row.rowNumber,
-                    errors: row.errors,
-                  })),
-              }),
-              createdBy: user.id,
-            },
-          });
-          return batch;
+          const batch = tasks.length
+            ? await createAutomaticBatchInTransaction(
+                tx,
+                {
+                  name: `表格自动审核 · ${file.name}`,
+                  importRecordId: importRecord.id,
+                  source: "EXCEL",
+                  createdBy: user.id,
+                  productId:
+                    productIds.length === 1 ? productIds[0] : undefined,
+                  campaignId:
+                    campaignIds.length === 1 ? campaignIds[0] : undefined,
+                  tasks,
+                },
+                syncState?.currentVersion || null,
+              )
+            : null;
+          return { batch, importRecord };
         },
         { timeout: 60_000 },
       );
-      batchId = committed.id;
+      batchId = committed.batch?.id || null;
+      importRecordId = committed.importRecord.id;
+      importedAt = committed.importRecord.createdAt;
       imported = validRows.length;
-      kickAutomaticAuditQueue();
+      if (committed.batch) kickAutomaticAuditQueue();
     }
 
     return ok({
@@ -500,6 +515,11 @@ export async function POST(request: Request) {
       invalidCount: rows.length - validRows.length,
       imported,
       batchId,
+      auditBatchId: batchId,
+      importRecordId,
+      fileName: file.name,
+      importedAt,
+      importedCount: imported,
       skipDuplicates,
       rows: rows.slice(0, IMPORT_PREVIEW_ROW_LIMIT),
       rowsTruncated: rows.length > IMPORT_PREVIEW_ROW_LIMIT,

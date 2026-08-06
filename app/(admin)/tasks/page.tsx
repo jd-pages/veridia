@@ -161,6 +161,12 @@ interface BatchStats {
 
 interface AuditBatch {
   id: string;
+  importRecordId: string | null;
+  importRecord: {
+    id: string;
+    fileName: string;
+    createdAt: string;
+  } | null;
   name: string | null;
   source: string;
   status: string;
@@ -189,6 +195,11 @@ interface ImportPreview {
   invalidCount: number;
   imported: number;
   batchId?: string | null;
+  auditBatchId?: string | null;
+  importRecordId?: string | null;
+  fileName?: string;
+  importedAt?: string | null;
+  importedCount?: number;
   rowsTruncated?: boolean;
   templateVersion: string;
   templateBrand: "达能" | "佳贝艾特";
@@ -1757,6 +1768,18 @@ export default function TasksPage() {
                 >
                   失败重试
                 </Button>
+                {!isCombinedQueue &&
+                selectedBatch.importRecordId &&
+                ["COMPLETED", "COMPLETED_WITH_ERRORS"].includes(
+                  selectedBatch.status,
+                ) ? (
+                  <Button
+                    icon={<FileSearchOutlined />}
+                    href={`/results?importRecordId=${encodeURIComponent(selectedBatch.importRecordId)}`}
+                  >
+                    查看本批审核结果
+                  </Button>
+                ) : null}
               </Space>
             </div>
 

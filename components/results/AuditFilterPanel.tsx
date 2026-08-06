@@ -19,6 +19,7 @@ import {
 import type {
   AdvancedResultFilters,
   CampaignOption,
+  ImportBatchOption,
   ProductOption,
   ResultFilters,
 } from "./types";
@@ -47,6 +48,8 @@ export default function AuditFilterPanel({
   products,
   campaigns,
   campaignsLoading,
+  importBatches,
+  importBatchesLoading,
   advancedOpen,
   onFiltersChange,
   onAdvancedFiltersChange,
@@ -59,6 +62,8 @@ export default function AuditFilterPanel({
   products: ProductOption[];
   campaigns: CampaignOption[];
   campaignsLoading: boolean;
+  importBatches: ImportBatchOption[];
+  importBatchesLoading: boolean;
   advancedOpen: boolean;
   onFiltersChange: (value: ResultFilters) => void;
   onAdvancedFiltersChange: (value: AdvancedResultFilters) => void;
@@ -93,6 +98,27 @@ export default function AuditFilterPanel({
       </div>
 
       <div className={`${styles.filterGrid} ${styles.primaryFilterGrid}`}>
+        <FilterField label="导入批次">
+          <Select
+            allowClear
+            showSearch
+            aria-label="导入批次"
+            placeholder="全部导入批次"
+            loading={importBatchesLoading}
+            value={filters.importRecordId || undefined}
+            options={importBatches.map((item) => ({
+              value: item.id,
+              label: item.label,
+              searchText: item.searchText,
+            }))}
+            filterOption={(input, option) =>
+              String(option?.searchText || "").includes(
+                input.trim().toLocaleLowerCase("zh-CN"),
+              )
+            }
+            onChange={(value) => update("importRecordId", value || "")}
+          />
+        </FilterField>
         <FilterField label="产品">
           <Select
             allowClear

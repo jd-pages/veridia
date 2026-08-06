@@ -26,6 +26,7 @@ export async function POST(request: Request) {
         source: "RE_AUDIT",
         createdBy: user.id,
         tasks: results.map((result) => ({
+          importRecordId: result.task.importRecordId,
           url: result.task.url,
           originalInput: result.task.originalInput,
           productId: result.task.productId,

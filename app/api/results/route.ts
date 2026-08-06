@@ -30,7 +30,9 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       where,
       include: {
         note: { include: { topics: true } },
-        task: { include: { product: true, campaign: true } },
+        task: {
+          include: { product: true, campaign: true, importRecord: true },
+        },
         manualReviews: {
           orderBy: { createdAt: "desc" },
           take: 1,
@@ -42,5 +44,8 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       take: pageSize,
     }),
   ]);
-  return ok({ total, page, pageSize, items });
+  return ok(
+    { total, page, pageSize, items },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }, "读取审核结果");

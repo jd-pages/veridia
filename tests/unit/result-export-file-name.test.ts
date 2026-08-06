@@ -29,4 +29,31 @@ describe("审核结果导出文件名", () => {
       }),
     ).toBe("VERIDIA佳贝艾特审核结果_当前筛选_20260804_134830.csv");
   });
+
+  it("按导入批次导出时包含安全的原文件名、导入时间和导出时间", () => {
+    expect(
+      auditResultExportFileName({
+        date: localDate,
+        importBatch: {
+          fileName: "D1 7.25 小红书(1):终稿?.xlsx",
+          createdAt: new Date(2026, 7, 6, 11, 45, 11),
+        },
+      }),
+    ).toBe(
+      "审核结果_D1 7.25 小红书(1)_终稿__20260806-114511_20260804-134830.xlsx",
+    );
+  });
+
+  it("导出所选保持既有命名且不套用导入批次范围", () => {
+    expect(
+      auditResultExportFileName({
+        date: localDate,
+        selected: true,
+        importBatch: {
+          fileName: "来源.xlsx",
+          createdAt: localDate,
+        },
+      }),
+    ).toBe("VERIDIA审核结果_所选结果_20260804_134830.xlsx");
+  });
 });

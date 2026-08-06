@@ -34,6 +34,7 @@ export async function POST(
     productStage: result.task.productStage || undefined,
     tasks: [
       {
+        importRecordId: result.task.importRecordId,
         url: result.note.url,
         productId: result.task.productId,
         campaignId: result.task.campaignId,

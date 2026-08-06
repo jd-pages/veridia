@@ -12,6 +12,23 @@ export interface CampaignOption {
   productId?: string | null;
 }
 
+export interface ImportBatchOption {
+  id: string;
+  fileName: string;
+  createdAt: string;
+  totalCount: number;
+  validCount: number;
+  invalidCount: number;
+  skippedCount: number;
+  createdBy: string | null;
+  creatorDisplayName: string | null;
+  resultCount: number;
+  taskCount: number;
+  batchCount: number;
+  label: string;
+  searchText: string;
+}
+
 export interface AuditTopic {
   id: string;
   displayText: string;
@@ -63,6 +80,7 @@ export interface ResultRow {
     topics: AuditTopic[];
   };
   task: {
+    importRecordId: string | null;
     productStage: string | null;
     url: string;
     finalUrl: string | null;
@@ -85,6 +103,11 @@ export interface ResultRow {
     orderNumber: string | null;
     product: ProductOption;
     campaign: CampaignOption;
+    importRecord: {
+      id: string;
+      fileName: string;
+      createdAt: string;
+    } | null;
   };
   manualReviews: Array<{
     id?: string;
@@ -103,6 +126,7 @@ export interface ResultPageData {
 }
 
 export interface ResultFilters {
+  importRecordId: string;
   productId: string;
   campaignId: string;
   commercePlatform: string;

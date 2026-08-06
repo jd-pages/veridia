@@ -21,7 +21,9 @@ export async function GET(
           noteProducts: { include: { product: true } },
         },
       },
-      task: { include: { product: true, campaign: true } },
+        task: {
+          include: { product: true, campaign: true, importRecord: true },
+        },
       ruleResults: { orderBy: { createdAt: "asc" } },
       manualReviews: {
         include: { reviewer: { select: { displayName: true, username: true } } },

@@ -18,6 +18,7 @@ export interface ResultQueryFilters {
   channel?: string;
   orderNumber?: string;
   batchId?: string;
+  importRecordId?: string;
   month?: string;
   startDate?: string;
   endDate?: string;
@@ -74,6 +75,7 @@ export function readResultQueryFilters(
     channel: value("channel"),
     orderNumber: value("orderNumber"),
     batchId: value("batchId"),
+    importRecordId: value("importRecordId"),
     month: value("month"),
     startDate: value("startDate"),
     endDate: value("endDate"),
@@ -239,6 +241,7 @@ export function buildAuditResultWhere(
     filters.productId ||
     filters.campaignId ||
     filters.batchId ||
+    filters.importRecordId ||
     filters.month ||
     commercePlatform ||
     channel ||
@@ -249,6 +252,9 @@ export function buildAuditResultWhere(
         ...(filters.productId ? { productId: filters.productId } : {}),
         ...(filters.campaignId ? { campaignId: filters.campaignId } : {}),
         ...(filters.batchId ? { batchId: filters.batchId } : {}),
+        ...(filters.importRecordId
+          ? { importRecordId: filters.importRecordId }
+          : {}),
         ...(filters.month ? { campaign: { month: filters.month } } : {}),
         ...(commercePlatform ? { commercePlatform } : {}),
         ...(channel

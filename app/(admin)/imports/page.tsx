@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Card, Empty, Table, Tag } from "antd";
+import { App, Button, Card, Empty, Table, Tag } from "antd";
 import PageHeader from "@/components/PageHeader";
 import StatusTag from "@/components/StatusTag";
 import { apiFetch } from "@/lib/client";
@@ -18,6 +18,10 @@ interface ImportRecord {
   status: string;
   summary: string;
   createdAt: string;
+  taskCount: number;
+  resultCount: number;
+  batchCount: number;
+  creatorDisplayName: string | null;
 }
 
 export default function ImportsPage() {
@@ -50,6 +54,14 @@ export default function ImportsPage() {
               { title: "异常", dataIndex: "invalidCount", width: 90 },
               { title: "跳过", dataIndex: "skippedCount", width: 90 },
               {
+                title: "审核进度",
+                width: 180,
+                render: (_, row) =>
+                  row.importType === "AUDIT_TASK"
+                    ? `结果 ${row.resultCount} 条 / 未完成 ${Math.max(row.taskCount - row.resultCount, 0)} 条`
+                    : "-",
+              },
+              {
                 title: "状态",
                 dataIndex: "status",
                 width: 120,
@@ -60,6 +72,28 @@ export default function ImportsPage() {
                 dataIndex: "createdAt",
                 width: 180,
                 render: (value: string) => new Date(value).toLocaleString("zh-CN"),
+              },
+              {
+                title: "导入人",
+                dataIndex: "creatorDisplayName",
+                width: 120,
+                render: (value: string | null) => value || "-",
+              },
+              {
+                title: "操作",
+                fixed: "right",
+                width: 150,
+                render: (_, row) =>
+                  row.importType === "AUDIT_TASK" &&
+                  row.status === "COMPLETED" &&
+                  row.taskCount > 0 ? (
+                    <Button
+                      type="link"
+                      href={`/results?importRecordId=${encodeURIComponent(row.id)}`}
+                    >
+                      查看审核结果
+                    </Button>
+                  ) : null,
               },
             ]}
             pagination={{ pageSize: 12 }}

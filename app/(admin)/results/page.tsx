@@ -39,6 +39,7 @@ import type {
   AdvancedResultFilters,
   BulkAction,
   CampaignOption,
+  ImportBatchOption,
   ProductOption,
   ResultDetail,
   ResultFilters,
@@ -64,6 +65,7 @@ import { canAccessBusiness } from "@/lib/permissions";
 import styles from "@/components/results/results-workbench.module.css";
 
 const defaultFilters: ResultFilters = {
+  importRecordId: "",
   productId: "",
   campaignId: "",
   commercePlatform: "",
@@ -100,19 +102,18 @@ function filtersFromSearchParams(searchParams: URLSearchParams) {
       : null;
   const filters: ResultFilters = {
     ...defaultFilters,
+    importRecordId: value("importRecordId"),
     productId: value("productId"),
     campaignId: value("campaignId"),
     commercePlatform: value("commercePlatform"),
     channel: value("channel") || value("platform"),
     orderNumber: value("orderNumber"),
-    startDate:
-      value("startDate") ||
+    startDate: value("startDate") ||
       validMonth?.startOf("month").format("YYYY-MM-DD") ||
-      defaultFilters.startDate,
-    endDate:
-      value("endDate") ||
+      (value("importRecordId") ? "" : defaultFilters.startDate),
+    endDate: value("endDate") ||
       validMonth?.endOf("month").format("YYYY-MM-DD") ||
-      defaultFilters.endDate,
+      (value("importRecordId") ? "" : defaultFilters.endDate),
     dateType:
       value("dateType") === "CREATED_AT" ? "CREATED_AT" : "AUDITED_AT",
     status: value("status"),
@@ -144,6 +145,7 @@ function buildQuery(
     pageSize: String(pageSize),
   });
   const supported = {
+    importRecordId: filters.importRecordId,
     productId: filters.productId,
     campaignId: filters.campaignId,
     commercePlatform: filters.commercePlatform,
@@ -182,6 +184,8 @@ export default function ResultsPage() {
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
   const [campaignsLoading, setCampaignsLoading] = useState(false);
+  const [importBatches, setImportBatches] = useState<ImportBatchOption[]>([]);
+  const [importBatchesLoading, setImportBatchesLoading] = useState(false);
   const campaignRequestRef = useRef(0);
   const [filters, setFilters] = useState<ResultFilters>(defaultFilters);
   const [appliedFilters, setAppliedFilters] =
@@ -278,15 +282,21 @@ export default function ResultsPage() {
     void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
       setCurrentRole(user?.role || null),
     );
-    void Promise.all([apiFetch<ProductOption[]>("/api/products")])
-      .then(([productData]) => {
+    setImportBatchesLoading(true);
+    void Promise.all([
+      apiFetch<ProductOption[]>("/api/products"),
+      apiFetch<ImportBatchOption[]>("/api/results/import-batches"),
+    ])
+      .then(([productData, importBatchData]) => {
         setProducts(productData);
+        setImportBatches(importBatchData);
       })
       .catch((error) =>
         message.error(
           error instanceof Error ? error.message : "加载筛选项失败",
         ),
-      );
+      )
+      .finally(() => setImportBatchesLoading(false));
     const initial = filtersFromSearchParams(
       new URLSearchParams(window.location.search),
     );
@@ -329,9 +339,23 @@ export default function ResultsPage() {
 
   const visibleItems = data.items;
 
+  const syncFilterUrl = (
+    targetFilters: ResultFilters,
+    targetAdvancedFilters: AdvancedResultFilters,
+  ) => {
+    const query = buildQuery(targetFilters, targetAdvancedFilters, 1, 1);
+    query.delete("page");
+    query.delete("pageSize");
+    router.replace(
+      query.size ? `/results?${query.toString()}` : "/results",
+      { scroll: false },
+    );
+  };
+
   const submitSearch = () => {
     setAppliedFilters(filters);
     setAppliedAdvancedFilters(advancedFilters);
+    syncFilterUrl(filters, advancedFilters);
     void load(1, data.pageSize, filters, advancedFilters);
   };
 
@@ -355,6 +379,7 @@ export default function ResultsPage() {
     setFilters(next);
     setAppliedFilters(next);
     setAppliedAdvancedFilters(advancedFilters);
+    syncFilterUrl(next, advancedFilters);
     void load(1, data.pageSize, next, advancedFilters);
   };
 
@@ -787,6 +812,8 @@ export default function ResultsPage() {
         products={products}
         campaigns={campaigns}
         campaignsLoading={campaignsLoading}
+        importBatches={importBatches}
+        importBatchesLoading={importBatchesLoading}
         advancedOpen={advancedOpen}
         onFiltersChange={setFilters}
         onAdvancedFiltersChange={setAdvancedFilters}
