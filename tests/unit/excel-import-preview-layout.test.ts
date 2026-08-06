@@ -21,6 +21,12 @@ describe("Excel 自动审核预检表格布局", () => {
     expect(previewTable).toMatch(/产品阶段话题[\s\S]*?width: 130/u);
     expect(previewTable).toMatch(/title: "预检结果"[\s\S]*?width: 220/u);
     expect(previewTable).toContain("showSizeChanger: false");
+    expect(previewTable).toContain("current: previewPage");
+    expect(page).toContain("当前仅显示异常记录，共");
+    expect(page).toContain("预检查通过，无异常记录");
+    expect(page).toContain("查看全部记录");
+    expect(page).toContain("仅看异常");
+    expect(page).toContain("preview.errorRows");
     expect(page).toContain(".map((item) => item.displayName)");
 
     expect(css).toMatch(

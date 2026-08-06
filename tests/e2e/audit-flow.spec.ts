@@ -356,6 +356,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   });
   await page.getByRole("button", { name: "开始预检查" }).click();
   await expect(page.getByText("可导入 9 条，异常 0 条")).toBeVisible();
+  await expect(page.getByText("预检查通过，无异常记录")).toBeVisible();
+  await page.getByRole("button", { name: "查看全部记录" }).click();
   const previewTableContent = page.locator(".ant-table-content").last();
   await previewTableContent.evaluate((element) => {
     element.scrollLeft = element.scrollWidth;
@@ -377,6 +379,23 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(page.getByRole("cell", { name: "10", exact: true })).toBeVisible();
   await expect(page.locator(".ant-pagination-item-2").last()).toHaveCount(0);
   await expect(previewResultHeader).toBeVisible();
+
+  downloadedTemplateSheet.getRow(6).getCell(11).value = "";
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "preview-errors.xlsx",
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: Buffer.from(await noteTemplateWorkbook.xlsx.writeBuffer()),
+  });
+  await page.getByRole("button", { name: "开始预检查" }).click();
+  await expect(page.getByText("可导入 8 条，异常 1 条")).toBeVisible();
+  await expect(page.getByText("当前仅显示异常记录，共 1 条。")).toBeVisible();
+  const errorPreviewTable = page.locator(".ant-table").last();
+  await expect(errorPreviewTable.locator('tbody tr[data-row-key]')).toHaveCount(1);
+  await expect(errorPreviewTable).toContainText("活动名称不能为空");
+  await page.getByRole("button", { name: "查看全部记录" }).click();
+  await expect(errorPreviewTable.locator('tbody tr[data-row-key]')).toHaveCount(9);
+
   downloadedTemplateSheet.spliceRows(2, 9);
   downloadedTemplateSheet.getRow(2).values = [
     "京东",

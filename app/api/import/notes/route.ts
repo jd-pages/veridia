@@ -24,6 +24,7 @@ import {
   detectLocalSourceType,
   parseTabularPreview,
 } from "@/lib/import-export-templates/tabular";
+import { selectImportPreviewRows } from "@/lib/import-preview";
 import {
   KABRITA_BRAND_NAME,
   inferKabritaProductStage,
@@ -527,6 +528,11 @@ export async function POST(request: Request) {
       if (committed.batch) kickAutomaticAuditQueue();
     }
 
+    const previewSelection = selectImportPreviewRows(
+      rows,
+      IMPORT_PREVIEW_ROW_LIMIT,
+    );
+
     return ok({
       ...tabular,
       missingRequiredFields: tabular.missingRequiredFields.map(
@@ -542,8 +548,7 @@ export async function POST(request: Request) {
       importedAt,
       importedCount: imported,
       skipDuplicates,
-      rows: rows.slice(0, IMPORT_PREVIEW_ROW_LIMIT),
-      rowsTruncated: rows.length > IMPORT_PREVIEW_ROW_LIMIT,
+      ...previewSelection,
     });
   } catch (error) {
     return fail(

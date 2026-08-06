@@ -67,11 +67,14 @@ describe("审核任务页面当前队列展示", () => {
   it("大批量任务按 50 条分片写入且预检响应最多返回 100 行", () => {
     const batchService = source("lib/automation/batch-service.ts");
     const importRoute = source("app/api/import/notes/route.ts");
+    const importPreview = source("lib/import-preview.ts");
 
     expect(batchService).toContain("AUTOMATIC_TASK_WRITE_CHUNK_SIZE = 50");
     expect(batchService).toContain("tx.auditTask.createMany");
     expect(importRoute).toContain("IMPORT_PREVIEW_ROW_LIMIT = 100");
-    expect(importRoute).toContain("rows.slice(0, IMPORT_PREVIEW_ROW_LIMIT)");
+    expect(importRoute).toContain("selectImportPreviewRows");
+    expect(importPreview).toContain("rows.slice(0, safeLimit)");
+    expect(importPreview).toContain("errorRows.slice(0, safeLimit)");
   });
 
   it("页面使用本次任务文案并展示完整摘要", () => {

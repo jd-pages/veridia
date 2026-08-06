@@ -201,6 +201,7 @@ interface ImportPreview {
   importedAt?: string | null;
   importedCount?: number;
   rowsTruncated?: boolean;
+  errorRowsTruncated?: boolean;
   templateVersion: string;
   templateBrand: "达能" | "佳贝艾特";
   sourceLabel: string;
@@ -238,6 +239,7 @@ interface ImportPreview {
     stageGroup: string;
     errors: string[];
   }>;
+  errorRows: Array<ImportPreview["rows"][number]>;
 }
 
 const activeBatchStatuses = new Set([
@@ -405,6 +407,8 @@ export default function TasksPage() {
   );
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [previewView, setPreviewView] = useState<"ERRORS" | "ALL">("ERRORS");
+  const [previewPage, setPreviewPage] = useState(1);
   const [importing, setImporting] = useState(false);
   const [templateDownloading, setTemplateDownloading] = useState(false);
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
@@ -785,6 +789,8 @@ export default function TasksPage() {
         body: data,
       });
       setPreview(result);
+      setPreviewView("ERRORS");
+      setPreviewPage(1);
       if (commit) {
         const nextBatchIds = result.batchId
           ? [...new Set([...trackedBatchIds, result.batchId])]
@@ -1298,6 +1304,8 @@ export default function TasksPage() {
                     onChange={({ fileList: next }) => {
                       setFileList(next.slice(-1));
                       setPreview(null);
+                      setPreviewView("ERRORS");
+                      setPreviewPage(1);
                     }}
                   >
                     <p className="ant-upload-drag-icon">
@@ -1373,12 +1381,42 @@ export default function TasksPage() {
                           message={`预检结果共 ${preview.total} 条，页面仅展示前 ${preview.rows.length} 条；全部有效数据仍会正常入队。`}
                         />
                       ) : null}
+                      <Space wrap>
+                        <Alert
+                          type={preview.invalidCount ? "warning" : "success"}
+                          showIcon
+                          message={
+                            preview.invalidCount
+                              ? previewView === "ERRORS"
+                                ? `当前仅显示异常记录，共 ${preview.invalidCount} 条。`
+                                : `当前显示全部预检记录，共 ${preview.total} 条。`
+                              : previewView === "ERRORS"
+                                ? "预检查通过，无异常记录"
+                                : `当前显示全部预检记录，共 ${preview.total} 条。`
+                          }
+                        />
+                        <Button
+                          onClick={() => {
+                            setPreviewView((current) =>
+                              current === "ERRORS" ? "ALL" : "ERRORS",
+                            );
+                            setPreviewPage(1);
+                          }}
+                        >
+                          {previewView === "ERRORS" ? "查看全部记录" : "仅看异常"}
+                        </Button>
+                      </Space>
+                      {previewView === "ALL" || preview.errorRows.length ? (
                       <div className={styles.previewTableShell}>
                         <Table<ImportPreview["rows"][number]>
                           className={styles.enterpriseTable}
                           rowKey="rowNumber"
                           size="small"
-                          dataSource={preview.rows}
+                          dataSource={
+                            previewView === "ERRORS"
+                              ? preview.errorRows
+                              : preview.rows
+                          }
                           tableLayout="fixed"
                           scroll={{ x: 1500 }}
                         columns={[
@@ -1545,12 +1583,15 @@ export default function TasksPage() {
                           },
                         ]}
                           pagination={{
+                            current: previewPage,
                             pageSize: 50,
                             showSizeChanger: false,
                             position: ["bottomRight"],
+                            onChange: setPreviewPage,
                           }}
                         />
                       </div>
+                      ) : null}
                     </>
                   ) : null}
                 </Space>
