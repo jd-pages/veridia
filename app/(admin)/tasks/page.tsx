@@ -262,6 +262,7 @@ interface ClearBatchResponse {
   retainedAuditResultCount: number;
   nextBatchId: string | null;
   clearedAt: string;
+  alreadyCleared: boolean;
 }
 
 const governanceTone: Record<
@@ -350,6 +351,7 @@ export default function TasksPage() {
   const [taskExecutionFilter, setTaskExecutionFilter] =
     useState<TaskExecutionFilter>("ALL");
   const loadSequence = useRef(0);
+  const clearedBatchIds = useRef(new Set<string>());
   const [batchPendingClear, setBatchPendingClear] =
     useState<AuditBatch | null>(null);
   const [clearingBatchId, setClearingBatchId] = useState<string | null>(null);
@@ -413,7 +415,9 @@ export default function TasksPage() {
         batchQuery.set("batchIds", requestedBatchIds.join(","));
       }
       const [batchResult, sessionResult] = await Promise.allSettled([
-        apiFetch<AuditBatch[]>(`/api/automation/batches?${batchQuery}`),
+        apiFetch<AuditBatch[]>(`/api/automation/batches?${batchQuery}`, {
+          cache: "no-store",
+        }),
         apiFetch<AutomationSession>("/api/automation/session"),
       ]);
       if (requestSequence !== loadSequence.current) return;
@@ -435,14 +439,17 @@ export default function TasksPage() {
         );
       }
       if (batchResult.status === "fulfilled") {
-        const activeBatches = batchResult.value.filter((batch) =>
+        const visibleBatches = batchResult.value.filter(
+          (batch) => !clearedBatchIds.current.has(batch.id),
+        );
+        const activeBatches = visibleBatches.filter((batch) =>
           activeBatchStatuses.has(batch.status),
         );
         const queueBatches = requestedBatchIds.length
-          ? batchResult.value
+          ? visibleBatches
           : activeBatches.length
             ? activeBatches
-            : batchResult.value.slice(0, 1);
+            : visibleBatches.slice(0, 1);
         const resolvedBatchIds = queueBatches.map((batch) => batch.id);
         const effectiveSelection =
           requestedSelection !== ALL_CURRENT_BATCHES &&
@@ -465,7 +472,9 @@ export default function TasksPage() {
               pageSize: String(requestedPageSize),
               executionStatus: requestedExecutionFilter,
             });
-            const currentTasks = await apiFetch<TaskPage>(`/api/tasks?${query}`);
+            const currentTasks = await apiFetch<TaskPage>(`/api/tasks?${query}`, {
+              cache: "no-store",
+            });
             if (requestSequence !== loadSequence.current) return;
             setTasks((previous) =>
               JSON.stringify(previous) === JSON.stringify(currentTasks.items)
@@ -839,28 +848,26 @@ export default function TasksPage() {
         `/api/automation/batches/${target.id}/clear`,
         { method: "POST" },
       );
+      clearedBatchIds.current.add(result.clearedBatchId);
+      loadSequence.current += 1;
       const nextBatchIds = result.nextBatchId ? [result.nextBatchId] : [];
-      setBatches((current) =>
-        current.filter((batch) => batch.id !== result.clearedBatchId),
-      );
-      setTrackedBatchIds(nextBatchIds);
-      setSelectedBatchId(result.nextBatchId || ALL_CURRENT_BATCHES);
+      setBatches([]);
+      setTrackedBatchIds([]);
+      setSelectedBatchId(ALL_CURRENT_BATCHES);
       setTaskExecutionFilter("ALL");
       setTaskPage(1);
       setTasks([]);
       setTaskTotal(0);
-      rememberCurrentBatches(nextBatchIds);
+      rememberCurrentBatches([]);
       setBatchPendingClear(null);
-      if (result.nextBatchId) {
-        await load(
-          true,
-          nextBatchIds,
-          1,
-          taskPageSize,
-          result.nextBatchId,
-          "ALL",
-        );
-      }
+      await load(
+        true,
+        nextBatchIds,
+        1,
+        taskPageSize,
+        result.nextBatchId || ALL_CURRENT_BATCHES,
+        "ALL",
+      );
       message.success(
         `已清除当前批次，保留 ${result.retainedAuditResultCount} 条正式审核结果。`,
       );

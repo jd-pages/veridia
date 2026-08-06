@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 export const visibleAuditTaskWhere: Prisma.AuditTaskWhereInput = {
-  OR: [{ batchId: null }, { batch: { clearedAt: null } }],
+  OR: [{ batchId: null }, { batch: { is: { clearedAt: null } } }],
 };
 
 export const duplicateRelevantAuditTaskWhere: Prisma.AuditTaskWhereInput = {

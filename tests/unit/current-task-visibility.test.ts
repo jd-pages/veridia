@@ -12,7 +12,8 @@ describe("审核任务页面当前队列展示", () => {
 
     expect(taskPage).toContain("/api/automation/batches?${batchQuery}");
     expect(taskPage).toContain("batchQuery.set(\"batchIds\"");
-    expect(taskPage).toContain("apiFetch<TaskPage>(`/api/tasks?${query}`)");
+    expect(taskPage).toContain("apiFetch<TaskPage>(`/api/tasks?${query}`");
+    expect(taskPage).toContain('cache: "no-store"');
     expect(taskPage).toContain("pageSize: String(requestedPageSize)");
     expect(taskPage).toContain("executionStatus: requestedExecutionFilter");
     expect(taskPage).not.toContain('apiFetch<Task[]>("/api/tasks")');

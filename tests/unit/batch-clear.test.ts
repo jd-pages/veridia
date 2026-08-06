@@ -39,17 +39,25 @@ describe("清除当前自动审核批次", () => {
   it("服务端事务保留审核结果并记录操作日志", () => {
     const service = source("lib/automation/batch-clear.ts");
     const route = source("app/api/automation/batches/[id]/clear/route.ts");
+    const batchRoute = source("app/api/automation/batches/route.ts");
     const taskRoute = source("app/api/tasks/route.ts");
     const taskExport = source("app/api/tasks/export/route.ts");
+    const taskVisibility = source("lib/automation/task-view.ts");
 
     expect(service).toContain("prisma.$transaction");
     expect(service).toContain("retainedAuditResultCount");
     expect(service).toContain("CLEAR_AUTOMATIC_BATCH_FROM_TASK_VIEW");
     expect(service).toContain('failureCode: "BATCH_CLEARED"');
+    expect(service).toContain("if (batch.clearedAt)");
+    expect(service).toContain("alreadyCleared: true");
+    expect(service).toContain("alreadyCleared: false");
     expect(service).not.toContain("auditResult.delete");
     expect(route).toContain("requireApiUser(BUSINESS_ROLES)");
+    expect(batchRoute).toContain('"Cache-Control": "no-store"');
+    expect(taskRoute).toContain('"Cache-Control": "no-store"');
     expect(taskRoute).toContain("visibleAuditTaskWhere");
     expect(taskExport).toContain("visibleAuditTaskWhere");
+    expect(taskVisibility).toContain("batch: { is: { clearedAt: null } }");
   });
 
   it("页面提供二次确认并清理筛选、分页和旧请求", () => {
@@ -67,6 +75,11 @@ describe("清除当前自动审核批次", () => {
       expect(page).toContain(text);
     }
     expect(page).toContain("loadSequence.current += 1");
+    expect(page).toContain("clearedBatchIds.current.add");
+    expect(page).toContain("setBatches([])");
+    expect(page).toContain("setTrackedBatchIds([])");
+    expect(page).toContain("rememberCurrentBatches([])");
+    expect(page).toContain('cache: "no-store"');
     expect(page).toContain('setTaskExecutionFilter("ALL")');
     expect(page).toContain("setTaskPage(1)");
     expect(page).toContain("confirmLoading={Boolean(clearingBatchId)}");

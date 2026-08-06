@@ -79,7 +79,9 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     }),
     paginated ? prisma.auditTask.count({ where }) : Promise.resolve(0),
   ]);
-  return ok(paginated ? { items: tasks, total, page, pageSize } : tasks);
+  return ok(paginated ? { items: tasks, total, page, pageSize } : tasks, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }, "读取审核任务");
 
 export const POST = withApiErrorBoundary(async function POST(request: Request) {

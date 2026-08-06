@@ -24,21 +24,42 @@ export async function clearAutomaticBatchFromTaskView(input: {
 }) {
   const clearedAt = new Date();
   const result = await prisma.$transaction(async (tx) => {
-    const batch = await tx.auditBatch.findFirst({
-      where: { id: input.batchId, clearedAt: null },
+    const batch = await tx.auditBatch.findUnique({
+      where: { id: input.batchId },
       select: {
         id: true,
         name: true,
         status: true,
         currentTaskId: true,
+        clearedAt: true,
       },
     });
     if (!batch) {
       throw new AutomaticBatchClearError(
-        "自动审核批次不存在或已清除。",
+        "自动审核批次不存在。",
         "BATCH_NOT_FOUND",
         404,
       );
+    }
+
+    const [clearedTaskCount, retainedAuditResultCount] = await Promise.all([
+      tx.auditTask.count({ where: { batchId: batch.id } }),
+      tx.auditResult.count({ where: { task: { batchId: batch.id } } }),
+    ]);
+    if (batch.clearedAt) {
+      const nextBatch = await tx.auditBatch.findFirst({
+        where: { id: { not: batch.id }, clearedAt: null },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+      return {
+        clearedBatchId: batch.id,
+        clearedTaskCount,
+        retainedAuditResultCount,
+        nextBatchId: nextBatch?.id || null,
+        clearedAt: batch.clearedAt.toISOString(),
+        alreadyCleared: true,
+      };
     }
 
     const processingTaskCount = await tx.auditTask.count({
@@ -55,11 +76,6 @@ export async function clearAutomaticBatchFromTaskView(input: {
         409,
       );
     }
-
-    const [clearedTaskCount, retainedAuditResultCount] = await Promise.all([
-      tx.auditTask.count({ where: { batchId: batch.id } }),
-      tx.auditResult.count({ where: { task: { batchId: batch.id } } }),
-    ]);
 
     await tx.auditTask.updateMany({
       where: {
@@ -129,6 +145,7 @@ export async function clearAutomaticBatchFromTaskView(input: {
       retainedAuditResultCount,
       nextBatchId: nextBatch?.id || null,
       clearedAt: clearedAt.toISOString(),
+      alreadyCleared: false,
     };
   });
 

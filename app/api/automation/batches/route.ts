@@ -40,6 +40,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       limit: batchId ? 1 : limit,
       includeTasks,
     }),
+    { headers: { "Cache-Control": "no-store" } },
   );
 }, "读取自动审核批次");
 

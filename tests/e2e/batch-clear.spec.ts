@@ -147,12 +147,14 @@ test("清除当前批次仅移出任务页并保留正式审核结果", async ({
     clearedTaskCount: number;
     retainedAuditResultCount: number;
     nextBatchId: string | null;
+    alreadyCleared: boolean;
   };
   expect(clearResult).toMatchObject({
     clearedBatchId: targetBatchId,
     clearedTaskCount: 1,
     retainedAuditResultCount: 1,
     nextBatchId: historyBatchId,
+    alreadyCleared: false,
   });
   await expect(page.getByText(historyName, { exact: false }).first()).toBeVisible();
   await expect(page.getByText(targetName, { exact: false })).toHaveCount(0);
@@ -185,6 +187,15 @@ test("清除当前批次仅移出任务页并保留正式审核结果", async ({
   expect((await page.request.get(`/api/results/${retainedResultId}`)).ok()).toBe(
     true,
   );
+  const repeatedClear = await page.request.post(
+    `/api/automation/batches/${targetBatchId}/clear`,
+  );
+  expect(repeatedClear.ok()).toBeTruthy();
+  expect((await repeatedClear.json()).data).toMatchObject({
+    clearedBatchId: targetBatchId,
+    nextBatchId: historyBatchId,
+    alreadyCleared: true,
+  });
 
   await page.getByRole("button", { name: "清除当前批次" }).click();
   await page.getByRole("button", { name: "确认清除", exact: true }).click();
@@ -199,6 +210,64 @@ test("清除当前批次仅移出任务页并保留正式审核结果", async ({
   const statusCards = page.locator('button[aria-label^="筛选"][aria-label$="记录"]');
   await expect(statusCards).toHaveCount(6);
   await expect(statusCards.locator("strong")).toHaveText(["0", "0", "0", "0", "0", "0"]);
+  await expect(page.getByLabel("执行记录批次筛选")).toHaveCount(0);
+  await expect(
+    page.getByText("对应审核结果已删除，可重新提交审核", { exact: true }),
+  ).toHaveCount(0);
+  await page.reload();
+  await expect(
+    page.getByText("暂无审核任务", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(statusCards.locator("strong")).toHaveText(["0", "0", "0", "0", "0", "0"]);
+  await expect(page.getByText(targetName, { exact: false })).toHaveCount(0);
+  await expect(page.getByText(historyName, { exact: false })).toHaveCount(0);
+
+  const deletedResultBatchName = `结果已删除后清除-${suffix}`;
+  const deletedResultBatchId = await createBatch(
+    deletedResultBatchName,
+    `${E2E_ORIGIN}/mock/xhs?case=read-failed&clear-deleted-result=${suffix}`,
+  );
+  await waitForBatchToStop(page, deletedResultBatchId);
+  const deletedResultBeforeClear = (
+    await (
+      await page.request.get(`/api/results?batchId=${deletedResultBatchId}`)
+    ).json()
+  ).data as { total: number; items: Array<{ id: string }> };
+  expect(deletedResultBeforeClear.total).toBe(1);
+  const deleteResultResponse = await page.request.delete(
+    `/api/results/${deletedResultBeforeClear.items[0].id}`,
+  );
+  expect(deleteResultResponse.ok()).toBeTruthy();
+
+  await page.goto(`/tasks?batchId=${deletedResultBatchId}`);
+  await expect(
+    page.getByText("对应审核结果已删除，可重新提交审核", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "清除当前批次" }).click();
+  await page.getByRole("button", { name: "确认清除", exact: true }).click();
+  await expect(
+    page.getByText("暂无审核任务", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(page.getByText(deletedResultBatchName, { exact: false })).toHaveCount(0);
+  await expect(
+    page.getByText("对应审核结果已删除，可重新提交审核", { exact: true }),
+  ).toHaveCount(0);
+  const hiddenDeletedResultTasks = (
+    await (
+      await page.request.get(
+        `/api/tasks?batchIds=${deletedResultBatchId}&page=1&pageSize=50`,
+      )
+    ).json()
+  ).data as { total: number };
+  expect(hiddenDeletedResultTasks.total).toBe(0);
+  await page.reload();
+  await expect(
+    page.getByText("暂无审核任务", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(page.getByText(deletedResultBatchName, { exact: false })).toHaveCount(0);
+  await expect(
+    page.getByText("对应审核结果已删除，可重新提交审核", { exact: true }),
+  ).toHaveCount(0);
 
   const runningBatchId = await createBatch(
     `运行中不可清除-${suffix}`,
