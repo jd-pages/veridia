@@ -231,10 +231,11 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "客户名",
     "产品系列",
     "阶段",
+    "段位",
     "订单编号",
     "内容渠道",
     "链接",
-    "发帖时间",
+    "发布时间",
     "活动名称",
     "自审",
   ]);
@@ -300,11 +301,11 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     const templateDownloadPromise = page.waitForEvent("download");
     await page.getByRole("button", { name: "下载导入模板" }).click();
     await page
-      .getByRole("menuitem", { name: "下载达能 Excel 模板" })
+      .getByRole("menuitem", { name: "下载达能客户 Excel 模板" })
       .click();
     const templateDownload = await templateDownloadPromise;
     expect(templateDownload.suggestedFilename()).toMatch(
-      /^VERIDIA达能导入模板_.+_\d{4}-\d{2}-\d{2}\.xlsx$/u,
+      /^VERIDIA达能客户导入模板_.+_\d{4}-\d{2}-\d{2}\.xlsx$/u,
     );
   }
   expect(page.context().pages()).toHaveLength(pageCountBeforeTemplateDownloads);
@@ -320,14 +321,14 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     noteTemplateWorkbook.worksheets[0],
   );
   expect(noteTemplateHeaders).toEqual([
-    "平台",
+    "平台（必填）",
     "店铺名称（必填）",
     "客户名（必填）",
     "产品系列（必填）",
-    "阶段（IFFO/GUM）",
-    "段位",
-    "订单编号",
-    "内容渠道",
+    "阶段（必填）",
+    "段位（必填）",
+    "订单编号（必填）",
+    "内容渠道（必填）",
     "链接（必填）",
     "发布时间（必填）",
     "活动名称（必填）",
@@ -339,9 +340,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       "京东健康官方进口超市",
       "E2E 客户",
       product.name,
-      "IFFO",
       "2段",
-      "",
+      "IFFO",
+      `PREVIEW-${suffix}-${index}`,
       "小红书",
       `${E2E_ORIGIN}/mock/xhs?case=passed&preview-layout=${suffix}-${index}`,
       "2026-08-03 12:00:00",
@@ -402,9 +403,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "京东健康官方进口超市",
     "E2E 客户",
     product.name,
-    "IFFO",
     "2段",
-    "",
+    "IFFO",
+    `MINIMAL-${suffix}`,
     "小红书",
     `${E2E_ORIGIN}/mock/xhs?case=passed&minimal-template=${suffix}`,
     "2026-08-03 12:00:00",
@@ -441,7 +442,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     }>
   ).find((task) => task.url.includes(`minimal-template=${suffix}`));
   expect(minimalTemplateTask).toBeTruthy();
-  expect(minimalTemplateTask?.notes).not.toContain("订单编号：");
+  expect(minimalTemplateTask?.notes).toContain(`订单编号：MINIMAL-${suffix}`);
   expect(minimalTemplateTask?.notes).toContain(`导入活动名称：${campaign.name}`);
 
   const workbook = new ExcelJS.Workbook();

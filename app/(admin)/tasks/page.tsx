@@ -204,6 +204,7 @@ interface ImportPreview {
   errorRowsTruncated?: boolean;
   templateVersion: string;
   templateBrand: "达能" | "佳贝艾特";
+  templateType: "DANONE_CUSTOMER" | "DANONE_AGENCY" | "KABRITA";
   sourceLabel: string;
   sourceType: string;
   recognizedFields: Array<{
@@ -775,7 +776,7 @@ export default function TasksPage() {
   const submitExcel = async (commit: boolean) => {
     const file = fileList[0]?.originFileObj;
     if (!file) {
-      message.warning("请先选择 Excel、CSV 或腾讯文档导出的表格");
+      message.warning("请先选择 Excel（.xlsx）表格");
       return;
     }
     setImporting(true);
@@ -1249,21 +1250,21 @@ export default function TasksPage() {
                     </span>
                     <h2>表格批量导入</h2>
                     <p>
-                      支持 Excel / CSV，也支持从腾讯文档导出的表格文件；字段别名会自动识别，表头顺序可不同。
+                      支持 Excel（.xlsx）；请按业务类型下载对应模板。
                     </p>
                   </div>
                   <Dropdown
                     menu={{
                       items: [
                         {
-                          key: "danone-xlsx",
-                          label: "下载达能 Excel 模板",
-                          onClick: () => void downloadTemplate("xlsx", "danone"),
+                          key: "danone-customer-xlsx",
+                          label: "下载达能客户 Excel 模板",
+                          onClick: () => void downloadTemplate("xlsx", "danone-customer"),
                         },
                         {
-                          key: "danone-csv",
-                          label: "下载达能 CSV 模板",
-                          onClick: () => void downloadTemplate("csv", "danone"),
+                          key: "danone-agency-xlsx",
+                          label: "下载达能代发 Excel 模板",
+                          onClick: () => void downloadTemplate("xlsx", "danone-agency"),
                         },
                         { type: "divider" },
                         {
@@ -1271,12 +1272,6 @@ export default function TasksPage() {
                           label: "下载佳贝艾特 Excel 模板",
                           onClick: () =>
                             void downloadTemplate("xlsx", "kabrita"),
-                        },
-                        {
-                          key: "kabrita-csv",
-                          label: "下载佳贝艾特 CSV 模板",
-                          onClick: () =>
-                            void downloadTemplate("csv", "kabrita"),
                         },
                       ],
                     }}
@@ -1297,10 +1292,18 @@ export default function TasksPage() {
                 >
                   <Upload.Dragger
                     className={styles.uploadArea}
-                    accept=".xlsx,.xls,.csv"
+                    accept=".xlsx"
                     maxCount={1}
                     fileList={fileList}
-                    beforeUpload={() => false}
+                    beforeUpload={(file) => {
+                      if (!file.name.toLocaleLowerCase().endsWith(".xlsx")) {
+                        message.error(
+                          "暂不支持CSV文件，请下载最新版Excel导入模板后重新填写。",
+                        );
+                        return Upload.LIST_IGNORE;
+                      }
+                      return false;
+                    }}
                     onChange={({ fileList: next }) => {
                       setFileList(next.slice(-1));
                       setPreview(null);
@@ -1312,10 +1315,10 @@ export default function TasksPage() {
                       <InboxOutlined />
                     </p>
                     <p className="ant-upload-text">
-                      点击或拖入 Excel / CSV 表格
+                      点击或拖入 Excel 表格
                     </p>
                     <p className="ant-upload-hint">
-                      支持腾讯文档导出文件；模板版本随审核规则同步更新
+                      支持 Excel（.xlsx）
                     </p>
                   </Upload.Dragger>
                   <Space wrap>
@@ -1352,6 +1355,13 @@ export default function TasksPage() {
                         </Descriptions.Item>
                         <Descriptions.Item label="模板品牌">
                           {preview.templateBrand}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="模板类型">
+                          {preview.templateType === "DANONE_AGENCY"
+                            ? "达能代发"
+                            : preview.templateType === "DANONE_CUSTOMER"
+                              ? "达能客户"
+                              : "佳贝艾特"}
                         </Descriptions.Item>
                         <Descriptions.Item label="数据源类型">
                           {preview.sourceLabel || preview.sourceType}

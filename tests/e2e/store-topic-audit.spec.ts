@@ -133,14 +133,14 @@ test("同一店铺任意命中第二条可点击话题即通过并保存结构�
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("多店铺话题审核");
     sheet.addRow([
-      "平台",
+      "平台（必填）",
       "店铺名称（必填）",
       "客户名（必填）",
       "产品系列（必填）",
-      "阶段（IFFO/GUM）",
-      "段位",
-      "订单编号",
-      "内容渠道",
+      "阶段（必填）",
+      "段位（必填）",
+      "订单编号（必填）",
+      "内容渠道（必填）",
       "链接（必填）",
       "发布时间（必填）",
       "活动名称（必填）",
@@ -152,14 +152,18 @@ test("同一店铺任意命中第二条可点击话题即通过并保存结构�
       storeName,
       "多话题 E2E",
       product.name,
-      "IFFO",
       "2段",
+      "IFFO",
       `MULTI-${suffix}`,
       "小红书",
       url,
       "2026-08-05 12:00:00",
       campaign.name,
     ]);
+    const metadata = workbook.addWorksheet("VERIDIA模板信息", {
+      state: "veryHidden",
+    });
+    metadata.getCell("B1").value = "DANONE_CUSTOMER";
 
     const response = await page.request.post("/api/import/notes", {
       multipart: {
@@ -184,7 +188,7 @@ test("同一店铺任意命中第二条可点击话题即通过并保存结构�
     await waitForBatch(page, payload.data.batchId);
 
     const resultsResponse = await page.request.get(
-      `/api/results?keyword=${encodeURIComponent(marker)}&pageSize=10`,
+      `/api/results?batchId=${encodeURIComponent(payload.data.batchId)}&pageSize=10`,
     );
     const results = (await resultsResponse.json()).data.items as Array<{
       id: string;

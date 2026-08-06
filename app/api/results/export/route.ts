@@ -14,6 +14,11 @@ import {
   buildConfiguredWorkbook,
 } from "@/lib/import-export-templates/export";
 import { KABRITA_BRAND_NAME } from "@/lib/import-export-templates/kabrita";
+import {
+  DANONE_MIXED_SUMMARY_FIELDS,
+  type ImportTemplateType,
+} from "@/lib/import-template-type";
+import { importedTemplateMetadataFromNotes } from "@/lib/import-task-metadata";
 import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
 import {
   buildAuditResultWhere,
@@ -87,6 +92,19 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const danoneRows = rows.filter(
     (row) => row.task.product.brandName?.trim() !== KABRITA_BRAND_NAME,
   );
+  const danoneTemplateType = (row: (typeof danoneRows)[number]): ImportTemplateType =>
+    importedTemplateMetadataFromNotes(row.task.notes)?.templateType ===
+    "DANONE_AGENCY"
+      ? "DANONE_AGENCY"
+      : "DANONE_CUSTOMER";
+  const danoneAgencyRows = danoneRows.filter(
+    (row) => danoneTemplateType(row) === "DANONE_AGENCY",
+  );
+  const danoneCustomerRows = danoneRows.filter(
+    (row) => danoneTemplateType(row) === "DANONE_CUSTOMER",
+  );
+  const mixedDanoneTemplates =
+    danoneAgencyRows.length > 0 && danoneCustomerRows.length > 0;
   const useKabritaTemplate = kabritaRows.length === rows.length;
   const mixedBrands = kabritaRows.length > 0 && danoneRows.length > 0;
   const templateBrand = useKabritaTemplate
@@ -95,6 +113,8 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const records = useKabritaTemplate
     ? kabritaRows.map(auditResultToKabritaExportRecord)
     : danoneRows.map(auditResultToCompactExportRecord);
+  const agencyRecords = danoneAgencyRows.map(auditResultToCompactExportRecord);
+  const customerRecords = danoneCustomerRows.map(auditResultToCompactExportRecord);
   const kabritaRecords = kabritaRows.map(auditResultToKabritaExportRecord);
   const format = searchParams.get("format") === "csv" ? "csv" : "xlsx";
   const fileName = auditResultExportFileName({
@@ -102,6 +122,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     selected: Boolean(filters.ids?.length),
     extension: format,
     importBatch,
+    danoneMixed: mixedDanoneTemplates && !mixedBrands,
   });
   const exportLog = async (format: "csv" | "xlsx", bytes: number) => {
     const filterKeys = Object.entries(filters)
@@ -182,10 +203,64 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     kind: "auditResults",
     records,
     templateBrand,
-    ...(mixedBrands
+    templateType:
+      !mixedBrands && !mixedDanoneTemplates && agencyRecords.length
+        ? "DANONE_AGENCY"
+        : !mixedBrands && !mixedDanoneTemplates && customerRecords.length
+          ? "DANONE_CUSTOMER"
+          : undefined,
+    ...(mixedDanoneTemplates && !kabritaRows.length
       ? {
           sections: [
-            { sheetName: "达能审核结果", records },
+            {
+              sheetName: "审核结果汇总",
+              records,
+              templateType: "DANONE_CUSTOMER" as const,
+              fields: DANONE_MIXED_SUMMARY_FIELDS,
+            },
+            {
+              sheetName: "达能代发",
+              records: agencyRecords,
+              templateType: "DANONE_AGENCY" as const,
+            },
+            {
+              sheetName: "达能客户",
+              records: customerRecords,
+              templateType: "DANONE_CUSTOMER" as const,
+            },
+          ],
+        }
+      : mixedBrands
+      ? {
+          sections: [
+            ...(mixedDanoneTemplates
+              ? [
+                  {
+                    sheetName: "达能审核结果汇总",
+                    records,
+                    templateType: "DANONE_CUSTOMER" as const,
+                    fields: DANONE_MIXED_SUMMARY_FIELDS,
+                  },
+                  {
+                    sheetName: "达能代发",
+                    records: agencyRecords,
+                    templateType: "DANONE_AGENCY" as const,
+                  },
+                  {
+                    sheetName: "达能客户",
+                    records: customerRecords,
+                    templateType: "DANONE_CUSTOMER" as const,
+                  },
+                ]
+              : [
+                  {
+                    sheetName: "达能审核结果",
+                    records,
+                    templateType: agencyRecords.length
+                      ? "DANONE_AGENCY" as const
+                      : "DANONE_CUSTOMER" as const,
+                  },
+                ]),
             {
               sheetName: "佳贝艾特审核结果",
               records: kabritaRecords,

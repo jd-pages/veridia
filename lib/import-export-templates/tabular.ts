@@ -17,11 +17,18 @@ import {
   isKabritaTemplateHeader,
   kabritaDisplayName,
 } from "./kabrita";
+import {
+  DANONE_AGENCY_IMPORT_FIELDS,
+  DANONE_CUSTOMER_IMPORT_FIELDS,
+  isImportTemplateType,
+  type ImportTemplateType,
+} from "@/lib/import-template-type";
 
 type Matrix = string[][];
 type ParsedMatrix = {
   matrix: Matrix;
   hyperlinks: Map<string, string>;
+  templateType?: ImportTemplateType;
 };
 
 const cellKey = (rowIndex: number, columnIndex: number) =>
@@ -113,7 +120,13 @@ async function xlsxMatrix(bytes: Uint8Array): Promise<ParsedMatrix> {
     }
     rows.push(values);
   }
-  return { matrix: rows, hyperlinks };
+  const metadata = workbook.getWorksheet("VERIDIA模板信息");
+  const metadataType = metadata?.getCell("B1").text.trim();
+  return {
+    matrix: rows,
+    hyperlinks,
+    templateType: isImportTemplateType(metadataType) ? metadataType : undefined,
+  };
 }
 
 function legacyExcelMatrix(bytes: Uint8Array): ParsedMatrix {
@@ -144,6 +157,8 @@ function aliasIndex(templates: ImportExportTemplates) {
   const aliases = new Map<string, StandardField>();
   const fields = new Set<StandardField>([
     ...templates.columnOrder.import,
+    ...DANONE_CUSTOMER_IMPORT_FIELDS,
+    ...DANONE_AGENCY_IMPORT_FIELDS,
     ...KABRITA_TEMPLATE_FIELDS,
     "complianceResult",
     // 兼容第三方表格使用“活动名称”；新版正式表头为“活动名称（必填）”。
@@ -197,6 +212,41 @@ function displayName(
   return templates.fieldDefinitions[field]?.displayName || field;
 }
 
+function detectTemplateType(
+  header: readonly string[],
+  metadataType?: ImportTemplateType,
+): ImportTemplateType {
+  if (metadataType) return metadataType;
+  if (isKabritaTemplateHeader(header)) return "KABRITA";
+  const normalized = new Set(header.map(normalizeTemplateHeader));
+  const hasStage = normalized.has(normalizeTemplateHeader("阶段")) ||
+    normalized.has(normalizeTemplateHeader("阶段（必填）"));
+  return hasStage ? "DANONE_CUSTOMER" : "DANONE_AGENCY";
+}
+
+function templateField(
+  rawHeader: string,
+  fallback: StandardField | undefined,
+  templateType: ImportTemplateType,
+) {
+  const normalized = normalizeTemplateHeader(rawHeader);
+  if (templateType === "DANONE_CUSTOMER") {
+    if (["阶段", "阶段（必填）"].map(normalizeTemplateHeader).includes(normalized)) {
+      return "productStageDetail" as const;
+    }
+    if (["段位", "段位（必填）"].map(normalizeTemplateHeader).includes(normalized)) {
+      return "productStage" as const;
+    }
+  }
+  if (
+    templateType === "DANONE_AGENCY" &&
+    ["段位", "段位（必填）"].map(normalizeTemplateHeader).includes(normalized)
+  ) {
+    return "productStage" as const;
+  }
+  return fallback;
+}
+
 export async function parseTabularPreview(input: {
   bytes: Uint8Array;
   fileName: string;
@@ -230,7 +280,8 @@ export async function parseTabularPreview(input: {
   const { matrix, hyperlinks: cellHyperlinks } = parsedMatrix;
   const { rowIndex, aliases } = locateHeader(matrix, templates);
   const header = matrix[rowIndex];
-  const kabritaTemplate = isKabritaTemplateHeader(header);
+  const templateType = detectTemplateType(header, parsedMatrix.templateType);
+  const kabritaTemplate = templateType === "KABRITA";
   const recognizedFields: TabularPreview["recognizedFields"] = [];
   const unknownHeaders: string[] = [];
   const duplicateHeaders: string[] = [];
@@ -238,7 +289,13 @@ export async function parseTabularPreview(input: {
   header.forEach((rawHeader, columnIndex) => {
     const value = rawHeader.trim();
     if (!value) return;
-    const field = aliases.get(normalizeTemplateHeader(value));
+    const field = parsedMatrix.templateType
+      ? templateField(
+          value,
+          aliases.get(normalizeTemplateHeader(value)),
+          templateType,
+        )
+      : aliases.get(normalizeTemplateHeader(value));
     if (!field) {
       unknownHeaders.push(value);
       return;
@@ -255,27 +312,34 @@ export async function parseTabularPreview(input: {
       displayName: displayName(templates, field, kabritaTemplate),
     });
   });
-  // 兼容旧模板仅用“段位”列承载 IFFO/GUM；新模板同时存在“阶段”和“段位”时，
-  // 两列保持独立，不进行回退映射。
-  if (!occupied.has("productStage") && occupied.has("productStageDetail")) {
+  if (
+    !parsedMatrix.templateType &&
+    !occupied.has("productStage") &&
+    occupied.has("productStageDetail")
+  ) {
     const legacyMatch = recognizedFields.find(
       (match) => match.field === "productStageDetail",
     );
     if (legacyMatch) {
       legacyMatch.field = "productStage";
-      legacyMatch.displayName = displayName(templates, "productStage", kabritaTemplate);
-      occupied.set("productStage", occupied.get("productStageDetail") || legacyMatch.header);
+      occupied.set("productStage", legacyMatch.header);
       occupied.delete("productStageDetail");
     }
   }
   const legacyLayout = !kabritaTemplate && !["customerName", "publishTime"].some(
     (field) => occupied.has(field as StandardField),
   );
-  const requiredFields: StandardField[] = kabritaTemplate
-    ? [...KABRITA_REQUIRED_FIELDS]
-    : legacyLayout
-      ? ["noteUrl", "productName", "productStage", "activityName"]
-      : templates.requiredFields;
+  const requiredFields: StandardField[] = parsedMatrix.templateType
+    ? kabritaTemplate
+      ? [...KABRITA_REQUIRED_FIELDS]
+      : templateType === "DANONE_AGENCY"
+        ? [...DANONE_AGENCY_IMPORT_FIELDS]
+        : [...DANONE_CUSTOMER_IMPORT_FIELDS]
+    : kabritaTemplate
+      ? [...KABRITA_REQUIRED_FIELDS]
+      : legacyLayout
+        ? ["noteUrl", "productName", "productStage", "activityName"]
+        : templates.requiredFields;
   const missingRequiredFields = requiredFields.filter(
     (field) => !occupied.has(field),
   );
@@ -318,6 +382,10 @@ export async function parseTabularPreview(input: {
         errors.push(
           field === "activityName"
             ? "活动名称不能为空"
+            : field === "productStage"
+              ? "段位不能为空"
+              : field === "productStageDetail"
+                ? "阶段不能为空"
             : `缺少必填字段：${displayName(templates, field, kabritaTemplate)}`,
         );
       }
@@ -337,9 +405,12 @@ export async function parseTabularPreview(input: {
     templateBrand: kabritaTemplate
       ? KABRITA_BRAND_NAME
       : DANONE_BRAND_NAME,
+    templateType,
     sourceLabel: kabritaTemplate
       ? `${KABRITA_BRAND_NAME} Excel`
-      : sourceType,
+      : templateType === "DANONE_AGENCY"
+        ? "达能代发 Excel"
+        : "达能客户 Excel",
     sourceType,
     headerRowNumber: rowIndex + 1,
     recognizedFields,

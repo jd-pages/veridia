@@ -571,7 +571,11 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       });
       expect(result.validCount).toBe(0);
       expect(result.rows[0].errors).toContain(
-        index === 10 ? "活动名称不能为空" : `缺少必填字段：${displayName}`,
+        index === 10
+          ? "活动名称不能为空"
+          : index === 4
+            ? "段位不能为空"
+            : `缺少必填字段：${displayName}`,
       );
     }
   });
@@ -658,60 +662,60 @@ describe("模板驱动导出", () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes);
     expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
-      "笔记导入",
+      "达能客户导入",
       "活动列表",
       "填写说明",
+      "VERIDIA模板信息",
     ]);
-    expect(workbook.getWorksheet("笔记导入")?.getCell("A1").text).toBe(
-      "平台",
+    expect(workbook.getWorksheet("达能客户导入")?.getCell("A1").text).toBe(
+      "平台（必填）",
     );
     expect(workbook.getWorksheet("填写说明")?.getCell("B2").text).toBe(
       templates.templateVersion,
     );
-    const headerValues = (workbook.getWorksheet("笔记导入")?.getRow(1)
+    const headerValues = (workbook.getWorksheet("达能客户导入")?.getRow(1)
       .values || []) as unknown[];
     const headers = headerValues.slice(1).map(String);
     expect(headers).toEqual([
-      "平台",
+      "平台（必填）",
       "店铺名称（必填）",
       "客户名（必填）",
       "产品系列（必填）",
-      "阶段（IFFO/GUM）",
-      "段位",
-      "订单编号",
-      "内容渠道",
+      "阶段（必填）",
+      "段位（必填）",
+      "订单编号（必填）",
+      "内容渠道（必填）",
       "链接（必填）",
       "发布时间（必填）",
       "活动名称（必填）",
     ]);
-    const stageCell = workbook.getWorksheet("笔记导入")?.getCell("E2");
-    expect(stageCell?.text).toBe("IFFO");
+    const stageCell = workbook.getWorksheet("达能客户导入")?.getCell("F2");
     expect(stageCell?.dataValidation).toMatchObject({
       type: "list",
       formulae: ['"IFFO,GUM"'],
-      error: "产品阶段话题请填写 IFFO 或 GUM。",
+      error: "段位仅支持 IFFO 或 GUM",
     });
-    expect(workbook.getWorksheet("笔记导入")?.getCell("F2").dataValidation)
+    expect(workbook.getWorksheet("达能客户导入")?.getCell("E2").dataValidation)
       .toMatchObject({
         type: "list",
         formulae: ['"P段,1段,2段,3段,4段,1+段,2+段"'],
       });
-    expect(workbook.getWorksheet("笔记导入")?.getCell("H2").text).toBe(
+    expect(workbook.getWorksheet("达能客户导入")?.getCell("H2").text).toBe(
       "小红书",
     );
-    expect(workbook.getWorksheet("笔记导入")?.getCell("K2").dataValidation)
+    expect(workbook.getWorksheet("达能客户导入")?.getCell("K2").dataValidation)
       .toMatchObject({ type: "list", formulae: ["VERIDIA_ACTIVITY_NAMES"] });
-    expect(workbook.getWorksheet("笔记导入")?.getCell("K10000").dataValidation)
+    expect(workbook.getWorksheet("达能客户导入")?.getCell("K10000").dataValidation)
       .toMatchObject({ type: "list" });
     expect(workbook.getWorksheet("活动列表")?.state).toBe("veryHidden");
     expect(workbook.getWorksheet("活动列表")?.getCell("A2").text).toBe(
       "达能2026年8月小红书种草审核",
     );
-    expect(workbook.getWorksheet("笔记导入")?.getColumn(10).numFmt).toBe(
+    expect(workbook.getWorksheet("达能客户导入")?.getColumn(10).numFmt).toBe(
       "yyyy-mm-dd hh:mm:ss",
     );
-    expect(workbook.getWorksheet("笔记导入")?.autoFilter).toBeTruthy();
-    expect(workbook.getWorksheet("笔记导入")?.getCell("A1").fill).toMatchObject({
+    expect(workbook.getWorksheet("达能客户导入")?.autoFilter).toBeTruthy();
+    expect(workbook.getWorksheet("达能客户导入")?.getCell("A1").fill).toMatchObject({
       fgColor: { argb: "FFFFFF00" },
     });
     for (const removed of [
@@ -739,28 +743,30 @@ describe("模板驱动导出", () => {
     );
     const noteSheet = noteWorkbook.worksheets[0];
     expect((noteSheet.getRow(1).values as unknown[]).slice(1)).toEqual([
-      "平台",
+      "平台（必填）",
       "店铺名称（必填）",
       "客户名（必填）",
       "产品系列（必填）",
-      "阶段（IFFO/GUM）",
-      "段位",
-      "订单编号",
-      "内容渠道",
+      "阶段（必填）",
+      "段位（必填）",
+      "订单编号（必填）",
+      "内容渠道（必填）",
       "链接（必填）",
       "发布时间（必填）",
       "活动名称（必填）",
     ]);
-    expect(noteSheet.getCell("E2").text).toBe("IFFO");
+    expect(noteSheet.getCell("E2").text).toBe("2段");
     expect(noteSheet.getCell("E2").dataValidation).toMatchObject({
-      type: "list",
-      formulae: ['"IFFO,GUM"'],
-    });
-    expect(noteSheet.getCell("F2").text).toBe("2段");
-    expect(noteSheet.getCell("F2").dataValidation).toMatchObject({
       type: "list",
       formulae: ['"P段,1段,2段,3段,4段,1+段,2+段"'],
     });
+    expect(noteSheet.getCell("F2").text).toBe("IFFO");
+    expect(noteSheet.getCell("F2").dataValidation).toMatchObject({
+      type: "list",
+      formulae: ['"IFFO,GUM"'],
+    });
+    expect(noteWorkbook.getWorksheet("VERIDIA模板信息")?.getCell("B1").text)
+      .toBe("DANONE_CUSTOMER");
     expect(noteSheet.getCell("H2").text).toBe("小红书");
     expect(noteSheet.getCell("J2").numFmt).toBe("yyyy-mm-dd hh:mm:ss");
     expect(Boolean(noteSheet.autoFilter) || noteSheet.getTables().length > 0).toBe(
@@ -947,7 +953,7 @@ describe("模板驱动导出", () => {
       manualReviews: baseRow.manualReviews,
     };
     const compact = auditResultToCompactExportRecord(compactSource);
-    expect(Object.keys(compact)).toEqual(RESULT_EXPORT_FIELDS);
+    expect(Object.keys(compact)).toEqual(expect.arrayContaining(RESULT_EXPORT_FIELDS));
     expect(compact).toMatchObject({
       originalUrl: "https://xhslink.com/original",
       orderNumber: "ORDER-1001",

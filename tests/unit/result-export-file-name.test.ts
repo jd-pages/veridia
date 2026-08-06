@@ -56,4 +56,10 @@ describe("审核结果导出文件名", () => {
       }),
     ).toBe("VERIDIA审核结果_所选结果_20260804_134830.xlsx");
   });
+
+  it("达能客户与代发混合导出使用独立文件名", () => {
+    expect(
+      auditResultExportFileName({ date: localDate, danoneMixed: true }),
+    ).toBe("VERIDIA-审核结果-达能混合-20260804-134830.xlsx");
+  });
 });

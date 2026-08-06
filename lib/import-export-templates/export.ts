@@ -40,6 +40,15 @@ import {
   KABRITA_TEMPLATE_EXAMPLES,
   kabritaFieldDefinition,
 } from "./kabrita";
+import {
+  DANONE_AGENCY_EXPORT_FIELDS,
+  DANONE_AGENCY_IMPORT_FIELDS,
+  DANONE_CUSTOMER_EXPORT_FIELDS,
+  DANONE_CUSTOMER_IMPORT_FIELDS,
+  IMPORT_TEMPLATE_TYPE_LABELS,
+  danoneTemplateFieldDisplayName,
+  type ImportTemplateType,
+} from "@/lib/import-template-type";
 
 export type ExportValueRecord = Partial<Record<StandardField, unknown>>;
 
@@ -70,7 +79,7 @@ export interface CompactAuditResultExportSourceRow {
       seriesName?: string | null;
       brandName?: string | null;
     };
-    campaign?: { name: string };
+    campaign?: { name: string; month?: string | null };
   };
   note: {
     url: string;
@@ -115,7 +124,24 @@ function columns(
   templates: ImportExportTemplates,
   kind: keyof ImportExportTemplates["columnOrder"],
   templateBrand?: ImportTemplateBrand,
+  templateType?: ImportTemplateType,
+  fieldsOverride?: readonly StandardField[],
 ) {
+  if (fieldsOverride) {
+    return fieldsOverride.map((field) => ({
+      field,
+      displayName:
+        field === "templateType"
+          ? "模板类型"
+          : field === "activityMonth"
+            ? "活动月份"
+            : danoneTemplateFieldDisplayName(
+                field,
+                templateType || "DANONE_CUSTOMER",
+                true,
+              ),
+    }));
+  }
   if (kind === "auditResults" && templateBrand === KABRITA_BRAND_NAME) {
     return KABRITA_EXPORT_FIELDS.map((field) => ({
       field,
@@ -123,6 +149,18 @@ function columns(
         field === "activityName"
           ? "活动名称"
           : KABRITA_FIELD_DEFINITIONS[field].displayName,
+    }));
+  }
+  if (kind === "auditResults" && templateType === "DANONE_AGENCY") {
+    return DANONE_AGENCY_EXPORT_FIELDS.map((field) => ({
+      field,
+      displayName: danoneTemplateFieldDisplayName(field, templateType, true),
+    }));
+  }
+  if (kind === "auditResults" && templateType === "DANONE_CUSTOMER") {
+    return DANONE_CUSTOMER_EXPORT_FIELDS.map((field) => ({
+      field,
+      displayName: danoneTemplateFieldDisplayName(field, templateType, true),
     }));
   }
   const auditResultDisplayNames: Partial<Record<StandardField, string>> = {
@@ -278,6 +316,14 @@ export function auditResultToCompactExportRecord(
   row: CompactAuditResultExportSourceRow,
 ): ExportValueRecord {
   const importedMetadata = importedTaskMetadataFromNotes(row.task.notes);
+  const templateMetadata = importedTemplateMetadataFromNotes(row.task.notes);
+  const raw = (templateMetadata?.rawValues || {}) as Partial<
+    Record<StandardField, string>
+  >;
+  const templateType =
+    templateMetadata?.templateType === "DANONE_AGENCY"
+      ? "DANONE_AGENCY"
+      : "DANONE_CUSTOMER";
   const commercePlatform =
     parseCommercePlatform(row.task.commercePlatform) ||
     parseCommercePlatform(importedMetadata.platform);
@@ -288,7 +334,15 @@ export function auditResultToCompactExportRecord(
     commercePlatform: commercePlatformLabel(commercePlatform),
     shopName: importedMetadata.shopName,
     customerName: importedMetadata.customerName,
-    productName: row.task.product.seriesName || row.task.product.name,
+    productName:
+      raw.productName || row.task.product.seriesName || row.task.product.name,
+    productStage:
+      raw.productStage ||
+      (row.task.productStage?.startsWith("GUM") ? "GUM" : "IFFO"),
+    productStageDetail:
+      templateType === "DANONE_CUSTOMER"
+        ? raw.productStageDetail || ""
+        : "",
     productStageTopic: productStageTopicLabel(row.task.productStage),
     orderNumber: importedMetadata.orderNumber,
     contentChannel: contentChannelLabel(channel),
@@ -297,6 +351,8 @@ export function auditResultToCompactExportRecord(
       ? importedPublishTimeValue(importedMetadata.publishTime)
       : row.note.publishedAt,
     activityName: importedMetadata.activityName || row.task.campaign?.name || "",
+    activityMonth: row.task.campaign?.month || "",
+    templateType: IMPORT_TEMPLATE_TYPE_LABELS[templateType],
     selfReview: detailedSelfReview(row),
   };
 }
@@ -534,10 +590,13 @@ export async function buildConfiguredWorkbook(input: {
   kind: "auditResults" | "auditTasks";
   records: ExportValueRecord[];
   templateBrand?: ImportTemplateBrand;
+  templateType?: ImportTemplateType;
   sections?: Array<{
     sheetName: string;
     records: ExportValueRecord[];
     templateBrand?: ImportTemplateBrand;
+    templateType?: ImportTemplateType;
+    fields?: readonly StandardField[];
   }>;
 }) {
   const { templates, kind } = input;
@@ -550,11 +609,18 @@ export async function buildConfiguredWorkbook(input: {
       (kind === "auditResults" ? "审核结果" : "审核任务"),
     records: input.records,
     templateBrand: input.templateBrand,
+    templateType: input.templateType,
   }];
   for (const section of sections) {
-  const { records, templateBrand, sheetName } = section;
+  const { records, templateBrand, templateType, sheetName } = section;
   const sheet = workbook.addWorksheet(sheetName);
-  const selected = columns(templates, kind, templateBrand);
+  const selected = columns(
+    templates,
+    kind,
+    templateBrand,
+    templateType,
+    section.fields,
+  );
   const widths: Partial<Record<StandardField, number>> = {
     commercePlatform: 16,
     shopName: 24,
@@ -689,20 +755,30 @@ export async function buildImportTemplateWorkbook(
   templates: ImportExportTemplates,
   options?: {
     templateBrand?: ImportTemplateBrand;
+    templateType?: ImportTemplateType;
     activityNames?: readonly string[];
   },
 ) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "VERIDIA";
+  const templateType =
+    options?.templateType ||
+    (options?.templateBrand === KABRITA_BRAND_NAME
+      ? "KABRITA"
+      : "DANONE_CUSTOMER");
   const sheet = workbook.addWorksheet(
-    options?.templateBrand === KABRITA_BRAND_NAME
+    templateType === "KABRITA"
       ? "佳贝艾特导入"
-      : templates.importTemplates.default.sheetName,
+      : templateType === "DANONE_AGENCY"
+        ? "达能代发导入"
+        : "达能客户导入",
   );
   const fields: readonly StandardField[] =
-    options?.templateBrand === KABRITA_BRAND_NAME
+    templateType === "KABRITA"
       ? KABRITA_IMPORT_FIELDS
-      : templates.columnOrder.import;
+      : templateType === "DANONE_AGENCY"
+        ? DANONE_AGENCY_IMPORT_FIELDS
+        : DANONE_CUSTOMER_IMPORT_FIELDS;
   const widths: Partial<Record<StandardField, number>> = {
     commercePlatform: 16,
     shopName: 24,
@@ -728,7 +804,10 @@ export async function buildImportTemplateWorkbook(
     complianceResult: 18,
   };
   sheet.columns = fields.map((field) => ({
-    header: fieldDefinition(templates, field, options?.templateBrand).displayName,
+    header:
+      templateType === "KABRITA"
+        ? fieldDefinition(templates, field, options?.templateBrand).displayName
+        : danoneTemplateFieldDisplayName(field, templateType),
     key: field,
     width:
       widths[field] ||
@@ -736,8 +815,9 @@ export async function buildImportTemplateWorkbook(
         52,
         Math.max(
           14,
-          fieldDefinition(templates, field, options?.templateBrand).displayName
-            .length * 3,
+          (templateType === "KABRITA"
+            ? fieldDefinition(templates, field, options?.templateBrand).displayName
+            : danoneTemplateFieldDisplayName(field, templateType)).length * 3,
         ),
       ),
   }));
@@ -746,7 +826,7 @@ export async function buildImportTemplateWorkbook(
       fields.map((field) => [field, templates.examples[field] || ""]),
     ),
   );
-  if (options?.templateBrand === KABRITA_BRAND_NAME) {
+  if (templateType === "KABRITA") {
     for (const field of fields) {
       sheet.getCell(2, fields.indexOf(field) + 1).value =
         KABRITA_TEMPLATE_EXAMPLES[
@@ -780,8 +860,8 @@ export async function buildImportTemplateWorkbook(
         allowBlank: false,
         formulae: ['"IFFO,GUM"'],
         showErrorMessage: true,
-        errorTitle: "产品阶段话题无效",
-        error: "产品阶段话题请填写 IFFO 或 GUM。",
+        errorTitle: "段位无效",
+        error: "段位仅支持 IFFO 或 GUM",
       };
     }
   }
@@ -794,11 +874,11 @@ export async function buildImportTemplateWorkbook(
     ) {
       sheet.getCell(rowNumber, productStageDetailColumn).dataValidation = {
         type: "list",
-        allowBlank: true,
+        allowBlank: false,
         formulae: ['"P段,1段,2段,3段,4段,1+段,2+段"'],
         showErrorMessage: true,
-        errorTitle: "产品段位无效",
-        error: "段位请填写 P段、1段、2段、3段、4段、1+段或2+段。",
+        errorTitle: "阶段无效",
+        error: "阶段请填写 P段、1段、2段、3段、4段、1+或2+。",
       };
     }
   }
@@ -841,7 +921,7 @@ export async function buildImportTemplateWorkbook(
   };
   const linkColumn =
     fields.indexOf(
-      options?.templateBrand === KABRITA_BRAND_NAME
+      templateType === "KABRITA"
         ? "xiaohongshuPublishLink"
         : "noteUrl",
     ) + 1;
@@ -876,34 +956,50 @@ export async function buildImportTemplateWorkbook(
     aliases:
       "正确示例：达能2026年8月小红书种草审核、佳贝艾特2026年8月小红书种草审核、爱他美2026年8月小红书种草审核；错误示例：2026年8月-达能-UGC、达能8月活动、8月UGC",
   });
+  instructions.addRow({
+    field: "模板类型",
+    displayName: IMPORT_TEMPLATE_TYPE_LABELS[templateType],
+    required: "",
+    description:
+      templateType === "DANONE_AGENCY"
+        ? "适用于达能代发旧格式：没有阶段列，段位只填写 IFFO 或 GUM；产品名称如“澳白2”末尾2代表2段，2段笔记必须包含蓝色可点击话题 #二段奶粉推荐。"
+        : templateType === "DANONE_CUSTOMER"
+          ? "适用于达能客户新格式：阶段填写具体段数，段位填写 IFFO 或 GUM，两列均为必填。"
+          : "适用于佳贝艾特业务模板。",
+    aliases: "活动名称填写活动管理中的完整名称",
+  });
   for (const field of fields) {
     instructions.addRow({
       field,
-      displayName: fieldDefinition(
-        templates,
-        field,
-        options?.templateBrand,
-      ).displayName,
+      displayName:
+        templateType === "KABRITA"
+          ? fieldDefinition(templates, field, options?.templateBrand).displayName
+          : danoneTemplateFieldDisplayName(field, templateType),
       required:
-        options?.templateBrand === KABRITA_BRAND_NAME
+        templateType === "KABRITA"
           ? KABRITA_REQUIRED_FIELDS.includes(field as never)
             ? "是"
             : "否"
-          : templates.requiredFields.includes(field)
-            ? "是"
-            : "否",
+          : "是",
       description: fieldDefinition(
         templates,
         field,
         options?.templateBrand,
       ).description,
       aliases:
-        options?.templateBrand === KABRITA_BRAND_NAME
+        templateType === "KABRITA"
           ? ""
           : (templates.fieldAliases[field] || []).join("、"),
     });
   }
   instructions.getRow(1).font = { bold: true };
+  const metadata = workbook.addWorksheet("VERIDIA模板信息", {
+    state: "veryHidden",
+  });
+  metadata.getCell("A1").value = "templateType";
+  metadata.getCell("B1").value = templateType;
+  metadata.getCell("A2").value = "templateVersion";
+  metadata.getCell("B2").value = templates.templateVersion;
   return workbook.xlsx.writeBuffer();
 }
 

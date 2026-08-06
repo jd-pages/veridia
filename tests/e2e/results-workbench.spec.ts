@@ -7,10 +7,11 @@ const resultExportHeaders = [
   "客户名",
   "产品系列",
   "阶段",
+  "段位",
   "订单编号",
   "内容渠道",
   "链接",
-  "发帖时间",
+  "发布时间",
   "活动名称",
   "自审",
 ];
@@ -41,7 +42,6 @@ const removedResultExportHeaders = [
   "正文允许段位",
   "正文实际识别段位",
   "达人昵称",
-  "发布时间",
   "图片数量合规",
   "图片提取状态",
   "规则版本",
@@ -63,6 +63,23 @@ const removedResultExportHeaders = [
   "正文内容",
   "noteContent",
   "contentText",
+];
+
+const danoneMixedSummaryHeaders = [
+  "模板类型",
+  "活动月份",
+  "活动名称",
+  "平台",
+  "店铺名称",
+  "客户名",
+  "产品系列",
+  "阶段",
+  "段位",
+  "订单编号",
+  "内容渠道",
+  "链接",
+  "发布时间",
+  "自审",
 ];
 
 function resultExportFileNamePattern(scope: "当前筛选" | "所选结果") {
@@ -260,16 +277,29 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   ).json()).data as { total: number };
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile((await download.path())!);
-  expect(
-    workbook.worksheets.reduce(
-      (total, worksheet) => total + Math.max(worksheet.rowCount - 1, 0),
-      0,
-    ),
-  ).toBe(filteredList.total);
+  const danoneSummary = workbook.getWorksheet("达能审核结果汇总");
+  const mixedSummary = workbook.getWorksheet("审核结果汇总");
+  const exportedRecordCount = mixedSummary
+    ? Math.max(mixedSummary.rowCount - 1, 0)
+    : danoneSummary
+      ? Math.max(danoneSummary.rowCount - 1, 0) +
+        Math.max(
+          (workbook.getWorksheet("佳贝艾特审核结果")?.rowCount || 1) - 1,
+          0,
+        )
+      : workbook.worksheets.reduce(
+          (total, worksheet) => total + Math.max(worksheet.rowCount - 1, 0),
+          0,
+        );
+  expect(exportedRecordCount).toBe(filteredList.total);
   const exportHeaders = workbook.worksheets[0]
     .getRow(1)
     .values as unknown[];
-  expect(exportHeaders.slice(1)).toEqual(resultExportHeaders);
+  expect(exportHeaders.slice(1)).toEqual(
+    danoneSummary || mixedSummary
+      ? danoneMixedSummaryHeaders
+      : resultExportHeaders,
+  );
   for (const removedHeader of removedResultExportHeaders) {
     expect(exportHeaders).not.toContain(removedHeader);
   }

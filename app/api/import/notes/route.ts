@@ -26,6 +26,9 @@ import {
 } from "@/lib/import-export-templates/tabular";
 import { selectImportPreviewRows } from "@/lib/import-preview";
 import {
+  inferDanoneAgencyProductStage,
+} from "@/lib/import-template-type";
+import {
   KABRITA_BRAND_NAME,
   inferKabritaProductStage,
   kabritaRawValues,
@@ -113,7 +116,10 @@ export async function POST(request: Request) {
     form.get("tencentExport") === "true" ||
     (file instanceof File && /腾讯|tencent/iu.test(file.name));
   if (!(file instanceof File)) {
-    return fail("请选择 Excel、CSV 或腾讯文档导出的表格文件");
+    return fail("请选择 Excel（.xlsx）表格文件");
+  }
+  if (!file.name.toLocaleLowerCase().endsWith(".xlsx")) {
+    return fail("暂不支持CSV文件，请下载最新版Excel导入模板后重新填写。");
   }
 
   try {
@@ -128,6 +134,7 @@ export async function POST(request: Request) {
     const rows: CheckedRow[] = [];
     const seen = new Set<string>();
     const isKabritaTemplate = tabular.templateBrand === KABRITA_BRAND_NAME;
+    const isDanoneAgencyTemplate = tabular.templateType === "DANONE_AGENCY";
     const activeProducts = await prisma.product.findMany({
       where: { status: "ACTIVE", deletedAt: null },
       include: { aliases: { select: { alias: true } } },
@@ -190,6 +197,9 @@ export async function POST(request: Request) {
       const purchaseProductLine = isKabritaTemplate
         ? values.purchaseProductLine || ""
         : "";
+      const agencyProductStage = isDanoneAgencyTemplate
+        ? inferDanoneAgencyProductStage(values.productName)
+        : null;
       const linkResolution = resolveImportedNoteLink({
         rawContent: originalLinkContent,
         hyperlinkTarget,
@@ -240,7 +250,9 @@ export async function POST(request: Request) {
           : values.productStage || "",
         stageDetailInput: isKabritaTemplate
           ? ""
-          : values.productStageDetail || "",
+          : isDanoneAgencyTemplate
+            ? agencyProductStage?.inferredStage || ""
+            : values.productStageDetail || "",
         productStage: "",
         stageGroup: "",
         notes: buildImportedTaskNotes({
@@ -259,14 +271,15 @@ export async function POST(request: Request) {
           publishTime: isKabritaTemplate ? undefined : values.publishTime,
           activityName: values.activityName,
           notes: values.remark,
-          ...(isKabritaTemplate
-            ? {
-                templateMetadata: {
-                  templateBrand: KABRITA_BRAND_NAME,
-                  rawValues: kabritaRawValues(parsed.rawValues || values),
-                },
-              }
-            : {}),
+          templateMetadata: {
+            templateType: tabular.templateType,
+            ...(isKabritaTemplate
+              ? { templateBrand: KABRITA_BRAND_NAME }
+              : {}),
+            rawValues: isKabritaTemplate
+              ? kabritaRawValues(parsed.rawValues || values)
+              : parsed.rawValues || values,
+          },
         }),
         errors: [...parsed.errors],
       };
@@ -290,7 +303,8 @@ export async function POST(request: Request) {
         : activeProducts;
       const productResolution = resolveProductReference(matchingProducts, {
         code: checked.productCode,
-        name: checked.productName,
+        name:
+          agencyProductStage?.normalizedProductName || checked.productName,
       });
       const product =
         productResolution.status === "MATCHED"
@@ -328,10 +342,14 @@ export async function POST(request: Request) {
       }
 
       const usesDetailedProductStages = Boolean(
-        campaign && product && campaignUsesDetailedProductStages(
-          product.brandName,
-          campaign.month,
-        ),
+        !isKabritaTemplate &&
+        (isDanoneAgencyTemplate
+          ? agencyProductStage?.inferredStage
+          : tabular.templateType === "DANONE_CUSTOMER" ||
+            (campaign && product && campaignUsesDetailedProductStages(
+              product.brandName,
+              campaign.month,
+            ))),
       );
       const importedPhase = normalizeImportedProductStageTopicValue(
         checked.stageInput,
@@ -348,11 +366,21 @@ export async function POST(request: Request) {
             ? detailedProductStageLabel(importedStage)
             : productStageTopicLabel(importedStage))
         : "";
-      if (!isKabritaTemplate && !importedPhase) {
-        checked.errors.push("产品阶段话题请填写 IFFO 或 GUM。");
+      if (!isKabritaTemplate && !checked.stageInput.trim()) {
+        checked.errors.push("段位不能为空");
+      } else if (!isKabritaTemplate && !importedPhase) {
+        checked.errors.push("段位仅支持 IFFO 或 GUM");
       }
-      if (!isKabritaTemplate && usesDetailedProductStages && !importedDetailedStage) {
-        checked.errors.push("段位请填写 P段、1段、2段、3段、4段、1+段或2+段。");
+      if (
+        tabular.templateType === "DANONE_CUSTOMER" &&
+        !checked.stageDetailInput.trim()
+      ) {
+        checked.errors.push("阶段不能为空");
+      } else if (
+        tabular.templateType === "DANONE_CUSTOMER" &&
+        !importedDetailedStage
+      ) {
+        checked.errors.push("阶段仅支持 P段、1段、2段、3段、4段、1+或2+");
       }
       if (
         importedPhase &&
@@ -360,7 +388,9 @@ export async function POST(request: Request) {
         detailedProductStagePhase(importedDetailedStage) !== importedPhase
       ) {
         checked.errors.push(
-          `阶段与段位不一致：${importedPhase} 不包含 ${checked.stageDetailInput.trim()}`,
+          isDanoneAgencyTemplate && agencyProductStage?.inferredStage
+            ? `产品段数与段位不匹配，${agencyProductStage.inferredStage}应属于${agencyProductStage.inferredGroup}`
+            : "阶段与段位不匹配",
         );
       }
       const stageRulesKey = campaign?.id || "";
@@ -456,6 +486,7 @@ export async function POST(request: Request) {
               summary: JSON.stringify({
                 templateVersion: tabular.templateVersion,
                 templateBrand: tabular.templateBrand,
+                templateType: tabular.templateType,
                 sourceType,
                 activities: [...new Map(validRows.map((row) => [
                   `${row.campaignId}\u0000${row.importedCampaignName}`,

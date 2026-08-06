@@ -1,6 +1,11 @@
 import type {
   KabritaRawValues,
 } from "@/lib/import-export-templates/kabrita";
+import type { StandardField } from "@/lib/import-export-templates/types";
+import {
+  isImportTemplateType,
+  type ImportTemplateType,
+} from "@/lib/import-template-type";
 
 export interface ImportedTaskMetadata {
   platform: string;
@@ -13,8 +18,9 @@ export interface ImportedTaskMetadata {
 }
 
 export interface ImportedTemplateMetadata {
-  templateBrand: "佳贝艾特";
-  rawValues: KabritaRawValues;
+  templateType?: ImportTemplateType;
+  templateBrand?: "佳贝艾特";
+  rawValues: KabritaRawValues | Partial<Record<StandardField, string>>;
 }
 
 const STRUCTURED_METADATA_PREFIX = "VERIDIA_IMPORT_METADATA_JSON：";
@@ -80,14 +86,14 @@ export function importedTemplateMetadataFromNotes(
     const parsed = JSON.parse(
       line.trim().slice(STRUCTURED_METADATA_PREFIX.length),
     ) as ImportedTemplateMetadata;
-    if (
-      parsed?.templateBrand !== "佳贝艾特" ||
-      !parsed.rawValues ||
-      typeof parsed.rawValues !== "object"
-    ) {
+    if (!parsed.rawValues || typeof parsed.rawValues !== "object") {
       return null;
     }
-    return parsed;
+    if (isImportTemplateType(parsed.templateType)) return parsed;
+    if (parsed.templateBrand === "佳贝艾特") {
+      return { ...parsed, templateType: "KABRITA" };
+    }
+    return null;
   } catch {
     return null;
   }

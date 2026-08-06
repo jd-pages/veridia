@@ -25,6 +25,7 @@ export function auditResultExportFileName(input: {
   selected?: boolean;
   extension?: "xlsx" | "csv";
   importBatch?: { fileName: string; createdAt: Date | string } | null;
+  danoneMixed?: boolean;
 }) {
   if (input.importBatch && !input.selected) {
     const importedAt = new Date(input.importBatch.createdAt);
@@ -34,6 +35,9 @@ export function auditResultExportFileName(input: {
     return `审核结果_${sanitizeWindowsFileSegment(input.importBatch.fileName)}_${importedTimestamp}_${formatCompactTimestamp(input.date || new Date())}.${input.extension || "xlsx"}`;
   }
   const scope = input.selected ? "所选结果" : "当前筛选";
+  if (input.danoneMixed) {
+    return `VERIDIA-审核结果-达能混合-${formatLocalExportTimestamp(input.date).replace("_", "-")}.${input.extension || "xlsx"}`;
+  }
   const brand = input.kabrita ? "佳贝艾特" : "";
   return `VERIDIA${brand}审核结果_${scope}_${formatLocalExportTimestamp(input.date)}.${input.extension || "xlsx"}`;
 }

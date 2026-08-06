@@ -1,10 +1,8 @@
 import { requireApiUser } from "@/lib/api";
 import { getActiveImportExportTemplates } from "@/lib/import-export-templates/config";
-import {
-  buildImportTemplateCsv,
-  buildImportTemplateWorkbook,
-} from "@/lib/import-export-templates/export";
+import { buildImportTemplateWorkbook } from "@/lib/import-export-templates/export";
 import { KABRITA_BRAND_NAME } from "@/lib/import-export-templates/kabrita";
+import type { ImportTemplateType } from "@/lib/import-template-type";
 import { prisma } from "@/lib/db";
 
 export async function GET(request: Request) {
@@ -12,9 +10,18 @@ export async function GET(request: Request) {
   if (user instanceof Response) return user;
   const searchParams = new URL(request.url).searchParams;
   const format = searchParams.get("format") || "xlsx";
-  const templateBrand = searchParams.get("brand") === "kabrita"
+  if (format !== "xlsx") {
+    return new Response("仅支持 Excel（.xlsx）模板", { status: 400 });
+  }
+  const requestedBrand = searchParams.get("brand");
+  const templateBrand = requestedBrand === "kabrita"
     ? KABRITA_BRAND_NAME
     : undefined;
+  const templateType: ImportTemplateType = requestedBrand === "kabrita"
+    ? "KABRITA"
+    : requestedBrand === "danone-agency"
+      ? "DANONE_AGENCY"
+      : "DANONE_CUSTOMER";
   const { templates } = await getActiveImportExportTemplates();
   const activityNames = (await prisma.campaign.findMany({
     where: { status: "ACTIVE", deletedAt: null },
@@ -22,28 +29,21 @@ export async function GET(request: Request) {
     select: { name: true },
   })).map((campaign) => campaign.name);
   const date = new Date().toISOString().slice(0, 10);
-  if (format === "csv") {
-    const csv = buildImportTemplateCsv(templates, {
-      templateBrand,
-      activityNames,
-    });
-    return new Response(csv, {
-      headers: {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`VERIDIA${templateBrand || "达能"}导入模板_${templates.templateVersion}_${date}.csv`)}`,
-        "Cache-Control": "no-store",
-      },
-    });
-  }
   const buffer = await buildImportTemplateWorkbook(templates, {
     templateBrand,
+    templateType,
     activityNames,
   });
+  const templateLabel = templateType === "DANONE_AGENCY"
+    ? "达能代发"
+    : templateType === "DANONE_CUSTOMER"
+      ? "达能客户"
+      : "佳贝艾特";
   return new Response(new Uint8Array(buffer as ArrayBuffer), {
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`VERIDIA${templateBrand || "达能"}导入模板_${templates.templateVersion}_${date}.xlsx`)}`,
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`VERIDIA${templateLabel}导入模板_${templates.templateVersion}_${date}.xlsx`)}`,
       "Cache-Control": "no-store",
     },
   });

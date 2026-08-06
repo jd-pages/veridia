@@ -1,7 +1,7 @@
 "use client";
 
-export type ImportTemplateFormat = "xlsx" | "csv";
-export type ImportTemplateBrand = "danone" | "kabrita";
+export type ImportTemplateFormat = "xlsx";
+export type ImportTemplateBrand = "danone-customer" | "danone-agency" | "kabrita";
 
 export interface ImportTemplateDownloadOutcome {
   saved: boolean;
@@ -40,7 +40,7 @@ function browserSave(bytes: Uint8Array, fileName: string, contentType: string) {
 
 export async function downloadImportTemplate(
   format: ImportTemplateFormat,
-  brand: ImportTemplateBrand = "danone",
+  brand: ImportTemplateBrand = "danone-customer",
 ): Promise<ImportTemplateDownloadOutcome> {
   const response = await fetch(
     `/api/import/template?format=${format}&brand=${brand}`,

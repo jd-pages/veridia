@@ -86,7 +86,8 @@ export type StandardField =
   | "xiaohongshuAccount"
   | "xiaohongshuPublishLink"
   | "purchaseProductLine"
-  | "complianceResult";
+  | "complianceResult"
+  | "templateType";
 
 export type ImportTemplateBrand = "达能" | "佳贝艾特";
 
@@ -152,6 +153,7 @@ export interface TabularPreviewRow {
 export interface TabularPreview {
   templateVersion: string;
   templateBrand: ImportTemplateBrand;
+  templateType: import("@/lib/import-template-type").ImportTemplateType;
   sourceLabel: string;
   sourceType: LocalTabularSourceType;
   headerRowNumber: number;

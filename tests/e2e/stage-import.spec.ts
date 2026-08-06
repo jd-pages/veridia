@@ -214,10 +214,10 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     errors: [],
   });
   expect(preview.rows[5].errors).toContain(
-    "产品阶段话题请填写 IFFO 或 GUM。",
+    "段位仅支持 IFFO 或 GUM",
   );
   expect(preview.rows[6].errors).toContain(
-    "产品阶段话题请填写 IFFO 或 GUM。",
+    "段位不能为空",
   );
   const tasksAfterPreview = (
     await (await page.request.get("/api/tasks")).json()
@@ -412,18 +412,9 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
       tencentExport: "true",
     },
   });
-  expect(csvResponse.ok()).toBeTruthy();
-  const csvPreview = (await csvResponse.json()).data as {
-    sourceType: string;
-    templateVersion: string;
-    validCount: number;
-    unknownHeaders: string[];
-  };
-  expect(csvPreview).toMatchObject({
-    sourceType: "TENCENT_DOCS_EXPORTED_CSV",
-    templateVersion: "template-2026.07.30.1",
-    validCount: 1,
-    unknownHeaders: ["额外登记列"],
+  expect(csvResponse.ok()).toBeFalsy();
+  expect(await csvResponse.json()).toMatchObject({
+    error: "暂不支持CSV文件，请下载最新版Excel导入模板后重新填写。",
   });
 
   const expectedStageTopics = new Map<string, string[]>([
@@ -470,17 +461,17 @@ test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", as
   }>;
   const campaign = campaigns.find((item) => item.name.includes("爱他美2026年8月"))!;
   const header = [
-    "平台",
-    "店铺名称",
-    "客户名",
-    "产品系列",
-    "阶段",
-    "段位",
-    "订单编号",
-    "内容渠道",
-    "链接",
-    "发帖时间",
-    "活动名称",
+    "平台（必填）",
+    "店铺名称（必填）",
+    "客户名（必填）",
+    "产品系列（必填）",
+    "阶段（必填）",
+    "段位（必填）",
+    "订单编号（必填）",
+    "内容渠道（必填）",
+    "链接（必填）",
+    "发布时间（必填）",
+    "活动名称（必填）",
   ];
   const base = [
     "京东",
@@ -490,14 +481,23 @@ test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", as
   ];
   const suffix = Date.now();
   const rows = [
-    [...base, "IFFO", "2段", "AUG-2", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-2`, "2026-08-05", campaign.name],
-    [...base, "IFFO", "P段", "AUG-P", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-p`, "2026-08-05", campaign.name],
-    [...base, "GUM", "2段", "AUG-CONFLICT", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-conflict`, "2026-08-05", campaign.name],
+    [...base, "2段", "IFFO", "AUG-2", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-2`, "2026-08-05", campaign.name],
+    [...base, "P段", "IFFO", "AUG-P", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-p`, "2026-08-05", campaign.name],
+    [...base, "2段", "GUM", "AUG-CONFLICT", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-conflict`, "2026-08-05", campaign.name],
   ];
-  const csv = [header, ...rows].map((row) => row.join(",")).join("\r\n");
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("达能客户导入");
+  sheet.addRow(header);
+  rows.forEach((row) => sheet.addRow(row));
+  const metadata = workbook.addWorksheet("VERIDIA模板信息", { state: "veryHidden" });
+  metadata.getCell("B1").value = "DANONE_CUSTOMER";
   const response = await page.request.post("/api/import/notes", {
     multipart: {
-      file: { name: "danone-august-stage.csv", mimeType: "text/csv", buffer: Buffer.from(`\uFEFF${csv}`) },
+      file: {
+        name: "danone-august-stage.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
+      },
       commit: "false",
     },
   });
@@ -519,5 +519,100 @@ test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", as
     stageGroup: "IFFO 新生儿组（P段/1段）",
     errors: [],
   });
-  expect(preview.rows[2].errors.join("；")).toContain("阶段与段位不一致");
+  expect(preview.rows[2].errors.join("；")).toContain("阶段与段位不匹配");
+});
+
+test("达能代发模板从产品名末尾识别段数并保存模板来源", async ({ page }) => {
+  expect((await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  })).ok()).toBeTruthy();
+  const campaigns = (await (await page.request.get("/api/campaigns")).json()).data as Array<{
+    id: string;
+    name: string;
+    month: string;
+  }>;
+  const campaign = campaigns.find((item) => item.month === "2026-07")!;
+  expect(campaign).toBeTruthy();
+  const suffix = Date.now();
+  const makeAgencyWorkbook = async (rows: string[][]) => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("达能代发导入");
+    sheet.addRow([
+      "平台（必填）", "店铺名称（必填）", "客户名（必填）",
+      "产品系列（必填）", "段位（必填）", "订单编号（必填）",
+      "内容渠道（必填）", "链接（必填）", "发布时间（必填）",
+      "活动名称（必填）",
+    ]);
+    rows.forEach((row) => sheet.addRow(row));
+    const metadata = workbook.addWorksheet("VERIDIA模板信息", { state: "veryHidden" });
+    metadata.getCell("B1").value = "DANONE_AGENCY";
+    return Buffer.from(await workbook.xlsx.writeBuffer());
+  };
+  const previewBuffer = await makeAgencyWorkbook([
+    ["抖音电商", "ROCKCHECK海外专营店", "ALG", "澳白2", "IFFO", `AGENCY-2-${suffix}`, "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&agency=${suffix}-2-ok`, "2026-07-26", campaign.name],
+    ["抖音电商", "ROCKCHECK海外专营店", "ALG", "澳白2", "GUM", `AGENCY-2-BAD-${suffix}`, "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&agency=${suffix}-2-bad`, "2026-07-26", campaign.name],
+    ["抖音电商", "ROCKCHECK海外专营店", "ALG", "澳白3", "GUM", `AGENCY-3-${suffix}`, "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&agency=${suffix}-3-ok`, "2026-07-26", campaign.name],
+    ["抖音电商", "ROCKCHECK海外专营店", "ALG", "澳白3", "IFFO", `AGENCY-3-BAD-${suffix}`, "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&agency=${suffix}-3-bad`, "2026-07-26", campaign.name],
+  ]);
+  const previewResponse = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: "danone-agency-preview.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: previewBuffer,
+      },
+      commit: "false",
+    },
+  });
+  expect(previewResponse.ok()).toBeTruthy();
+  const preview = (await previewResponse.json()).data as {
+    templateType: string;
+    validCount: number;
+    invalidCount: number;
+    rows: Array<{ productStage: string; errors: string[] }>;
+  };
+  expect(preview).toMatchObject({
+    templateType: "DANONE_AGENCY",
+    validCount: 2,
+    invalidCount: 2,
+  });
+  expect(preview.rows[0]).toMatchObject({ productStage: "IFFO_2", errors: [] });
+  expect(preview.rows[1].errors).toContain("产品段数与段位不匹配，2段应属于IFFO");
+  expect(preview.rows[2]).toMatchObject({ productStage: "GUM_3_4_1PLUS_2PLUS", errors: [] });
+  expect(preview.rows[3].errors).toContain("产品段数与段位不匹配，3段应属于GUM");
+
+  const auditUrl = `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-rockcheck-store-passed&agency-audit=${suffix}`;
+  const commitBuffer = await makeAgencyWorkbook([[
+    "抖音电商", "ROCKCHECK海外专营店", "ALG", "澳白2", "IFFO",
+    `AGENCY-AUDIT-${suffix}`, "小红书", auditUrl, "2026-07-26", campaign.name,
+  ]]);
+  const commitResponse = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: "danone-agency-commit.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: commitBuffer,
+      },
+      commit: "true",
+    },
+  });
+  const commitPayload = (await commitResponse.json()).data as {
+    batchId: string;
+    imported: number;
+  };
+  expect(commitResponse.ok()).toBeTruthy();
+  expect(commitPayload.imported).toBe(1);
+  await waitForBatch(page, commitPayload.batchId);
+  const task = ((await (await page.request.get("/api/tasks")).json()).data as Array<{
+    url: string;
+    productStage: string;
+    campaignId: string;
+    notes: string;
+  }>).find((item) => item.url === auditUrl);
+  expect(task).toMatchObject({
+    productStage: "IFFO_2",
+    campaignId: campaign.id,
+  });
+  expect(task?.notes).toContain('"templateType":"DANONE_AGENCY"');
+  expect(task?.notes).toContain('"productName":"澳白2"');
 });
