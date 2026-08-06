@@ -3,7 +3,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 function source(relativePath: string) {
-  return fs.readFileSync(path.join(process.cwd(), relativePath), "utf8");
+  return fs
+    .readFileSync(path.join(process.cwd(), relativePath), "utf8")
+    .replace(/\r\n/gu, "\n");
 }
 
 describe("小红书持久会话与访问节奏", () => {
