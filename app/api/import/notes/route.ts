@@ -40,6 +40,10 @@ import {
 } from "@/lib/product-matching";
 import { buildImportedTaskNotes } from "@/lib/import-task-metadata";
 import {
+  resolveImportedActivity,
+  type ImportActivityMatchStatus,
+} from "@/lib/import-activity-matching";
+import {
   commercePlatformLabel,
   contentChannelLabel,
 } from "@/lib/result-source";
@@ -74,6 +78,10 @@ interface CheckedRow {
   productName: string;
   purchaseProductLine: string;
   campaignName: string;
+  importedCampaignName: string;
+  campaignMatchStatus: ImportActivityMatchStatus;
+  campaignPeriod: string;
+  campaignRuleCount: number;
   month: string;
   specification: string;
   stageInput: string;
@@ -89,9 +97,8 @@ interface CheckedRow {
 
 const IMPORT_PREVIEW_ROW_LIMIT = 100;
 
-function inferRuleMonth(value: string | null | undefined) {
-  const match = String(value || "").match(/(20\d{2})[-/.年](\d{1,2})/u);
-  return match ? `${match[1]}-${match[2].padStart(2, "0")}` : "";
+function dateLabel(value: Date) {
+  return value.toISOString().slice(0, 10);
 }
 
 export async function POST(request: Request) {
@@ -125,10 +132,27 @@ export async function POST(request: Request) {
       include: { aliases: { select: { alias: true } } },
     });
     const activeStoreTopicRules = await loadActiveStoreTopicRules();
-    const campaignCache = new Map<
-      string,
-      Awaited<ReturnType<typeof prisma.campaign.findFirst>>
-    >();
+    const campaignCandidates = (await prisma.campaign.findMany({
+      include: {
+        products: { select: { productId: true } },
+        _count: {
+          select: {
+            topicRules: { where: { status: "ACTIVE" } },
+          },
+        },
+      },
+    })).map((campaign) => ({
+      id: campaign.id,
+      name: campaign.name,
+      month: campaign.month,
+      startDate: campaign.startDate,
+      endDate: campaign.endDate,
+      status: campaign.status,
+      deletedAt: campaign.deletedAt,
+      productId: campaign.productId,
+      productIds: campaign.products.map((item) => item.productId),
+      ruleCount: campaign._count.topicRules,
+    }));
     const stageRulesCache = new Map<
       string,
       Array<{ applicableStage: string | null; milkType: string | null }>
@@ -203,8 +227,12 @@ export async function POST(request: Request) {
           ? purchaseProductLine
           : values.productName || "",
         purchaseProductLine,
-        campaignName: values.activityName || "",
-        month: values.activityMonth || inferRuleMonth(values.publishTime),
+        campaignName: "",
+        importedCampaignName: String(values.activityName || "").trim(),
+        campaignMatchStatus: "EMPTY",
+        campaignPeriod: "",
+        campaignRuleCount: 0,
+        month: "",
         specification: values.specification || "",
         stageInput: isKabritaTemplate
           ? inferKabritaProductStage(purchaseProductLine)
@@ -228,6 +256,7 @@ export async function POST(request: Request) {
             : values.orderNumber,
           contentChannel: contentChannelLabel(linkResolution.platform),
           publishTime: isKabritaTemplate ? undefined : values.publishTime,
+          activityName: values.activityName,
           notes: values.remark,
           ...(isKabritaTemplate
             ? {
@@ -277,43 +306,24 @@ export async function POST(request: Request) {
         }
       }
 
-      const campaignKey = product
-        ? [
-            product.id,
-            checked.campaignName ? "NAME" : checked.month ? "MONTH" : "UNIQUE",
-            checked.campaignName || checked.month,
-          ].join("\u0000")
-        : "";
-      let campaign = product ? campaignCache.get(campaignKey) : null;
-      if (product && !campaignCache.has(campaignKey)) {
-        const campaignCandidates = await prisma.campaign.findMany({
-          where: {
-            ...(checked.campaignName ? { name: checked.campaignName } : {}),
-            ...(!checked.campaignName && checked.month
-              ? { month: checked.month }
-              : {}),
-            status: "ACTIVE",
-            OR: [
-              { productId: product.id },
-              { products: { some: { productId: product.id } } },
-            ],
-          },
-          take: 2,
-        });
-        campaign =
-          campaignCandidates.length === 1 ? campaignCandidates[0] : null;
-        campaignCache.set(campaignKey, campaign);
+      const campaignResolution = resolveImportedActivity({
+        activityName: checked.importedCampaignName,
+        productId: product?.id,
+        candidates: campaignCandidates,
+      });
+      checked.campaignMatchStatus = campaignResolution.status;
+      const campaign = campaignResolution.campaign;
+      if (campaignResolution.error) {
+        checked.errors.push(campaignResolution.error);
       }
-      if (!campaign) {
-        checked.errors.push(
-          checked.campaignName || checked.month
-            ? "活动不存在、规则月份未匹配或与产品不匹配"
-            : "规则月份未匹配，请填写活动或有效发帖时间",
-        );
-      } else {
-        checked.campaignId = campaign.id;
+      if (campaign) {
         checked.campaignName = campaign.name;
         checked.month = campaign.month;
+        checked.campaignPeriod = `${dateLabel(campaign.startDate)} 至 ${dateLabel(campaign.endDate)}`;
+        checked.campaignRuleCount = campaign.ruleCount;
+      }
+      if (campaignResolution.status === "MATCHED" && campaign) {
+        checked.campaignId = campaign.id;
       }
 
       const usesDetailedProductStages = Boolean(
@@ -446,6 +456,17 @@ export async function POST(request: Request) {
                 templateVersion: tabular.templateVersion,
                 templateBrand: tabular.templateBrand,
                 sourceType,
+                activities: [...new Map(validRows.map((row) => [
+                  `${row.campaignId}\u0000${row.importedCampaignName}`,
+                  {
+                    activityId: row.campaignId,
+                    importedName: row.importedCampaignName,
+                    officialName: row.campaignName,
+                    month: row.month,
+                    period: row.campaignPeriod,
+                    ruleCount: row.campaignRuleCount,
+                  },
+                ])).values()],
                 errors: rows
                   .filter((row) => row.errors.length)
                   .map((row) => ({

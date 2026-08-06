@@ -5,6 +5,7 @@ import {
   buildImportTemplateWorkbook,
 } from "@/lib/import-export-templates/export";
 import { KABRITA_BRAND_NAME } from "@/lib/import-export-templates/kabrita";
+import { prisma } from "@/lib/db";
 
 export async function GET(request: Request) {
   const user = await requireApiUser();
@@ -15,9 +16,17 @@ export async function GET(request: Request) {
     ? KABRITA_BRAND_NAME
     : undefined;
   const { templates } = await getActiveImportExportTemplates();
+  const activityNames = (await prisma.campaign.findMany({
+    where: { status: "ACTIVE", deletedAt: null },
+    orderBy: [{ startDate: "desc" }, { name: "asc" }],
+    select: { name: true },
+  })).map((campaign) => campaign.name);
   const date = new Date().toISOString().slice(0, 10);
   if (format === "csv") {
-    const csv = buildImportTemplateCsv(templates, { templateBrand });
+    const csv = buildImportTemplateCsv(templates, {
+      templateBrand,
+      activityNames,
+    });
     return new Response(csv, {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
@@ -28,6 +37,7 @@ export async function GET(request: Request) {
   }
   const buffer = await buildImportTemplateWorkbook(templates, {
     templateBrand,
+    activityNames,
   });
   return new Response(new Uint8Array(buffer as ArrayBuffer), {
     headers: {

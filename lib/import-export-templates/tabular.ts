@@ -146,7 +146,7 @@ function aliasIndex(templates: ImportExportTemplates) {
     ...templates.columnOrder.import,
     ...KABRITA_TEMPLATE_FIELDS,
     "complianceResult",
-    // 兼容旧版四列表格；新模板不再要求活动列，但已有文件仍可指定活动。
+    // 兼容第三方表格使用“活动名称”；新版正式表头为“活动名称（必填）”。
     "activityName",
   ]);
   for (const field of fields) {
@@ -274,15 +274,16 @@ export async function parseTabularPreview(input: {
   const requiredFields: StandardField[] = kabritaTemplate
     ? [...KABRITA_REQUIRED_FIELDS]
     : legacyLayout
-      ? ["noteUrl", "productName", "productStage"]
+      ? ["noteUrl", "productName", "productStage", "activityName"]
       : templates.requiredFields;
   const missingRequiredFields = requiredFields.filter(
     (field) => !occupied.has(field),
   );
   const structuralErrors = [
-    ...missingRequiredFields.map(
-      (field) =>
-        `缺少必填字段：${displayName(templates, field, kabritaTemplate)}`,
+    ...missingRequiredFields.map((field) =>
+      field === "activityName"
+        ? "当前模板缺少“活动名称（必填）”列，请下载最新版导入模板后重新填写"
+        : `缺少必填字段：${displayName(templates, field, kabritaTemplate)}`,
     ),
     ...duplicateHeaders.map((field) => `表头重复：${field}`),
   ];
@@ -315,7 +316,9 @@ export async function parseTabularPreview(input: {
     for (const field of requiredFields) {
       if (!values[field]) {
         errors.push(
-          `缺少必填字段：${displayName(templates, field, kabritaTemplate)}`,
+          field === "activityName"
+            ? "活动名称不能为空"
+            : `缺少必填字段：${displayName(templates, field, kabritaTemplate)}`,
         );
       }
     }

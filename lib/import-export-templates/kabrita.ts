@@ -17,6 +17,7 @@ export const KABRITA_IMPORT_FIELDS = [
   "xiaohongshuAccount",
   "xiaohongshuPublishLink",
   "purchaseProductLine",
+  "activityName",
 ] as const satisfies readonly StandardField[];
 
 export const KABRITA_EXPORT_FIELDS = [
@@ -39,6 +40,7 @@ export type KabritaRawValues = Partial<
 export const KABRITA_REQUIRED_FIELDS = [
   "xiaohongshuPublishLink",
   "purchaseProductLine",
+  "activityName",
 ] as const satisfies readonly KabritaTemplateField[];
 
 export const KABRITA_FIELD_DEFINITIONS: Record<
@@ -105,6 +107,11 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
     type: "string",
     description: "用于匹配佳贝艾特荷兰版或港版产品",
   },
+  activityName: {
+    displayName: "活动名称（必填）",
+    type: "string",
+    description: "必须填写活动管理中显示的完整活动名称",
+  },
   selfReview: {
     displayName: "自审",
     type: "string",
@@ -130,6 +137,7 @@ export const KABRITA_TEMPLATE_EXAMPLES: KabritaRawValues = {
   xiaohongshuAccount: "示例账号",
   xiaohongshuPublishLink: "https://xhslink.com/示例短链",
   purchaseProductLine: "荷兰佳贝1",
+  activityName: "",
 };
 
 const KABRITA_CORE_HEADERS = [

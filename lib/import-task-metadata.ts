@@ -9,6 +9,7 @@ export interface ImportedTaskMetadata {
   orderNumber: string;
   contentChannel: string;
   publishTime: string;
+  activityName: string;
 }
 
 export interface ImportedTemplateMetadata {
@@ -25,6 +26,7 @@ const LABELS: Record<keyof ImportedTaskMetadata, string> = {
   orderNumber: "订单编号：",
   contentChannel: "内容渠道：",
   publishTime: "发帖时间：",
+  activityName: "导入活动名称：",
 };
 
 function singleLine(value: unknown) {

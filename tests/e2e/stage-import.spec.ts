@@ -227,7 +227,7 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
   const aliasWorkbook = new ExcelJS.Workbook();
   const aliasSheet = aliasWorkbook.addWorksheet("产品别名识别");
   aliasSheet.addRow([
-    "笔记链接", "产品", "活动", "产品阶段话题",
+    "笔记链接", "产品", "活动名称", "产品阶段话题",
     "店铺名称", "成交平台", "内容渠道",
   ]);
   const germanProduct = products.find((item) =>
@@ -287,7 +287,7 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
   const gumCommitWorkbook = new ExcelJS.Workbook();
   const gumCommitSheet = gumCommitWorkbook.addWorksheet("笔记导入");
   gumCommitSheet.addRow([
-    "笔记链接", "产品", "活动", "产品阶段话题",
+    "笔记链接", "产品", "活动名称", "产品阶段话题",
     "店铺名称", "成交平台", "内容渠道",
   ]);
   const gumCommitUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&stage=${suffix}-gum-commit`;
@@ -339,7 +339,8 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     "订单编号",
     "内容渠道",
     "链接（必填）",
-    "发帖时间（必填）",
+    "发布时间（必填）",
+    "活动名称（必填）",
   ]);
   const newTemplateUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&new-template=${suffix}`;
   newTemplateSheet.addRow([
@@ -353,6 +354,7 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     "小红书",
     newTemplateUrl,
     "2026-08-03 12:00:00",
+    augustCampaign!.name,
   ]);
   const newTemplateResponse = await page.request.post("/api/import/notes", {
     multipart: {
@@ -488,7 +490,7 @@ test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", as
   ];
   const suffix = Date.now();
   const rows = [
-    [...base, "IFFO", "2段", "AUG-2", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-2`, "2026-08-05", ""],
+    [...base, "IFFO", "2段", "AUG-2", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-2`, "2026-08-05", campaign.name],
     [...base, "IFFO", "P段", "AUG-P", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-p`, "2026-08-05", campaign.name],
     [...base, "GUM", "2段", "AUG-CONFLICT", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-conflict`, "2026-08-05", campaign.name],
   ];

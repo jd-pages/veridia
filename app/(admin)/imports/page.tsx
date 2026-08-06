@@ -22,6 +22,7 @@ interface ImportRecord {
   resultCount: number;
   batchCount: number;
   creatorDisplayName: string | null;
+  activityNames: string[];
 }
 
 export default function ImportsPage() {
@@ -43,6 +44,12 @@ export default function ImportsPage() {
             dataSource={items}
             columns={[
               { title: "文件名", dataIndex: "fileName", width: 280 },
+              {
+                title: "活动名称",
+                dataIndex: "activityNames",
+                width: 260,
+                render: (values: string[]) => values?.join("、") || "-",
+              },
               {
                 title: "导入类型",
                 dataIndex: "importType",

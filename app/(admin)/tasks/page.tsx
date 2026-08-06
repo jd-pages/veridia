@@ -229,6 +229,11 @@ interface ImportPreview {
     productName: string;
     purchaseProductLine: string;
     campaignName: string;
+    importedCampaignName: string;
+    campaignMatchStatus: string;
+    campaignPeriod: string;
+    campaignRuleCount: number;
+    month: string;
     productStage: string;
     stageGroup: string;
     errors: string[];
@@ -1464,14 +1469,34 @@ export default function TasksPage() {
                               ]
                             : []),
                           {
-                            title: "活动",
+                            title: "活动名称",
                             dataIndex: "campaignName",
-                            width: 190,
-                            render: (value: string) => (
-                              <span className={styles.previewWrap} title={value}>
-                                {value || "-"}
+                            width: 260,
+                            render: (value: string, row) => (
+                              <div className={styles.previewWrap}>
+                                <div title={value || row.importedCampaignName}>
+                                  {value || row.importedCampaignName || "-"}
+                                </div>
+                                <Tag color={row.campaignMatchStatus === "MATCHED" ? "green" : "red"}>
+                                  {row.campaignMatchStatus === "MATCHED" ? "已匹配" : "匹配异常"}
+                                </Tag>
+                              </div>
+                            ),
+                          },
+                          {
+                            title: "活动月份 / 周期",
+                            width: 220,
+                            render: (_value, row) => (
+                              <span className={styles.previewWrap}>
+                                {row.month || "-"}<br />{row.campaignPeriod || "-"}
                               </span>
                             ),
+                          },
+                          {
+                            title: "关联规则",
+                            dataIndex: "campaignRuleCount",
+                            width: 110,
+                            render: (value: number) => `${value || 0} 条`,
                           },
                           ...(preview.templateBrand === "佳贝艾特"
                             ? []

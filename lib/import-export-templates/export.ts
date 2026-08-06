@@ -70,6 +70,7 @@ export interface CompactAuditResultExportSourceRow {
       seriesName?: string | null;
       brandName?: string | null;
     };
+    campaign?: { name: string };
   };
   note: {
     url: string;
@@ -118,7 +119,10 @@ function columns(
   if (kind === "auditResults" && templateBrand === KABRITA_BRAND_NAME) {
     return KABRITA_EXPORT_FIELDS.map((field) => ({
       field,
-      displayName: KABRITA_FIELD_DEFINITIONS[field].displayName,
+      displayName:
+        field === "activityName"
+          ? "活动名称"
+          : KABRITA_FIELD_DEFINITIONS[field].displayName,
     }));
   }
   const auditResultDisplayNames: Partial<Record<StandardField, string>> = {
@@ -131,6 +135,7 @@ function columns(
     contentChannel: "内容渠道",
     originalUrl: "链接",
     publishTime: "发帖时间",
+    activityName: "活动名称",
     selfReview: "自审",
   };
   return templates.columnOrder[kind].map((field) => ({
@@ -266,7 +271,7 @@ export function detailedSelfReview(row: CompactAuditResultExportSourceRow) {
 }
 
 /**
- * 审核结果下载固定为十列，只读取这十列实际需要的数据。
+ * 审核结果下载只读取业务模板实际需要的数据。
  * 历史结果中的规则快照或技术审核字段即使不完整，也不应阻断人工导出。
  */
 export function auditResultToCompactExportRecord(
@@ -291,6 +296,7 @@ export function auditResultToCompactExportRecord(
     publishTime: importedMetadata.publishTime
       ? importedPublishTimeValue(importedMetadata.publishTime)
       : row.note.publishedAt,
+    activityName: importedMetadata.activityName || row.task.campaign?.name || "",
     selfReview: detailedSelfReview(row),
   };
 }
@@ -318,6 +324,7 @@ export function auditResultToKabritaExportRecord(
       raw.purchaseProductLine ||
       row.task.product.seriesName ||
       row.task.product.name,
+    activityName: raw.activityName || imported.activityName || row.task.campaign?.name || "",
     selfReview: detailedSelfReview(row),
   };
 }
@@ -445,7 +452,7 @@ export function auditResultToExportRecord(row: {
     productName: row.task.product.seriesName || row.task.product.name,
     orderNumber: importedMetadata.orderNumber,
     contentChannel: contentChannelLabel(channel),
-    activityName: row.task.campaign.name,
+    activityName: importedMetadata.activityName || row.task.campaign.name,
     source: businessSourceLabel(row.task.source),
     productStageTopic: productStageTopicLabel(row.task.productStage),
     allowedBodyStages: bodyStageRequired
@@ -680,7 +687,10 @@ export function buildConfiguredCsv(input: {
 
 export async function buildImportTemplateWorkbook(
   templates: ImportExportTemplates,
-  options?: { templateBrand?: ImportTemplateBrand },
+  options?: {
+    templateBrand?: ImportTemplateBrand;
+    activityNames?: readonly string[];
+  },
 ) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "VERIDIA";
@@ -703,6 +713,7 @@ export async function buildImportTemplateWorkbook(
     contentChannel: 18,
     noteUrl: 52,
     publishTime: 22,
+    activityName: 38,
     registrationTime: 22,
     channel: 16,
     customerRemark: 28,
@@ -743,6 +754,13 @@ export async function buildImportTemplateWorkbook(
         ] || "";
     }
   }
+  const activityNameColumn = fields.indexOf("activityName") + 1;
+  const activityNames = [...new Set(
+    (options?.activityNames || []).map((name) => name.trim()).filter(Boolean),
+  )];
+  if (activityNameColumn > 0) {
+    sheet.getCell(2, activityNameColumn).value = activityNames[0] || "";
+  }
   const publishTimeColumn = fields.indexOf("publishTime") + 1;
   if (publishTimeColumn > 0) {
     sheet.getCell(2, publishTimeColumn).value = importedPublishTimeValue(
@@ -781,6 +799,29 @@ export async function buildImportTemplateWorkbook(
         showErrorMessage: true,
         errorTitle: "产品段位无效",
         error: "段位请填写 P段、1段、2段、3段、4段、1+段或2+段。",
+      };
+    }
+  }
+  if (activityNameColumn > 0 && activityNames.length) {
+    const activitySheet = workbook.addWorksheet("活动列表", {
+      state: "veryHidden",
+    });
+    activitySheet.getCell("A1").value = "活动名称";
+    activityNames.forEach((name, index) => {
+      activitySheet.getCell(index + 2, 1).value = name;
+    });
+    workbook.definedNames.add(
+      `'活动列表'!$A$2:$A$${activityNames.length + 1}`,
+      "VERIDIA_ACTIVITY_NAMES",
+    );
+    for (let rowNumber = 2; rowNumber <= 10_000; rowNumber += 1) {
+      sheet.getCell(rowNumber, activityNameColumn).dataValidation = {
+        type: "list",
+        allowBlank: false,
+        formulae: ["VERIDIA_ACTIVITY_NAMES"],
+        showErrorMessage: true,
+        errorTitle: "活动名称无效",
+        error: "请选择活动管理中当前启用的完整活动名称。",
       };
     }
   }
@@ -826,6 +867,15 @@ export async function buildImportTemplateWorkbook(
     description: `模板Schema ${templates.schemaVersion}`,
     aliases: "模板随审核规则同步更新",
   });
+  instructions.addRow({
+    field: "活动名称填写要求",
+    displayName: "活动名称（必填）",
+    required: "是",
+    description:
+      "必须填写“活动管理”中显示的完整活动名称，不能填写简称或自行改写。",
+    aliases:
+      "正确示例：达能2026年8月小红书种草审核、佳贝艾特2026年8月小红书种草审核、爱他美2026年8月小红书种草审核；错误示例：2026年8月-达能-UGC、达能8月活动、8月UGC",
+  });
   for (const field of fields) {
     instructions.addRow({
       field,
@@ -859,7 +909,10 @@ export async function buildImportTemplateWorkbook(
 
 export function buildImportTemplateCsv(
   templates: ImportExportTemplates,
-  options?: { templateBrand?: ImportTemplateBrand },
+  options?: {
+    templateBrand?: ImportTemplateBrand;
+    activityNames?: readonly string[];
+  },
 ) {
   const fields: readonly StandardField[] =
     options?.templateBrand === KABRITA_BRAND_NAME
@@ -872,7 +925,9 @@ export function buildImportTemplateCsv(
     ),
     [
       fields.map((field) =>
-        options?.templateBrand === KABRITA_BRAND_NAME
+        field === "activityName"
+          ? options?.activityNames?.[0] || ""
+          : options?.templateBrand === KABRITA_BRAND_NAME
           ? KABRITA_TEMPLATE_EXAMPLES[
               field as keyof typeof KABRITA_TEMPLATE_EXAMPLES
             ] || ""

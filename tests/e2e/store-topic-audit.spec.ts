@@ -50,7 +50,8 @@ test("Excel 店铺忽略英文大小写完成精确映射", async ({
     "订单编号",
     "内容渠道",
     "链接（必填）",
-    "发帖时间（必填）",
+    "发布时间（必填）",
+    "活动名称（必填）",
   ]);
   const url = `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-folo-store-passed&store-topic=${Date.now()}`;
   sheet.addRow([
@@ -64,6 +65,7 @@ test("Excel 店铺忽略英文大小写完成精确映射", async ({
     "小红书",
     url,
     "2026-08-05 12:00:00",
+    campaign.name,
   ]);
 
   const response = await page.request.post("/api/import/notes", {
@@ -140,7 +142,8 @@ test("同一店铺任意命中第二条可点击话题即通过并保存结构�
       "订单编号",
       "内容渠道",
       "链接（必填）",
-      "发帖时间（必填）",
+      "发布时间（必填）",
+      "活动名称（必填）",
     ]);
     const marker = `accepted-topic-${suffix}`;
     const url = `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-rockcheck-store-passed&${marker}`;
@@ -155,6 +158,7 @@ test("同一店铺任意命中第二条可点击话题即通过并保存结构�
       "小红书",
       url,
       "2026-08-05 12:00:00",
+      campaign.name,
     ]);
 
     const response = await page.request.post("/api/import/notes", {

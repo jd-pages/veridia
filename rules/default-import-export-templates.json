@@ -28,9 +28,9 @@
     "customerName": { "displayName": "客户名（必填）", "type": "string", "description": "线下表格中的客户名，仅用于记录和导出" },
     "orderNumber": { "displayName": "订单编号", "type": "string", "description": "可选，用于和原始表格对照，不参与审核判断" },
     "productName": { "displayName": "产品系列（必填）", "type": "string", "description": "系统中已有的产品名称、产品系列或简称" },
-    "activityName": { "displayName": "活动", "type": "string", "description": "系统中已有的活动名称" },
+    "activityName": { "displayName": "活动名称（必填）", "type": "string", "description": "必须填写活动管理中显示的完整活动名称，不能填写简称或自行改写" },
     "influencerName": { "displayName": "达人昵称", "type": "string", "description": "达人或博主昵称" },
-    "publishTime": { "displayName": "发帖时间（必填）", "type": "datetime", "description": "线下表格中的发帖时间，仅用于记录和导出" },
+    "publishTime": { "displayName": "发布时间（必填）", "type": "datetime", "description": "线下表格中的发布时间，仅用于记录和导出" },
     "title": { "displayName": "标题", "type": "string", "description": "笔记标题" },
     "content": { "displayName": "正文内容", "type": "string", "description": "笔记正文" },
     "effectiveBodyLength": { "displayName": "正文有效字数", "type": "integer", "description": "固定规则计算后的有效正文字符数" },
@@ -62,6 +62,7 @@
     "contentChannel": { "displayName": "内容渠道", "type": "string", "description": "内容来源渠道；未填写时仅由笔记链接类型识别" },
     "specification": { "displayName": "规格", "type": "string", "description": "用于识别产品段位的规格信息" },
     "productStage": { "displayName": "阶段（IFFO/GUM）", "type": "string", "description": "必填，只填写 IFFO 或 GUM" },
+    "productStageDetail": { "displayName": "段位", "type": "string", "description": "按活动要求填写P段、1段、2段、3段、4段、1+段或2+段" },
     "source": { "displayName": "任务来源", "type": "string", "description": "任务创建来源" },
     "productStageTopic": { "displayName": "阶段", "type": "string", "description": "审核选择的产品阶段话题组" },
     "allowedBodyStages": { "displayName": "正文允许段位", "type": "stringList", "description": "当前阶段组允许的正文段位词" },
@@ -90,7 +91,7 @@
     "customerName": ["客户名", "客户名（必填）", "客户名称", "customerName"],
     "orderNumber": ["订单编号", "订单号", "订单编号（必填）", "orderNumber"],
     "productName": ["产品", "产品系列", "产品系列（必填）", "商品", "商品名称", "产品名称", "审核产品", "product", "productName"],
-    "activityName": ["活动", "活动名称", "审核活动", "campaign", "activity", "activityName"],
+    "activityName": ["活动名称（必填）", "活动名称"],
     "influencerName": ["达人昵称", "博主昵称", "账号昵称", "小红书昵称", "昵称", "author", "influencer", "influencerName"],
     "publishTime": ["发帖时间", "发帖时间（必填）", "发布时间", "发布日期", "笔记时间", "publishTime", "createdAt"],
     "title": ["标题", "笔记标题", "title"],
@@ -104,13 +105,14 @@
     "activityMonth": ["活动月份", "月份", "campaignMonth", "activityMonth"],
     "contentChannel": ["渠道", "内容渠道", "内容渠道（必填）", "审核渠道", "发布渠道", "内容平台", "channel"],
     "specification": ["规格", "产品规格", "商品规格", "specification"],
-    "productStage": ["产品阶段话题", "产品段位", "奶粉段位", "阶段", "阶段（IFFO/GUM）", "段位", "productStage"]
+    "productStage": ["产品阶段话题", "阶段", "阶段（IFFO/GUM）", "productStage"]
+    ,"productStageDetail": ["段位", "产品段位", "奶粉段位", "productStageDetail"]
   },
-  "requiredFields": ["shopName", "customerName", "productName", "productStage", "noteUrl", "publishTime"],
-  "optionalFields": ["orderNumber", "noteId", "activityName", "influencerName", "title", "content", "effectiveBodyLength", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark", "productCode", "activityMonth", "specification", "publicStatus", "selfReview"],
+  "requiredFields": ["shopName", "customerName", "productName", "productStage", "noteUrl", "publishTime", "activityName"],
+  "optionalFields": ["orderNumber", "noteId", "influencerName", "title", "content", "effectiveBodyLength", "imageCount", "topicTags", "screenshotStatus", "noteStatus", "remark", "productCode", "activityMonth", "specification", "publicStatus", "selfReview"],
   "columnOrder": {
-    "import": ["commercePlatform", "shopName", "customerName", "productName", "productStage", "orderNumber", "contentChannel", "noteUrl", "publishTime"],
-    "auditResults": ["commercePlatform", "shopName", "customerName", "productName", "productStageTopic", "orderNumber", "contentChannel", "originalUrl", "publishTime", "selfReview"],
+    "import": ["commercePlatform", "shopName", "customerName", "productName", "productStage", "productStageDetail", "orderNumber", "contentChannel", "noteUrl", "publishTime", "activityName"],
+    "auditResults": ["commercePlatform", "shopName", "customerName", "productName", "productStageTopic", "orderNumber", "contentChannel", "originalUrl", "publishTime", "activityName", "selfReview"],
     "auditTasks": ["noteUrl", "noteId", "productName", "activityName", "auditStatus", "auditResult", "ruleVersion", "reviewedAt", "remark"]
   },
   "dataValidation": {

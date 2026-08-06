@@ -13,6 +13,7 @@ export const RESULT_EXPORT_FIELDS: StandardField[] = [
   "contentChannel",
   "originalUrl",
   "publishTime",
+  "activityName",
   "selfReview",
 ];
 
@@ -27,6 +28,7 @@ export const IMPORT_TEMPLATE_FIELDS: StandardField[] = [
   "contentChannel",
   "noteUrl",
   "publishTime",
+  "activityName",
 ];
 
 function normalizeBusinessTemplates(
@@ -94,9 +96,15 @@ function normalizeBusinessTemplates(
     description: "小红书完整链接或 xhslink 短链接",
   };
   output.fieldDefinitions.publishTime = {
-    displayName: "发帖时间（必填）",
+    displayName: "发布时间（必填）",
     type: "datetime",
     description: "线下表格中的发帖时间，仅用于记录和导出",
+  };
+  output.fieldDefinitions.activityName = {
+    displayName: "活动名称（必填）",
+    type: "string",
+    description:
+      "必须填写活动管理中显示的完整活动名称，不能填写简称或自行改写",
   };
   output.fieldDefinitions.productStageTopic = {
     displayName: "阶段",
@@ -209,6 +217,7 @@ function normalizeBusinessTemplates(
       "发布时间",
     ]),
   ];
+  output.fieldAliases.activityName = ["活动名称（必填）", "活动名称"];
   output.examples.commercePlatform = "京东";
   output.examples.shopName = "京东健康官方进口超市";
   output.examples.customerName = "示例客户";
@@ -218,6 +227,7 @@ function normalizeBusinessTemplates(
   output.examples.contentChannel = "小红书";
   output.examples.noteUrl = "https://xhslink.com/示例短链";
   output.examples.publishTime = "2026-08-03 12:00:00";
+  output.examples.activityName = "";
   output.requiredFields = [
     "shopName",
     "customerName",
@@ -225,6 +235,7 @@ function normalizeBusinessTemplates(
     "productName",
     "productStage",
     "publishTime",
+    "activityName",
   ];
   output.optionalFields = [
     ...new Set([
@@ -235,7 +246,6 @@ function normalizeBusinessTemplates(
       "commercePlatform" as const,
       "contentChannel" as const,
       "productStageDetail" as const,
-      "activityName" as const,
       "effectiveBodyLength" as const,
       "publicStatus" as const,
     ]),

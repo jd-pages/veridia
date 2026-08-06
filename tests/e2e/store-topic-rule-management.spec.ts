@@ -117,7 +117,7 @@ test("活动与规则可独立维护店铺话题规则", async ({ page }) => {
   const campaigns = (await (await page.request.get(`/api/campaigns?productId=${product.id}`)).json()).data as Array<{ name: string; month: string }>;
   const campaign = campaigns.find((item) => item.month === "2026-07")!;
   const csv = [
-    "笔记链接,产品,活动,产品阶段话题,店铺名称,成交平台,内容渠道",
+    "笔记链接,产品,活动名称,产品阶段话题,店铺名称,成交平台,内容渠道",
     `http://localhost:3100/mock/xhs?case=passed&store-disabled=${suffix},${product.name},${campaign.name},IFFO,${editedName},天猫,小红书`,
   ].join("\r\n");
   const disabledPreview = await page.request.post("/api/import/notes", {

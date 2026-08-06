@@ -1,9 +1,11 @@
 import ExcelJS from "exceljs";
 import path from "node:path";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { PrismaClient } from "@prisma/client";
 import { productStageTopicLabel } from "../lib/product-stage";
 import { MIN_BODY_LENGTH } from "../lib/audit-constants";
+import { BUILTIN_IMPORT_EXPORT_TEMPLATES } from "../lib/import-export-templates/config";
+import { buildImportTemplateWorkbook } from "../lib/import-export-templates/export";
 
 const prisma = new PrismaClient();
 
@@ -30,48 +32,22 @@ function styleSheet(
 }
 
 async function main() {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "小红书笔记合规审核系统";
-  const sheet = workbook.addWorksheet("笔记导入模板");
-  sheet.columns = [
-    { header: "平台（必填）", key: "platform", width: 16 },
-    { header: "店铺名称（必填）", key: "shopName", width: 24 },
-    { header: "客户名（必填）", key: "customerName", width: 20 },
-    { header: "产品系列（必填）", key: "productName", width: 26 },
-    { header: "阶段（IFFO/GUM）", key: "productStage", width: 18 },
-    { header: "订单编号", key: "orderNumber", width: 22 },
-    { header: "内容渠道（必填）", key: "contentChannel", width: 18 },
-    { header: "链接（必填）", key: "url", width: 52 },
-    { header: "发帖时间（必填）", key: "publishTime", width: 22 },
-  ];
-  sheet.addRow({
-    platform: "小红书",
-    shopName: "示例店铺",
-    customerName: "示例客户",
-    productName: "爱他美奇迹绿罐",
-    productStage: "IFFO",
-    orderNumber: "JD202608030001",
-    contentChannel: "小红书",
-    url: "https://xhslink.com/示例短链",
-    publishTime: new Date(Date.UTC(2026, 7, 3, 12, 0, 0)),
-  });
-  for (let row = 2; row <= 5001; row += 1) {
-    sheet.getCell(row, 5).dataValidation = {
-      type: "list",
-      allowBlank: false,
-      formulae: ['"IFFO,GUM"'],
-      showErrorMessage: true,
-      errorTitle: "产品阶段话题无效",
-      error: "产品阶段话题请填写 IFFO 或 GUM。",
-    };
-  }
-  sheet.getColumn(8).alignment = { vertical: "top", wrapText: true };
-  sheet.getColumn(9).numFmt = "yyyy-mm-dd hh:mm:ss";
-  styleSheet(sheet, { fill: "FFFFFF00", font: "FF000000" });
-
   const outputDir = path.join(process.cwd(), "templates");
   await mkdir(outputDir, { recursive: true });
-  await workbook.xlsx.writeFile(path.join(outputDir, "笔记导入模板.xlsx"));
+  const activityNames = (await prisma.campaign.findMany({
+    where: { status: "ACTIVE", deletedAt: null },
+    orderBy: [{ startDate: "desc" }, { name: "asc" }],
+    select: { name: true },
+  })).map((item) => item.name);
+  const noteTemplate = await buildImportTemplateWorkbook(
+    BUILTIN_IMPORT_EXPORT_TEMPLATES,
+    { activityNames },
+  );
+  await writeFile(
+    path.join(outputDir, "笔记导入模板.xlsx"),
+    Buffer.from(noteTemplate as ArrayBuffer),
+  );
+  if (process.argv.includes("--note-only")) return;
 
   const campaign = await prisma.campaign.findFirst({
     where: { status: "ACTIVE", deletedAt: null },

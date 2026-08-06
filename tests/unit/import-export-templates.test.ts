@@ -48,9 +48,14 @@ const kabritaImportHeaders = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
+  "活动名称（必填）",
 ];
 
-const kabritaExportHeaders = [...kabritaImportHeaders, "自审"];
+const kabritaExportHeaders = [
+  ...kabritaImportHeaders.slice(0, -1),
+  "活动名称",
+  "自审",
+];
 
 describe("远程表格模板配置", () => {
   it("内置模板包含必填字段、标准别名和本地数据源", () => {
@@ -61,6 +66,7 @@ describe("远程表格模板配置", () => {
       "productName",
       "productStage",
       "publishTime",
+      "activityName",
     ]);
     expect(templates.optionalFields).toContain("orderNumber");
     expect(templates.fieldAliases.noteUrl).toContain("小红书链接");
@@ -95,7 +101,7 @@ describe("远程表格模板配置", () => {
 });
 
 describe("佳贝艾特专属导入导出模板", () => {
-  it("严格生成不含是否符合的12列表头并可识别模板品牌", async () => {
+  it("严格生成不含是否符合的13列表头并可识别模板品牌", async () => {
     const bytes = await buildImportTemplateWorkbook(templates, {
       templateBrand: KABRITA_BRAND_NAME,
     });
@@ -104,7 +110,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     expect(
       (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
     ).toEqual(kabritaImportHeaders);
-    expect(KABRITA_IMPORT_FIELDS).toHaveLength(12);
+    expect(KABRITA_IMPORT_FIELDS).toHaveLength(13);
 
     const csv = buildImportTemplateCsv(templates, {
       templateBrand: KABRITA_BRAND_NAME,
@@ -129,6 +135,7 @@ describe("佳贝艾特专属导入导出模板", () => {
           "kabrita-user",
           "97【示例笔记】https://www.xiaohongshu.com/explore/kabrita-1",
           "荷兰佳贝1",
+          "佳贝艾特2026年8月小红书种草审核",
         ].join(","),
       ].join("\r\n")),
       fileName: "佳贝艾特.csv",
@@ -152,7 +159,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     );
   });
 
-  it("只把小红书发布链接和购买产品线作为必填字段", async () => {
+  it("把小红书发布链接、购买产品线和活动名称作为必填字段", async () => {
     const withoutLink = kabritaImportHeaders.filter(
       (header) => header !== "小红书发布链接",
     );
@@ -193,7 +200,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     );
   });
 
-  it("保存12列原值并用系统审核结论生成12列加自审的佳贝艾特导出", async () => {
+  it("保存13列原值并用系统审核结论生成13列加自审的佳贝艾特导出", async () => {
     const rawValues = Object.fromEntries(
       KABRITA_IMPORT_FIELDS.map((field, index) => [
         field,
@@ -303,7 +310,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     expect(headers).not.toEqual(
       expect.arrayContaining(["是否符合", "阶段", "IFFO", "GUM", "产品阶段话题"]),
     );
-    expect(sheet.getCell("M2").text).toBe(
+    expect(sheet.getCell("N2").text).toBe(
       "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张",
     );
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
@@ -356,6 +363,7 @@ describe("佳贝艾特专属导入导出模板", () => {
       "内容渠道",
       "链接",
       "发帖时间",
+      "活动名称",
       "自审",
     ]);
     expect(
@@ -464,10 +472,10 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
     expect(result.previewRows[0].values.noteUrl).toContain("legacy-xls");
   });
 
-  it("新九列表格读取人工识别字段并继续识别小红书短链接", async () => {
+  it("新十一列表格读取人工识别字段并继续识别小红书短链接", async () => {
     const csv = [
-      "平台（必填）,店铺名称（必填）,客户名（必填）,产品系列（必填）,阶段（IFFO/GUM）,订单编号,内容渠道（必填）,链接（必填）,发帖时间（必填）",
-      "京东,京东健康官方进口超市,示例客户,爱他美奇迹绿罐,IFFO,ORDER-1001,小红书,https://xhslink.com/new-template,2026-08-03 12:00:00",
+      "平台,店铺名称（必填）,客户名（必填）,产品系列（必填）,阶段（IFFO/GUM）,段位,订单编号,内容渠道,链接（必填）,发布时间（必填）,活动名称（必填）",
+      "京东,京东健康官方进口超市,示例客户,爱他美奇迹绿罐,IFFO,2段,ORDER-1001,小红书,https://xhslink.com/new-template,2026-08-03 12:00:00,达能2026年8月小红书种草审核",
     ].join("\r\n");
     const result = await parseTabularPreview({
       bytes: Buffer.from(csv),
@@ -487,6 +495,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       contentChannel: "小红书",
       noteUrl: "https://xhslink.com/new-template",
       publishTime: "2026-08-03 12:00:00",
+      activityName: "达能2026年8月小红书种草审核",
     });
     expect(
       importedTaskMetadataFromNotes(
@@ -499,6 +508,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       orderNumber: "ORDER-1001",
       contentChannel: "小红书",
       publishTime: "2026-08-03 12:00:00",
+      activityName: "达能2026年8月小红书种草审核",
     });
 
     const missingOrder = await parseTabularPreview({
@@ -525,6 +535,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       "内容渠道（必填）",
       "链接（必填）",
       "发帖时间（必填）",
+      "活动名称",
     ];
     const values = [
       "京东",
@@ -537,6 +548,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       "小红书",
       "https://xhslink.com/required-fields",
       "2026-08-03 12:00:00",
+      "达能2026年8月小红书种草审核",
     ];
     const required = [
       [1, "店铺名称（必填）"],
@@ -544,7 +556,8 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       [3, "产品系列（必填）"],
       [4, "阶段（IFFO/GUM）"],
       [8, "链接（必填）"],
-      [9, "发帖时间（必填）"],
+      [9, "发布时间（必填）"],
+      [10, "活动名称（必填）"],
     ] as const;
 
     for (const [index, displayName] of required) {
@@ -558,12 +571,24 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       });
       expect(result.validCount).toBe(0);
       expect(result.rows[0].errors).toContain(
-        `缺少必填字段：${displayName}`,
+        index === 10 ? "活动名称不能为空" : `缺少必填字段：${displayName}`,
       );
     }
   });
 
   it("清晰提示缺少必填字段、重复表头、空文件和乱码CSV", async () => {
+    const outdated = await parseTabularPreview({
+      bytes: Buffer.from(
+        "平台,店铺名称（必填）,客户名（必填）,产品系列（必填）,阶段（IFFO/GUM）,段位,订单编号,内容渠道,链接（必填）,发布时间（必填）\r\n京东,示例店铺,示例客户,爱他美澳洲白金版,IFFO,2段,,小红书,https://xhslink.com/outdated,2026-08-03 12:00:00",
+      ),
+      fileName: "旧模板.csv",
+      sourceType: "CSV",
+      templates,
+    });
+    expect(outdated.rows[0].errors).toContain(
+      "当前模板缺少“活动名称（必填）”列，请下载最新版导入模板后重新填写",
+    );
+
     const missing = await parseTabularPreview({
       bytes: Buffer.from("产品,活动\r\n澳白,7月活动"),
       fileName: "missing.csv",
@@ -626,12 +651,15 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
 });
 
 describe("模板驱动导出", () => {
-  it("下载模板按线下表格顺序生成阶段与段位十列并保留筛选和模板版本", async () => {
-    const bytes = await buildImportTemplateWorkbook(templates);
+  it("下载模板按线下表格顺序生成十一列、动态活动下拉并保留筛选", async () => {
+    const bytes = await buildImportTemplateWorkbook(templates, {
+      activityNames: ["达能2026年8月小红书种草审核", "佳贝艾特2026年8月小红书种草审核"],
+    });
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes);
     expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
       "笔记导入",
+      "活动列表",
       "填写说明",
     ]);
     expect(workbook.getWorksheet("笔记导入")?.getCell("A1").text).toBe(
@@ -653,7 +681,8 @@ describe("模板驱动导出", () => {
       "订单编号",
       "内容渠道",
       "链接（必填）",
-      "发帖时间（必填）",
+      "发布时间（必填）",
+      "活动名称（必填）",
     ]);
     const stageCell = workbook.getWorksheet("笔记导入")?.getCell("E2");
     expect(stageCell?.text).toBe("IFFO");
@@ -670,11 +699,13 @@ describe("模板驱动导出", () => {
     expect(workbook.getWorksheet("笔记导入")?.getCell("H2").text).toBe(
       "小红书",
     );
-    expect(workbook.getWorksheet("填写说明")?.getCell("B9").text).toBe(
-      "订单编号",
-    );
-    expect(workbook.getWorksheet("填写说明")?.getCell("C9").text).toBe(
-      "否",
+    expect(workbook.getWorksheet("笔记导入")?.getCell("K2").dataValidation)
+      .toMatchObject({ type: "list", formulae: ["VERIDIA_ACTIVITY_NAMES"] });
+    expect(workbook.getWorksheet("笔记导入")?.getCell("K10000").dataValidation)
+      .toMatchObject({ type: "list" });
+    expect(workbook.getWorksheet("活动列表")?.state).toBe("veryHidden");
+    expect(workbook.getWorksheet("活动列表")?.getCell("A2").text).toBe(
+      "达能2026年8月小红书种草审核",
     );
     expect(workbook.getWorksheet("笔记导入")?.getColumn(10).numFmt).toBe(
       "yyyy-mm-dd hh:mm:ss",
@@ -701,23 +732,24 @@ describe("模板驱动导出", () => {
     }
   });
 
-  it("仓库内标准模板同步十列、筛选及阶段与段位校验", async () => {
+  it("仓库内标准模板同步十一列、筛选及阶段与段位校验", async () => {
     const noteWorkbook = new ExcelJS.Workbook();
     await noteWorkbook.xlsx.load(
       (await readFile("templates/笔记导入模板.xlsx")) as unknown as ExcelJS.Buffer,
     );
     const noteSheet = noteWorkbook.worksheets[0];
     expect((noteSheet.getRow(1).values as unknown[]).slice(1)).toEqual([
-      "平台（必填）",
+      "平台",
       "店铺名称（必填）",
       "客户名（必填）",
       "产品系列（必填）",
       "阶段（IFFO/GUM）",
       "段位",
       "订单编号",
-      "内容渠道（必填）",
+      "内容渠道",
       "链接（必填）",
-      "发帖时间（必填）",
+      "发布时间（必填）",
+      "活动名称（必填）",
     ]);
     expect(noteSheet.getCell("E2").text).toBe("IFFO");
     expect(noteSheet.getCell("E2").dataValidation).toMatchObject({
@@ -1059,7 +1091,7 @@ describe("模板驱动导出", () => {
     expect(legacyChannelOnly.contentChannel).toBe("小红书");
   });
 
-  it("18条当前筛选结果严格生成十列线下处理字段", async () => {
+  it("18条当前筛选结果生成包含活动名称的线下处理字段", async () => {
     const records = Array.from({ length: 18 }, (_, index) => ({
       platform: "小红书",
       shopName: "示例店铺",
@@ -1070,6 +1102,7 @@ describe("模板驱动导出", () => {
       contentChannel: "小红书",
       originalUrl: `https://www.xiaohongshu.com/explore/export-${index + 1}`,
       publishTime: new Date(Date.UTC(2026, 7, 3, 12, 0, 0)),
+      activityName: "达能2026年8月小红书种草审核",
       selfReview: "Y",
     }));
     const bytes = await buildConfiguredWorkbook({
@@ -1092,6 +1125,7 @@ describe("模板驱动导出", () => {
       "内容渠道",
       "链接",
       "发帖时间",
+      "活动名称",
       "自审",
     ]);
     expect(sheet.getColumn(9).numFmt).toBe("yyyy-mm-dd hh:mm:ss");
@@ -1101,7 +1135,7 @@ describe("模板驱动导出", () => {
     );
     expect(sheet.getCell("F2").text).toBe("");
     expect(sheet.getCell("F3").text).toBe("ORDER-2");
-    expect(sheet.getCell("J2").dataValidation).toMatchObject({
+    expect(sheet.getCell("K2").dataValidation).toMatchObject({
       type: "list",
       allowBlank: true,
       formulae: [

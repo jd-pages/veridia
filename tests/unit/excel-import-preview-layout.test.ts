@@ -5,12 +5,14 @@ describe("Excel 自动审核预检表格布局", () => {
   it("把宽表限制在卡片内并通过表格内部横向滚动展示完整结果列", async () => {
     const page = await readFile("app/(admin)/tasks/page.tsx", "utf8");
     const css = await readFile("app/(admin)/tasks/tasks.module.css", "utf8");
+    const previewStart = page.indexOf(
+      "<div className={styles.previewTableShell}>",
+    );
     const previewTable = page.slice(
-      page.indexOf("<div className={styles.previewTableShell}>"),
-      page.indexOf(
-        "</div>",
-        page.indexOf("<div className={styles.previewTableShell}>"),
-      ),
+      previewStart,
+      page.indexOf("</Table>", previewStart) > 0
+        ? page.indexOf("</Table>", previewStart) + "</Table>".length
+        : page.indexOf("pagination={{", previewStart) + 1_000,
     );
 
     expect(previewTable).toContain('tableLayout="fixed"');

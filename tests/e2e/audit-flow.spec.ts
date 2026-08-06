@@ -235,6 +235,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "内容渠道",
     "链接",
     "发帖时间",
+    "活动名称",
     "自审",
   ]);
   const exportSheet = exportWorkbook.worksheets[0];
@@ -328,7 +329,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "订单编号",
     "内容渠道",
     "链接（必填）",
-    "发帖时间（必填）",
+    "发布时间（必填）",
+    "活动名称（必填）",
   ]);
   const downloadedTemplateSheet = noteTemplateWorkbook.worksheets[0];
   for (let index = 0; index < 9; index += 1) {
@@ -343,6 +345,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       "小红书",
       `${E2E_ORIGIN}/mock/xhs?case=passed&preview-layout=${suffix}-${index}`,
       "2026-08-03 12:00:00",
+      campaign.name,
     ];
   }
   await page.locator('input[type="file"]').setInputFiles({
@@ -386,6 +389,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "小红书",
     `${E2E_ORIGIN}/mock/xhs?case=passed&minimal-template=${suffix}`,
     "2026-08-03 12:00:00",
+    campaign.name,
   ];
   const minimalTemplateImport = await page.request.post("/api/import/notes", {
     multipart: {
@@ -419,6 +423,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   ).find((task) => task.url.includes(`minimal-template=${suffix}`));
   expect(minimalTemplateTask).toBeTruthy();
   expect(minimalTemplateTask?.notes).not.toContain("订单编号：");
+  expect(minimalTemplateTask?.notes).toContain(`导入活动名称：${campaign.name}`);
 
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("导入");
@@ -1096,6 +1101,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       "内容渠道",
       "链接",
       "发帖时间",
+      "活动名称",
       "自审",
     ].join(","),
   );
