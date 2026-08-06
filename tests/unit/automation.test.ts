@@ -12,8 +12,29 @@ import {
   isXiaohongshuNoteDetailUrl,
   safePageLogUrl,
 } from "../../lib/automation/page-classification";
+import {
+  isBrowserControlInfrastructureError,
+  toAutomaticExtractionError,
+} from "../../lib/automation/failure";
 
 describe("自动批量审核提取分类", () => {
+  it("将 CDP 与浏览器生命周期故障归为批次级控制异常", () => {
+    const errors = [
+      "cdpSession.send: Protocol error (Target.createTarget): Hidden target can be created only when remote debugging is enabled",
+      "Target page, context or browser has been closed",
+      "DevToolsActivePort 无效",
+    ];
+    for (const message of errors) {
+      expect(isBrowserControlInfrastructureError(new Error(message))).toBe(true);
+      expect(toAutomaticExtractionError(new Error(message)).code).toBe(
+        "BROWSER_CONTROL_ERROR",
+      );
+    }
+    expect(isBrowserControlInfrastructureError(new Error("net::ERR_TIMED_OUT"))).toBe(
+      false,
+    );
+  });
+
   it("区分页面不存在、删除、无权限、登录失效和安全验证", () => {
     expect(failureCodeForPageStatus("NOTE_NOT_FOUND")).toBe("NOTE_NOT_FOUND");
     expect(failureCodeForPageStatus("NO_PERMISSION")).toBe("NO_PERMISSION");

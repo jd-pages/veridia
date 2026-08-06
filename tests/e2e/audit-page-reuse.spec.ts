@@ -113,13 +113,17 @@ test("连续审核与网络重试复用唯一后台 auditPage", async ({ page })
     auditPageRequestCount: number;
     interactivePageOpen: boolean;
     windowState: string;
+    controlState: string;
+    controlReady: boolean;
   };
   expect(diagnosticsAfterFive).toMatchObject({
     browserInstanceCount: 1,
     pageCount: 1,
     auditPageOpen: true,
     interactivePageOpen: false,
-    windowState: "hidden",
+    windowState: "minimized",
+    controlState: "READY",
+    controlReady: true,
   });
   expect(diagnosticsAfterFive.contextLaunchCount).toBe(
     diagnosticsBefore.contextLaunchCount +
@@ -135,6 +139,42 @@ test("连续审核与网络重试复用唯一后台 auditPage", async ({ page })
   expect(diagnosticsAfterFive.auditPageReuseCount).toBeGreaterThanOrEqual(
     diagnosticsBefore.auditPageReuseCount + 4,
   );
+
+  const closeAuditPage = await page.request.post("/api/automation/session", {
+    data: { action: "CLOSE_AUDIT_PAGE_FOR_TEST" },
+  });
+  expect(closeAuditPage.ok()).toBeTruthy();
+  const afterClose = (await closeAuditPage.json()).data as typeof diagnosticsAfterFive;
+  expect(afterClose.auditPageOpen).toBe(false);
+
+  const secondBatchResponse = await page.request.post("/api/automation/batches", {
+    data: {
+      name: `关闭页面后重建-${suffix}`,
+      productId: product.id,
+      campaignId: campaign.id,
+      productStage: "IFFO",
+      urls: Array.from(
+        { length: 5 },
+        (_, index) =>
+          `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-passed&audit-page-rebuild=${suffix}-${index}`,
+      ).join("\n"),
+      intervalMs: 1000,
+    },
+  });
+  expect(secondBatchResponse.ok()).toBeTruthy();
+  const secondBatchId = (await secondBatchResponse.json()).data.batchId as string;
+  cleanupBatchIds.push(secondBatchId);
+  await waitForBatch(page, secondBatchId);
+  const diagnosticsAfterRebuild = (
+    await (await page.request.get("/api/automation/session")).json()
+  ).data as typeof diagnosticsAfterFive;
+  expect(diagnosticsAfterRebuild.contextLaunchCount).toBe(
+    diagnosticsAfterFive.contextLaunchCount,
+  );
+  expect(diagnosticsAfterRebuild.auditPageCreateCount).toBe(
+    diagnosticsAfterFive.auditPageCreateCount + 1,
+  );
+  expect(diagnosticsAfterRebuild.controlReady).toBe(true);
 
   const retryResponse = await page.request.post("/api/automation/batches", {
     data: {
@@ -155,14 +195,14 @@ test("连续审核与网络重试复用唯一后台 auditPage", async ({ page })
     await (await page.request.get("/api/automation/session")).json()
   ).data as typeof diagnosticsAfterFive;
   expect(diagnosticsAfterRetry.auditPageCreateCount).toBe(
-    diagnosticsAfterFive.auditPageCreateCount,
+    diagnosticsAfterRebuild.auditPageCreateCount,
   );
   expect(diagnosticsAfterRetry.auditPageRequestCount).toBe(
-    diagnosticsAfterFive.auditPageRequestCount + 3,
+    diagnosticsAfterRebuild.auditPageRequestCount + 3,
   );
   expect(diagnosticsAfterRetry.pageCount).toBe(1);
   expect(diagnosticsAfterRetry.interactivePageOpen).toBe(false);
-  expect(diagnosticsAfterRetry.windowState).toBe("hidden");
+  expect(diagnosticsAfterRetry.windowState).toBe("minimized");
 
   const notFoundResponse = await page.request.post("/api/automation/batches", {
     data: {
@@ -183,12 +223,12 @@ test("连续审核与网络重试复用唯一后台 auditPage", async ({ page })
     await (await page.request.get("/api/automation/session")).json()
   ).data as typeof diagnosticsAfterFive;
   expect(diagnosticsAfterNotFound.auditPageCreateCount).toBe(
-    diagnosticsAfterFive.auditPageCreateCount,
+    diagnosticsAfterRebuild.auditPageCreateCount,
   );
   expect(diagnosticsAfterNotFound.auditPageRequestCount).toBe(
     diagnosticsAfterRetry.auditPageRequestCount + 1,
   );
   expect(diagnosticsAfterNotFound.pageCount).toBe(1);
   expect(diagnosticsAfterNotFound.interactivePageOpen).toBe(false);
-  expect(diagnosticsAfterNotFound.windowState).toBe("hidden");
+  expect(diagnosticsAfterNotFound.windowState).toBe("minimized");
 });

@@ -185,6 +185,14 @@ interface AuditBatch {
 interface AutomationSession {
   status: string;
   sessionState?: string;
+  controlState?:
+    | "NOT_STARTED"
+    | "CONNECTING"
+    | "READY"
+    | "DISCONNECTED"
+    | "RESTART_REQUIRED";
+  controlReady?: boolean;
+  controlLastError?: string | null;
   lastLoginAt: string | null;
   lastError: string | null;
 }
@@ -903,7 +911,11 @@ export default function TasksPage() {
   };
 
   const loginAction = async (
-    action: "START_LOGIN" | "COMPLETE_LOGIN" | "CHECK_SESSION",
+    action:
+      | "START_LOGIN"
+      | "COMPLETE_LOGIN"
+      | "CHECK_SESSION"
+      | "RESTART_BROWSER",
   ) => {
     try {
       const result = await apiFetch<AutomationSession>("/api/automation/session", {
@@ -913,6 +925,8 @@ export default function TasksPage() {
       setSession(result);
       if (action === "START_LOGIN") {
         message.info("专用浏览器已打开，请手动登录或扫码");
+      } else if (action === "RESTART_BROWSER" && result.controlReady) {
+        message.success("专用浏览器控制连接已重新建立");
       } else if (result.sessionState === "LOGGED_IN" || result.status === "READY") {
         message.success("登录状态已保存，可以继续自动审核");
       } else if (result.sessionState === "NETWORK_ERROR") {
@@ -940,6 +954,13 @@ export default function TasksPage() {
       setTemplateDownloading(false);
     }
   };
+
+  const browserControlBlocked = Boolean(
+    session?.status === "READY" &&
+      ["DISCONNECTED", "RESTART_REQUIRED"].includes(
+        session.controlState || "",
+      ),
+  );
 
   return (
     <div className={styles.tasksWorkspace}>
@@ -1018,6 +1039,14 @@ export default function TasksPage() {
                 value={session?.status || "UNKNOWN"}
                 domain="session"
               />
+              <Tag color={session?.controlReady ? "green" : "orange"}>
+                控制连接：
+                {session?.controlReady
+                  ? "正常"
+                  : session?.controlState === "CONNECTING"
+                    ? "正在连接"
+                    : "需要重新启动"}
+              </Tag>
             </div>
             <p>
               {session?.lastLoginAt
@@ -1026,6 +1055,11 @@ export default function TasksPage() {
             </p>
             {session?.lastError ? (
               <span className={styles.inlineError}>{session.lastError}</span>
+            ) : null}
+            {session?.controlLastError ? (
+              <span className={styles.inlineError}>
+                {session.controlLastError}
+              </span>
             ) : null}
           </div>
         </div>
@@ -1044,6 +1078,9 @@ export default function TasksPage() {
           </Button>
           <Button onClick={() => void loginAction("CHECK_SESSION")}>
             重新检测
+          </Button>
+          <Button onClick={() => void loginAction("RESTART_BROWSER")}>
+            重新启动专用浏览器
           </Button>
         </Space>}
       </Card>
@@ -1229,6 +1266,7 @@ export default function TasksPage() {
                         size="large"
                         htmlType="submit"
                         loading={submitting}
+                        disabled={browserControlBlocked}
                         icon={<PlayCircleOutlined />}
                         className={styles.primaryAction}
                       >
@@ -1331,7 +1369,11 @@ export default function TasksPage() {
                     <Button
                       type="primary"
                       loading={importing}
-                      disabled={!preview || preview.validCount === 0}
+                      disabled={
+                        !preview ||
+                        preview.validCount === 0 ||
+                        browserControlBlocked
+                      }
                       onClick={() => void submitExcel(true)}
                     >
                       导入并自动审核 {preview?.validCount || 0} 条

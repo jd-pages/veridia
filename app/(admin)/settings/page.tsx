@@ -66,6 +66,9 @@ interface XhsSessionDiagnostics {
   profilePath: string;
   partition: string;
   browserRunning: boolean;
+  controlState: string;
+  controlReady: boolean;
+  controlLastError: string | null;
   pageCount: number;
   lastCheckedAt: string | null;
   lastVerificationAt: string | null;
@@ -243,6 +246,11 @@ export default function SettingsPage() {
           <Descriptions.Item label="浏览器运行">
             {xhsSession?.browserRunning ? "是" : "否"}
           </Descriptions.Item>
+          <Descriptions.Item label="浏览器控制状态">
+            <Tag color={xhsSession?.controlReady ? "green" : "orange"}>
+              {xhsSession?.controlReady ? "控制连接正常" : "需要重新启动"}
+            </Tag>
+          </Descriptions.Item>
           <Descriptions.Item label="当前页面数量">
             {xhsSession?.pageCount ?? 0}
           </Descriptions.Item>
@@ -272,7 +280,7 @@ export default function SettingsPage() {
             {xhsSession?.auditLock?.batchId || "无"}
           </Descriptions.Item>
           <Descriptions.Item label="最近失效原因">
-            {xhsSession?.lastInvalidReason || "无"}
+            {xhsSession?.controlLastError || xhsSession?.lastInvalidReason || "无"}
           </Descriptions.Item>
         </Descriptions>
         <Space wrap>

@@ -9,6 +9,7 @@ import {
   getAutomationSession,
   getXhsAuditPage,
   getXhsAuditPageDiagnostics,
+  keepXhsAuditPageInBackground,
   showXhsManualIntervention,
   startXiaohongshuLogin,
 } from "./browser";
@@ -215,7 +216,7 @@ async function captureFailureEvidence(
   const fileName = `${task.id}-attempt-${task.attempts}-${Date.now()}.png`;
   const screenshotPath = path.join(evidenceDirectory, fileName);
   const screenshotSaved = await page
-    .screenshot({ path: screenshotPath, fullPage: false })
+    .screenshot({ path: screenshotPath, fullPage: false, timeout: 5_000 })
     .then(() => true)
     .catch(() => false);
   const domSnapshot = await collectDomPageSnapshot(page).catch(() => null);
@@ -328,8 +329,9 @@ export async function extractAuditTaskAutomatically(
     const message = error instanceof Error ? error.message : String(error);
     if (/专用浏览器已关闭|context or browser has been closed/iu.test(message)) {
       throw new AutomaticExtractionError(
-        "LOGIN_REQUIRED",
-        "小红书专用浏览器已关闭，审核任务已暂停。请重新打开浏览器后继续审核。",
+        "BROWSER_CONTROL_ERROR",
+        "审核浏览器连接异常，当前批次已暂停。请点击“重新启动专用浏览器”后继续。",
+        { technicalMessage: message.slice(0, 500) },
       );
     }
     throw error;
@@ -400,7 +402,7 @@ export async function extractAuditTaskAutomatically(
         )
       ) {
         console.error(
-          "[自动审核] 隐藏审核页面连接中断",
+          "[自动审核] 审核页面控制连接中断",
           JSON.stringify({
             taskId: task.id,
             message: error.message,
@@ -408,8 +410,9 @@ export async function extractAuditTaskAutomatically(
           }),
         );
         throw new AutomaticExtractionError(
-          "LOGIN_REQUIRED",
-          "小红书专用浏览器已关闭，审核任务已暂停。请重新打开浏览器后继续审核。",
+          "BROWSER_CONTROL_ERROR",
+          "审核浏览器连接异常，当前批次已暂停。请点击“重新启动专用浏览器”后继续。",
+          { technicalMessage: error.message.slice(0, 500) },
         );
       }
       if (error instanceof Error && /Timeout/i.test(error.message)) {
@@ -419,6 +422,8 @@ export async function extractAuditTaskAutomatically(
         "NETWORK_ERROR",
         error instanceof Error ? error.message : "页面网络请求失败",
       );
+    } finally {
+      await keepXhsAuditPageInBackground(page);
     }
 
     const delay = Number(url.searchParams.get("autoDelay") || 0);

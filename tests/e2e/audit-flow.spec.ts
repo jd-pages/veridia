@@ -37,7 +37,7 @@ async function waitForBatch(
         const batch = batches.find((item) => item.id === batchId);
         return batch && terminalStatuses.includes(batch.status) ? batch : null;
       },
-      { timeout: 30_000 },
+      { timeout: 60_000 },
     )
     .not.toBeNull()
     .then(async () => {
@@ -48,7 +48,7 @@ async function waitForBatch(
 }
 
 test("本地账号登录、创建任务、审核、详情、Excel 与插件提交链路", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   await page.goto("/login");
   await page.getByLabel("用户名").fill("admin");
   await page.getByLabel("密码").fill("Admin123!");

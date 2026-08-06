@@ -163,7 +163,6 @@ try {
     VERIDIA_NEXT_DIST_DIR: e2eNextDistDir,
     E2E_XHS_PROFILE_PATH: path.join(root, ".playwright", "xhs-release-profile"),
     PLAYWRIGHT_BROWSER_CHANNEL: "",
-    PW_CHROMIUM_ATTACH_TO_OTHER: "1",
     RUST_LOG: "info",
   };
   run("端到端数据库迁移", "npm.cmd", ["run", "db:init-empty"], e2eEnv);

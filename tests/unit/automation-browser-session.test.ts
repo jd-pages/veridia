@@ -27,21 +27,21 @@ describe("小红书持久会话与访问节奏", () => {
     expect(browser).toContain("auditPage?: Page");
     expect(browser).toContain("auditPagePromise?: Promise<Page>");
     expect(hiddenChromium).toContain('"--no-startup-window"');
-    expect(hiddenChromium).toContain('hidden: true');
-    expect(hiddenChromium).toContain('background: true');
-    expect(hiddenChromium).toContain('focus: false');
+    expect(hiddenChromium).not.toContain("Target.createTarget");
+    expect(hiddenChromium).not.toContain("hidden: true");
+    expect(hiddenChromium).toContain("return context.newPage()");
     expect(hiddenChromium).toContain('"--remote-debugging-port=0"');
-    expect(browser).toContain('process.env.PW_CHROMIUM_ATTACH_TO_OTHER = "1"');
-    expect(source("playwright.config.ts")).toContain(
-      'PW_CHROMIUM_ATTACH_TO_OTHER: "1"',
+    expect(browser).not.toContain("PW_CHROMIUM_ATTACH_TO_OTHER");
+    expect(source("playwright.config.ts")).not.toContain(
+      "PW_CHROMIUM_ATTACH_TO_OTHER",
     );
-    expect(source("desktop/main.cjs")).toContain(
-      'PW_CHROMIUM_ATTACH_TO_OTHER: "1"',
+    expect(source("desktop/main.cjs")).not.toContain(
+      "PW_CHROMIUM_ATTACH_TO_OTHER",
     );
-    expect(source("scripts/release.mjs")).toContain(
-      'PW_CHROMIUM_ATTACH_TO_OTHER: "1"',
+    expect(source("scripts/release.mjs")).not.toContain(
+      "PW_CHROMIUM_ATTACH_TO_OTHER",
     );
-    expect(browser).toContain("createHiddenAuditPage");
+    expect(browser).toContain("createAuditPage");
     expect(browser).toContain("getXhsAuditPage");
     expect(browser).toContain("auditPageCreateCount");
     expect(browser).toContain("auditPageReuseCount");
@@ -74,15 +74,15 @@ describe("小红书持久会话与访问节奏", () => {
     expect(hiddenChromium).not.toContain("ShowWindow");
   });
 
-  it("专用浏览器意外关闭时保留断点并按登录问题暂停", () => {
+  it("专用浏览器意外关闭时保留断点并按控制问题暂停", () => {
     const browser = source("lib/automation/browser.ts");
     const extract = source("lib/automation/extract.ts");
     const queue = source("lib/automation/queue.ts");
 
     expect(browser).toContain("contextClosedUnexpectedly");
-    expect(browser).toContain("小红书专用浏览器已关闭，审核任务已暂停");
-    expect(extract).toContain('new AutomaticExtractionError(\n        "LOGIN_REQUIRED"');
-    expect(queue).toContain('"LOGIN_REQUIRED"');
+    expect(browser).toContain("审核浏览器连接异常，当前批次已暂停");
+    expect(extract).toContain('new AutomaticExtractionError(\n        "BROWSER_CONTROL_ERROR"');
+    expect(queue).toContain('"BROWSER_CONTROL_ERROR"');
     expect(queue).toContain('status: "PENDING"');
   });
 
@@ -108,5 +108,22 @@ describe("小红书持久会话与访问节奏", () => {
     expect(pacing).toContain("XHS_NETWORK_RETRY_SECOND_MS: 15_000");
     expect(pacing).toContain("XHS_COOLDOWN_TASK_COUNT: 25");
     expect(pacing).toContain("concurrency: 1 as const");
+  });
+
+  it("浏览器控制故障按批次暂停且最多自动恢复一次", () => {
+    const browser = source("lib/automation/browser.ts");
+    const queue = source("lib/automation/queue.ts");
+    const failure = source("lib/automation/failure.ts");
+
+    expect(failure).toContain('"BROWSER_CONTROL_ERROR"');
+    expect(failure).toContain("Target\\.createTarget");
+    expect(browser).toContain("automaticRecoveryAttempt: recoveryAttempt");
+    expect(browser).toContain("recoveryAttempt >= 1");
+    expect(browser).toContain("controlState: state.controlState");
+    expect(queue).toContain(
+      'extractionError.code === "BROWSER_CONTROL_ERROR"',
+    );
+    expect(queue).toContain('status: browserControlIssue\n              ? "PAUSED"');
+    expect(queue).toContain("ensureXhsBrowserControlReady(true)");
   });
 });

@@ -12,6 +12,7 @@ export type AutomaticFailureCode =
   | "PAGE_READ_FAILED"
   | "BODY_NOT_RECOGNIZED"
   | "TOPICS_NOT_RECOGNIZED"
+  | "BROWSER_CONTROL_ERROR"
   | "CANCELLED";
 
 export const automaticFailureLabels: Record<AutomaticFailureCode, string> = {
@@ -28,6 +29,7 @@ export const automaticFailureLabels: Record<AutomaticFailureCode, string> = {
   PAGE_READ_FAILED: "页面读取失败",
   BODY_NOT_RECOGNIZED: "未识别到正文",
   TOPICS_NOT_RECOGNIZED: "未识别到话题",
+  BROWSER_CONTROL_ERROR: "审核浏览器控制连接异常",
   CANCELLED: "任务已取消",
 };
 
@@ -50,5 +52,19 @@ export class AutomaticExtractionError extends Error {
 export function toAutomaticExtractionError(error: unknown) {
   if (error instanceof AutomaticExtractionError) return error;
   const message = error instanceof Error ? error.message : "自动提取失败";
+  if (isBrowserControlInfrastructureError(error)) {
+    return new AutomaticExtractionError(
+      "BROWSER_CONTROL_ERROR",
+      "审核浏览器连接异常，当前批次已暂停。请点击“重新启动专用浏览器”后继续。",
+      { technicalMessage: message.slice(0, 500) },
+    );
+  }
   return new AutomaticExtractionError("NETWORK_ERROR", message);
+}
+
+export function isBrowserControlInfrastructureError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /Target\.createTarget|cdpSession\.send|Protocol error|browser has been closed|context or browser has been closed|Target page, context or browser has been closed|BrowserContext.*closed|Browser.*disconnected|remote debugging|DevToolsActivePort|专用 Chromium 尚未连接|审核浏览器连接异常/iu.test(
+    message,
+  );
 }

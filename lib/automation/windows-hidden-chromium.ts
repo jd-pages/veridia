@@ -1,9 +1,9 @@
 import "server-only";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import type { Browser, BrowserContext, BrowserType, Page } from "playwright";
+import type { Browser, BrowserContext, BrowserType } from "playwright";
 
 const DEVTOOLS_ACTIVE_PORT = "DevToolsActivePort";
 const CONNECT_TIMEOUT_MS = 30_000;
@@ -13,14 +13,41 @@ type HiddenChromiumConnection = {
   context: BrowserContext;
   processId: number | null;
   reusedProcess: boolean;
+  executablePath: string;
+  browserVersion: string;
+  remoteDebuggingMode: "port";
+  remoteDebuggingPolicy: "ALLOWED" | "BLOCKED" | "NOT_CONFIGURED";
   close: () => Promise<void>;
 };
+
+function remoteDebuggingPolicy() {
+  const keys = [
+    String.raw`HKLM\SOFTWARE\Policies\Google\Chrome`,
+    String.raw`HKCU\SOFTWARE\Policies\Google\Chrome`,
+    String.raw`HKLM\SOFTWARE\Policies\Microsoft\Edge`,
+    String.raw`HKCU\SOFTWARE\Policies\Microsoft\Edge`,
+  ];
+  for (const key of keys) {
+    const result = spawnSync(
+      "reg.exe",
+      ["query", key, "/v", "RemoteDebuggingAllowed"],
+      { encoding: "utf8", windowsHide: true },
+    );
+    if (result.status !== 0) continue;
+    if (/RemoteDebuggingAllowed\s+REG_DWORD\s+0x0/iu.test(result.stdout)) {
+      return "BLOCKED" as const;
+    }
+    return "ALLOWED" as const;
+  }
+  return "NOT_CONFIGURED" as const;
+}
 
 function executableCandidates(chromium: BrowserType) {
   const configured = process.env.PLAYWRIGHT_EXECUTABLE_PATH?.trim();
   const localAppData = process.env.LOCALAPPDATA;
   return [
     configured,
+    chromium.executablePath(),
     process.env.PROGRAMFILES
       ? path.join(
           process.env.PROGRAMFILES,
@@ -42,7 +69,6 @@ function executableCandidates(chromium: BrowserType) {
     localAppData
       ? path.join(localAppData, "Google", "Chrome", "Application", "chrome.exe")
       : undefined,
-    chromium.executablePath(),
   ].filter((candidate): candidate is string => Boolean(candidate));
 }
 
@@ -75,7 +101,13 @@ async function connectExisting(
 ) {
   try {
     const endpoint = await readDevToolsEndpoint(profilePath);
-    return await chromium.connectOverCDP(endpoint, { timeout });
+    const browser = await chromium.connectOverCDP(endpoint, { timeout });
+    if (!browser.isConnected() || !browser.contexts()[0]) {
+      await browser.close().catch(() => undefined);
+      return null;
+    }
+    await browser.version();
+    return browser;
   } catch {
     return null;
   }
@@ -123,6 +155,12 @@ export async function launchWindowsHiddenChromium(
   chromium: BrowserType,
   profilePath: string,
 ): Promise<HiddenChromiumConnection> {
+  const policy = remoteDebuggingPolicy();
+  if (policy === "BLOCKED") {
+    throw new Error(
+      "当前电脑策略限制了浏览器自动控制，请联系管理员检查 RemoteDebuggingAllowed 策略。",
+    );
+  }
   const existing = await connectExisting(chromium, profilePath);
   if (existing) {
     const context = existing.contexts()[0];
@@ -132,6 +170,10 @@ export async function launchWindowsHiddenChromium(
       context,
       processId: null,
       reusedProcess: true,
+      executablePath: resolveExecutable(chromium),
+      browserVersion: existing.version(),
+      remoteDebuggingMode: "port",
+      remoteDebuggingPolicy: policy,
       close: () => closeBrowser(existing, null),
     };
   }
@@ -144,6 +186,7 @@ export async function launchWindowsHiddenChromium(
     `--user-data-dir=${profilePath}`,
     "--remote-debugging-port=0",
     "--no-startup-window",
+    "--start-minimized",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-component-update",
@@ -186,39 +229,14 @@ export async function launchWindowsHiddenChromium(
     context,
     processId: child.pid ?? null,
     reusedProcess: false,
+    executablePath: executable,
+    browserVersion: browser.version(),
+    remoteDebuggingMode: "port",
+    remoteDebuggingPolicy: policy,
     close,
   };
 }
 
-export async function createHiddenAuditPage(
-  browser: Browser,
-  context: BrowserContext,
-) {
-  const pagePromise = context.waitForEvent("page", { timeout: 10_000 });
-  const session = await browser.newBrowserCDPSession();
-  try {
-    await session.send("Target.createTarget", {
-      url: "about:blank",
-      hidden: true,
-      background: true,
-      focus: false,
-    });
-    return { page: await pagePromise, keepAliveSession: session };
-  } catch (error) {
-    await session.detach().catch(() => undefined);
-    throw error;
-  }
-}
-
-export async function pageHasUiWindow(page: Page) {
-  const session = await page.context().newCDPSession(page).catch(() => null);
-  if (!session) return false;
-  try {
-    await session.send("Browser.getWindowForTarget");
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await session.detach().catch(() => undefined);
-  }
+export async function createAuditPage(context: BrowserContext) {
+  return context.newPage();
 }

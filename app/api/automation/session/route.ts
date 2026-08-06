@@ -2,6 +2,7 @@ import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import {
   checkXhsSessionState,
+  closeXhsAuditPageForTesting,
   completeXiaohongshuLogin,
   getXhsSessionDiagnostics,
   logoutXhsSession,
@@ -24,6 +25,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
       | "COMPLETE_LOGIN"
       | "CHECK_SESSION"
       | "RESTART_BROWSER"
+      | "CLOSE_AUDIT_PAGE_FOR_TEST"
       | "LOGOUT_XHS";
   };
   try {
@@ -40,6 +42,9 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     if (body.action === "RESTART_BROWSER") {
       return ok(await restartXhsBrowser());
     }
+    if (body.action === "CLOSE_AUDIT_PAGE_FOR_TEST") {
+      return ok(await closeXhsAuditPageForTesting());
+    }
     if (body.action === "LOGOUT_XHS") {
       return ok(await logoutXhsSession());
     }
@@ -47,7 +52,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   } catch (error) {
     console.error("[VERIDIA API] 小红书专用浏览器操作失败", error);
     return fail(
-      "小红书专用浏览器操作失败，请完全退出并重启 VERIDIA 后再试。",
+      "审核浏览器连接异常。请点击“重新启动专用浏览器”后重试；若系统策略禁止远程调试，请联系管理员检查浏览器策略。",
       500,
       "BROWSER_OPERATION_FAILED",
     );

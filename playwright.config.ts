@@ -45,6 +45,10 @@ const e2eXhsProfilePath =
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  testIgnore:
+    process.env.VERIDIA_BROWSER_STRESS_E2E === "true"
+      ? undefined
+      : "**/*.stress.spec.ts",
   fullyParallel: false,
   workers: 1,
   timeout: 45_000,
@@ -81,9 +85,7 @@ export default defineConfig({
         process.env.EXTENSION_TOKEN || "local-extension-demo-token",
       VERIDIA_ACCOUNT_SIGNING_PUBLIC_KEY_PATH: e2eAccountPublicKeyPath,
       XHS_PROFILE_PATH: e2eXhsProfilePath,
-      // Hidden Chromium targets are reported as `other`. Playwright must opt in
-      // before the Next.js server loads the Playwright module.
-      PW_CHROMIUM_ATTACH_TO_OTHER: "1",
+      AUTOMATION_LOCAL_MOCK_WAIT_CAP_MS: "5",
       ...(executablePath ? { PLAYWRIGHT_EXECUTABLE_PATH: executablePath } : {}),
     },
   },
