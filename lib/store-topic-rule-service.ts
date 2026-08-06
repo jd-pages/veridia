@@ -12,6 +12,7 @@ import {
   type StoreTopicResolution,
 } from "@/lib/store-topic-config";
 import {
+  storeAcceptedTopicSeeds,
   storeRequiredTopicSeeds,
   storeTopicRuleSeeds,
 } from "@/lib/store-topic-rule-seeds";
@@ -216,6 +217,35 @@ export async function ensureStoreTopicRuleSeeds() {
           normalizedTopic: normalizeStoreTopicForMatch(expectedTopic),
           topicType: "ACCEPTED",
           sortOrder: 0,
+          enabled: true,
+        },
+        update: {},
+      });
+    }
+    for (const seed of storeAcceptedTopicSeeds) {
+      const rule = await tx.storeTopicRule.findUnique({
+        where: {
+          commercePlatform_normalizedStoreName: {
+            commercePlatform: seed.commercePlatform,
+            normalizedStoreName: normalizeStoreNameForMatch(seed.storeName),
+          },
+        },
+      });
+      if (!rule) continue;
+      const normalizedTopic = normalizeStoreTopicForMatch(seed.topic);
+      await tx.storeTopicEntry.upsert({
+        where: {
+          storeTopicRuleId_normalizedTopic: {
+            storeTopicRuleId: rule.id,
+            normalizedTopic,
+          },
+        },
+        create: {
+          storeTopicRuleId: rule.id,
+          topic: storeTopicWithHash(seed.topic),
+          normalizedTopic,
+          topicType: "ACCEPTED",
+          sortOrder: 1,
           enabled: true,
         },
         update: {},

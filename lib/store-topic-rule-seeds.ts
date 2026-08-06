@@ -12,6 +12,12 @@ export interface StoreRequiredTopicSeed {
   topic: string;
 }
 
+export interface StoreAcceptedTopicSeed {
+  commercePlatform: CommercePlatform;
+  storeName: string;
+  topic: string;
+}
+
 const storesByPlatform: Record<CommercePlatform, readonly string[]> = {
   JD: [
     "爱他美优选海外专卖店", "爱他美国际进口超市", "Aptamil爱他美海外进口超市",
@@ -46,6 +52,14 @@ export const storeTopicRuleSeeds: readonly StoreTopicRuleSeed[] = Object.entries
     storeName,
   })),
 );
+
+export const storeAcceptedTopicSeeds: readonly StoreAcceptedTopicSeed[] = [
+  {
+    commercePlatform: "DOUYIN_ECOMMERCE",
+    storeName: "ROCKCHECK海外专营店",
+    topic: "#爱他美RC奶粉直播间",
+  },
+];
 
 const jdStoresRequiringPlatformTopic = [
   "健康官方进口超市",

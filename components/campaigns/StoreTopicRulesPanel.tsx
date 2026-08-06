@@ -277,7 +277,7 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
           },
           { title: "标准店铺名称", dataIndex: "storeName", width: 230 },
           {
-            title: "可接受店铺话题",
+            title: "店铺话题（任选其一）",
             dataIndex: "acceptedTopics",
             width: 280,
             render: (_value, rule) => {
@@ -413,7 +413,11 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
           <Form.Item name="storeName" label="标准店铺名称" rules={[{ required: true, whitespace: true, message: "请输入标准店铺名称" }]}>
             <Input placeholder="请输入完整店铺名称" />
           </Form.Item>
-          <Form.Item label="可接受店铺话题" required>
+          <Form.Item
+            label="店铺话题（任选其一）"
+            required
+            extra="配置多条时，命中任意一条真实可点击话题即可。"
+          >
             <Form.List name="acceptedTopics">
               {(fields, { add, remove }) => (
                 <Space direction="vertical" style={{ width: "100%" }}>

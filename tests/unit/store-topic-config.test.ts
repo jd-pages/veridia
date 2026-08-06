@@ -4,10 +4,12 @@ import { createMockNote } from "@/lib/mock-data";
 import {
   expectedStoreTopicForName,
   normalizeStoreNameForMatch,
+  normalizeStoreTopicForMatch,
   resolveStoreTopicConfig,
   validateStoreTopic,
 } from "@/lib/store-topic-config";
 import {
+  storeAcceptedTopicSeeds,
   storeRequiredTopicSeeds,
   storeTopicRuleSeeds,
 } from "@/lib/store-topic-rule-seeds";
@@ -37,6 +39,20 @@ const storeTopicConfigs = storeTopicRuleSeeds.map((seed) => ({
       sortOrder: 0,
       enabled: true,
     },
+    ...storeAcceptedTopicSeeds
+      .filter(
+        (accepted) =>
+          accepted.commercePlatform === seed.commercePlatform &&
+          normalizeStoreNameForMatch(accepted.storeName) ===
+            normalizeStoreNameForMatch(seed.storeName),
+      )
+      .map((accepted, index) => ({
+        id: `${seed.id}-topic-${index + 2}`,
+        topic: accepted.topic,
+        normalizedTopic: normalizeStoreTopicForMatch(accepted.topic),
+        sortOrder: index + 1,
+        enabled: true,
+      })),
   ],
   requiredTopics: storeRequiredTopicSeeds
     .filter(
@@ -209,6 +225,77 @@ describe("店铺话题配置与精确审核", () => {
       validateStoreTopic({
         ...common,
         extractedTopics: [topic("#ROCKCHECK 海外旗舰店")],
+      }).status,
+    ).toBe("NON_COMPLIANT");
+  });
+
+  it("ROCKCHECK海外专营店的原话题与直播间话题严格二选一", () => {
+    const resolved = resolve({
+      storeName: "ROCKCHECK海外专营店",
+      commercePlatform: "抖音电商",
+    });
+    expect(resolved).toMatchObject({
+      status: "MATCHED",
+      expectedTopics: [
+        "#ROCKCHECK海外专营店",
+        "#爱他美RC奶粉直播间",
+      ],
+      requiredTopics: [],
+    });
+    const common = {
+      channel: "XIAOHONGSHU",
+      storeName: "ROCKCHECK海外专营店",
+      expectedTopics: resolved.expectedTopics,
+      requiredTopics: resolved.requiredTopics,
+      mappingStatus: "MATCHED" as const,
+      pageUrl: "https://www.xiaohongshu.com/explore/123",
+    };
+
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#ROCKCHECK海外专营店")],
+      }).status,
+    ).toBe("COMPLIANT");
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#爱他美RC奶粉直播间")],
+      }).status,
+    ).toBe("COMPLIANT");
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [
+          topic("#ROCKCHECK海外专营店"),
+          topic("#爱他美RC奶粉直播间"),
+        ],
+      }).status,
+    ).toBe("COMPLIANT");
+    expect(
+      validateStoreTopic({ ...common, extractedTopics: [] }).status,
+    ).toBe("NON_COMPLIANT");
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#爱他美RC奶粉直播间", false)],
+        body: "正文提到爱他美RC奶粉直播间，但不是可点击话题。",
+      }).status,
+    ).toBe("NON_COMPLIANT");
+
+    const otherStore = resolve({
+      storeName: "FOLO海外旗舰店",
+      commercePlatform: "抖音电商",
+    });
+    expect(
+      validateStoreTopic({
+        channel: "XIAOHONGSHU",
+        storeName: "FOLO海外旗舰店",
+        expectedTopics: otherStore.expectedTopics,
+        requiredTopics: otherStore.requiredTopics,
+        mappingStatus: "MATCHED",
+        extractedTopics: [topic("#爱他美RC奶粉直播间")],
+        pageUrl: "https://www.xiaohongshu.com/explore/123",
       }).status,
     ).toBe("NON_COMPLIANT");
   });

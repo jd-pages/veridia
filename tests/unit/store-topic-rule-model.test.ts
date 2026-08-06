@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { normalizeStoreNameForMatch } from "@/lib/store-topic-config";
 import {
+  storeAcceptedTopicSeeds,
   storeRequiredTopicSeeds,
   storeTopicRuleSeeds,
 } from "@/lib/store-topic-rule-seeds";
@@ -16,6 +17,13 @@ const acceptedTopicsMigration = readFileSync(
   path.join(
     root,
     "prisma/migrations/202608060001_store_accepted_topics/migration.sql",
+  ),
+  "utf8",
+);
+const rockcheckTopicMigration = readFileSync(
+  path.join(
+    root,
+    "prisma/migrations/202608060003_rockcheck_alternate_topic/migration.sql",
   ),
   "utf8",
 );
@@ -34,6 +42,10 @@ const itemRoute = readFileSync(
 );
 const campaignsPage = readFileSync(
   path.join(root, "app/(admin)/campaigns/page.tsx"),
+  "utf8",
+);
+const storeTopicPanel = readFileSync(
+  path.join(root, "components/campaigns/StoreTopicRulesPanel.tsx"),
   "utf8",
 );
 
@@ -127,6 +139,33 @@ describe("店铺话题规则数据模型与迁移", () => {
         ),
       ).toBe(true);
     }
+  });
+
+  it("只为抖音电商 ROCKCHECK 店铺幂等增加第二条可接受话题", () => {
+    expect(storeAcceptedTopicSeeds).toEqual([
+      {
+        commercePlatform: "DOUYIN_ECOMMERCE",
+        storeName: "ROCKCHECK海外专营店",
+        topic: "#爱他美RC奶粉直播间",
+      },
+    ]);
+    expect(rockcheckTopicMigration).toContain("INSERT OR IGNORE");
+    expect(rockcheckTopicMigration).toContain(
+      '"commercePlatform" = \'DOUYIN_ECOMMERCE\'',
+    );
+    expect(rockcheckTopicMigration).toContain(
+      '"normalizedStoreName" = \'rockcheck海外专营店\'',
+    );
+    expect(rockcheckTopicMigration).toContain("'#爱他美RC奶粉直播间'");
+    expect(rockcheckTopicMigration).toContain("'ACCEPTED'");
+    expect(rockcheckTopicMigration).not.toMatch(
+      /^\s*(?:DELETE|DROP|TRUNCATE|UPDATE)\b/imu,
+    );
+  });
+
+  it("管理页明确展示店铺话题为任选其一", () => {
+    expect(storeTopicPanel).toContain('title: "店铺话题（任选其一）"');
+    expect(storeTopicPanel).toContain('label="店铺话题（任选其一）"');
   });
 
   it("管理入口与读写接口统一使用管理员和审核员业务权限", () => {
