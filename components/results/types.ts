@@ -39,7 +39,11 @@ export interface ResultRow {
   clickableCompliant: boolean;
   storeTopicStatus: string;
   expectedStoreTopic: string | null;
+  expectedStoreTopics: string;
+  requiredStoreTopics: string;
   matchedStoreTopic: string | null;
+  matchedStoreTopics: string;
+  matchedRequiredStoreTopics: string;
   storeTopicFailureReason: string | null;
   missingTopics: string;
   forbiddenTopics: string;
@@ -75,6 +79,8 @@ export interface ResultRow {
     storeTopicRuleId: string | null;
     matchedStoreName: string | null;
     expectedStoreTopic: string | null;
+    expectedStoreTopics: string;
+    requiredStoreTopics: string;
     storeMappingStatus: string | null;
     orderNumber: string | null;
     product: ProductOption;

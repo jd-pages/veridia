@@ -202,6 +202,8 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
         storeTopicRuleId: storeTopicRequirement.storeTopicRuleId,
         matchedStoreName: storeTopicRequirement.matchedStoreName,
         expectedStoreTopic: storeTopicRequirement.expectedTopic,
+        expectedStoreTopics: JSON.stringify(storeTopicRequirement.expectedTopics),
+        requiredStoreTopics: JSON.stringify(storeTopicRequirement.requiredTopics),
         storeMappingStatus: storeTopicRequirement.mappingStatus,
       },
     });
@@ -340,7 +342,13 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
       clickableCompliant: evaluation.clickableCompliant,
       storeTopicStatus: evaluation.storeTopicStatus,
       expectedStoreTopic: evaluation.expectedStoreTopic,
+      expectedStoreTopics: JSON.stringify(evaluation.expectedStoreTopics),
+      requiredStoreTopics: JSON.stringify(evaluation.requiredStoreTopics),
       matchedStoreTopic: evaluation.matchedStoreTopic,
+      matchedStoreTopics: JSON.stringify(evaluation.matchedStoreTopics),
+      matchedRequiredStoreTopics: JSON.stringify(
+        evaluation.matchedRequiredStoreTopics,
+      ),
       storeTopicFailureReason: evaluation.storeTopicFailureReason,
       missingTopics: JSON.stringify(evaluation.missingTopics),
       forbiddenTopics: JSON.stringify(evaluation.forbiddenTopics),

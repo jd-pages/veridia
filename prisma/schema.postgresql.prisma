@@ -62,11 +62,32 @@ model StoreTopicRule {
   updatedBy           String?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+  topicEntries        StoreTopicEntry[]
 
   @@unique([commercePlatform, normalizedStoreName])
   @@index([commercePlatform, enabled, deletedAt])
   @@index([updatedAt])
   @@map("store_topic_rules")
+}
+
+model StoreTopicEntry {
+  id                  String         @id @default(cuid())
+  storeTopicRuleId    String
+  topic               String
+  normalizedTopic     String
+  topicType           String         @default("ACCEPTED")
+  sortOrder           Int            @default(0)
+  enabled             Boolean        @default(true)
+  deletedAt           DateTime?
+  createdBy           String?
+  updatedBy           String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  storeTopicRule      StoreTopicRule @relation(fields: [storeTopicRuleId], references: [id], onDelete: Cascade)
+
+  @@unique([storeTopicRuleId, normalizedTopic])
+  @@index([storeTopicRuleId, topicType, enabled, deletedAt, sortOrder])
+  @@map("store_topic_entries")
 }
 
 model LocalAuthSession {
@@ -297,6 +318,8 @@ model AuditTask {
   storeTopicRuleId   String?
   matchedStoreName   String?
   expectedStoreTopic String?
+  expectedStoreTopics String            @default("[]")
+  requiredStoreTopics String            @default("[]")
   storeMappingStatus String?
   orderNumber        String?
   softwareVersion    String?
@@ -475,6 +498,10 @@ model AuditResult {
   storeTopicStatus        String         @default("NOT_CHECKED")
   expectedStoreTopic      String?
   matchedStoreTopic       String?
+  expectedStoreTopics       String       @default("[]")
+  requiredStoreTopics       String       @default("[]")
+  matchedStoreTopics        String       @default("[]")
+  matchedRequiredStoreTopics String      @default("[]")
   storeTopicFailureReason String?
   missingTopics           String         @default("[]")
   forbiddenTopics         String         @default("[]")

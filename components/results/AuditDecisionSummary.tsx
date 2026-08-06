@@ -10,6 +10,7 @@ import {
 } from "@/lib/result-detail-presentation";
 import { isUnavailableNoteResult } from "@/lib/result-display";
 import { resultDetailLinks } from "@/lib/result-links";
+import { parseStoredStringArray } from "@/lib/stored-json";
 import {
   commercePlatformLabel,
   contentChannelLabel,
@@ -102,6 +103,24 @@ export default function AuditDecisionSummary({
   const platformLabel = commercePlatformLabel(row.task.commercePlatform);
   const storeName = row.task.storeName?.trim() || "—";
   const orderNumber = row.task.orderNumber?.trim() || "—";
+  const expectedStoreTopics = parseStoredStringArray(
+    row.expectedStoreTopics,
+  );
+  if (!expectedStoreTopics.length && row.expectedStoreTopic) {
+    expectedStoreTopics.push(
+      row.expectedStoreTopic.startsWith("#")
+        ? row.expectedStoreTopic
+        : `#${row.expectedStoreTopic}`,
+    );
+  }
+  const matchedStoreTopics = parseStoredStringArray(row.matchedStoreTopics);
+  if (!matchedStoreTopics.length && row.matchedStoreTopic) {
+    matchedStoreTopics.push(row.matchedStoreTopic);
+  }
+  const requiredStoreTopics = parseStoredStringArray(row.requiredStoreTopics);
+  const matchedRequiredStoreTopics = parseStoredStringArray(
+    row.matchedRequiredStoreTopics,
+  );
 
   return (
     <div className={styles.decisionLayout}>
@@ -299,19 +318,54 @@ export default function AuditDecisionSummary({
                   <strong>{row.task.matchedStoreName || "未匹配"}</strong>
                 </div>
                 <div>
-                  <span>要求话题</span>
+                  <span>可接受店铺话题</span>
                   <strong>
-                    {row.expectedStoreTopic
-                      ? row.expectedStoreTopic.startsWith("#")
-                        ? row.expectedStoreTopic
-                        : `#${row.expectedStoreTopic}`
+                    {expectedStoreTopics.length
+                      ? expectedStoreTopics.map((topic) => (
+                          <span key={topic} style={{ display: "block" }}>
+                            {topic}
+                          </span>
+                        ))
                       : "无法确认"}
                   </strong>
                 </div>
                 <div>
-                  <span>实际命中</span>
-                  <strong>{row.matchedStoreTopic || "未命中"}</strong>
+                  <span>附加必需话题</span>
+                  <strong>
+                    {requiredStoreTopics.length
+                      ? requiredStoreTopics.map((topic) => (
+                          <span key={topic} style={{ display: "block" }}>
+                            {topic}
+                          </span>
+                        ))
+                      : "无"}
+                  </strong>
                 </div>
+                <div>
+                  <span>实际命中话题</span>
+                  <strong>
+                    {matchedStoreTopics.length || matchedRequiredStoreTopics.length
+                      ? [...matchedStoreTopics, ...matchedRequiredStoreTopics].map((topic) => (
+                          <span key={topic} style={{ display: "block" }}>
+                            {topic}
+                          </span>
+                        ))
+                      : "无"}
+                  </strong>
+                </div>
+                {row.storeTopicStatus === "NON_COMPLIANT" &&
+                !matchedStoreTopics.length ? (
+                  <div>
+                    <span>缺少可接受话题</span>
+                    <strong>
+                      {expectedStoreTopics.map((topic) => (
+                        <span key={topic} style={{ display: "block" }}>
+                          {topic}
+                        </span>
+                      ))}
+                    </strong>
+                  </div>
+                ) : null}
                 <div>
                   <span>状态</span>
                   <strong>

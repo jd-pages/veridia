@@ -63,6 +63,8 @@ interface CheckedRow {
   channel: NoteLinkPlatform;
   commercePlatform: string;
   expectedStoreTopic: string;
+  expectedStoreTopics: string[];
+  requiredStoreTopics: string[];
   storeTopicRuleId: string;
   matchedStoreName: string;
   storeMappingStatus: StoreMappingStatus;
@@ -189,6 +191,8 @@ export async function POST(request: Request) {
         channel: linkResolution.platform,
         commercePlatform: storeResolution.commercePlatform || "",
         expectedStoreTopic: storeResolution.expectedTopic || "",
+        expectedStoreTopics: storeResolution.expectedTopics,
+        requiredStoreTopics: storeResolution.requiredTopics,
         storeTopicRuleId: storeResolution.storeTopicRuleId || "",
         matchedStoreName: storeResolution.matchedStoreName || "",
         storeMappingStatus: storeResolution.status,
@@ -436,6 +440,8 @@ export async function POST(request: Request) {
             storeTopicRuleId: row.storeTopicRuleId,
             matchedStoreName: row.matchedStoreName,
             expectedStoreTopic: row.expectedStoreTopic,
+            expectedStoreTopics: row.expectedStoreTopics,
+            requiredStoreTopics: row.requiredStoreTopics,
             storeMappingStatus: row.storeMappingStatus,
             orderNumber: row.orderNumber,
           }));

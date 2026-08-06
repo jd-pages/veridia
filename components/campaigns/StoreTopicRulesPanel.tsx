@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   App,
   Button,
@@ -35,6 +35,18 @@ interface StoreTopicRule {
   commercePlatform: CommercePlatform;
   storeName: string;
   expectedTopic: string;
+  acceptedTopics: Array<{
+    id: string;
+    topic: string;
+    enabled: boolean;
+    sortOrder: number;
+  }>;
+  requiredTopics: Array<{
+    id: string;
+    topic: string;
+    enabled: boolean;
+    sortOrder: number;
+  }>;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -51,6 +63,26 @@ interface RuleFormValue {
   commercePlatform: CommercePlatform;
   storeName: string;
   enabled: boolean;
+  acceptedTopics: Array<{
+    id?: string;
+    topic: string;
+    enabled?: boolean;
+  }>;
+  requiredTopics: Array<{
+    id?: string;
+    topic: string;
+    enabled?: boolean;
+  }>;
+}
+
+function topicText(value: unknown) {
+  return String(value ?? "").trim().replace(/^#/u, "").trim();
+}
+
+function normalizedTopicText(value: unknown) {
+  return topicText(value).replace(/[A-Z]/g, (character) =>
+    character.toLowerCase(),
+  );
 }
 
 export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean }) {
@@ -67,6 +99,7 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<StoreTopicRule | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const previousStoreNameRef = useRef("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,16 +129,37 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
 
   const openCreate = () => {
     setEditing(null);
-    form.setFieldsValue({ commercePlatform: "TMALL", storeName: "", enabled: true });
+    previousStoreNameRef.current = "";
+    form.setFieldsValue({
+      commercePlatform: "TMALL",
+      storeName: "",
+      enabled: true,
+      acceptedTopics: [{ topic: "", enabled: true }],
+      requiredTopics: [],
+    });
     setModalOpen(true);
   };
 
   const openEdit = (rule: StoreTopicRule) => {
     setEditing(rule);
+    previousStoreNameRef.current = rule.storeName;
     form.setFieldsValue({
       commercePlatform: rule.commercePlatform,
       storeName: rule.storeName,
       enabled: rule.enabled,
+      acceptedTopics: (rule.acceptedTopics.length
+        ? rule.acceptedTopics
+        : [{ topic: rule.expectedTopic, enabled: true }]
+      ).map((topic) => ({
+        id: "id" in topic ? topic.id : undefined,
+        topic: topicText(topic.topic),
+        enabled: topic.enabled,
+      })),
+      requiredTopics: rule.requiredTopics.map((topic) => ({
+        id: topic.id,
+        topic: topicText(topic.topic),
+        enabled: topic.enabled,
+      })),
     });
     setModalOpen(true);
   };
@@ -222,7 +276,42 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
             render: (value: CommercePlatform) => commercePlatformLabels[value],
           },
           { title: "标准店铺名称", dataIndex: "storeName", width: 230 },
-          { title: "要求店铺话题", dataIndex: "expectedTopic", width: 250 },
+          {
+            title: "可接受店铺话题",
+            dataIndex: "acceptedTopics",
+            width: 280,
+            render: (_value, rule) => {
+              const topics = rule.acceptedTopics.length
+                ? rule.acceptedTopics
+                : [{ topic: rule.expectedTopic }];
+              return (
+                <Space direction="vertical" size={2}>
+                  {topics.map((topic, index) => (
+                    <Typography.Text key={"id" in topic ? topic.id : index}>
+                      {topic.topic.startsWith("#") ? topic.topic : `#${topic.topic}`}
+                    </Typography.Text>
+                  ))}
+                </Space>
+              );
+            },
+          },
+          {
+            title: "附加必需话题",
+            dataIndex: "requiredTopics",
+            width: 220,
+            render: (topics: StoreTopicRule["requiredTopics"]) =>
+              topics.length ? (
+                <Space direction="vertical" size={2}>
+                  {topics.map((topic) => (
+                    <Typography.Text key={topic.id}>
+                      {topic.topic.startsWith("#") ? topic.topic : `#${topic.topic}`}
+                    </Typography.Text>
+                  ))}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">无</Typography.Text>
+              ),
+          },
           {
             title: "状态",
             dataIndex: "enabled",
@@ -291,22 +380,150 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
         title={editing ? "编辑店铺规则" : "新增店铺"}
         okText="保存"
         cancelText="取消"
+        okButtonProps={{ "data-testid": "save-store-topic-rule" }}
+        cancelButtonProps={{ "data-testid": "cancel-store-topic-rule" }}
         confirmLoading={saving}
         onOk={() => void save()}
         onCancel={() => setModalOpen(false)}
       >
-        <Form form={form} layout="vertical">
+        <Form
+          form={form}
+          layout="vertical"
+          onValuesChange={(changed, values) => {
+            if (!("storeName" in changed)) return;
+            const previousStoreName = previousStoreNameRef.current;
+            const nextStoreName = String(values.storeName || "").trim();
+            const acceptedTopics = values.acceptedTopics || [];
+            if (
+              acceptedTopics[0] &&
+              normalizedTopicText(acceptedTopics[0].topic) ===
+                normalizedTopicText(previousStoreName)
+            ) {
+              form.setFieldValue(
+                ["acceptedTopics", 0, "topic"],
+                nextStoreName,
+              );
+            }
+            previousStoreNameRef.current = nextStoreName;
+          }}
+        >
           <Form.Item name="commercePlatform" label="成交平台" rules={[{ required: true, message: "请选择成交平台" }]}>
             <Select options={commercePlatforms.map((value) => ({ value, label: commercePlatformLabels[value] }))} />
           </Form.Item>
           <Form.Item name="storeName" label="标准店铺名称" rules={[{ required: true, whitespace: true, message: "请输入标准店铺名称" }]}>
             <Input placeholder="请输入完整店铺名称" />
           </Form.Item>
-          <Form.Item label="要求店铺话题" shouldUpdate>
-            {() => {
-              const storeName = String(form.getFieldValue("storeName") || "").trim();
-              return <Input value={storeName ? `#${storeName}` : ""} disabled />;
-            }}
+          <Form.Item label="可接受店铺话题" required>
+            <Form.List name="acceptedTopics">
+              {(fields, { add, remove }) => (
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  {fields.map((field, index) => (
+                    <Space key={field.key} align="start" style={{ width: "100%" }}>
+                      <Form.Item name={[field.name, "id"]} hidden>
+                        <Input />
+                      </Form.Item>
+                      <Form.Item
+                        name={[field.name, "topic"]}
+                        style={{ flex: 1, marginBottom: 0 }}
+                        rules={[
+                          {
+                            required: true,
+                            whitespace: true,
+                            message: `请输入第 ${index + 1} 条店铺话题`,
+                          },
+                          { max: 100, message: "每条店铺话题不能超过 100 个字符" },
+                          {
+                            pattern: /^[^,，、;；/|｜\r\n]+$/u,
+                            message: "每个输入框只能填写一条话题，请使用“添加话题”新增",
+                          },
+                        ]}
+                      >
+                        <Input
+                          addonBefore="#"
+                          placeholder="请输入完整话题文字"
+                          aria-label={`可接受店铺话题 ${index + 1}`}
+                          data-testid={`accepted-store-topic-${index}`}
+                        />
+                      </Form.Item>
+                      <Button
+                        danger
+                        type="text"
+                        icon={<DeleteOutlined />}
+                        disabled={fields.length === 1}
+                        aria-label={`删除店铺话题 ${index + 1}`}
+                        onClick={() => remove(field.name)}
+                      >
+                        删除
+                      </Button>
+                    </Space>
+                  ))}
+                  <Button
+                    type="dashed"
+                    icon={<PlusOutlined />}
+                    onClick={() => add({ topic: "", enabled: true })}
+                  >
+                    添加话题
+                  </Button>
+                </Space>
+              )}
+            </Form.List>
+          </Form.Item>
+          <Form.Item
+            label="附加必需话题"
+            extra="配置的每一条都必须作为真实可点击话题命中；不需要时可留空。"
+          >
+            <Form.List name="requiredTopics">
+              {(fields, { add, remove }) => (
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  {fields.map((field, index) => (
+                    <Space key={field.key} align="start" style={{ width: "100%" }}>
+                      <Form.Item name={[field.name, "id"]} hidden>
+                        <Input />
+                      </Form.Item>
+                      <Form.Item
+                        name={[field.name, "topic"]}
+                        style={{ flex: 1, marginBottom: 0 }}
+                        rules={[
+                          {
+                            required: true,
+                            whitespace: true,
+                            message: `请输入第 ${index + 1} 条附加必需话题`,
+                          },
+                          { max: 100, message: "每条附加必需话题不能超过 100 个字符" },
+                          {
+                            pattern: /^[^,，、;；/|｜\r\n]+$/u,
+                            message: "每个输入框只能填写一条话题，请使用“添加必需话题”新增",
+                          },
+                        ]}
+                      >
+                        <Input
+                          addonBefore="#"
+                          placeholder="请输入必须命中的完整话题文字"
+                          aria-label={`附加必需话题 ${index + 1}`}
+                          data-testid={`required-store-topic-${index}`}
+                        />
+                      </Form.Item>
+                      <Button
+                        danger
+                        type="text"
+                        icon={<DeleteOutlined />}
+                        aria-label={`删除附加必需话题 ${index + 1}`}
+                        onClick={() => remove(field.name)}
+                      >
+                        删除
+                      </Button>
+                    </Space>
+                  ))}
+                  <Button
+                    type="dashed"
+                    icon={<PlusOutlined />}
+                    onClick={() => add({ topic: "", enabled: true })}
+                  >
+                    添加必需话题
+                  </Button>
+                </Space>
+              )}
+            </Form.List>
           </Form.Item>
           <Form.Item name="enabled" label="状态" valuePropName="checked">
             <Switch checkedChildren="启用" unCheckedChildren="停用" />

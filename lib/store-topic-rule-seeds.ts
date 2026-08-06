@@ -6,6 +6,12 @@ export interface StoreTopicRuleSeed {
   storeName: string;
 }
 
+export interface StoreRequiredTopicSeed {
+  commercePlatform: CommercePlatform;
+  storeName: string;
+  topic: string;
+}
+
 const storesByPlatform: Record<CommercePlatform, readonly string[]> = {
   JD: [
     "爱他美优选海外专卖店", "爱他美国际进口超市", "Aptamil爱他美海外进口超市",
@@ -40,3 +46,48 @@ export const storeTopicRuleSeeds: readonly StoreTopicRuleSeed[] = Object.entries
     storeName,
   })),
 );
+
+const jdStoresRequiringPlatformTopic = [
+  "健康官方进口超市",
+  "爱他美优选海外专卖店",
+  "Aptamil爱他美海外进口超市",
+  "爱他美国际进口超市",
+  "FOLO海外官方旗舰店",
+  "国际平价会员店",
+  "爱他美精选海外专卖店",
+  "澳大利亚官方进口国家馆",
+  "德国官方进口国家馆",
+  "海星健康官方进口超市",
+  "荷兰官方进口国家馆",
+  "环球甄选旗舰店",
+] as const;
+
+const tmallStoresRequiringPlatformTopic = [
+  "爱他美金胜海外专卖店",
+  "AYW海外专营店",
+  "folo海外专营店",
+  "BJF海外专营店",
+] as const;
+
+const taobaoStoresRequiringPlatformTopic = [
+  "国际进口超市",
+  "ALG阿莱购",
+] as const;
+
+export const storeRequiredTopicSeeds: readonly StoreRequiredTopicSeed[] = [
+  ...jdStoresRequiringPlatformTopic.map((storeName) => ({
+    commercePlatform: "JD" as const,
+    storeName,
+    topic: "#京东",
+  })),
+  ...tmallStoresRequiringPlatformTopic.map((storeName) => ({
+    commercePlatform: "TMALL" as const,
+    storeName,
+    topic: "#天猫",
+  })),
+  ...taobaoStoresRequiringPlatformTopic.map((storeName) => ({
+    commercePlatform: "TAOBAO" as const,
+    storeName,
+    topic: "#淘宝",
+  })),
+];

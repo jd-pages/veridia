@@ -119,6 +119,8 @@ export interface AuditContext {
     matchedStoreName: string | null;
     commercePlatform: "JD" | "DOUYIN_ECOMMERCE" | "TMALL" | "TAOBAO" | null;
     expectedTopic: string | null;
+    expectedTopics: string[];
+    requiredTopics: string[];
     mappingStatus: "MATCHED" | "STORE_NAME_MISSING" | "STORE_NOT_MAPPED";
   } | null;
 }
@@ -152,7 +154,11 @@ export interface AuditEvaluation {
     | "NON_COMPLIANT"
     | "UNREVIEWABLE";
   expectedStoreTopic: string | null;
+  expectedStoreTopics: string[];
+  requiredStoreTopics: string[];
   matchedStoreTopic: string | null;
+  matchedStoreTopics: string[];
+  matchedRequiredStoreTopics: string[];
   storeTopicFailureReason: string | null;
   publicStatus: "NOT_REQUIRED" | "PUBLIC" | "NOT_PUBLIC" | "UNKNOWN";
   retentionStatus:

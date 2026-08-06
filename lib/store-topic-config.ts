@@ -12,6 +12,16 @@ export interface StoreTopicConfig {
   storeName: string;
   normalizedStoreName: string;
   expectedTopic: string;
+  acceptedTopics: readonly StoreAcceptedTopicConfig[];
+  requiredTopics: readonly StoreAcceptedTopicConfig[];
+  enabled: boolean;
+}
+
+export interface StoreAcceptedTopicConfig {
+  id: string;
+  topic: string;
+  normalizedTopic: string;
+  sortOrder: number;
   enabled: boolean;
 }
 
@@ -26,6 +36,20 @@ export function expectedStoreTopicForName(storeName: unknown) {
   return normalized ? `#${normalized}` : "";
 }
 
+export function storeTopicWithHash(value: unknown) {
+  const text = exactStoreTopicText(value);
+  return text ? `#${text}` : "";
+}
+
+export function exactStoreTopicText(value: unknown) {
+  const trimmed = String(value ?? "").trim();
+  return trimmed.startsWith("#") ? trimmed.slice(1).trim() : trimmed;
+}
+
+export function normalizeStoreTopicForMatch(value: unknown) {
+  return normalizeStoreNameForMatch(exactStoreTopicText(value));
+}
+
 export type StoreMappingStatus =
   | "MATCHED"
   | "STORE_NAME_MISSING"
@@ -38,6 +62,8 @@ export interface StoreTopicResolution {
   matchedStoreName: string | null;
   commercePlatform: CommercePlatform | null;
   expectedTopic: string | null;
+  expectedTopics: string[];
+  requiredTopics: string[];
   config: StoreTopicConfig | null;
   failureReason: string | null;
 }
@@ -56,6 +82,8 @@ export function resolveStoreTopicConfig(
       matchedStoreName: null,
       commercePlatform,
       expectedTopic: null,
+      expectedTopics: [],
+      requiredTopics: [],
       config: null,
       failureReason: "导入数据未填写店铺名称。",
     };
@@ -75,19 +103,39 @@ export function resolveStoreTopicConfig(
       matchedStoreName: null,
       commercePlatform,
       expectedTopic: null,
+      expectedTopics: [],
+      requiredTopics: [],
       config: null,
       failureReason: commercePlatform
         ? `未在${commercePlatform === "JD" ? "京东" : commercePlatform === "TMALL" ? "天猫" : commercePlatform === "TAOBAO" ? "淘宝" : "抖音电商"}店铺话题规则中找到匹配店铺：${storeName}。`
         : `未找到有效成交平台，无法匹配店铺：${storeName}。`,
     };
   }
+  const expectedTopics = matches[0].acceptedTopics
+    .filter((topic) => topic.enabled)
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .map((topic) => storeTopicWithHash(topic.topic))
+    .filter(Boolean);
+  const requiredTopics = matches[0].requiredTopics
+    .filter((topic) => topic.enabled)
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .map((topic) => storeTopicWithHash(topic.topic))
+    .filter(Boolean);
+  const compatibleExpectedTopic =
+    expectedTopics[0] || storeTopicWithHash(matches[0].expectedTopic);
   return {
     status: "MATCHED",
     storeTopicRuleId: matches[0].id,
     storeName,
     matchedStoreName: matches[0].storeName,
     commercePlatform: matches[0].commercePlatform,
-    expectedTopic: matches[0].expectedTopic,
+    expectedTopic: compatibleExpectedTopic || null,
+    expectedTopics: expectedTopics.length
+      ? expectedTopics
+      : compatibleExpectedTopic
+        ? [compatibleExpectedTopic]
+        : [],
+    requiredTopics,
     config: matches[0],
     failureReason: null,
   };
@@ -103,89 +151,193 @@ export type StoreTopicAuditStatus =
 export interface StoreTopicAuditResult {
   status: StoreTopicAuditStatus;
   expectedTopic: string | null;
+  expectedTopics: string[];
+  requiredTopics: string[];
   matchedTopic: string | null;
+  matchedTopics: string[];
+  matchedRequiredTopics: string[];
   failureReason: string | null;
   needsReview: boolean;
-}
-
-function exactTopicText(value: unknown) {
-  const trimmed = String(value ?? "").trim();
-  return trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
-}
-
-function topicWithHash(value: unknown) {
-  const text = exactTopicText(value);
-  return text ? `#${text}` : "";
 }
 
 export function validateStoreTopic(input: {
   channel?: unknown;
   storeName?: unknown;
   expectedTopic?: unknown;
+  expectedTopics?: unknown;
+  requiredTopics?: unknown;
   mappingStatus?: unknown;
   extractedTopics: ExtractedTopic[];
   body?: unknown;
   pageUrl?: string | null;
 }): StoreTopicAuditResult {
-  const expectedTopic = topicWithHash(input.expectedTopic);
-  const expectedTopicText = exactTopicText(expectedTopic);
+  const normalizedTopicList = (values: unknown[]) => [
+    ...new Map(
+      values
+        .map(storeTopicWithHash)
+        .filter(Boolean)
+        .map((topic) => [normalizeStoreTopicForMatch(topic), topic] as const),
+    ).values(),
+  ];
+  const expectedTopics = normalizedTopicList([
+    ...(Array.isArray(input.expectedTopics) ? input.expectedTopics : []),
+    input.expectedTopic,
+  ]);
+  const requiredTopics = normalizedTopicList(
+    Array.isArray(input.requiredTopics) ? input.requiredTopics : [],
+  );
+  const expectedTopic = expectedTopics[0] || null;
   const mappingStatus = String(input.mappingStatus ?? "");
+  const emptyResult = {
+    expectedTopic: null,
+    expectedTopics: [] as string[],
+    requiredTopics: [] as string[],
+    matchedTopic: null,
+    matchedTopics: [] as string[],
+    matchedRequiredTopics: [] as string[],
+  };
   if (mappingStatus === "STORE_NAME_MISSING") {
     return {
-      status: "UNREVIEWABLE", expectedTopic: null, matchedTopic: null,
-      failureReason: "导入数据未填写店铺名称，店铺话题无法审核。", needsReview: true,
+      status: "UNREVIEWABLE",
+      ...emptyResult,
+      failureReason: "导入数据未填写店铺名称，店铺话题无法审核。",
+      needsReview: true,
     };
   }
-  if (mappingStatus !== "MATCHED" || !expectedTopicText) {
+  if (mappingStatus !== "MATCHED" || !expectedTopics.length) {
     return {
-      status: "UNREVIEWABLE", expectedTopic: null, matchedTopic: null,
-      failureReason: "导入店铺名称未匹配店铺话题配置。", needsReview: true,
+      status: "UNREVIEWABLE",
+      ...emptyResult,
+      failureReason: "导入店铺名称未匹配店铺话题配置。",
+      needsReview: true,
     };
   }
   const channel = parseContentChannel(input.channel);
   if (channel !== "XIAOHONGSHU") {
     return {
-      status: "UNREVIEWABLE", expectedTopic, matchedTopic: null,
-      failureReason: "当前内容渠道尚未配置店铺话题审核适配器。", needsReview: true,
+      status: "UNREVIEWABLE",
+      expectedTopic,
+      expectedTopics,
+      requiredTopics,
+      matchedTopic: null,
+      matchedTopics: [],
+      matchedRequiredTopics: [],
+      failureReason: "当前内容渠道尚未配置店铺话题审核适配器。",
+      needsReview: true,
     };
   }
-  const exactMatches = input.extractedTopics.filter(
-    (topic) =>
-      normalizeStoreNameForMatch(exactTopicText(topic.displayText)) ===
-      normalizeStoreNameForMatch(expectedTopicText),
-  );
-  if (!exactMatches.length) {
-    const onlyInBody = normalizeStoreNameForMatch(input.body).includes(
-      normalizeStoreNameForMatch(expectedTopicText),
+  const normalizedBody = normalizeStoreNameForMatch(input.body);
+  const matchesFor = (configuredTopic: string) =>
+    input.extractedTopics.filter(
+      (topic) =>
+        normalizeStoreTopicForMatch(topic.displayText) ===
+        normalizeStoreTopicForMatch(configuredTopic),
     );
+  const clickableMatchesFor = (configuredTopic: string) =>
+    matchesFor(configuredTopic).filter(
+      (topic) =>
+        classifyTopicCandidates([topic], {
+          pageUrl: input.pageUrl || undefined,
+        }) === "CLICKABLE",
+    );
+  const matchedTopics = normalizedTopicList(
+    expectedTopics.flatMap((topic) =>
+      clickableMatchesFor(topic).map((candidate) => candidate.displayText),
+    ),
+  );
+  const matchedTopic = matchedTopics[0] || null;
+  const hardFailures: string[] = [];
+  const reviewFailures: string[] = [];
+
+  if (!matchedTopics.length) {
+    const exactAcceptedMatches = expectedTopics.flatMap(matchesFor);
+    if (!exactAcceptedMatches.length) {
+      const onlyInBody = expectedTopics.some((topic) =>
+        normalizedBody.includes(normalizeStoreTopicForMatch(topic)),
+      );
+      hardFailures.push(
+        onlyInBody
+          ? `可接受店铺话题仅出现在正文中，未形成可点击话题：${expectedTopics.join("；")}`
+          : `未命中任何可接受店铺话题：${expectedTopics.join("；")}`,
+      );
+    } else if (
+      classifyTopicCandidates(exactAcceptedMatches, {
+        pageUrl: input.pageUrl || undefined,
+      }) === "UNKNOWN"
+    ) {
+      reviewFailures.push(
+        `可接受店铺话题可点击状态无法确认：${normalizedTopicList(exactAcceptedMatches.map((topic) => topic.displayText)).join("；")}`,
+      );
+    } else {
+      hardFailures.push(
+        `可接受店铺话题不可点击：${normalizedTopicList(exactAcceptedMatches.map((topic) => topic.displayText)).join("；")}`,
+      );
+    }
+  }
+
+  const matchedRequiredTopics: string[] = [];
+  for (const requiredTopic of requiredTopics) {
+    const exactMatches = matchesFor(requiredTopic);
+    const clickableMatches = clickableMatchesFor(requiredTopic);
+    if (clickableMatches.length) {
+      matchedRequiredTopics.push(
+        storeTopicWithHash(clickableMatches[0].displayText),
+      );
+      continue;
+    }
+    if (!exactMatches.length) {
+      hardFailures.push(
+        normalizedBody.includes(normalizeStoreTopicForMatch(requiredTopic))
+          ? `附加必需话题仅出现在正文中，未形成可点击话题：${requiredTopic}`
+          : `缺少附加必需话题：${requiredTopic}`,
+      );
+    } else if (
+      classifyTopicCandidates(exactMatches, {
+        pageUrl: input.pageUrl || undefined,
+      }) === "UNKNOWN"
+    ) {
+      reviewFailures.push(`附加必需话题可点击状态无法确认：${requiredTopic}`);
+    } else {
+      hardFailures.push(`附加必需话题不可点击：${requiredTopic}`);
+    }
+  }
+
+  const failureReason = [...hardFailures, ...reviewFailures].join("；") || null;
+  if (hardFailures.length) {
     return {
-      status: "NON_COMPLIANT", expectedTopic, matchedTopic: null,
-      failureReason: onlyInBody
-        ? `店铺名称仅出现在正文中，未形成可点击话题：${expectedTopic}`
-        : `缺少店铺话题：${expectedTopic}`,
+      status: "NON_COMPLIANT",
+      expectedTopic,
+      expectedTopics,
+      requiredTopics,
+      matchedTopic,
+      matchedTopics,
+      matchedRequiredTopics,
+      failureReason,
       needsReview: false,
     };
   }
-  const clickability = classifyTopicCandidates(exactMatches, {
-    pageUrl: input.pageUrl || undefined,
-  });
-  const matchedTopic = topicWithHash(exactMatches[0].displayText);
-  if (clickability === "CLICKABLE") {
+  if (reviewFailures.length) {
     return {
-      status: "COMPLIANT", expectedTopic, matchedTopic,
-      failureReason: null, needsReview: false,
-    };
-  }
-  if (clickability === "UNKNOWN") {
-    return {
-      status: "UNREVIEWABLE", expectedTopic, matchedTopic,
-      failureReason: `店铺话题可点击状态无法确认：${expectedTopic}`,
+      status: "UNREVIEWABLE",
+      expectedTopic,
+      expectedTopics,
+      requiredTopics,
+      matchedTopic,
+      matchedTopics,
+      matchedRequiredTopics,
+      failureReason,
       needsReview: true,
     };
   }
   return {
-    status: "NON_COMPLIANT", expectedTopic, matchedTopic,
-    failureReason: `店铺话题不可点击：${expectedTopic}`,
+    status: "COMPLIANT",
+    expectedTopic,
+    expectedTopics,
+    requiredTopics,
+    matchedTopic,
+    matchedTopics,
+    matchedRequiredTopics,
+    failureReason: null,
     needsReview: false,
   };
 }
@@ -215,6 +367,8 @@ export function buildStoreTopicAuditRequirement(input: {
     commercePlatform:
       parseCommercePlatform(input.commercePlatform) || resolved.commercePlatform,
     expectedTopic: resolved.expectedTopic,
+    expectedTopics: resolved.expectedTopics,
+    requiredTopics: resolved.requiredTopics,
     mappingStatus: resolved.status,
   };
 }
@@ -225,7 +379,13 @@ export function storeTopicAuditForNote(
 ) {
   if (!requirement) {
     return {
-      status: "NOT_REQUIRED", expectedTopic: null, matchedTopic: null,
+      status: "NOT_REQUIRED",
+      expectedTopic: null,
+      expectedTopics: [],
+      requiredTopics: [],
+      matchedTopic: null,
+      matchedTopics: [],
+      matchedRequiredTopics: [],
       failureReason: null, needsReview: false,
     } satisfies StoreTopicAuditResult;
   }

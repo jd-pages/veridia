@@ -145,7 +145,11 @@ export function evaluateAudit(
       clickableCompliant: true,
       storeTopicStatus: "NOT_CHECKED",
       expectedStoreTopic: context.storeTopicRequirement?.expectedTopic || null,
+      expectedStoreTopics: context.storeTopicRequirement?.expectedTopics || [],
+      requiredStoreTopics: context.storeTopicRequirement?.requiredTopics || [],
       matchedStoreTopic: null,
+      matchedStoreTopics: [],
+      matchedRequiredStoreTopics: [],
       storeTopicFailureReason: null,
       publicStatus: "UNKNOWN",
       retentionStatus: "NOT_REQUIRED",
@@ -709,16 +713,26 @@ export function evaluateAudit(
     evaluations.push({
       ruleKey: "STORE_TOPIC",
       ruleName: "店铺话题审核",
-      expectedValue: storeTopicAudit.expectedTopic
-        ? `${storeTopicAudit.expectedTopic.startsWith("#") ? storeTopicAudit.expectedTopic : `#${storeTopicAudit.expectedTopic}`}，且为可点击话题`
+      expectedValue: storeTopicAudit.expectedTopics.length
+        ? `${storeTopicAudit.expectedTopics.join("；")} 中任意一条${
+            storeTopicAudit.requiredTopics.length
+              ? `，并且 ${storeTopicAudit.requiredTopics.join("；")} 全部命中`
+              : ""
+          }，且均为可点击话题`
         : "导入店铺名称需完全匹配店铺话题配置",
-      actualValue: storeTopicAudit.matchedTopic || "未命中",
+      actualValue:
+        [
+          ...storeTopicAudit.matchedTopics,
+          ...storeTopicAudit.matchedRequiredTopics,
+        ].join("；") || "未命中",
       passed: storeTopicAudit.needsReview ? true : passed,
       failureReason: storeTopicAudit.failureReason || undefined,
       evidence: {
         status: storeTopicAudit.status,
-        expectedTopic: storeTopicAudit.expectedTopic,
-        matchedTopic: storeTopicAudit.matchedTopic,
+        expectedTopics: storeTopicAudit.expectedTopics,
+        requiredTopics: storeTopicAudit.requiredTopics,
+        matchedTopics: storeTopicAudit.matchedTopics,
+        matchedRequiredTopics: storeTopicAudit.matchedRequiredTopics,
       },
     });
     if (!passed && storeTopicAudit.failureReason) {
@@ -845,7 +859,11 @@ export function evaluateAudit(
     clickableCompliant,
     storeTopicStatus: storeTopicAudit.status,
     expectedStoreTopic: storeTopicAudit.expectedTopic,
+    expectedStoreTopics: storeTopicAudit.expectedTopics,
+    requiredStoreTopics: storeTopicAudit.requiredTopics,
     matchedStoreTopic: storeTopicAudit.matchedTopic,
+    matchedStoreTopics: storeTopicAudit.matchedTopics,
+    matchedRequiredStoreTopics: storeTopicAudit.matchedRequiredTopics,
     storeTopicFailureReason: storeTopicAudit.failureReason,
     publicStatus,
     retentionStatus,

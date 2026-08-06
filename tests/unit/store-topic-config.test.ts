@@ -7,7 +7,10 @@ import {
   resolveStoreTopicConfig,
   validateStoreTopic,
 } from "@/lib/store-topic-config";
-import { storeTopicRuleSeeds } from "@/lib/store-topic-rule-seeds";
+import {
+  storeRequiredTopicSeeds,
+  storeTopicRuleSeeds,
+} from "@/lib/store-topic-rule-seeds";
 import type { AuditContext, ExtractedTopic } from "@/lib/types";
 
 const topic = (
@@ -26,6 +29,29 @@ const storeTopicConfigs = storeTopicRuleSeeds.map((seed) => ({
   ...seed,
   normalizedStoreName: normalizeStoreNameForMatch(seed.storeName),
   expectedTopic: expectedStoreTopicForName(seed.storeName),
+  acceptedTopics: [
+    {
+      id: `${seed.id}-topic-1`,
+      topic: expectedStoreTopicForName(seed.storeName),
+      normalizedTopic: normalizeStoreNameForMatch(seed.storeName),
+      sortOrder: 0,
+      enabled: true,
+    },
+  ],
+  requiredTopics: storeRequiredTopicSeeds
+    .filter(
+      (required) =>
+        required.commercePlatform === seed.commercePlatform &&
+        normalizeStoreNameForMatch(required.storeName) ===
+          normalizeStoreNameForMatch(seed.storeName),
+    )
+    .map((required, index) => ({
+      id: `${seed.id}-required-${index + 1}`,
+      topic: required.topic,
+      normalizedTopic: normalizeStoreNameForMatch(required.topic.replace(/^#/u, "")),
+      sortOrder: index,
+      enabled: true,
+    })),
   enabled: true,
 }));
 
@@ -87,6 +113,48 @@ describe("店铺话题配置与精确审核", () => {
     ).toBe("STORE_NOT_MAPPED");
   });
 
+  it("只为指定平台和完整店铺名加载附加平台话题", () => {
+    expect(
+      resolve({ storeName: "健康官方进口超市", commercePlatform: "京东" })
+        .requiredTopics,
+    ).toEqual(["#京东"]);
+    expect(
+      resolve({ storeName: "FOLO海外专营店", commercePlatform: "天猫" })
+        .requiredTopics,
+    ).toEqual(["#天猫"]);
+    expect(
+      resolve({ storeName: "ALG阿莱购", commercePlatform: "淘宝" })
+        .requiredTopics,
+    ).toEqual(["#淘宝"]);
+    expect(
+      resolve({ storeName: "国际进口超市", commercePlatform: "淘宝" })
+        .requiredTopics,
+    ).toEqual(["#淘宝"]);
+    expect(
+      resolve({ storeName: "京东健康官方进口超市", commercePlatform: "京东" })
+        .requiredTopics,
+    ).toEqual([]);
+
+    const taobaoAlg = storeTopicConfigs.find(
+      (config) =>
+        config.commercePlatform === "TAOBAO" && config.storeName === "ALG阿莱购",
+    )!;
+    expect(
+      resolveStoreTopicConfig(
+        [
+          ...storeTopicConfigs,
+          {
+            ...taobaoAlg,
+            id: "same-name-on-jd",
+            commercePlatform: "JD",
+            requiredTopics: [],
+          },
+        ],
+        { storeName: "ALG阿莱购", commercePlatform: "京东" },
+      ).requiredTopics,
+    ).toEqual([]);
+  });
+
   it.each([
     "FOLO海外店",
     "FOLO 海外专营店",
@@ -106,6 +174,144 @@ describe("店铺话题配置与精确审核", () => {
         pageUrl: "https://www.xiaohongshu.com/explore/123",
       }),
     ).toMatchObject({ status: "COMPLIANT", matchedTopic: "#京东健康官方进口超市" });
+  });
+
+  it("任意命中多个可接受店铺话题中的一条即合规", () => {
+    const common = {
+      channel: "XIAOHONGSHU",
+      storeName: "ROCKCHECK海外专营店",
+      expectedTopics: [
+        "#ROCKCHECK海外专营店",
+        "#ROCKCHECK海外旗舰店",
+      ],
+      mappingStatus: "MATCHED",
+      pageUrl: "https://www.xiaohongshu.com/explore/123",
+    };
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#ROCKCHECK海外专营店")],
+      }),
+    ).toMatchObject({
+      status: "COMPLIANT",
+      matchedTopics: ["#ROCKCHECK海外专营店"],
+    });
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#rockcheck海外旗舰店")],
+      }),
+    ).toMatchObject({
+      status: "COMPLIANT",
+      matchedTopics: ["#rockcheck海外旗舰店"],
+    });
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#ROCKCHECK 海外旗舰店")],
+      }).status,
+    ).toBe("NON_COMPLIANT");
+  });
+
+  it("普通正文命中第二条话题不算合规，且缺失原因保留全部候选", () => {
+    const result = validateStoreTopic({
+      channel: "XIAOHONGSHU",
+      expectedTopics: [
+        "#ROCKCHECK海外专营店",
+        "#ROCKCHECK海外旗舰店",
+      ],
+      mappingStatus: "MATCHED",
+      extractedTopics: [],
+      body: "正文提到了ROCKCHECK海外旗舰店，但不是可点击话题。",
+    });
+    expect(result.status).toBe("NON_COMPLIANT");
+    expect(result.failureReason).toContain("仅出现在正文中");
+    expect(result.expectedTopics).toEqual([
+      "#ROCKCHECK海外专营店",
+      "#ROCKCHECK海外旗舰店",
+    ]);
+  });
+
+  it("可接受话题组内 OR，附加必需话题组内 AND", () => {
+    const common = {
+      channel: "XIAOHONGSHU",
+      expectedTopics: ["#健康官方进口超市", "#健康进口旗舰店"],
+      requiredTopics: ["#京东"],
+      mappingStatus: "MATCHED",
+      pageUrl: "https://www.xiaohongshu.com/explore/123",
+    };
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#健康进口旗舰店"), topic("#京东")],
+      }),
+    ).toMatchObject({
+      status: "COMPLIANT",
+      matchedTopics: ["#健康进口旗舰店"],
+      matchedRequiredTopics: ["#京东"],
+    });
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#健康官方进口超市")],
+      }).failureReason,
+    ).toBe("缺少附加必需话题：#京东");
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#京东")],
+      }).failureReason,
+    ).toContain("未命中任何可接受店铺话题");
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [
+          topic("#健康官方进口超市"),
+          topic("#京东", false),
+        ],
+      }).failureReason,
+    ).toBe("附加必需话题不可点击：#京东");
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#健康官方进口超市")],
+        body: "正文里提到京东，但不是可点击话题。",
+      }).failureReason,
+    ).toBe("附加必需话题仅出现在正文中，未形成可点击话题：#京东");
+  });
+
+  it("淘宝店铺必须同时命中独立可点击的店铺话题和 #淘宝", () => {
+    const common = {
+      channel: "XIAOHONGSHU",
+      expectedTopics: ["#ALG阿莱购"],
+      requiredTopics: ["#淘宝"],
+      mappingStatus: "MATCHED",
+      pageUrl: "https://www.xiaohongshu.com/explore/taobao-store",
+    };
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#ALG阿莱购"), topic("#淘宝")],
+      }).status,
+    ).toBe("COMPLIANT");
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#ALG阿莱购")],
+      }).failureReason,
+    ).toBe("缺少附加必需话题：#淘宝");
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#淘宝")],
+      }).failureReason,
+    ).toContain("未命中任何可接受店铺话题");
+    expect(
+      validateStoreTopic({
+        ...common,
+        extractedTopics: [topic("#ALG阿莱购"), topic("#淘宝", false)],
+      }).failureReason,
+    ).toBe("附加必需话题不可点击：#淘宝");
   });
 
   it("可点击店铺话题仅忽略英文字母大小写", () => {
@@ -158,6 +364,8 @@ describe("店铺话题配置与精确审核", () => {
         matchedStoreName: "京东健康官方进口超市",
         commercePlatform: "JD",
         expectedTopic: "#京东健康官方进口超市",
+        expectedTopics: ["#京东健康官方进口超市"],
+        requiredTopics: [],
         mappingStatus: "MATCHED",
       },
     };
@@ -171,7 +379,7 @@ describe("店铺话题配置与精确审核", () => {
     expect(missing.storeTopicStatus).toBe("NON_COMPLIANT");
     expect(missing.topicsCompliant).toBe(false);
     expect(missing.failureReasons.join("；")).toContain(
-      "缺少店铺话题：#京东健康官方进口超市",
+      "未命中任何可接受店铺话题：#京东健康官方进口超市",
     );
   });
 
@@ -191,11 +399,11 @@ describe("店铺话题配置与精确审核", () => {
     expect(validateStoreTopic({
       ...common,
       extractedTopics: [topic("#京东健康")],
-    }).failureReason).toBe("缺少店铺话题：#京东健康官方进口超市");
+    }).failureReason).toBe("未命中任何可接受店铺话题：#京东健康官方进口超市");
     expect(validateStoreTopic({
       ...common,
       extractedTopics: [topic("#京东健康官方进口超市", false)],
-    }).failureReason).toBe("店铺话题不可点击：#京东健康官方进口超市");
+    }).failureReason).toBe("可接受店铺话题不可点击：#京东健康官方进口超市");
   });
 
   it("店铺未映射无法审核，NOTE_NOT_FOUND 仍优先短路为未审核", () => {
@@ -225,6 +433,8 @@ describe("店铺话题配置与精确审核", () => {
         matchedStoreName: "京东健康官方进口超市",
         commercePlatform: "JD",
         expectedTopic: "#京东健康官方进口超市",
+        expectedTopics: ["#京东健康官方进口超市"],
+        requiredTopics: [],
         mappingStatus: "MATCHED",
       },
     };

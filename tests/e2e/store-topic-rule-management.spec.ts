@@ -22,15 +22,36 @@ test("活动与规则可独立维护店铺话题规则", async ({ page }) => {
   await search.press("Enter");
   await page.getByRole("button", { name: /新增店铺/u }).click();
   await page.getByLabel("标准店铺名称").fill(originalName);
-  await expect(page.getByRole("dialog").locator("input[disabled]")).toHaveValue(`#${originalName}`);
-  await page.keyboard.press("Escape");
+  await expect(page.getByLabel("可接受店铺话题 1")).toHaveValue(originalName);
+  await page.getByRole("button", { name: "添加话题" }).click();
+  await expect(page.getByLabel("可接受店铺话题 2")).toBeVisible();
+  const alternateTopic = `TestShop${suffix}海外旗舰店`;
+  await page.getByLabel("可接受店铺话题 2").fill(alternateTopic);
+  await page.getByRole("button", { name: "添加必需话题" }).click();
+  const requiredTopic = `平台必需话题${suffix}`;
+  await page.getByTestId("required-store-topic-0").fill(requiredTopic);
+  await page.getByTestId("save-store-topic-rule").click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
-  const createdResponse = await page.request.post("/api/store-topic-rules", {
-    data: { commercePlatform: "TMALL", storeName: originalName, enabled: true },
-  });
-  expect(createdResponse.ok()).toBeTruthy();
-  const created = (await createdResponse.json()).data as { id: string };
+  const createdPage = await page.request.get(
+    `/api/store-topic-rules?query=${encodeURIComponent(originalName)}&pageSize=10`,
+  );
+  const createdItems = (await createdPage.json()).data.items as Array<{
+    id: string;
+    acceptedTopics: Array<{ topic: string }>;
+    requiredTopics: Array<{ topic: string }>;
+  }>;
+  const created = createdItems.find((item) =>
+    item.acceptedTopics.some((topic) => topic.topic === `#${alternateTopic}`),
+  )!;
+  expect(created).toBeTruthy();
+  expect(created.acceptedTopics.map((topic) => topic.topic)).toEqual([
+    `#${originalName}`,
+    `#${alternateTopic}`,
+  ]);
+  expect(created.requiredTopics.map((topic) => topic.topic)).toEqual([
+    `#${requiredTopic}`,
+  ]);
 
   const duplicate = await page.request.post("/api/store-topic-rules", {
     data: {
@@ -47,23 +68,45 @@ test("活动与规则可独立维护店铺话题规则", async ({ page }) => {
   await search.press("Enter");
   const row = page.getByRole("row").filter({ hasText: originalName });
   await expect(row).toBeVisible();
+  await expect(row.getByText(`#${originalName}`, { exact: true })).toBeVisible();
+  await expect(row.getByText(`#${alternateTopic}`, { exact: true })).toBeVisible();
+  await expect(row.getByText(`#${requiredTopic}`, { exact: true })).toBeVisible();
   await row.getByRole("button", { name: /编辑/u }).click();
   await page.getByLabel("标准店铺名称").fill(editedName);
-  await expect(page.getByRole("dialog").locator("input[disabled]")).toHaveValue(`#${editedName}`);
-  await page.keyboard.press("Escape");
+  await expect(page.getByLabel("可接受店铺话题 1")).toHaveValue(editedName);
+  await expect(page.getByLabel("可接受店铺话题 2")).toHaveValue(alternateTopic);
+  await expect(page.getByTestId("required-store-topic-0")).toHaveValue(requiredTopic);
+  await page.getByTestId("save-store-topic-rule").click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
-  const edited = await page.request.patch(`/api/store-topic-rules/${created.id}`, {
-    data: { commercePlatform: "TMALL", storeName: editedName, enabled: true },
-  });
-  expect(edited.ok()).toBeTruthy();
-  expect((await edited.json()).data.expectedTopic).toBe(`#${editedName}`);
+  const editedResponse = await page.request.get(
+    `/api/store-topic-rules?query=${encodeURIComponent(editedName)}&pageSize=10`,
+  );
+  const editedData = (await editedResponse.json()).data.items.find(
+    (item: { id: string }) => item.id === created.id,
+  );
+  expect(editedData.expectedTopic).toBe(`#${editedName}`);
+  expect(editedData.acceptedTopics.map((topic: { topic: string }) => topic.topic))
+    .toEqual([`#${editedName}`, `#${alternateTopic}`]);
+  expect(editedData.requiredTopics.map((topic: { topic: string }) => topic.topic))
+    .toEqual([`#${requiredTopic}`]);
 
   await page.getByRole("button", { name: /刷新/u }).click();
   await search.fill(editedName.toLowerCase());
   await search.press("Enter");
   const editedRow = page.getByRole("row").filter({ hasText: editedName });
   await expect(editedRow).toBeVisible();
+  await editedRow.getByRole("button", { name: /编辑/u }).click();
+  const customTopic = `自定义${suffix}话题`;
+  await page.getByLabel("可接受店铺话题 1").fill(customTopic);
+  await page.getByLabel("标准店铺名称").fill(`${editedName}更新`);
+  await expect(page.getByLabel("可接受店铺话题 1")).toHaveValue(customTopic);
+  await expect(page.getByLabel("可接受店铺话题 2")).toHaveValue(alternateTopic);
+  await expect(page.getByTestId("required-store-topic-0")).toHaveValue(requiredTopic);
+  await page.getByLabel("可接受店铺话题 2").fill(customTopic.toLowerCase());
+  await page.getByTestId("save-store-topic-rule").click();
+  await expect(page.getByText(/已存在相同话题/u)).toBeVisible();
+  await page.getByTestId("cancel-store-topic-rule").click();
   const disabled = await page.request.patch(`/api/store-topic-rules/${created.id}`, {
     data: { commercePlatform: "TMALL", storeName: editedName, enabled: false },
   });

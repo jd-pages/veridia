@@ -25,6 +25,8 @@ export interface AutomaticTaskInput {
   storeTopicRuleId?: string | null;
   matchedStoreName?: string | null;
   expectedStoreTopic?: string | null;
+  expectedStoreTopics?: string[] | null;
+  requiredStoreTopics?: string[] | null;
   storeMappingStatus?: string | null;
   orderNumber?: string | null;
   source?: string;
@@ -110,6 +112,8 @@ export async function createAutomaticBatchInTransaction(
       storeTopicRuleId: task.storeTopicRuleId?.trim() || null,
       matchedStoreName: task.matchedStoreName?.trim() || null,
       expectedStoreTopic: task.expectedStoreTopic?.trim() || null,
+      expectedStoreTopics: JSON.stringify(task.expectedStoreTopics || []),
+      requiredStoreTopics: JSON.stringify(task.requiredStoreTopics || []),
       storeMappingStatus: task.storeMappingStatus?.trim() || null,
       orderNumber: task.orderNumber?.trim() || null,
       createdBy: input.createdBy || null,

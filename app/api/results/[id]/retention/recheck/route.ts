@@ -3,6 +3,7 @@ import { BUSINESS_ROLES } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { createAutomaticBatch } from "@/lib/automation/batch-service";
 import { kickAutomaticAuditQueue } from "@/lib/automation/queue";
+import { parseStoredStringArray } from "@/lib/stored-json";
 
 export async function POST(
   _request: Request,
@@ -46,6 +47,12 @@ export async function POST(
         storeTopicRuleId: result.task.storeTopicRuleId,
         matchedStoreName: result.task.matchedStoreName,
         expectedStoreTopic: result.task.expectedStoreTopic,
+        expectedStoreTopics: parseStoredStringArray(
+          result.task.expectedStoreTopics,
+        ),
+        requiredStoreTopics: parseStoredStringArray(
+          result.task.requiredStoreTopics,
+        ),
         storeMappingStatus: result.task.storeMappingStatus,
         orderNumber: result.task.orderNumber,
         notes: `基于历史审核结果 ${result.id} 的公开留存复查`,

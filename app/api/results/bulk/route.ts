@@ -3,6 +3,7 @@ import { fail, ok, requireApiUser } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import { createAutomaticBatch } from "@/lib/automation/batch-service";
 import { kickAutomaticAuditQueue } from "@/lib/automation/queue";
+import { parseStoredStringArray } from "@/lib/stored-json";
 
 export async function POST(request: Request) {
   const user = await requireApiUser(BUSINESS_ROLES);
@@ -39,6 +40,12 @@ export async function POST(request: Request) {
           storeTopicRuleId: result.task.storeTopicRuleId,
           matchedStoreName: result.task.matchedStoreName,
           expectedStoreTopic: result.task.expectedStoreTopic,
+          expectedStoreTopics: parseStoredStringArray(
+            result.task.expectedStoreTopics,
+          ),
+          requiredStoreTopics: parseStoredStringArray(
+            result.task.requiredStoreTopics,
+          ),
           storeMappingStatus: result.task.storeMappingStatus,
           orderNumber: result.task.orderNumber,
           source: "RE_AUDIT",
