@@ -97,6 +97,7 @@ export default function StickyHorizontalScrollbar({
 
     return () => {
       tableRef.current?.removeEventListener("scroll", update);
+      tableRef.current = null;
       window.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
       resizeObserver.disconnect();

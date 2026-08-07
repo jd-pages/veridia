@@ -106,17 +106,21 @@ test("审核结果表格悬浮横向滚动、固定列和重算", async ({ page 
   expect(overflow).toBeGreaterThan(0);
   await expect(stickyScroll).toBeVisible();
 
+  const initialThumbBox = await stickyThumb.boundingBox();
+  expect(initialThumbBox).not.toBeNull();
   const scrollTarget = Math.min(300, overflow);
-  await tableBody.evaluate((element, target) => {
-    element.scrollLeft = target;
-    element.dispatchEvent(new Event("scroll"));
+  await tableBody.evaluate(async (element, target) => {
+    element.scrollTo({ left: target, behavior: "instant" });
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
   }, scrollTarget);
   await expect
     .poll(() => tableBody.evaluate((element) => element.scrollLeft))
     .toBe(scrollTarget);
   await expect
-    .poll(() => stickyThumb.evaluate((element) => element.style.transform))
-    .not.toBe("translate3d(0px, 0px, 0px)");
+    .poll(async () => (await stickyThumb.boundingBox())?.x ?? 0)
+    .toBeGreaterThan(initialThumbBox!.x + 1);
 
   const thumbBox = await stickyThumb.boundingBox();
   expect(thumbBox).not.toBeNull();

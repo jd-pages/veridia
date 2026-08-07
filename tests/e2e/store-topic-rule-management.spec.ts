@@ -8,8 +8,13 @@ test("活动与规则可独立维护店铺话题规则", async ({ page }) => {
   expect(login.ok()).toBeTruthy();
 
   await page.goto("/campaigns");
-  await page.getByRole("tab", { name: "店铺话题规则" }).click();
-  await expect(page.getByRole("button", { name: /新增店铺/u })).toBeVisible();
+  const createStoreButton = page.getByRole("button", { name: /新增店铺/u });
+  await expect(async () => {
+    if (!(await createStoreButton.isVisible())) {
+      await page.getByRole("tab", { name: "店铺话题规则" }).click();
+    }
+    await expect(createStoreButton).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 15_000 });
 
   const search = page.getByRole("searchbox", { name: "搜索店铺名称" });
   await search.fill("FOLO");

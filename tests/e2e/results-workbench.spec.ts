@@ -90,13 +90,42 @@ function resultExportFileNamePattern(scope: "当前筛选" | "所选结果") {
 }
 
 async function login(page: Page) {
-  const response = await page.request.post("/api/auth/login", {
-    data: { username: "admin", password: "Admin123!" },
-  });
-  if (!response.ok()) {
-    throw new Error(
-      `E2E 管理员登录失败 (${response.status()}): ${await response.text()}`,
+  const isTransientConnectionError = (error: unknown) =>
+    /\b(?:ECONNRESET|ECONNREFUSED)\b|socket hang up/iu.test(
+      error instanceof Error ? error.message : String(error),
     );
+
+  for (let attempt = 0; attempt <= 2; attempt += 1) {
+    try {
+      const response = await page.request.post("/api/auth/login", {
+        data: { username: "admin", password: "Admin123!" },
+      });
+      if (!response.ok()) {
+        throw new Error(
+          `E2E 管理员登录失败 (${response.status()}): ${await response.text()}`,
+        );
+      }
+      return;
+    } catch (error) {
+      if (!isTransientConnectionError(error) || attempt === 2) {
+        throw error;
+      }
+      await expect
+        .poll(
+          async () => {
+            try {
+              return (await page.request.get("/api/health")).status();
+            } catch (healthError) {
+              if (!isTransientConnectionError(healthError)) {
+                throw healthError;
+              }
+              return 0;
+            }
+          },
+          { timeout: 5_000, intervals: [100, 250, 500] },
+        )
+        .toBe(200);
+    }
   }
 }
 
@@ -111,8 +140,16 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await expect(page.getByText("日期范围", { exact: true })).toBeVisible();
   await expect(page.getByLabel("开始日期")).toHaveValue("2026-08-01");
   await expect(page.getByLabel("结束日期")).toHaveValue("2026-08-31");
-  await page.getByLabel("开始日期").click();
   const datePickerPopup = page.locator(".ant-picker-dropdown:visible");
+  await expect(async () => {
+    if (!(await datePickerPopup.isVisible())) {
+      await page.getByLabel("开始日期").click();
+    }
+    await expect(datePickerPopup.locator(".ant-picker-header-view")).toContainText(
+      "八月",
+      { timeout: 2_000 },
+    );
+  }).toPass({ timeout: 15_000 });
   await expect(datePickerPopup.locator(".ant-picker-header-view")).toContainText(
     "八月",
   );
