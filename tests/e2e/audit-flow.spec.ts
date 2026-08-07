@@ -699,7 +699,10 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "COMPLETED",
   ]);
   expect(douyinExcelBatch.channel).toBe("DOUYIN");
-  expect(douyinExcelBatch.stats.needsReview).toBe(1);
+  // Douyin now executes the shared store-topic validator. This row contains no
+  // accepted store topic, so it is a business failure rather than an adapter
+  // gap that needs manual review.
+  expect(douyinExcelBatch.stats.needsReview).toBe(0);
   expect(douyinExcelBatch.importRecordId).toBe(committedImport.importRecordId);
 
   const importOptionsResponse = await page.request.get(
@@ -727,7 +730,11 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   );
   const importResults = (await importResultsResponse.json()).data as {
     total: number;
-    items: Array<{ task: { importRecordId: string } }>;
+    items: Array<{
+      storeTopicStatus: string;
+      storeTopicFailureReason: string | null;
+      task: { importRecordId: string; channel: string };
+    }>;
   };
   expect(importResults.total).toBe(4);
   expect(
@@ -735,6 +742,15 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       (item) => item.task.importRecordId === committedImport.importRecordId,
     ),
   ).toBe(true);
+  const douyinImportResult = importResults.items.find(
+    (item) => item.task.channel === "DOUYIN",
+  );
+  expect(douyinImportResult).toMatchObject({
+    storeTopicStatus: "NON_COMPLIANT",
+  });
+  expect(douyinImportResult?.storeTopicFailureReason).toContain(
+    "可接受店铺话题",
+  );
 
   await page.goto(
     `/results?importRecordId=${encodeURIComponent(committedImport.importRecordId)}`,

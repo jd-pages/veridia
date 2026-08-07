@@ -186,7 +186,10 @@ export function evaluateAudit(
       storeTopicStatus: "NOT_CHECKED",
       expectedStoreTopic: context.storeTopicRequirement?.expectedTopic || null,
       expectedStoreTopics: context.storeTopicRequirement?.expectedTopics || [],
-      requiredStoreTopics: context.storeTopicRequirement?.requiredTopics || [],
+      requiredStoreTopics:
+        context.storeTopicRequirement?.channel === "DOUYIN"
+          ? []
+          : context.storeTopicRequirement?.requiredTopics || [],
       matchedStoreTopic: null,
       matchedStoreTopics: [],
       matchedRequiredStoreTopics: [],

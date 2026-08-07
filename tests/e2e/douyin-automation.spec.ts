@@ -338,6 +338,194 @@ test("混合 Excel 只创建一个导入记录并拆分为两个串行平台批�
   }
 });
 
+test("抖音复用店铺映射但仅审核 ACCEPTED，小红书继续审核 REQUIRED", async ({ page }) => {
+  test.setTimeout(180_000);
+  await login(page);
+  const products = (await (
+    await page.request.get("/api/products")
+  ).json()).data as Array<{ id: string; name: string; brandName: string }>;
+  const product = products.find((item) => item.name === "爱他美澳洲白金版")!;
+  expect(product).toBeTruthy();
+  const campaigns = (await (
+    await page.request.get(`/api/campaigns?productId=${product.id}`)
+  ).json()).data as Array<{
+    id: string;
+    name: string;
+    month: string;
+    contentChannel: string;
+  }>;
+  const xhsCampaign = campaigns.find(
+    (item) =>
+      item.month === "2026-07" && item.contentChannel === "XIAOHONGSHU",
+  )!;
+  const douyinCampaign = campaigns.find(
+    (item) => item.month === "2026-07" && item.contentChannel === "DOUYIN",
+  )!;
+  expect(xhsCampaign).toBeTruthy();
+  expect(douyinCampaign).toBeTruthy();
+
+  const suffix = Date.now();
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("达能代发导入");
+  sheet.addRow([
+    "平台（必填）",
+    "店铺名称（必填）",
+    "客户名（必填）",
+    "产品系列（必填）",
+    "段位（必填）",
+    "订单编号（必填）",
+    "内容渠道（必填）",
+    "链接（必填）",
+    "发布时间（必填）",
+    "活动名称（必填）",
+  ]);
+  const douyinUrl = (caseId: string, topicText: string) =>
+    `${E2E_ORIGIN}/mock/douyin?case=video&topic=${encodeURIComponent(topicText)}&store-policy=${suffix}-${caseId}`;
+  const rows = [
+    {
+      platform: "京东",
+      storeName: "FOLO海外官方旗舰店",
+      orderNumber: `DY-JD-ACCEPTED-${suffix}`,
+      channel: "抖音",
+      url: douyinUrl("jd-accepted", "FOLO海外官方旗舰店"),
+      campaignName: douyinCampaign.name,
+    },
+    {
+      platform: "京东",
+      storeName: "FOLO海外官方旗舰店",
+      orderNumber: `DY-JD-PLATFORM-${suffix}`,
+      channel: "抖音",
+      url: douyinUrl("jd-platform", "京东"),
+      campaignName: douyinCampaign.name,
+    },
+    {
+      platform: "天猫",
+      storeName: "FOLO海外专营店",
+      orderNumber: `DY-TMALL-ACCEPTED-${suffix}`,
+      channel: "抖音",
+      url: douyinUrl("tmall-accepted", "FOLO海外专营店"),
+      campaignName: douyinCampaign.name,
+    },
+    {
+      platform: "淘宝",
+      storeName: "ALG阿莱购",
+      orderNumber: `DY-TAOBAO-ACCEPTED-${suffix}`,
+      channel: "抖音",
+      url: douyinUrl("taobao-accepted", "ALG阿莱购"),
+      campaignName: douyinCampaign.name,
+    },
+    {
+      platform: "天猫",
+      storeName: "FOLO海外专营店",
+      orderNumber: `XHS-TMALL-MISSING-${suffix}`,
+      channel: "小红书",
+      url: `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-folo-store-passed&store-policy=${suffix}`,
+      campaignName: xhsCampaign.name,
+    },
+  ];
+  for (const [index, row] of rows.entries()) {
+    sheet.addRow([
+      row.platform,
+      row.storeName,
+      `渠道店铺策略-${index + 1}`,
+      "澳白2",
+      "IFFO",
+      row.orderNumber,
+      row.channel,
+      row.url,
+      "2026-07-26 12:00:00",
+      row.campaignName,
+    ]);
+  }
+  const metadata = workbook.addWorksheet("VERIDIA模板信息", {
+    state: "veryHidden",
+  });
+  metadata.getCell("B1").value = "DANONE_AGENCY";
+
+  const response = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: `store-topic-channel-policy-${suffix}.xlsx`,
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
+      },
+      commit: "true",
+      skipDuplicates: "true",
+    },
+  });
+  const payload = await response.json();
+  expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
+  expect(payload.data).toMatchObject({
+    validCount: 5,
+    invalidCount: 0,
+    plannedBatchCount: 2,
+  });
+  expect(payload.data.batchIds).toHaveLength(2);
+  for (const batchId of payload.data.batchIds as string[]) {
+    await waitForTerminalBatch(page, batchId);
+  }
+
+  const resultPayload = await (
+    await page.request.get(
+      `/api/results?importRecordId=${payload.data.importRecordId}&pageSize=100`,
+    )
+  ).json();
+  const results = resultPayload.data.items as Array<{
+    storeTopicStatus: string;
+    requiredStoreTopics: string;
+    matchedRequiredStoreTopics: string;
+    storeTopicFailureReason: string | null;
+    task: { orderNumber: string; channel: string };
+  }>;
+  expect(results).toHaveLength(5);
+  const byOrder = new Map(
+    results.map((item) => [item.task.orderNumber, item] as const),
+  );
+  for (const orderNumber of [
+    `DY-JD-ACCEPTED-${suffix}`,
+    `DY-TMALL-ACCEPTED-${suffix}`,
+    `DY-TAOBAO-ACCEPTED-${suffix}`,
+  ]) {
+    expect(byOrder.get(orderNumber)).toMatchObject({
+      storeTopicStatus: "COMPLIANT",
+      storeTopicFailureReason: null,
+      task: { channel: "DOUYIN" },
+    });
+    expect(JSON.parse(byOrder.get(orderNumber)!.requiredStoreTopics)).toEqual(
+      [],
+    );
+    expect(
+      JSON.parse(byOrder.get(orderNumber)!.matchedRequiredStoreTopics),
+    ).toEqual([]);
+  }
+  expect(byOrder.get(`DY-JD-PLATFORM-${suffix}`)).toMatchObject({
+    storeTopicStatus: "NON_COMPLIANT",
+    task: { channel: "DOUYIN" },
+  });
+  expect(
+    byOrder.get(`DY-JD-PLATFORM-${suffix}`)!.storeTopicFailureReason,
+  ).toContain("可接受店铺话题");
+  expect(byOrder.get(`XHS-TMALL-MISSING-${suffix}`)).toMatchObject({
+    storeTopicStatus: "NON_COMPLIANT",
+    task: { channel: "XIAOHONGSHU" },
+  });
+  expect(
+    JSON.parse(
+      byOrder.get(`XHS-TMALL-MISSING-${suffix}`)!.requiredStoreTopics,
+    ),
+  ).toEqual(["#天猫"]);
+  expect(
+    byOrder.get(`XHS-TMALL-MISSING-${suffix}`)!.storeTopicFailureReason,
+  ).toContain("#天猫");
+
+  for (const batchId of payload.data.batchIds as string[]) {
+    expect(
+      (await page.request.post(`/api/automation/batches/${batchId}/clear`)).ok(),
+    ).toBeTruthy();
+  }
+});
+
 test("抖音批次使用独立会话、单一后台页面并应用独立业务规则", async ({ page }) => {
   test.setTimeout(120_000);
   await login(page);

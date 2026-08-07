@@ -183,9 +183,17 @@ export function validateStoreTopic(input: {
     ...(Array.isArray(input.expectedTopics) ? input.expectedTopics : []),
     input.expectedTopic,
   ]);
-  const requiredTopics = normalizedTopicList(
+  const configuredRequiredTopics = normalizedTopicList(
     Array.isArray(input.requiredTopics) ? input.requiredTopics : [],
   );
+  const channel = parseContentChannel(input.channel);
+  // Store mappings are shared across content channels. Xiaohongshu consumes
+  // ACCEPTED (OR) + REQUIRED (AND), while Douyin intentionally consumes only
+  // ACCEPTED (OR). Keep REQUIRED entries in storage, but do not expose them as
+  // an active Douyin audit requirement.
+  const requiredTopics = channel === "XIAOHONGSHU"
+    ? configuredRequiredTopics
+    : [];
   const expectedTopic = expectedTopics[0] || null;
   const mappingStatus = String(input.mappingStatus ?? "");
   const emptyResult = {
@@ -212,8 +220,7 @@ export function validateStoreTopic(input: {
       needsReview: true,
     };
   }
-  const channel = parseContentChannel(input.channel);
-  if (channel !== "XIAOHONGSHU") {
+  if (!channel) {
     return {
       status: "UNREVIEWABLE",
       expectedTopic,

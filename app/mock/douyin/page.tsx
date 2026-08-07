@@ -34,14 +34,37 @@ function noteFor(caseName: MockCase): ExtractedNote {
   return status ? { ...base, pageStatus: status as ExtractedNote["pageStatus"] } : base;
 }
 
-export default async function MockDouyinPage({ searchParams }: { searchParams: Promise<{ case?: string }> }) {
-  const requested = (await searchParams).case || "video";
+export default async function MockDouyinPage({ searchParams }: { searchParams: Promise<{ case?: string; topic?: string; clickable?: string }> }) {
+  const params = await searchParams;
+  const requested = params.case || "video";
   if (requested === "short-link") {
     redirect("/mock/douyin?case=video&redirectedFrom=short-link");
   }
   const allowed: MockCase[] = ["video", "image-text", "topics", "unclickable", "not-found", "logged-out", "security", "no-permission", "app-launch", "empty", "multi-image", "network-error", "load-timeout"];
   const caseName = (allowed.includes(requested as MockCase) ? requested : "video") as MockCase;
-  const note = noteFor(caseName);
+  const baseNote = noteFor(caseName);
+  const injectedTopic = String(params.topic || "").trim();
+  const injectedTopicClickable = params.clickable !== "false";
+  const note = injectedTopic && baseNote.pageStatus === "NORMAL"
+    ? {
+        ...baseNote,
+        topics: [
+          ...baseNote.topics,
+          {
+            displayText: injectedTopic.startsWith("#")
+              ? injectedTopic
+              : `#${injectedTopic}`,
+            isLinkElement: injectedTopicClickable,
+            hasHref: injectedTopicClickable,
+            href: injectedTopicClickable
+              ? `/search/${encodeURIComponent(injectedTopic.replace(/^#/u, ""))}`
+              : null,
+            styleFeature: injectedTopicClickable,
+            source: "DOM",
+          },
+        ],
+      }
+    : baseNote;
   const statusText: Record<MockCase, string | undefined> = { video: undefined, "image-text": undefined, topics: undefined, unclickable: undefined, empty: undefined, "multi-image": undefined, "not-found": "作品不存在，该作品已删除", "logged-out": "登录后继续，请扫码登录", security: "访问频繁，需要安全验证", "no-permission": "私密作品，暂无权限查看", "app-launch": "打开抖音 App 查看", "network-error": "模拟临时网络连接中断", "load-timeout": "模拟页面加载超时" };
   return (
     <main data-douyin-page-status={caseName} style={{ padding: 48 }}>
