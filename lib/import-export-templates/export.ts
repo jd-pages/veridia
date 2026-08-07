@@ -757,6 +757,10 @@ export async function buildImportTemplateWorkbook(
     templateBrand?: ImportTemplateBrand;
     templateType?: ImportTemplateType;
     activityNames?: readonly string[];
+    activities?: ReadonlyArray<{
+      name: string;
+      contentChannel: "XIAOHONGSHU" | "DOUYIN";
+    }>;
   },
 ) {
   const workbook = new ExcelJS.Workbook();
@@ -835,12 +839,23 @@ export async function buildImportTemplateWorkbook(
     }
   }
   const activityNameColumn = fields.indexOf("activityName") + 1;
+  const activities = options?.activities || (options?.activityNames || []).map(
+    (name) => ({
+      name,
+      contentChannel: name.includes("抖音")
+        ? "DOUYIN" as const
+        : "XIAOHONGSHU" as const,
+    }),
+  );
   const activityNames = [...new Set(
-    (options?.activityNames || []).map((name) => name.trim()).filter(Boolean),
+    activities.map((activity) => activity.name.trim()).filter(Boolean),
   )];
   if (activityNameColumn > 0) {
     sheet.getCell(2, activityNameColumn).value = activityNames[0] || "";
   }
+  const exampleActivity = activities.find(
+    (activity) => activity.name.trim() === activityNames[0],
+  );
   const publishTimeColumn = fields.indexOf("publishTime") + 1;
   if (publishTimeColumn > 0) {
     sheet.getCell(2, publishTimeColumn).value = importedPublishTimeValue(
@@ -862,6 +877,23 @@ export async function buildImportTemplateWorkbook(
         showErrorMessage: true,
         errorTitle: "段位无效",
         error: "段位仅支持 IFFO 或 GUM",
+      };
+    }
+  }
+  const contentChannelColumn = fields.indexOf("contentChannel") + 1;
+  if (contentChannelColumn > 0) {
+    if (exampleActivity) {
+      sheet.getCell(2, contentChannelColumn).value =
+        exampleActivity.contentChannel === "DOUYIN" ? "抖音" : "小红书";
+    }
+    for (let rowNumber = 2; rowNumber <= 10_000; rowNumber += 1) {
+      sheet.getCell(rowNumber, contentChannelColumn).dataValidation = {
+        type: "list",
+        allowBlank: false,
+        formulae: ['"小红书,抖音"'],
+        showErrorMessage: true,
+        errorTitle: "内容渠道无效",
+        error: "内容渠道仅支持小红书或抖音，并且必须与活动及链接一致。",
       };
     }
   }
@@ -887,8 +919,14 @@ export async function buildImportTemplateWorkbook(
       state: "veryHidden",
     });
     activitySheet.getCell("A1").value = "活动名称";
+    activitySheet.getCell("B1").value = "内容渠道";
     activityNames.forEach((name, index) => {
       activitySheet.getCell(index + 2, 1).value = name;
+      activitySheet.getCell(index + 2, 2).value =
+        activities.find((activity) => activity.name.trim() === name)
+          ?.contentChannel === "DOUYIN"
+          ? "抖音"
+          : "小红书";
     });
     workbook.definedNames.add(
       `'活动列表'!$A$2:$A$${activityNames.length + 1}`,
@@ -954,7 +992,16 @@ export async function buildImportTemplateWorkbook(
     description:
       "必须填写“活动管理”中显示的完整活动名称，不能填写简称或自行改写。",
     aliases:
-      "正确示例：达能2026年8月小红书种草审核、佳贝艾特2026年8月小红书种草审核、爱他美2026年8月小红书种草审核；错误示例：2026年8月-达能-UGC、达能8月活动、8月UGC",
+      "正确示例：XXX2026年8月小红书种草审核、XXX2026年8月抖音种草审核；错误示例：2026年8月-达能-UGC、达能8月活动、8月UGC",
+  });
+  instructions.addRow({
+    field: "抖音填写示例",
+    displayName: "内容渠道：抖音",
+    required: "",
+    description: "活动请选择完整的抖音审核活动名称；链接支持 https://www.douyin.com/note/...、https://www.douyin.com/video/... 或 https://v.douyin.com/...。",
+    aliases:
+      activities.find((activity) => activity.contentChannel === "DOUYIN")?.name ||
+      "XXX2026年8月抖音种草审核",
   });
   instructions.addRow({
     field: "模板类型",

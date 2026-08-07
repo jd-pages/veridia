@@ -23,7 +23,7 @@ export async function getAuditContext(
   productId: string,
   campaignId: string,
   productStage?: string | null,
-  contentChannel: AutomationPlatform = "XIAOHONGSHU",
+  contentChannel?: AutomationPlatform,
 ): Promise<AuditContext> {
   const [product, campaign] = await Promise.all([
     prisma.product.findFirst({
@@ -48,6 +48,15 @@ export async function getAuditContext(
   if (!/^\d{4}-\d{2}$/u.test(campaign.month)) {
     throw new Error("规则月份未匹配，无法开始自动审核");
   }
+  const resolvedContentChannel: AutomationPlatform =
+    contentChannel ||
+    (campaign.contentChannel === "DOUYIN" ? "DOUYIN" : "XIAOHONGSHU");
+  if (
+    contentChannel &&
+    ![resolvedContentChannel, "ALL"].includes(campaign.contentChannel)
+  ) {
+    throw new Error("内容渠道与活动渠道不一致，请选择对应内容平台的审核活动");
+  }
   const usesDetailedProductStages = campaignUsesDetailedProductStages(
     brandName,
     campaign.month,
@@ -62,7 +71,7 @@ export async function getAuditContext(
     where: {
       brandName,
       status: "ACTIVE",
-      contentChannel: { in: [contentChannel, "ALL"] },
+      contentChannel: { in: [resolvedContentChannel, "ALL"] },
       AND: [
         {
           OR: [
@@ -89,7 +98,7 @@ export async function getAuditContext(
       brandName,
       campaignId,
       status: "ACTIVE",
-      contentChannel: { in: [contentChannel, "ALL"] },
+      contentChannel: { in: [resolvedContentChannel, "ALL"] },
     },
     select: {
       campaignId: true,
@@ -98,7 +107,9 @@ export async function getAuditContext(
       topic: true,
     },
   });
-  const campaignChannelMatches = [contentChannel, "ALL"].includes(campaign.contentChannel);
+  const campaignChannelMatches = [resolvedContentChannel, "ALL"].includes(
+    campaign.contentChannel,
+  );
   const requiresProductStage = campaignChannelMatches && campaignRequiresProductStage(
     campaignStageRequirementRules,
   );
@@ -136,12 +147,12 @@ export async function getAuditContext(
     productId,
     campaignId,
     campaignName: campaign.name,
-    contentChannel,
+    contentChannel: resolvedContentChannel,
     rulesConfigured: campaignChannelMatches && uniqueRules.length > 0,
     ruleMonth: campaign.month,
     brandName,
     basicRewardRequired:
-      contentChannel === "XIAOHONGSHU" && brandName === "佳贝艾特" &&
+      resolvedContentChannel === "XIAOHONGSHU" && brandName === "佳贝艾特" &&
       campaign.name === "佳贝艾特2026年8月小红书种草审核",
     requiresProductStage,
     productStage: normalizedProductStage || null,

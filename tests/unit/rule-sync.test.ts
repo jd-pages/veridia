@@ -18,7 +18,25 @@ import {
 
 describe("GitHub 规则同步", () => {
   it("旧规则包缺少作用域时默认限定为小红书", () => {
-    const payload = validateRulePayload(builtinRules);
+    const legacy = structuredClone(builtinRules) as unknown as {
+      campaigns: Array<Record<string, unknown>>;
+      topicRules: Array<Record<string, unknown>>;
+    };
+    legacy.campaigns = legacy.campaigns
+      .filter((campaign) => campaign.contentChannel !== "DOUYIN")
+      .map((campaign) => {
+        const copy = { ...campaign };
+        delete copy.contentChannel;
+        return copy;
+      });
+    legacy.topicRules = legacy.topicRules
+      .filter((rule) => rule.contentChannel !== "DOUYIN")
+      .map((rule) => {
+        const copy = { ...rule };
+        delete copy.contentChannel;
+        return copy;
+      });
+    const payload = validateRulePayload(legacy);
     expect(
       payload.campaigns.every(
         (campaign) => campaign.contentChannel === "XIAOHONGSHU",
@@ -65,7 +83,17 @@ describe("GitHub 规则同步", () => {
   it("内置规则快照包含产品、活动、阶段组和话题规则", () => {
     const payload = validateRulePayload(builtinRules);
     expect(payload.products.length).toBe(7);
-    expect(payload.campaigns.length).toBe(3);
+    expect(payload.campaigns.length).toBe(6);
+    expect(
+      payload.campaigns.filter(
+        (campaign) => campaign.contentChannel === "XIAOHONGSHU",
+      ),
+    ).toHaveLength(3);
+    expect(
+      payload.campaigns.filter(
+        (campaign) => campaign.contentChannel === "DOUYIN",
+      ),
+    ).toHaveLength(3);
     expect(payload.stageGroups.map((item) => item.key)).toEqual([
       "IFFO_P1",
       "IFFO_2",
@@ -74,11 +102,19 @@ describe("GitHub 规则同步", () => {
     expect(
       payload.stageGroups.every((item) => item.requireBodyStage === false),
     ).toBe(true);
-    expect(payload.topicRules.length).toBe(28);
+    expect(payload.topicRules.length).toBe(54);
+    expect(
+      payload.topicRules.filter(
+        (rule) => rule.contentChannel === "XIAOHONGSHU",
+      ),
+    ).toHaveLength(28);
+    expect(
+      payload.topicRules.filter((rule) => rule.contentChannel === "DOUYIN"),
+    ).toHaveLength(26);
     expect(payload.products.filter((item) => item.brand === "达能")).toHaveLength(5);
     expect(payload.products.filter((item) => item.brand === "佳贝艾特")).toHaveLength(2);
-    expect(payload.topicRules.filter((item) => item.brand === "达能")).toHaveLength(18);
-    expect(payload.topicRules.filter((item) => item.brand === "佳贝艾特")).toHaveLength(10);
+    expect(payload.topicRules.filter((item) => item.brand === "达能")).toHaveLength(34);
+    expect(payload.topicRules.filter((item) => item.brand === "佳贝艾特")).toHaveLength(20);
   });
 
   it("旧规则包品牌字段可缺省，同名阶段话题可按品牌分别存在", () => {
@@ -86,7 +122,7 @@ describe("GitHub 规则同步", () => {
       topicRules: Array<Record<string, unknown>>;
     };
     for (const rule of legacy.topicRules) delete rule.brand;
-    expect(validateRulePayload(legacy).topicRules).toHaveLength(28);
+    expect(validateRulePayload(legacy).topicRules).toHaveLength(54);
 
     const multiBrand = structuredClone(builtinRules);
     multiBrand.products.push({
@@ -110,7 +146,7 @@ describe("GitHub 规则同步", () => {
       campaignKey: "activity_kabrita",
       productKey: null,
     });
-    expect(validateRulePayload(multiBrand).topicRules).toHaveLength(29);
+    expect(validateRulePayload(multiBrand).topicRules).toHaveLength(55);
   });
 
   it("旧规则包缺少正文段位开关时保持原校验语义", () => {
@@ -136,7 +172,7 @@ describe("GitHub 规则同步", () => {
       importExportTemplates: defaultTemplates,
     });
     expect(extended.importExportTemplates?.templateVersion).toBe(
-      "template-2026.07.30.1",
+      "template-2026.08.07.1",
     );
     const tampered = structuredClone(extended);
     tampered.importExportTemplates!.templateVersion = "template-tampered";

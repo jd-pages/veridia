@@ -657,7 +657,16 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
 describe("模板驱动导出", () => {
   it("下载模板按线下表格顺序生成十一列、动态活动下拉并保留筛选", async () => {
     const bytes = await buildImportTemplateWorkbook(templates, {
-      activityNames: ["达能2026年8月小红书种草审核", "佳贝艾特2026年8月小红书种草审核"],
+      activities: [
+        {
+          name: "达能2026年8月小红书种草审核",
+          contentChannel: "XIAOHONGSHU",
+        },
+        {
+          name: "达能2026年8月抖音种草审核",
+          contentChannel: "DOUYIN",
+        },
+      ],
     });
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes);
@@ -703,6 +712,10 @@ describe("模板驱动导出", () => {
     expect(workbook.getWorksheet("达能客户导入")?.getCell("H2").text).toBe(
       "小红书",
     );
+    expect(workbook.getWorksheet("达能客户导入")?.getCell("H2").dataValidation)
+      .toMatchObject({ type: "list", formulae: ['"小红书,抖音"'] });
+    expect(workbook.getWorksheet("达能客户导入")?.getCell("H10000").dataValidation)
+      .toMatchObject({ type: "list" });
     expect(workbook.getWorksheet("达能客户导入")?.getCell("K2").dataValidation)
       .toMatchObject({ type: "list", formulae: ["VERIDIA_ACTIVITY_NAMES"] });
     expect(workbook.getWorksheet("达能客户导入")?.getCell("K10000").dataValidation)
@@ -711,6 +724,22 @@ describe("模板驱动导出", () => {
     expect(workbook.getWorksheet("活动列表")?.getCell("A2").text).toBe(
       "达能2026年8月小红书种草审核",
     );
+    expect(workbook.getWorksheet("活动列表")?.getCell("B2").text).toBe(
+      "小红书",
+    );
+    expect(workbook.getWorksheet("活动列表")?.getCell("A3").text).toBe(
+      "达能2026年8月抖音种草审核",
+    );
+    expect(workbook.getWorksheet("活动列表")?.getCell("B3").text).toBe(
+      "抖音",
+    );
+    expect(
+      workbook
+        .getWorksheet("填写说明")
+        ?.getColumn(4)
+        .values.map(String)
+        .join("\n"),
+    ).toContain("https://v.douyin.com/");
     expect(workbook.getWorksheet("达能客户导入")?.getColumn(10).numFmt).toBe(
       "yyyy-mm-dd hh:mm:ss",
     );

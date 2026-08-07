@@ -83,6 +83,9 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   if (linkPlatforms.length !== 1) return fail("同一批次只能包含一个内容平台，请分别创建小红书和抖音批次");
   const contentChannel = linkPlatforms[0];
   if (body.contentChannel && body.contentChannel !== contentChannel) return fail("选择的内容平台与作品链接不一致");
+  if (![contentChannel, "ALL"].includes(campaign.contentChannel)) {
+    return fail("内容渠道与活动渠道不一致，请选择对应内容平台的审核活动");
+  }
   const productStage = normalizeConfiguredProductStageValue(
     body.productStage,
     campaignUsesDetailedProductStages(product.brandName, campaign.month),

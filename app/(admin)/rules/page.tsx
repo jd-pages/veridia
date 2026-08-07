@@ -18,6 +18,7 @@ import {
   Table,
   Tag,
   Row,
+  Segmented,
   Typography,
 } from "antd";
 import {
@@ -57,6 +58,7 @@ interface Campaign {
   products?: Array<{ product: Product }>;
   ruleVersion?: number;
   status?: string;
+  contentChannel: "XIAOHONGSHU" | "DOUYIN";
 }
 
 interface Rule {
@@ -77,6 +79,7 @@ interface Rule {
   notes: string | null;
   topicCategory: string;
   applicableStage: string | null;
+  contentChannel: "XIAOHONGSHU" | "DOUYIN" | "ALL";
   campaign: Campaign | null;
   product: Product | null;
 }
@@ -113,12 +116,17 @@ function monthLabel(value: string) {
   return `${year}年${Number(month)}月`;
 }
 
-function updateRulePageUrl(brandName?: string, month?: string) {
+function updateRulePageUrl(
+  brandName?: string,
+  month?: string,
+  contentChannel: "XIAOHONGSHU" | "DOUYIN" = "XIAOHONGSHU",
+) {
   const url = new URL(window.location.href);
   if (brandName) url.searchParams.set("brand", brandName);
   else url.searchParams.delete("brand");
   if (month) url.searchParams.set("month", month);
   else url.searchParams.delete("month");
+  url.searchParams.set("channel", contentChannel);
   window.history.replaceState(window.history.state, "", url);
 }
 
@@ -126,6 +134,9 @@ export default function RulesPage() {
   const { message } = App.useApp();
   const [brands, setBrands] = useState<RuleBrand[]>([]);
   const [selectedBrand, setSelectedBrand] = useState<string>();
+  const [selectedChannel, setSelectedChannel] = useState<
+    "XIAOHONGSHU" | "DOUYIN"
+  >("XIAOHONGSHU");
   const [selectedMonth, setSelectedMonth] = useState<string>();
   const [rules, setRules] = useState<Rule[]>([]);
   const [stageGroups, setStageGroups] = useState<StageGroup[]>([]);
@@ -180,13 +191,15 @@ export default function RulesPage() {
   const loadBrands = useCallback(async () => {
     setLoading(true);
     try {
-      setBrands(await apiFetch<RuleBrand[]>("/api/rule-brands"));
+      setBrands(await apiFetch<RuleBrand[]>(
+        `/api/rule-brands?contentChannel=${selectedChannel}`,
+      ));
     } catch (error) {
       message.error(error instanceof Error ? error.message : "加载品牌失败");
     } finally {
       setLoading(false);
     }
-  }, [message]);
+  }, [message, selectedChannel]);
 
   const load = useCallback(async (options?: { brand?: string; month?: string }) => {
     const activeBrand = options?.brand || selectedBrand;
@@ -194,7 +207,7 @@ export default function RulesPage() {
     setLoading(true);
     try {
       const [campaignData, productData, stageData] = await Promise.all([
-        apiFetch<Campaign[]>("/api/campaigns"),
+        apiFetch<Campaign[]>(`/api/campaigns?contentChannel=${selectedChannel}`),
         apiFetch<Product[]>("/api/products"),
         apiFetch<StageGroup[]>("/api/rule-stage-groups"),
       ]);
@@ -212,7 +225,7 @@ export default function RulesPage() {
       );
       const ruleData = requestedMonth
         ? await apiFetch<Rule[]>(
-            `/api/rules?brandName=${encodeURIComponent(activeBrand)}&month=${encodeURIComponent(requestedMonth)}`,
+            `/api/rules?brandName=${encodeURIComponent(activeBrand)}&month=${encodeURIComponent(requestedMonth)}&contentChannel=${selectedChannel}`,
           )
         : [];
       setRules(ruleData);
@@ -220,7 +233,7 @@ export default function RulesPage() {
       setCampaigns(monthlyCampaigns);
       if (requestedMonth && requestedMonth !== selectedMonth) {
         setSelectedMonth(requestedMonth);
-        updateRulePageUrl(activeBrand, requestedMonth);
+        updateRulePageUrl(activeBrand, requestedMonth, selectedChannel);
       }
       if (campaignId && !monthlyCampaigns.some((item) => item.id === campaignId)) {
         setCampaignId(undefined);
@@ -234,12 +247,13 @@ export default function RulesPage() {
     } finally {
       setLoading(false);
     }
-  }, [campaignId, message, selectedBrand, selectedMonth]);
+  }, [campaignId, message, selectedBrand, selectedMonth, selectedChannel]);
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
     setSelectedBrand(search.get("brand") || undefined);
     setSelectedMonth(search.get("month") || undefined);
+    setSelectedChannel(search.get("channel") === "DOUYIN" ? "DOUYIN" : "XIAOHONGSHU");
     void loadBrands();
     void apiFetch<SessionUser | null>("/api/auth/me").then((user) =>
       setCurrentRole(user?.role || null),
@@ -257,6 +271,21 @@ export default function RulesPage() {
           title="话题规则"
           description="按品牌维护产品话题与阶段话题，审核任务将根据产品品牌自动匹配对应规则。"
         />
+        <Card className="surface-card" style={{ marginBottom: 16 }}>
+          <Segmented
+            value={selectedChannel}
+            options={[
+              { label: "小红书", value: "XIAOHONGSHU" },
+              { label: "抖音", value: "DOUYIN" },
+            ]}
+            onChange={(value) => {
+              const channel = value as "XIAOHONGSHU" | "DOUYIN";
+              setSelectedChannel(channel);
+              setSelectedMonth(undefined);
+              updateRulePageUrl(undefined, undefined, channel);
+            }}
+          />
+        </Card>
         <Row className="rule-brand-grid" gutter={[16, 16]}>
           {brands.map((brand) => (
             <Col key={brand.brandName} xs={24} md={12}>
@@ -273,7 +302,7 @@ export default function RulesPage() {
                     onClick={() => {
                       setSelectedBrand(brand.brandName);
                       setSelectedMonth(undefined);
-                      updateRulePageUrl(brand.brandName);
+                      updateRulePageUrl(brand.brandName, undefined, selectedChannel);
                     }}
                   >
                     进入规则
@@ -311,6 +340,7 @@ export default function RulesPage() {
         title={`${selectedBrand}话题规则`}
         breadcrumbItems={[
           "话题规则",
+          selectedChannel === "DOUYIN" ? "抖音" : "小红书",
           selectedBrand,
           ...(selectedMonth ? [monthLabel(selectedMonth)] : []),
         ]}
@@ -327,7 +357,7 @@ export default function RulesPage() {
                 setSelectedBrand(undefined);
                 setSelectedMonth(undefined);
                 setCampaignId(undefined);
-                updateRulePageUrl();
+                updateRulePageUrl(undefined, undefined, selectedChannel);
                 void loadBrands();
               }}
             >
@@ -379,6 +409,22 @@ export default function RulesPage() {
         )}
       />
       <Card className="surface-card" style={{ marginBottom: 16 }}>
+        <Segmented
+          value={selectedChannel}
+          options={[
+            { label: "小红书", value: "XIAOHONGSHU" },
+            { label: "抖音", value: "DOUYIN" },
+          ]}
+          onChange={(value) => {
+            const channel = value as "XIAOHONGSHU" | "DOUYIN";
+            setSelectedChannel(channel);
+            setSelectedMonth(undefined);
+            setCampaignId(undefined);
+            updateRulePageUrl(selectedBrand, undefined, channel);
+          }}
+        />
+      </Card>
+      <Card className="surface-card" style={{ marginBottom: 16 }}>
         <Space wrap size="large">
           <Typography.Text strong>规则月份</Typography.Text>
           <Select
@@ -389,7 +435,7 @@ export default function RulesPage() {
               setLoading(true);
               setCampaignId(undefined);
               setSelectedMonth(month);
-              updateRulePageUrl(selectedBrand, month);
+              updateRulePageUrl(selectedBrand, month, selectedChannel);
             }}
             options={[
               ...new Set([
@@ -638,9 +684,10 @@ export default function RulesPage() {
               await apiFetch("/api/campaigns", {
                 method: "POST",
                 body: JSON.stringify({
-                  name: `${namePrefix}${monthLabel(values.month)}小红书种草审核`,
+                  name: `${namePrefix}${monthLabel(values.month)}${selectedChannel === "DOUYIN" ? "抖音" : "小红书"}种草审核`,
                   month: values.month,
                   productIds: products.map((product) => product.id),
+                  contentChannel: selectedChannel,
                 }),
               });
             }
@@ -648,7 +695,7 @@ export default function RulesPage() {
             setMonthOpen(false);
             setCampaignId(undefined);
             setSelectedMonth(values.month);
-            updateRulePageUrl(selectedBrand, values.month);
+            updateRulePageUrl(selectedBrand, values.month, selectedChannel);
             await load({ brand: selectedBrand, month: values.month });
           }}
         >
@@ -700,7 +747,11 @@ export default function RulesPage() {
           onFinish={async (values) => {
             await apiFetch(editing ? `/api/rules/${editing.id}` : "/api/rules", {
               method: editing ? "PUT" : "POST",
-              body: JSON.stringify({ ...values, brandName: selectedBrand }),
+              body: JSON.stringify({
+                ...values,
+                brandName: selectedBrand,
+                contentChannel: selectedChannel,
+              }),
             });
             message.success(editing ? "规则已更新并生成新版本" : "规则已创建");
             setOpen(false);

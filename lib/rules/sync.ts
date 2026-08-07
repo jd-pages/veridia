@@ -12,6 +12,7 @@ import {
   applyRulePayload,
   validateRulePayload,
 } from "./package";
+import { ensureBuiltinDouyinRules } from "./douyin-initialization";
 import {
   RULE_PACKAGE_SCHEMA_VERSION,
   type RuleCounts,
@@ -35,6 +36,9 @@ const BUNDLED_LOCAL_PRODUCT_KEYS = [
 const BUNDLED_LOCAL_CAMPAIGN_KEYS = [
   "activity_kabrita_2026_08",
   "activity_danone_2026_08",
+  ...validateRulePayload(builtinRules).campaigns
+    .filter((campaign) => campaign.contentChannel === "DOUYIN")
+    .map((campaign) => campaign.key),
 ];
 const BUNDLED_LOCAL_TOPIC_KEYS = [
   "topic_danone_202608_brand",
@@ -56,6 +60,9 @@ const BUNDLED_LOCAL_TOPIC_KEYS = [
   "topic_kabrita_stage_iffo_p1",
   "topic_kabrita_stage_iffo_2",
   "topic_kabrita_stage_gum",
+  ...validateRulePayload(builtinRules).topicRules
+    .filter((rule) => rule.contentChannel === "DOUYIN")
+    .map((rule) => rule.key),
 ];
 
 async function retainBundledLocalRules() {
@@ -404,9 +411,14 @@ async function initializeBuiltinRules() {
 
 export async function ensureBuiltinRules() {
   if (!builtinInitializationPromise) {
-    builtinInitializationPromise = initializeBuiltinRules().finally(() => {
-      builtinInitializationPromise = null;
-    });
+    builtinInitializationPromise = initializeBuiltinRules()
+      .then(async () => {
+        await ensureBuiltinDouyinRules(validateRulePayload(builtinRules));
+        return prisma.ruleSyncState.findUniqueOrThrow({ where: { id: "active" } });
+      })
+      .finally(() => {
+        builtinInitializationPromise = null;
+      });
   }
   return builtinInitializationPromise;
 }

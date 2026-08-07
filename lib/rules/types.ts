@@ -24,11 +24,15 @@ export interface RulePackageCampaign {
   endDate: string;
   productKeys: string[];
   minImageCount: number;
+  productImageRequired?: boolean;
+  firstImageRequirement?: string | null;
+  prohibitedImageGuidance?: string | null;
   bodyRequired: boolean;
   minBodyLength: number;
   publicRequired: boolean;
   retentionDays: number;
   rewardDescription: string | null;
+  visualReviewGuidance?: string | null;
   customerRegistrationNotes: string | null;
   clickableTopicRequired: boolean;
   ruleRevision: number;
@@ -65,6 +69,7 @@ export interface RulePackageTopicRule {
   sortOrder: number;
   revision: number;
   status: string;
+  notes?: string | null;
 }
 
 export interface RulePackagePayload {

@@ -324,13 +324,13 @@ export async function POST(request: Request) {
       const campaignResolution = resolveImportedActivity({
         activityName: checked.importedCampaignName,
         productId: product?.id,
+        contentChannel: checked.channel === "DOUYIN" ? "DOUYIN" : "XIAOHONGSHU",
         candidates: campaignCandidates.map((candidate) => ({
           ...candidate,
-          ruleCount: [checked.channel, "ALL"].includes(candidate.contentChannel)
-            ? candidate.ruleChannels.filter((channel) => [checked.channel, "ALL"].includes(channel)).length
-            : 0,
+          ruleCount: candidate.ruleChannels.filter((channel) =>
+            [candidate.contentChannel, "ALL"].includes(channel),
+          ).length,
         })),
-        allowMissingRules: checked.channel === "DOUYIN",
       });
       checked.campaignMatchStatus = campaignResolution.status;
       const campaign = campaignResolution.campaign;

@@ -217,7 +217,9 @@ export function evaluateAudit(
   let imageCompliant: boolean | null = null;
 
   if (pagePassed && ["VIDEO", "VIDEO_NOTE"].includes(noteType)) {
-    imageStatus = "VIDEO_NOTE";
+    imageStatus = context.contentChannel === "DOUYIN"
+      ? "NOT_REQUIRED"
+      : "VIDEO_NOTE";
     evaluations.push({
       ruleKey: "GLOBAL_IMAGE_COUNT",
       ruleName: "图片数量",

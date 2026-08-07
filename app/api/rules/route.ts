@@ -17,7 +17,9 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       campaignId,
       productId,
       brandName,
-      contentChannel,
+      ...(contentChannel
+        ? { contentChannel: { in: [contentChannel, "ALL"] } }
+        : {}),
       ...(month ? { campaign: { is: { month, deletedAt: null } } } : {}),
     },
     include: { campaign: true, product: true },

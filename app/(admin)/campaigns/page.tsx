@@ -15,6 +15,7 @@ import {
   List,
   Modal,
   Row,
+  Segmented,
   Space,
   Statistic,
   Table,
@@ -79,6 +80,7 @@ interface Campaign {
   customerRegistrationNotes: string | null;
   ruleVersion: number;
   status: string;
+  contentChannel: "XIAOHONGSHU" | "DOUYIN";
   product: Product | null;
   products: Array<{ product: Product }>;
   topicRules?: TopicRule[];
@@ -171,18 +173,23 @@ export default function CampaignsPage() {
     null,
   );
   const [activeSection, setActiveSection] = useState("campaigns");
+  const [contentChannel, setContentChannel] = useState<
+    "XIAOHONGSHU" | "DOUYIN"
+  >("XIAOHONGSHU");
   const canManageBusiness = canAccessBusiness(currentRole);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setItems(await apiFetch<Campaign[]>("/api/campaigns"));
+      setItems(await apiFetch<Campaign[]>(
+        `/api/campaigns?contentChannel=${contentChannel}`,
+      ));
     } catch (error) {
       message.error(error instanceof Error ? error.message : "加载活动失败");
     } finally {
       setLoading(false);
     }
-  }, [message]);
+  }, [contentChannel, message]);
 
   useEffect(() => {
     void load();
@@ -282,7 +289,20 @@ export default function CampaignsPage() {
         ]}
       />
 
-      {activeSection === "campaigns" ? <Card className="surface-card">
+      {activeSection === "campaigns" ? <>
+        <Card className="surface-card" style={{ marginBottom: 16 }}>
+          <Segmented
+            value={contentChannel}
+            options={[
+              { label: "小红书", value: "XIAOHONGSHU" },
+              { label: "抖音", value: "DOUYIN" },
+            ]}
+            onChange={(value) =>
+              setContentChannel(value as "XIAOHONGSHU" | "DOUYIN")
+            }
+          />
+        </Card>
+        <Card className="surface-card">
         <Table<Campaign>
           rowKey="id"
           loading={loading}
@@ -351,7 +371,8 @@ export default function CampaignsPage() {
           ]}
           pagination={{ pageSize: 10 }}
         />
-      </Card> : <StoreTopicRulesPanel canManage={canManageBusiness} />}
+        </Card>
+      </> : <StoreTopicRulesPanel canManage={canManageBusiness} />}
 
       <Modal
         open={importOpen}
@@ -540,6 +561,9 @@ export default function CampaignsPage() {
                     .filter((value, index, values) => values.indexOf(value) === index)
                     .join("、") ||
                   "未配置"}
+              </Descriptions.Item>
+              <Descriptions.Item label="内容渠道" span={2}>
+                {detail.contentChannel === "DOUYIN" ? "抖音" : "小红书"}
               </Descriptions.Item>
               <Descriptions.Item label="活动周期" span={2}>
                 {dayjs(detail.startDate).format("YYYY-MM-DD")} 至{" "}

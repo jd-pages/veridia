@@ -50,14 +50,100 @@ test("审核任务页提供相互隔离的小红书与抖音环境入口", async
   expect(xhs.profilePath).not.toBe(douyin.profilePath);
 });
 
+test("规则与活动管理按内容渠道展示独立抖音副本", async ({ page }) => {
+  await login(page);
+  const xhsCampaigns = (await (
+    await page.request.get("/api/campaigns?contentChannel=XIAOHONGSHU")
+  ).json()).data as Array<{ id: string; name: string; contentChannel: string }>;
+  const douyinCampaigns = (await (
+    await page.request.get("/api/campaigns?contentChannel=DOUYIN")
+  ).json()).data as Array<{ id: string; name: string; contentChannel: string }>;
+  expect(xhsCampaigns).toHaveLength(3);
+  expect(douyinCampaigns).toHaveLength(3);
+  expect(xhsCampaigns.every((item) => item.contentChannel === "XIAOHONGSHU"))
+    .toBe(true);
+  expect(douyinCampaigns.every((item) => item.contentChannel === "DOUYIN"))
+    .toBe(true);
+  expect(douyinCampaigns.every((item) => item.name.includes("抖音"))).toBe(true);
+  const augustDouyinCampaign = douyinCampaigns.find((item) =>
+    item.name.includes("2026年8月"),
+  );
+  const augustXhsCampaign = xhsCampaigns.find((item) =>
+    item.name.includes("2026年8月"),
+  );
+  expect(augustDouyinCampaign).toBeTruthy();
+  expect(augustXhsCampaign).toBeTruthy();
+
+  const douyinRules = (await (
+    await page.request.get("/api/rules?contentChannel=DOUYIN")
+  ).json()).data as Array<{ id: string; topic: string; contentChannel: string }>;
+  expect(douyinRules).toHaveLength(26);
+  expect(douyinRules.every((item) => item.contentChannel === "DOUYIN")).toBe(
+    true,
+  );
+  expect(douyinRules.map((item) => item.topic)).not.toContain(
+    "#爱他美新手爸妈日记",
+  );
+
+  await page.goto("/rules?channel=DOUYIN");
+  await expect(page.locator(".ant-segmented-item-selected")).toContainText("抖音");
+  const danoneCard = page.locator(".rule-brand-card").filter({
+    has: page.getByText("达能", { exact: true }),
+  });
+  await danoneCard.getByRole("button", { name: "进入规则" }).click();
+  await expect(page).toHaveURL(/channel=DOUYIN/u);
+  await expect(page.getByText("#爱他美新手爸妈日记")).toHaveCount(0);
+
+  await page.goto("/campaigns");
+  await page.locator(".ant-segmented-item").filter({ hasText: "抖音" }).click();
+  await expect(page.getByText(augustDouyinCampaign!.name, { exact: true }))
+    .toBeVisible();
+  await expect(
+    page.getByText(augustXhsCampaign!.name, { exact: true }),
+  ).toHaveCount(0);
+
+  const templateResponse = await page.request.get(
+    "/api/import/template?brand=danone-agency",
+  );
+  expect(templateResponse.ok()).toBeTruthy();
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(
+    (await templateResponse.body()) as unknown as ExcelJS.Buffer,
+  );
+  const activitySheet = workbook.getWorksheet("活动列表")!;
+  const activityRows = activitySheet.getRows(2, activitySheet.rowCount - 1) || [];
+  expect(activityRows.map((row) => row.getCell(1).text)).toEqual(
+    expect.arrayContaining(douyinCampaigns.map((item) => item.name)),
+  );
+  expect(
+    activityRows
+      .filter((row) => row.getCell(1).text.includes("抖音"))
+      .every((row) => row.getCell(2).text === "抖音"),
+  ).toBe(true);
+  expect(
+    workbook.getWorksheet("达能代发导入")?.getCell("G10000").dataValidation,
+  ).toMatchObject({ type: "list", formulae: ['"小红书,抖音"'] });
+});
+
 test("混合 Excel 只创建一个导入记录并拆分为两个串行平台批次", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);
   const campaigns = (await (
     await page.request.get("/api/campaigns")
-  ).json()).data as Array<{ id: string; name: string; month: string }>;
-  const campaign = campaigns.find((item) => item.month === "2026-07")!;
-  expect(campaign).toBeTruthy();
+  ).json()).data as Array<{
+    id: string;
+    name: string;
+    month: string;
+    contentChannel: string;
+  }>;
+  const xhsCampaign = campaigns.find(
+    (item) => item.month === "2026-07" && item.contentChannel === "XIAOHONGSHU",
+  )!;
+  const douyinCampaign = campaigns.find(
+    (item) => item.month === "2026-07" && item.contentChannel === "DOUYIN",
+  )!;
+  expect(xhsCampaign).toBeTruthy();
+  expect(douyinCampaign).toBeTruthy();
   const suffix = Date.now();
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("达能代发导入");
@@ -81,7 +167,7 @@ test("混合 Excel 只创建一个导入记录并拆分为两个串行平台批�
         ? `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-rockcheck-store-passed&mixed=${suffix}-${index}`
         : `${E2E_ORIGIN}/mock/douyin?case=video&mixed=${suffix}-${index}`,
       "2026-07-26",
-      campaign.name,
+      xhs ? xhsCampaign.name : douyinCampaign.name,
     ]);
   }
   const metadata = workbook.addWorksheet("VERIDIA模板信息", {
@@ -89,6 +175,36 @@ test("混合 Excel 只创建一个导入记录并拆分为两个串行平台批�
   });
   metadata.getCell("B1").value = "DANONE_AGENCY";
   const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+  sheet.getCell("J8").value = xhsCampaign.name;
+  const douyinWithXhsCampaign = Buffer.from(await workbook.xlsx.writeBuffer());
+  sheet.getCell("J8").value = douyinCampaign.name;
+  sheet.getCell("J2").value = douyinCampaign.name;
+  const xhsWithDouyinCampaign = Buffer.from(await workbook.xlsx.writeBuffer());
+  sheet.getCell("J2").value = xhsCampaign.name;
+
+  for (const [name, invalidBuffer] of [
+    ["douyin-xhs-campaign", douyinWithXhsCampaign],
+    ["xhs-douyin-campaign", xhsWithDouyinCampaign],
+  ] as const) {
+    const mismatchResponse = await page.request.post("/api/import/notes", {
+      multipart: {
+        file: {
+          name: `${name}-${suffix}.xlsx`,
+          mimeType:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          buffer: invalidBuffer,
+        },
+        commit: "false",
+      },
+    });
+    const mismatch = (await mismatchResponse.json()).data;
+    expect(mismatchResponse.ok()).toBeTruthy();
+    expect(mismatch.invalidCount).toBe(1);
+    expect(JSON.stringify(mismatch.errorRows)).toContain(
+      "内容渠道与活动渠道不一致",
+    );
+  }
 
   const previewResponse = await page.request.post("/api/import/notes", {
     multipart: {
@@ -222,19 +338,40 @@ test("混合 Excel 只创建一个导入记录并拆分为两个串行平台批�
   }
 });
 
-test("抖音批次使用独立会话、单一后台页面并在无业务规则时进入待复核", async ({ page }) => {
+test("抖音批次使用独立会话、单一后台页面并应用独立业务规则", async ({ page }) => {
   test.setTimeout(120_000);
   await login(page);
-  const products = (await (await page.request.get("/api/products")).json()).data as Array<{ id: string }>;
-  const product = products[0];
-  const campaigns = (await (await page.request.get(`/api/campaigns?productId=${product.id}`)).json()).data as Array<{ id: string }>;
+  const products = (await (await page.request.get("/api/products")).json()).data as Array<{
+    id: string;
+    brandName: string;
+  }>;
+  const product = products.find((item) => item.brandName === "达能")!;
+  const campaigns = (await (await page.request.get(`/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`)).json()).data as Array<{ id: string }>;
   const campaign = campaigns[0];
+  const requirementsResponse = await page.request.get(
+    `/api/campaigns/${campaign.id}/requirements?productId=${product.id}&stage=IFFO_P1`,
+  );
+  expect(requirementsResponse.ok()).toBeTruthy();
+  const requirementContext = (await requirementsResponse.json()).data.context as {
+    contentChannel: string;
+    rulesConfigured: boolean;
+    rules: Array<{ topic: string }>;
+  };
+  expect(requirementContext.contentChannel).toBe("DOUYIN");
+  expect(requirementContext.rulesConfigured).toBe(true);
+  expect(requirementContext.rules.map((rule) => rule.topic)).not.toContain(
+    "#爱他美新手爸妈日记",
+  );
+  expect(requirementContext.rules.map((rule) => rule.topic)).toContain(
+    "#新生儿奶粉",
+  );
   const suffix = Date.now();
   const response = await page.request.post("/api/automation/batches", {
     data: {
       contentChannel: "DOUYIN",
       productId: product.id,
       campaignId: campaign.id,
+      productStage: "IFFO_P1",
       urls: [
         `${E2E_ORIGIN}/mock/douyin?case=video&dy=${suffix}-1`,
         `${E2E_ORIGIN}/mock/douyin?case=multi-image&dy=${suffix}-2`,
@@ -252,13 +389,44 @@ test("抖音批次使用独立会话、单一后台页面并在无业务规则�
   const batchPayload = await (await page.request.get(`/api/automation/batches?batchId=${batchId}`)).json();
   const batch = batchPayload.data[0] as {
     channel: string;
-    tasks: Array<{ channel: string; status: string; auditResults: Array<{ autoStatus: string }> }>;
+    tasks: Array<{
+      channel: string;
+      status: string;
+      auditResults: Array<{
+        autoStatus: string;
+      }>;
+    }>;
   };
   expect(batch.channel).toBe("DOUYIN");
   expect(batch.tasks).toHaveLength(2);
   expect(batch.tasks.every((task) => task.channel === "DOUYIN")).toBe(true);
-  expect(batch.tasks.every((task) => task.status === "NEEDS_REVIEW")).toBe(true);
-  expect(batch.tasks.every((task) => task.auditResults[0]?.autoStatus === "NEEDS_REVIEW")).toBe(true);
+  expect(batch.tasks.every((task) => task.status === "COMPLETED")).toBe(true);
+  expect(batch.tasks.every((task) => task.auditResults[0]?.autoStatus === "FAILED")).toBe(true);
+  const resultPayload = await (
+    await page.request.get(`/api/results?batchId=${batchId}&pageSize=100`)
+  ).json();
+  expect(resultPayload.data.total).toBe(2);
+  expect(
+    resultPayload.data.items.every(
+      (item: { failureReasons: string }) =>
+        !item.failureReasons.includes("业务规则未配置"),
+    ),
+  ).toBe(true);
+  const videoResult = resultPayload.data.items.find(
+    (item: { task: { url: string } }) => item.task.url.includes("case=video"),
+  );
+  const imageTextResult = resultPayload.data.items.find(
+    (item: { task: { url: string } }) =>
+      item.task.url.includes("case=multi-image"),
+  );
+  expect(videoResult).toMatchObject({
+    imageStatus: "NOT_REQUIRED",
+    imageCount: 0,
+  });
+  expect(imageTextResult).toMatchObject({
+    imageStatus: "COMPLIANT",
+    imageCount: 5,
+  });
 
   const douyinSession = (await (await page.request.get("/api/automation/session?platform=DOUYIN")).json()).data;
   const xhsSession = (await (await page.request.get("/api/automation/session?platform=XIAOHONGSHU")).json()).data;
@@ -275,7 +443,7 @@ test("抖音不存在作品使用独立终态且不阻断后续作品", async ({
   await login(page);
   const products = (await (await page.request.get("/api/products")).json()).data as Array<{ id: string }>;
   const product = products[0];
-  const campaigns = (await (await page.request.get(`/api/campaigns?productId=${product.id}`)).json()).data as Array<{ id: string }>;
+  const campaigns = (await (await page.request.get(`/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`)).json()).data as Array<{ id: string }>;
   const suffix = Date.now();
   const response = await page.request.post("/api/automation/batches", {
     data: {
@@ -296,14 +464,14 @@ test("抖音不存在作品使用独立终态且不阻断后续作品", async ({
   }, { timeout: 90_000 }).toMatch(/^COMPLETED/u);
   const payload = await (await page.request.get(`/api/automation/batches?batchId=${batchId}`)).json();
   expect(payload.data[0].tasks[0]).toMatchObject({ status: "COMPLETED", failureCode: "NOTE_NOT_FOUND" });
-  expect(payload.data[0].tasks[1].status).toBe("NEEDS_REVIEW");
+  expect(payload.data[0].tasks[1].status).toBe("COMPLETED");
   await page.request.post(`/api/automation/batches/${batchId}/clear`);
 });
 
 test("抖音临时网络错误最多重试两次且不创建新页面", async ({ page }) => {
   await login(page);
   const product = ((await (await page.request.get("/api/products")).json()).data as Array<{ id: string }>)[0];
-  const campaign = ((await (await page.request.get(`/api/campaigns?productId=${product.id}`)).json()).data as Array<{ id: string }>)[0];
+  const campaign = ((await (await page.request.get(`/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`)).json()).data as Array<{ id: string }>)[0];
   const before = (await (await page.request.get("/api/automation/session?platform=DOUYIN")).json()).data;
   const response = await page.request.post("/api/automation/batches", {
     data: {
@@ -334,7 +502,7 @@ test("抖音临时网络错误最多重试两次且不创建新页面", async ({
 test("抖音安全限制暂停批次并只显示同一会话的人工页", async ({ page }) => {
   await login(page);
   const product = ((await (await page.request.get("/api/products")).json()).data as Array<{ id: string }>)[0];
-  const campaign = ((await (await page.request.get(`/api/campaigns?productId=${product.id}`)).json()).data as Array<{ id: string }>)[0];
+  const campaign = ((await (await page.request.get(`/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`)).json()).data as Array<{ id: string }>)[0];
   const response = await page.request.post("/api/automation/batches", {
     data: {
       contentChannel: "DOUYIN",
@@ -372,7 +540,7 @@ test("抖音未登录只暂停当前平台批次且不生成业务失败结果",
     await page.request.get("/api/products")
   ).json()).data as Array<{ id: string }>)[0];
   const campaign = ((await (
-    await page.request.get(`/api/campaigns?productId=${product.id}`)
+    await page.request.get(`/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`)
   ).json()).data as Array<{ id: string }>)[0];
   const response = await page.request.post("/api/automation/batches", {
     data: {

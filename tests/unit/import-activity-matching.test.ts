@@ -12,6 +12,7 @@ const campaign = {
   productId: null,
   productIds: ["product-danone"],
   ruleCount: 10,
+  contentChannel: "XIAOHONGSHU",
 };
 
 describe("导入活动精确匹配", () => {
@@ -65,16 +66,33 @@ describe("导入活动精确匹配", () => {
     }).status).toBe("NO_RULES");
   });
 
-  it("抖音首阶段允许精确关联活动但不借用小红书规则", () => {
-    const result = resolveImportedActivity({
+  it("内容渠道必须与活动渠道一致，抖音活动也必须配置独立规则", () => {
+    expect(resolveImportedActivity({
       activityName: campaign.name,
       productId: "product-danone",
-      candidates: [{ ...campaign, ruleCount: 0 }],
-      allowMissingRules: true,
+      contentChannel: "DOUYIN",
+      candidates: [campaign],
+    })).toMatchObject({
+      status: "CHANNEL_MISMATCH",
+      error: "内容渠道与活动渠道不一致：当前渠道为抖音，请选择对应的抖音审核活动。",
     });
-    expect(result).toMatchObject({
-      status: "MATCHED",
-      campaign: { id: campaign.id, ruleCount: 0 },
-    });
+    const douyinCampaign = {
+      ...campaign,
+      id: "campaign-aug-douyin",
+      name: "达能2026年8月抖音种草审核",
+      contentChannel: "DOUYIN",
+    };
+    expect(resolveImportedActivity({
+      activityName: douyinCampaign.name,
+      productId: "product-danone",
+      contentChannel: "DOUYIN",
+      candidates: [douyinCampaign],
+    })).toMatchObject({ status: "MATCHED", campaign: { id: douyinCampaign.id } });
+    expect(resolveImportedActivity({
+      activityName: douyinCampaign.name,
+      productId: "product-danone",
+      contentChannel: "DOUYIN",
+      candidates: [{ ...douyinCampaign, ruleCount: 0 }],
+    }).status).toBe("NO_RULES");
   });
 });

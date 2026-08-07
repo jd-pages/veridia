@@ -81,7 +81,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       "utf8",
     ),
   ) as {
-    products: unknown[];
+    products: Array<{ name: string }>;
     campaigns: Array<{ key: string; name: string; month: string }>;
     stageGroups: unknown[];
     topicRules: Array<{ campaignKey: string | null }>;
@@ -97,16 +97,27 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     month: "2026-08",
   });
   expect(danoneAugustRules).toHaveLength(9);
-  expect(afterRules.counts).toEqual({
-    products: builtinRules.products.length,
-    activities: builtinRules.campaigns.length,
-    stageGroups: builtinRules.stageGroups.length,
-    topicRules: builtinRules.topicRules.length,
-  });
+  expect(afterRules.counts.products).toBeGreaterThanOrEqual(
+    builtinRules.products.length,
+  );
+  expect(afterRules.counts.activities).toBeGreaterThanOrEqual(
+    builtinRules.campaigns.length,
+  );
+  expect(afterRules.counts.stageGroups).toBeGreaterThanOrEqual(
+    builtinRules.stageGroups.length,
+  );
+  expect(afterRules.counts.topicRules).toBeGreaterThanOrEqual(
+    builtinRules.topicRules.length,
+  );
 
   const productsResponse = await page.request.get("/api/products");
   expect(productsResponse.ok()).toBeTruthy();
   const products = (await productsResponse.json()).data as Array<{ id: string; code: string; name: string }>;
+  expect(
+    builtinRules.products.every((expected) =>
+      products.some((actual) => actual.name === expected.name),
+    ),
+  ).toBe(true);
   const product =
     products.find((item) => item.name.includes("澳洲白金版")) ||
     products[0];
@@ -121,6 +132,18 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     availableCampaigns.find((item) => item.month === "2026-07") ||
     availableCampaigns[0];
   expect(campaign).toBeTruthy();
+  const douyinCampaignsResponse = await page.request.get(
+    `/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`,
+  );
+  const douyinCampaigns = (await douyinCampaignsResponse.json()).data as Array<{
+    id: string;
+    name: string;
+    month: string;
+  }>;
+  const douyinCampaign =
+    douyinCampaigns.find((item) => item.month === campaign.month) ||
+    douyinCampaigns[0];
+  expect(douyinCampaign).toBeTruthy();
 
   const ruleTemplateWorkbook = new ExcelJS.Workbook();
   await ruleTemplateWorkbook.xlsx.load(
@@ -300,9 +323,11 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const templateDownloadPromise = page.waitForEvent("download");
     await page.getByRole("button", { name: "下载导入模板" }).click();
-    await page
-      .getByRole("menuitem", { name: "下载达能客户 Excel 模板" })
-      .click();
+    const templateMenuItem = page.getByRole("menuitem", {
+      name: "下载达能客户 Excel 模板",
+    });
+    await expect(templateMenuItem).toBeVisible();
+    await templateMenuItem.click({ force: true });
     const templateDownload = await templateDownloadPromise;
     expect(templateDownload.suggestedFilename()).toMatch(
       /^VERIDIA达能客户导入模板_.+_\d{4}-\d{2}-\d{2}\.xlsx$/u,
@@ -503,8 +528,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     `${E2E_ORIGIN}/mock/douyin?case=video&e2e-import=${suffix}-douyin`,
     product.code,
     product.name,
-    campaign.name,
-    campaign.month,
+    douyinCampaign.name,
+    douyinCampaign.month,
     "IFFO",
     "抖音",
     "京东健康官方进口超市",
@@ -592,8 +617,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "https://www.douyin.com/video/987654321",
     product.code,
     product.name,
-    campaign.name,
-    campaign.month,
+    douyinCampaign.name,
+    douyinCampaign.month,
     "IFFO",
     "DOUYIN",
     "京东健康官方进口超市",

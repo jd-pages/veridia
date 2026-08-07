@@ -4,6 +4,7 @@ import { BUSINESS_ROLES } from "@/lib/permissions";
 import { createAutomaticBatch } from "@/lib/automation/batch-service";
 import { kickAutomaticAuditQueue } from "@/lib/automation/queue";
 import { parseStoredStringArray } from "@/lib/stored-json";
+import { resolveReauditCampaignId } from "@/lib/re-audit-campaign";
 
 export async function POST(request: Request) {
   const user = await requireApiUser(BUSINESS_ROLES);
@@ -21,6 +22,14 @@ export async function POST(request: Request) {
   });
   if (body.action === "RE_AUDIT") {
     try {
+      const campaignIds = new Map(
+        await Promise.all(
+          results.map(async (result) => [
+            result.task.id,
+            await resolveReauditCampaignId(result.task),
+          ] as const),
+        ),
+      );
       const batch = await createAutomaticBatch({
         name: `重新审核 ${results.length} 条`,
         source: "RE_AUDIT",
@@ -30,7 +39,7 @@ export async function POST(request: Request) {
           url: result.task.url,
           originalInput: result.task.originalInput,
           productId: result.task.productId,
-          campaignId: result.task.campaignId,
+          campaignId: campaignIds.get(result.task.id)!,
           productStage: result.task.productStage,
           milkType: result.task.milkType,
           notes: result.task.notes,

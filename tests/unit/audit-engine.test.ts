@@ -70,6 +70,82 @@ describe("audit engine", () => {
     expect(result.failureReasons).toEqual(["抖音采集成功，业务规则未配置"]);
     expect(result.missingTopics).toEqual([]);
   });
+  it("抖音视频使用业务规则审核但图片数量明确不适用", () => {
+    const result = evaluateAudit(
+      { ...createMockNote("video-note"), noteType: "VIDEO" },
+      { ...context, contentChannel: "DOUYIN", rulesConfigured: true },
+    );
+    expect(result.imageStatus).toBe("NOT_REQUIRED");
+    expect(result.imageCount).toBeNull();
+    expect(result.failureReasons.join("；")).not.toContain("图片数量不足");
+  });
+  it("抖音使用独立规则且缺少小红书新手爸妈话题不会失败", () => {
+    const xhsCampaign = defaultRules.campaigns.find(
+      (campaign) => campaign.key === "activity_bd673ea91f342c12a819",
+    )!;
+    const douyinCampaign = defaultRules.campaigns.find(
+      (campaign) => campaign.key === "douyin_activity_bd673ea91f342c12a819",
+    )!;
+    const productKey = xhsCampaign.productKeys[0];
+    const applicable = (channel: "XIAOHONGSHU" | "DOUYIN") =>
+      defaultRules.topicRules.filter(
+        (rule) =>
+          (rule.contentChannel || "XIAOHONGSHU") === channel &&
+          rule.campaignKey ===
+            (channel === "DOUYIN" ? douyinCampaign.key : xhsCampaign.key) &&
+          (!rule.productKey || rule.productKey === productKey) &&
+          (!rule.applicableStage || rule.applicableStage === "IFFO_2"),
+      );
+    const toContext = (
+      campaign: typeof xhsCampaign,
+      channel: "XIAOHONGSHU" | "DOUYIN",
+    ): AuditContext => ({
+      productId: productKey,
+      campaignId: campaign.key,
+      campaignName: campaign.name,
+      contentChannel: channel,
+      rulesConfigured: true,
+      ruleVersion: campaign.ruleRevision,
+      minImageCount: campaign.minImageCount,
+      minBodyLength: campaign.minBodyLength,
+      publicRequired: campaign.publicRequired,
+      retentionDays: campaign.retentionDays,
+      bodyRequired: campaign.bodyRequired,
+      clickableTopicRequired: campaign.clickableTopicRequired,
+      rules: applicable(channel).map((rule) => ({
+        id: rule.key,
+        scope: rule.scope,
+        ruleType: rule.ruleType,
+        topic: rule.topic,
+        exactMatch: rule.exactMatch,
+        clickableRequired: rule.clickableRequired,
+        caseSensitive: rule.caseSensitive,
+        minCount: rule.minCount,
+        sortOrder: rule.sortOrder,
+        version: rule.revision,
+        topicCategory: rule.topicCategory,
+        applicableStage: rule.applicableStage,
+        milkType: rule.milkType,
+      })),
+    });
+    const note = createMockNote("passed");
+    note.body = "这是一段满足正文长度要求且不依赖小红书专属话题的抖音审核正文。".repeat(3);
+    note.imageCount = 3;
+    note.topics = applicable("DOUYIN").map((rule) => ({
+      displayText: rule.topic,
+      isLinkElement: true,
+      hasHref: true,
+      href: `https://www.douyin.com/search/${encodeURIComponent(rule.topic)}`,
+      styleFeature: true,
+    }));
+
+    const douyin = evaluateAudit(note, toContext(douyinCampaign, "DOUYIN"));
+    const xhs = evaluateAudit(note, toContext(xhsCampaign, "XIAOHONGSHU"));
+    expect(douyin.autoStatus).toBe("PASSED");
+    expect(douyin.missingTopics).not.toContain("#爱他美新手爸妈日记");
+    expect(xhs.autoStatus).toBe("FAILED");
+    expect(xhs.missingTopics).toContain("#爱他美新手爸妈日记");
+  });
   it.each(["not-found", "deleted"] as const)(
     "页面失效 %s 时短路正文、图片和话题审核",
     (caseName) => {

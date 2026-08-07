@@ -1,9 +1,13 @@
 import { ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { prisma } from "@/lib/db";
 
-export const GET = withApiErrorBoundary(async function GET() {
+export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
   if (user instanceof Response) return user;
+  const requestedChannel = new URL(request.url).searchParams.get("contentChannel");
+  const contentChannel = requestedChannel === "DOUYIN"
+    ? "DOUYIN"
+    : "XIAOHONGSHU";
 
   const products = await prisma.product.findMany({
     where: { deletedAt: null },
@@ -22,6 +26,7 @@ export const GET = withApiErrorBoundary(async function GET() {
         prisma.campaign.findMany({
           where: {
             deletedAt: null,
+            contentChannel,
             OR: [
               { product: { is: { brandName } } },
               { products: { some: { product: { brandName } } } },
@@ -29,7 +34,9 @@ export const GET = withApiErrorBoundary(async function GET() {
           },
           select: { id: true },
         }),
-        prisma.topicRule.count({ where: { brandName } }),
+        prisma.topicRule.count({
+          where: { brandName, contentChannel: { in: [contentChannel, "ALL"] } },
+        }),
       ]);
       return {
         brandName,

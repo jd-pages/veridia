@@ -47,13 +47,26 @@ describe("规则发布来源", () => {
       ]),
     );
     const danoneMonthlyCampaigns = payload.campaigns.filter((campaign) =>
-      campaign.name.startsWith("爱他美2026年"),
+      campaign.name.startsWith("爱他美2026年") &&
+      campaign.contentChannel === "XIAOHONGSHU",
     );
     expect(danoneMonthlyCampaigns.map((campaign) => campaign.month)).toEqual([
       "2026-07",
       "2026-08",
     ]);
     expect(new Set(danoneMonthlyCampaigns.map((campaign) => campaign.key)).size).toBe(2);
+    const douyinMonthlyCampaigns = payload.campaigns.filter(
+      (campaign) =>
+        campaign.name.startsWith("爱他美2026年") &&
+        campaign.contentChannel === "DOUYIN",
+    );
+    expect(douyinMonthlyCampaigns.map((campaign) => campaign.month)).toEqual([
+      "2026-07",
+      "2026-08",
+    ]);
+    expect(
+      new Set(douyinMonthlyCampaigns.map((campaign) => campaign.key)).size,
+    ).toBe(2);
     const augustStageRules = payload.topicRules.filter(
       (rule) =>
         rule.campaignKey === "activity_danone_2026_08" &&

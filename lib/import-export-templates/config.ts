@@ -35,6 +35,7 @@ function normalizeBusinessTemplates(
   templates: ImportExportTemplates,
 ): ImportExportTemplates {
   const output = structuredClone(templates);
+  output.templateVersion = "template-2026.08.07.1";
   output.fieldDefinitions.failedReasons = {
     displayName: "失败原因",
     type: "stringList",
@@ -88,12 +89,12 @@ function normalizeBusinessTemplates(
   output.fieldDefinitions.contentChannel = {
     displayName: "内容渠道",
     type: "string",
-    description: "内容来源渠道；未填写时仅由笔记链接类型识别",
+    description: "填写小红书或抖音，必须与所选审核活动及链接平台一致",
   };
   output.fieldDefinitions.noteUrl = {
     displayName: "链接（必填）",
     type: "url",
-    description: "小红书完整链接或 xhslink 短链接",
+    description: "小红书/抖音作品完整链接或对应平台短链接",
   };
   output.fieldDefinitions.publishTime = {
     displayName: "发布时间（必填）",

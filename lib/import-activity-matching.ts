@@ -4,6 +4,7 @@ export type ImportActivityMatchStatus =
   | "NOT_FOUND"
   | "DUPLICATE"
   | "INACTIVE"
+  | "CHANNEL_MISMATCH"
   | "PRODUCT_NOT_IN_ACTIVITY"
   | "NO_RULES";
 
@@ -14,6 +15,7 @@ export interface ImportActivityCandidate {
   startDate: Date;
   endDate: Date;
   status: string;
+  contentChannel?: string;
   deletedAt: Date | null;
   productId: string | null;
   productIds: string[];
@@ -30,8 +32,8 @@ export interface ImportActivityResolution {
 export function resolveImportedActivity(input: {
   activityName: unknown;
   productId: string | null | undefined;
+  contentChannel?: "XIAOHONGSHU" | "DOUYIN";
   candidates: readonly ImportActivityCandidate[];
-  allowMissingRules?: boolean;
 }): ImportActivityResolution {
   const inputName = String(input.activityName ?? "").trim();
   const fail = (
@@ -60,6 +62,15 @@ export function resolveImportedActivity(input: {
   if (campaign.status !== "ACTIVE") {
     return fail("INACTIVE", "该活动当前未启用，无法导入", campaign);
   }
+  const requestedChannel = input.contentChannel || "XIAOHONGSHU";
+  if ((campaign.contentChannel || "XIAOHONGSHU") !== requestedChannel) {
+    const currentChannel = requestedChannel === "DOUYIN" ? "抖音" : "小红书";
+    return fail(
+      "CHANNEL_MISMATCH",
+      `内容渠道与活动渠道不一致：当前渠道为${currentChannel}，请选择对应的${currentChannel}审核活动。`,
+      campaign,
+    );
+  }
   const productIds = new Set([
     ...(campaign.productId ? [campaign.productId] : []),
     ...campaign.productIds,
@@ -71,7 +82,7 @@ export function resolveImportedActivity(input: {
       campaign,
     );
   }
-  if (campaign.ruleCount < 1 && !input.allowMissingRules) {
+  if (campaign.ruleCount < 1) {
     return fail("NO_RULES", "该活动尚未配置审核规则", campaign);
   }
   return { status: "MATCHED", inputName, campaign, error: "" };

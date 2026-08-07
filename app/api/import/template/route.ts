@@ -23,16 +23,21 @@ export async function GET(request: Request) {
       ? "DANONE_AGENCY"
       : "DANONE_CUSTOMER";
   const { templates } = await getActiveImportExportTemplates();
-  const activityNames = (await prisma.campaign.findMany({
+  const activities = await prisma.campaign.findMany({
     where: { status: "ACTIVE", deletedAt: null },
     orderBy: [{ startDate: "desc" }, { name: "asc" }],
-    select: { name: true },
-  })).map((campaign) => campaign.name);
+    select: { name: true, contentChannel: true },
+  });
   const date = new Date().toISOString().slice(0, 10);
   const buffer = await buildImportTemplateWorkbook(templates, {
     templateBrand,
     templateType,
-    activityNames,
+    activities: activities.map((campaign) => ({
+      name: campaign.name,
+      contentChannel: campaign.contentChannel === "DOUYIN"
+        ? "DOUYIN" as const
+        : "XIAOHONGSHU" as const,
+    })),
   });
   const templateLabel = templateType === "DANONE_AGENCY"
     ? "达能代发"
