@@ -52,17 +52,17 @@ model User {
 }
 
 model StoreTopicRule {
-  id                  String    @id @default(cuid())
+  id                  String            @id @default(cuid())
   commercePlatform    String
   storeName           String
   normalizedStoreName String
   expectedTopic       String
-  enabled             Boolean   @default(true)
+  enabled             Boolean           @default(true)
   deletedAt           DateTime?
   createdBy           String?
   updatedBy           String?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
   topicEntries        StoreTopicEntry[]
 
   @@unique([commercePlatform, normalizedStoreName])
@@ -72,19 +72,19 @@ model StoreTopicRule {
 }
 
 model StoreTopicEntry {
-  id                  String         @id @default(cuid())
-  storeTopicRuleId    String
-  topic               String
-  normalizedTopic     String
-  topicType           String         @default("ACCEPTED")
-  sortOrder           Int            @default(0)
-  enabled             Boolean        @default(true)
-  deletedAt           DateTime?
-  createdBy           String?
-  updatedBy           String?
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
-  storeTopicRule      StoreTopicRule @relation(fields: [storeTopicRuleId], references: [id], onDelete: Cascade)
+  id               String         @id @default(cuid())
+  storeTopicRuleId String
+  topic            String
+  normalizedTopic  String
+  topicType        String         @default("ACCEPTED")
+  sortOrder        Int            @default(0)
+  enabled          Boolean        @default(true)
+  deletedAt        DateTime?
+  createdBy        String?
+  updatedBy        String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  storeTopicRule   StoreTopicRule @relation(fields: [storeTopicRuleId], references: [id], onDelete: Cascade)
 
   @@unique([storeTopicRuleId, normalizedTopic])
   @@index([storeTopicRuleId, topicType, enabled, deletedAt, sortOrder])
@@ -208,6 +208,7 @@ model Campaign {
   ruleSource                String            @default("LOCAL_DRAFT")
   productId                 String?
   name                      String
+  contentChannel            String            @default("XIAOHONGSHU")
   month                     String
   year                      Int?
   startDate                 DateTime
@@ -236,7 +237,7 @@ model Campaign {
   auditBatches              AuditBatch[]
 
   @@unique([name, month])
-  @@index([month, status])
+  @@index([contentChannel, month, status])
   @@index([productId, status])
   @@map("campaigns")
 }
@@ -263,6 +264,7 @@ model TopicRule {
   campaignId        String?
   productId         String?
   brandName         String?
+  contentChannel    String    @default("XIAOHONGSHU")
   ruleType          String
   topicCategory     String    @default("GENERAL")
   applicableStage   String?
@@ -281,7 +283,7 @@ model TopicRule {
   campaign          Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   product           Product?  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@index([scope, status])
+  @@index([contentChannel, scope, status])
   @@index([brandName, status, sortOrder])
   @@index([campaignId, status, sortOrder])
   @@index([productId, status])
@@ -290,54 +292,54 @@ model TopicRule {
 }
 
 model AuditTask {
-  id                 String             @id @default(cuid())
-  batchId            String?
-  importRecordId     String?
-  url                String
-  originalInput      String?
-  normalizedUrl      String
-  productId          String
-  campaignId         String
-  productStage       String?
-  milkType           String?
-  source             String             @default("MANUAL")
-  status             String             @default("PENDING")
-  queueOrder         Int                @default(0)
-  replacesResultId   String?
-  attempts           Int                @default(0)
-  failureCode        String?
-  failureMessage     String?
-  finalUrl           String?
-  pageTitle          String?
-  pageType           String?
-  redirectChain      String             @default("[]")
-  failureEvidence    String?
-  notes              String?
-  platform           String?
-  channel            String?
-  commercePlatform   String?
-  storeName          String?
-  storeTopicRuleId   String?
-  matchedStoreName   String?
-  expectedStoreTopic String?
-  expectedStoreTopics String            @default("[]")
-  requiredStoreTopics String            @default("[]")
-  storeMappingStatus String?
-  orderNumber        String?
-  softwareVersion    String?
-  rulePackageVersion String?
-  createdBy          String?
-  startedAt          DateTime?
-  finishedAt         DateTime?
-  nextRunAt          DateTime?
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-  batch              AuditBatch?        @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  importRecord       ImportRecord?       @relation(fields: [importRecordId], references: [id], onDelete: SetNull)
-  product            Product            @relation(fields: [productId], references: [id])
-  campaign           Campaign           @relation(fields: [campaignId], references: [id])
-  extractions        ExtractionRecord[]
-  auditResults       AuditResult[]
+  id                  String             @id @default(cuid())
+  batchId             String?
+  importRecordId      String?
+  url                 String
+  originalInput       String?
+  normalizedUrl       String
+  productId           String
+  campaignId          String
+  productStage        String?
+  milkType            String?
+  source              String             @default("MANUAL")
+  status              String             @default("PENDING")
+  queueOrder          Int                @default(0)
+  replacesResultId    String?
+  attempts            Int                @default(0)
+  failureCode         String?
+  failureMessage      String?
+  finalUrl            String?
+  pageTitle           String?
+  pageType            String?
+  redirectChain       String             @default("[]")
+  failureEvidence     String?
+  notes               String?
+  platform            String?
+  channel             String?
+  commercePlatform    String?
+  storeName           String?
+  storeTopicRuleId    String?
+  matchedStoreName    String?
+  expectedStoreTopic  String?
+  expectedStoreTopics String             @default("[]")
+  requiredStoreTopics String             @default("[]")
+  storeMappingStatus  String?
+  orderNumber         String?
+  softwareVersion     String?
+  rulePackageVersion  String?
+  createdBy           String?
+  startedAt           DateTime?
+  finishedAt          DateTime?
+  nextRunAt           DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  batch               AuditBatch?        @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  importRecord        ImportRecord?       @relation(fields: [importRecordId], references: [id], onDelete: SetNull)
+  product             Product            @relation(fields: [productId], references: [id])
+  campaign            Campaign           @relation(fields: [campaignId], references: [id])
+  extractions         ExtractionRecord[]
+  auditResults        AuditResult[]
 
   @@index([status, createdAt])
   @@index([batchId, status, queueOrder])
@@ -361,6 +363,8 @@ model AuditBatch {
   campaignId       String?
   productStage     String?
   source           String      @default("MANUAL")
+  channel          String?
+  queueOrder       Int         @default(0)
   status           String      @default("QUEUED")
   totalCount       Int         @default(0)
   intervalMs       Int         @default(5000)
@@ -386,6 +390,8 @@ model AuditBatch {
   @@index([createdBy, createdAt])
   @@index([clearedAt, createdAt])
   @@index([importRecordId])
+  @@index([channel, status])
+  @@index([status, queueOrder, createdAt])
   @@map("audit_batches")
 }
 
@@ -405,7 +411,8 @@ model AutomationSession {
 
 model NoteRecord {
   id                    String             @id @default(cuid())
-  platformNoteId        String?            @unique
+  contentChannel        String?
+  platformNoteId        String?
   url                   String             @unique
   finalUrl              String?
   title                 String?
@@ -427,7 +434,8 @@ model NoteRecord {
   noteProducts          NoteProduct[]
   auditResults          AuditResult[]
 
-  @@index([pageStatus])
+  @@unique([contentChannel, platformNoteId])
+  @@index([contentChannel, pageStatus])
   @@map("note_records")
 }
 
@@ -458,6 +466,7 @@ model NoteTopic {
   styleFeature   Boolean    @default(false)
   isClickable    Boolean    @default(false)
   domPath        String?
+  source         String?
   createdAt      DateTime   @default(now())
   note           NoteRecord @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
@@ -484,50 +493,50 @@ model ExtractionRecord {
 }
 
 model AuditResult {
-  id                      String         @id @default(cuid())
-  auditTaskId             String
-  noteId                  String
-  ruleVersion             Int
-  softwareVersion         String         @default("unknown")
-  rulePackageVersion      String?
-  ruleSnapshot            String
-  pageStatus              String
-  bodyStatus              String
-  effectiveBodyLength     Int            @default(0)
-  bodyCompliant           Boolean        @default(true)
-  noteType                String         @default("UNKNOWN")
-  imageExtractionStatus   String         @default("NOT_CHECKED")
-  imageStatus             String         @default("NOT_REQUIRED")
-  imageCount              Int
-  imageCompliant          Boolean
-  topicsCompliant         Boolean
-  clickableCompliant      Boolean
-  storeTopicStatus        String         @default("NOT_CHECKED")
-  expectedStoreTopic      String?
-  matchedStoreTopic       String?
-  expectedStoreTopics       String       @default("[]")
-  requiredStoreTopics       String       @default("[]")
-  matchedStoreTopics        String       @default("[]")
-  matchedRequiredStoreTopics String      @default("[]")
-  storeTopicFailureReason String?
-  missingTopics           String         @default("[]")
-  forbiddenTopics         String         @default("[]")
-  autoStatus              String
-  publicStatus            String         @default("NOT_REQUIRED")
-  retentionStatus         String         @default("NOT_REQUIRED")
-  retentionDueAt          DateTime?
-  visualReviewStatus      String         @default("NOT_REQUIRED")
-  visualReviewDetails     String         @default("{}")
-  failureReasons          String         @default("[]")
-  aiStatus                String         @default("DISABLED")
-  aiRelevance             String?
-  aiReason                String?
-  auditedAt               DateTime       @default(now())
-  createdAt               DateTime       @default(now())
-  task                    AuditTask      @relation(fields: [auditTaskId], references: [id])
-  note                    NoteRecord     @relation(fields: [noteId], references: [id])
-  ruleResults             RuleResult[]
-  manualReviews           ManualReview[]
+  id                         String         @id @default(cuid())
+  auditTaskId                String
+  noteId                     String
+  ruleVersion                Int
+  softwareVersion            String         @default("unknown")
+  rulePackageVersion         String?
+  ruleSnapshot               String
+  pageStatus                 String
+  bodyStatus                 String
+  effectiveBodyLength        Int            @default(0)
+  bodyCompliant              Boolean        @default(true)
+  noteType                   String         @default("UNKNOWN")
+  imageExtractionStatus      String         @default("NOT_CHECKED")
+  imageStatus                String         @default("NOT_REQUIRED")
+  imageCount                 Int
+  imageCompliant             Boolean
+  topicsCompliant            Boolean
+  clickableCompliant         Boolean
+  storeTopicStatus           String         @default("NOT_CHECKED")
+  expectedStoreTopic         String?
+  matchedStoreTopic          String?
+  expectedStoreTopics        String         @default("[]")
+  requiredStoreTopics        String         @default("[]")
+  matchedStoreTopics         String         @default("[]")
+  matchedRequiredStoreTopics String         @default("[]")
+  storeTopicFailureReason    String?
+  missingTopics              String         @default("[]")
+  forbiddenTopics            String         @default("[]")
+  autoStatus                 String
+  publicStatus               String         @default("NOT_REQUIRED")
+  retentionStatus            String         @default("NOT_REQUIRED")
+  retentionDueAt             DateTime?
+  visualReviewStatus         String         @default("NOT_REQUIRED")
+  visualReviewDetails        String         @default("{}")
+  failureReasons             String         @default("[]")
+  aiStatus                   String         @default("DISABLED")
+  aiRelevance                String?
+  aiReason                   String?
+  auditedAt                  DateTime       @default(now())
+  createdAt                  DateTime       @default(now())
+  task                       AuditTask      @relation(fields: [auditTaskId], references: [id])
+  note                       NoteRecord     @relation(fields: [noteId], references: [id])
+  ruleResults                RuleResult[]
+  manualReviews              ManualReview[]
 
   @@index([autoStatus, auditedAt])
   @@index([imageStatus, auditedAt])
@@ -676,6 +685,7 @@ model ImportRecord {
   skippedCount Int      @default(0)
   status       String
   summary      String
+  channelDistribution String @default("{}")
   createdBy    String?
   createdAt    DateTime @default(now())
   creator      User?        @relation(fields: [createdBy], references: [id], onDelete: SetNull)

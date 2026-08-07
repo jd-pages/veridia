@@ -980,7 +980,7 @@ describe("模板驱动导出", () => {
         ...compactSource.task,
         notes: buildImportedTaskNotes({ contentChannel: "抖音" }),
       },
-    })).toBe("N-内容渠道不支持");
+    })).toBe("N-缺少话题");
     expect(selfReview({
       autoStatus: "FAILED",
       topicsCompliant: false,

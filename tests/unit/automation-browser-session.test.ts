@@ -114,6 +114,7 @@ describe("小红书持久会话与访问节奏", () => {
     const browser = source("lib/automation/browser.ts");
     const queue = source("lib/automation/queue.ts");
     const failure = source("lib/automation/failure.ts");
+    const platformRuntime = source("lib/automation/platform-runtime.ts");
 
     expect(failure).toContain('"BROWSER_CONTROL_ERROR"');
     expect(failure).toContain("Target\\.createTarget");
@@ -124,6 +125,66 @@ describe("小红书持久会话与访问节奏", () => {
       'extractionError.code === "BROWSER_CONTROL_ERROR"',
     );
     expect(queue).toContain('status: browserControlIssue\n              ? "PAUSED"');
-    expect(queue).toContain("ensureXhsBrowserControlReady(true)");
+    expect(queue).toContain("await runtime.ensureBrowserReady()");
+    expect(platformRuntime).toContain("ensureXhsBrowserControlReady(true)");
+  });
+});
+
+describe("抖音独立持久会话与后台审核页", () => {
+  it("使用独立 Profile、唯一 context 与长期复用 auditPage", () => {
+    const browser = source("lib/automation/douyin-browser.ts");
+    const extract = source("lib/automation/douyin-extract.ts");
+    expect(browser.match(/launchPersistentContext\(/gu)).toHaveLength(1);
+    expect(browser).toContain('"douyin-profile"');
+    expect(browser).toContain("DOUYIN_PROFILE_PATH");
+    expect(browser).toContain("auditPage?: Page");
+    expect(browser).toContain("auditPagePromise?: Promise<Page>");
+    expect(browser).toContain("createAuditPage(context)");
+    expect(extract).toContain("getDouyinAuditPage({ taskId: task.id, url: task.url })");
+    expect(extract).not.toContain("context.newPage()");
+    expect(extract).not.toContain("page.bringToFront()");
+    expect(extract).not.toContain("await page.close()");
+  });
+
+  it("只有人工交互入口聚焦，正常、异常和重试均复用后台页", () => {
+    const browser = source("lib/automation/douyin-browser.ts");
+    const extract = source("lib/automation/douyin-extract.ts");
+    expect(browser.match(/\.bringToFront\(\)/gu)).toHaveLength(1);
+    expect(browser).toContain("showDouyinManualIntervention");
+    expect(extract).toContain('showDouyinManualIntervention(page, "LOGIN_REQUIRED")');
+    expect(extract).toContain('showDouyinManualIntervention(page, "SECURITY_RESTRICTED")');
+    expect(extract).not.toContain("bringToFront");
+    expect(extract).not.toContain("newPage(");
+    expect(browser).toContain('await setWindowState(interactivePage, "minimized")');
+  });
+
+  it("两个平台使用不同会话、锁和访问节奏，同时由单并发队列路由", () => {
+    const runtime = source("lib/automation/platform-runtime.ts");
+    const pacing = source("lib/automation/pacing.ts");
+    const queue = source("lib/automation/queue.ts");
+    expect(runtime).toContain("runtimeRegistry");
+    expect(runtime).toContain('sessionId: "douyin"');
+    expect(runtime).toContain('sessionId: "xiaohongshu"');
+    expect(pacing).toContain("DOUYIN_NETWORK_MAX_RETRIES: 2");
+    expect(pacing).toContain("DOUYIN_AUDIT_WAIT_MIN_MS: 7_000");
+    expect(queue).toContain("automationRuntime(platform)");
+    expect(queue).toContain("queueState.activeBatchId");
+    expect(queue).toContain('status: { in: ["PAUSED", "LOGIN_EXPIRED", "SECURITY_RESTRICTED"] }');
+    expect(queue).toContain('orderBy: [{ queueOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }]');
+    expect(source("lib/automation/browser.ts")).toContain('platform: "XIAOHONGSHU"');
+    expect(source("lib/automation/douyin-browser.ts")).toContain('platform: "DOUYIN"');
+  });
+
+  it("混合 Excel 共用一个导入记录并按平台拆分为串行子批次", () => {
+    const route = source("app/api/import/notes/route.ts");
+    const batchService = source("lib/automation/batch-service.ts");
+    expect(route).toContain('["XIAOHONGSHU", "DOUYIN"] as const');
+    expect(route).toContain("const channelTasks = tasks.filter");
+    expect(route).toContain("importRecordId: importRecord.id");
+    expect(route).toContain("allowQueuedBehindActive: true");
+    expect(route).toContain("batchIds = committed.batches.map");
+    expect(route).toContain("channelDistribution: JSON.stringify(channelDistribution)");
+    expect(batchService).toContain("platforms.length !== 1");
+    expect(batchService).toContain("queueOrder: Math.max(0, input.queueOrder || 0)");
   });
 });

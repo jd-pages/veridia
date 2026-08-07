@@ -30,6 +30,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       validCount: true,
       invalidCount: true,
       skippedCount: true,
+      channelDistribution: true,
       createdBy: true,
       creator: { select: { displayName: true } },
       _count: { select: { auditBatches: true, auditTasks: true } },
@@ -45,6 +46,13 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     const labelInput = { ...record, creatorDisplayName };
     return {
       ...record,
+      channelDistribution: (() => {
+        try {
+          return JSON.parse(record.channelDistribution) as Record<string, number>;
+        } catch {
+          return {};
+        }
+      })(),
       creatorDisplayName,
       resultCount: resultCounts.get(record.id) || 0,
       batchCount: _count.auditBatches,

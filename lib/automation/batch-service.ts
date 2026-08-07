@@ -9,6 +9,10 @@ import {
   countTaskStatuses,
   taskExecutionStatusGroups,
 } from "@/lib/automation/task-execution-filter";
+import {
+  parseAutomationPlatform,
+  platformFromUrl,
+} from "@/lib/automation/platform";
 
 export interface AutomaticTaskInput {
   importRecordId?: string | null;
@@ -43,6 +47,8 @@ export interface CreateAutomaticBatchInput {
   campaignId?: string;
   productStage?: string;
   intervalMs?: number;
+  queueOrder?: number;
+  allowQueuedBehindActive?: boolean;
   tasks: AutomaticTaskInput[];
 }
 
@@ -63,25 +69,45 @@ export async function createAutomaticBatchInTransaction(
   rulePackageVersion: string | null,
 ) {
   if (!input.tasks.length) throw new Error("没有可加入自动审核的链接");
-  const activeBatch = await tx.auditBatch.findFirst({
-    where: {
-      status: {
-        in: [
-          "QUEUED",
-          "RUNNING",
-          "RESUMING",
-          "LOGIN_EXPIRED",
-          "SECURITY_RESTRICTED",
-        ],
-      },
-      clearedAt: null,
-    },
-    select: { id: true },
-  });
+  const platforms = [
+    ...new Set(
+      input.tasks.map(
+        (task) =>
+          parseAutomationPlatform(task.channel) ||
+          parseAutomationPlatform(task.platform) ||
+          platformFromUrl(task.url),
+      ),
+    ),
+  ];
+  if (platforms.some((platform) => !platform)) {
+    throw new Error("存在无法识别内容平台的链接，不能创建自动审核批次");
+  }
+  if (platforms.length !== 1) {
+    throw new Error("同一自动审核批次只能包含一个内容平台，请按小红书或抖音分别创建批次");
+  }
+  const batchPlatform = platforms[0]!;
+  const activeBatch = input.allowQueuedBehindActive
+    ? null
+    : await tx.auditBatch.findFirst({
+        where: {
+          status: {
+            in: [
+              "QUEUED",
+              "RUNNING",
+              "RESUMING",
+              "LOGIN_EXPIRED",
+              "SECURITY_RESTRICTED",
+            ],
+          },
+          clearedAt: null,
+        },
+        select: { id: true, channel: true },
+      });
   if (activeBatch) {
     console.warn("[自动审核] 已拦截第二任务启动", { activeBatchId: activeBatch.id });
+    const activePlatform = parseAutomationPlatform(activeBatch.channel);
     throw new Error(
-      "当前已有小红书自动审核任务正在运行，请完成、暂停或取消当前任务后再启动新任务。",
+      `当前已有内容平台自动审核任务正在运行${activePlatform ? `：${activePlatform === "DOUYIN" ? "抖音" : "小红书"}` : ""}，请完成、暂停或取消当前任务后再启动新任务。`,
     );
   }
   const batch = await tx.auditBatch.create({
@@ -93,6 +119,8 @@ export async function createAutomaticBatchInTransaction(
       campaignId: input.campaignId || null,
       productStage: input.productStage || null,
       source: input.source,
+      channel: batchPlatform,
+      queueOrder: Math.max(0, input.queueOrder || 0),
       status: "QUEUED",
       totalCount: input.tasks.length,
       intervalMs: Math.max(
@@ -119,8 +147,8 @@ export async function createAutomaticBatchInTransaction(
       queueOrder: index,
       replacesResultId: task.replacesResultId || null,
       notes: task.notes?.trim() || null,
-      platform: task.platform?.trim() || null,
-      channel: task.channel?.trim() || task.platform?.trim() || null,
+      platform: task.platform?.trim() || batchPlatform,
+      channel: task.channel?.trim() || task.platform?.trim() || batchPlatform,
       commercePlatform: task.commercePlatform?.trim() || null,
       storeName: task.storeName?.trim() || null,
       storeTopicRuleId: task.storeTopicRuleId?.trim() || null,

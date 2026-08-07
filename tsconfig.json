@@ -46,7 +46,15 @@
     ".next-preview-3100/types/**/*.ts",
     ".next-preview-3100/dev/types/**/*.ts",
     ".playwright/next-release/types/**/*.ts",
-    ".playwright/next-release/dev/types/**/*.ts"
+    ".playwright/next-release/dev/types/**/*.ts",
+    ".playwright/next-e2e/types/**/*.ts",
+    ".playwright/next-e2e/dev/types/**/*.ts",
+    ".playwright/next-douyin-gate-3111/types/**/*.ts",
+    ".playwright/next-douyin-gate-3111/dev/types/**/*.ts",
+    ".playwright/next-full-gate-3111/types/**/*.ts",
+    ".playwright/next-full-gate-3111/dev/types/**/*.ts",
+    ".next-preview-3110/types/**/*.ts",
+    ".next-preview-3110/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

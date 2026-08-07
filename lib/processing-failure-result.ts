@@ -8,6 +8,7 @@ import {
   processingFailureTaskStatuses,
   type ProcessingFailureStatus,
 } from "@/lib/processing-failure";
+import { resolveTaskAutomationPlatform } from "@/lib/automation/platform";
 
 const globalForFailureBackfill = globalThis as typeof globalThis & {
   processingFailureBackfill?: Promise<number>;
@@ -43,13 +44,16 @@ export async function recordProcessingFailureResult(input: {
   ].includes(input.failureCode || "");
   const taskScope = await prisma.auditTask.findUnique({
     where: { id: input.taskId },
-    select: { productId: true, campaignId: true, productStage: true },
+    select: { productId: true, campaignId: true, productStage: true, channel: true, platform: true, url: true },
   });
   if (!taskScope) throw new Error("审核任务不存在");
+  const contentChannel = resolveTaskAutomationPlatform(taskScope);
+  if (!contentChannel) throw new Error("审核任务未关联有效内容平台");
   const currentContext = await getAuditContext(
     taskScope.productId,
     taskScope.campaignId,
     taskScope.productStage,
+    contentChannel,
   );
 
   return prisma.$transaction(async (tx) => {
@@ -77,13 +81,14 @@ export async function recordProcessingFailureResult(input: {
       },
     });
 
-    const existingNote = await tx.noteRecord.findUnique({
-      where: { url: task.url },
+    const existingNote = await tx.noteRecord.findFirst({
+      where: { url: task.url, contentChannel },
     });
     const note = existingNote
       ? await tx.noteRecord.update({
           where: { id: existingNote.id },
           data: {
+            contentChannel,
             finalUrl: task.finalUrl,
             title: task.pageTitle,
             body: noteNotFound ? null : undefined,
@@ -97,6 +102,7 @@ export async function recordProcessingFailureResult(input: {
         })
       : await tx.noteRecord.create({
           data: {
+            contentChannel,
             url: task.url,
             finalUrl: task.finalUrl,
             title: task.pageTitle,

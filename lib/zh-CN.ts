@@ -67,6 +67,7 @@ export const commonStatusLabels: Record<string, string> = {
   EMPTY: "正文为空",
   IMAGE_TEXT: "图文笔记",
   VIDEO_NOTE: "视频笔记",
+  VIDEO: "视频",
   SUCCESS: "提取成功",
   IMAGES_READ_FAILED: "图片数量读取失败",
   NOT_CHECKED: "未提取",

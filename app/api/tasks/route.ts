@@ -1,6 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { extractSupportedNoteUrls, isSupportedNoteUrl, normalizeUrl } from "@/lib/topic";
+import { normalizeUrl } from "@/lib/topic";
+import { extractNoteLinksFromText } from "@/lib/note-links";
+import { platformFromUrl } from "@/lib/automation/platform";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import {
@@ -94,6 +96,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     productStage?: string;
     notes?: string;
     skipDuplicates?: boolean;
+    contentChannel?: string;
   };
   if (!body.productId || !body.campaignId) return fail("请选择产品和活动");
   const [campaign, product] = await Promise.all([
@@ -114,6 +117,13 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     }),
   ]);
   if (!campaign || !product) return fail("活动不存在或与产品不匹配");
+  const linkExtraction = extractNoteLinksFromText(body.urls || []);
+  const uniqueUrls = linkExtraction.links.map((item) => item.url);
+  const platforms = [...new Set(linkExtraction.links.map((item) => item.platform))];
+  if (platforms.length > 1) return fail("同一次创建只能包含一个内容平台");
+  const contentChannel = platforms[0] || null;
+  if (!contentChannel) return fail("请至少输入一条支持的小红书或抖音作品详情链接");
+  if (body.contentChannel && body.contentChannel !== contentChannel) return fail("选择的内容平台与作品链接不一致");
   const productStage = normalizeConfiguredProductStageValue(
     body.productStage,
     campaignUsesDetailedProductStages(product.brandName, campaign.month),
@@ -122,6 +132,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     where: {
       campaignId: body.campaignId,
       status: "ACTIVE",
+      contentChannel: { in: [contentChannel, "ALL"] },
     },
     select: {
       topicCategory: true,
@@ -145,7 +156,6 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   }
   const effectiveProductStage = requiresProductStage ? productStage : null;
 
-  const uniqueUrls = extractSupportedNoteUrls(body.urls || []);
   const created = [];
   const syncState = await prisma.ruleSyncState.findUnique({
     where: { id: "active" },
@@ -154,8 +164,9 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   const errors: Array<{ url: string; reason: string }> = [];
   const requestIdentities = new Set<string>();
   for (const url of uniqueUrls) {
-    if (!isSupportedNoteUrl(url)) {
-      errors.push({ url, reason: "链接格式不正确或不是支持的小红书/模拟链接" });
+    const platform = platformFromUrl(url);
+    if (!platform) {
+      errors.push({ url, reason: "链接格式不正确或不是支持的小红书/抖音作品链接" });
       continue;
     }
     const normalizedUrl = normalizeUrl(url);
@@ -183,8 +194,8 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
           productStage: effectiveProductStage,
           milkType: stageRule?.milkType || null,
           notes: body.notes?.trim() || null,
-          platform: "XIAOHONGSHU",
-          channel: "XIAOHONGSHU",
+          platform,
+          channel: platform,
           createdBy: user.id,
           source: "MANUAL",
           softwareVersion: packageJson.version,

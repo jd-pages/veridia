@@ -40,6 +40,7 @@ const colors: Record<string, string> = {
   EMPTY: "red",
   IMAGE_TEXT: "blue",
   VIDEO_NOTE: "purple",
+  VIDEO: "purple",
   SUCCESS: "green",
   IMAGES_READ_FAILED: "gold",
   NOT_CHECKED: "default",

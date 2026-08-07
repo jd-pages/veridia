@@ -61,6 +61,15 @@ const context: AuditContext = {
 };
 
 describe("audit engine", () => {
+  it("抖音尚未配置业务规则时只保存采集结果并进入人工复核", () => {
+    const result = evaluateAudit(
+      { ...createMockNote("passed"), noteType: "VIDEO", adapterName: "playwright-douyin" },
+      { ...context, contentChannel: "DOUYIN", rulesConfigured: false },
+    );
+    expect(result.autoStatus).toBe("NEEDS_REVIEW");
+    expect(result.failureReasons).toEqual(["抖音采集成功，业务规则未配置"]);
+    expect(result.missingTopics).toEqual([]);
+  });
   it.each(["not-found", "deleted"] as const)(
     "页面失效 %s 时短路正文、图片和话题审核",
     (caseName) => {

@@ -55,6 +55,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     name?: string;
     notes?: string;
     intervalMs?: number;
+    contentChannel?: string;
   };
   if (!body.productId || !body.campaignId) return fail("请选择产品和活动");
   const [campaign, product] = await Promise.all([
@@ -76,6 +77,12 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   ]);
   if (!campaign) return fail("活动不存在或与产品不匹配");
   if (!product) return fail("产品不存在");
+  const extraction = extractNoteLinksFromText(body.urls || []);
+  if (!extraction.links.length) return fail("请至少输入一条作品详情链接");
+  const linkPlatforms = [...new Set(extraction.links.map((item) => item.platform))];
+  if (linkPlatforms.length !== 1) return fail("同一批次只能包含一个内容平台，请分别创建小红书和抖音批次");
+  const contentChannel = linkPlatforms[0];
+  if (body.contentChannel && body.contentChannel !== contentChannel) return fail("选择的内容平台与作品链接不一致");
   const productStage = normalizeConfiguredProductStageValue(
     body.productStage,
     campaignUsesDetailedProductStages(product.brandName, campaign.month),
@@ -84,6 +91,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     where: {
       campaignId: body.campaignId,
       status: "ACTIVE",
+      contentChannel: { in: [contentChannel, "ALL"] },
     },
     select: {
       topicCategory: true,
@@ -107,9 +115,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   }
   const effectiveProductStage = requiresProductStage ? productStage : null;
 
-  const extraction = extractNoteLinksFromText(body.urls || []);
   const urls = extraction.links.map((item) => item.url);
-  if (!urls.length) return fail("请至少输入一条笔记链接");
 
   const accepted: string[] = [];
   const skipped: Array<{ url: string; reason: string }> = [];
@@ -153,15 +159,15 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
         productStage: effectiveProductStage,
         milkType: stageRule?.milkType || null,
         notes: body.notes,
-        platform: "XIAOHONGSHU",
-        channel: "XIAOHONGSHU",
+        platform: contentChannel,
+        channel: contentChannel,
         source: "MANUAL",
       })),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "创建自动审核批次失败";
-    if (message.includes("当前已有小红书自动审核任务正在运行")) {
-      return fail(message, 409, "XHS_AUDIT_ALREADY_RUNNING");
+    if (message.includes("当前已有内容平台自动审核任务正在运行")) {
+      return fail(message, 409, "AUTOMATION_ALREADY_RUNNING");
     }
     throw error;
   }

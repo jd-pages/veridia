@@ -206,6 +206,7 @@ model Campaign {
   ruleSource                String            @default("LOCAL_DRAFT")
   productId                 String?
   name                      String
+  contentChannel            String            @default("XIAOHONGSHU")
   month                     String
   year                      Int?
   startDate                 DateTime
@@ -234,7 +235,7 @@ model Campaign {
   auditBatches              AuditBatch[]
 
   @@unique([name, month])
-  @@index([month, status])
+  @@index([contentChannel, month, status])
   @@index([productId, status])
   @@map("campaigns")
 }
@@ -261,6 +262,7 @@ model TopicRule {
   campaignId        String?
   productId         String?
   brandName         String?
+  contentChannel    String    @default("XIAOHONGSHU")
   ruleType          String
   topicCategory     String    @default("GENERAL")
   applicableStage   String?
@@ -279,7 +281,7 @@ model TopicRule {
   campaign          Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   product           Product?  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@index([scope, status])
+  @@index([contentChannel, scope, status])
   @@index([brandName, status, sortOrder])
   @@index([campaignId, status, sortOrder])
   @@index([productId, status])
@@ -359,6 +361,8 @@ model AuditBatch {
   campaignId       String?
   productStage     String?
   source           String      @default("MANUAL")
+  channel          String?
+  queueOrder       Int         @default(0)
   status           String      @default("QUEUED")
   totalCount       Int         @default(0)
   intervalMs       Int         @default(5000)
@@ -384,6 +388,8 @@ model AuditBatch {
   @@index([createdBy, createdAt])
   @@index([clearedAt, createdAt])
   @@index([importRecordId])
+  @@index([channel, status])
+  @@index([status, queueOrder, createdAt])
   @@map("audit_batches")
 }
 
@@ -403,7 +409,8 @@ model AutomationSession {
 
 model NoteRecord {
   id                    String             @id @default(cuid())
-  platformNoteId        String?            @unique
+  contentChannel        String?
+  platformNoteId        String?
   url                   String             @unique
   finalUrl              String?
   title                 String?
@@ -425,7 +432,8 @@ model NoteRecord {
   noteProducts          NoteProduct[]
   auditResults          AuditResult[]
 
-  @@index([pageStatus])
+  @@unique([contentChannel, platformNoteId])
+  @@index([contentChannel, pageStatus])
   @@map("note_records")
 }
 
@@ -456,6 +464,7 @@ model NoteTopic {
   styleFeature   Boolean    @default(false)
   isClickable    Boolean    @default(false)
   domPath        String?
+  source         String?
   createdAt      DateTime   @default(now())
   note           NoteRecord @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
@@ -674,6 +683,7 @@ model ImportRecord {
   skippedCount Int      @default(0)
   status       String
   summary      String
+  channelDistribution String @default("{}")
   createdBy    String?
   createdAt    DateTime @default(now())
   creator      User?        @relation(fields: [createdBy], references: [id], onDelete: SetNull)

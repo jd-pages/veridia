@@ -15,10 +15,12 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const productId = searchParams.get("productId") || undefined;
   const month = searchParams.get("month") || undefined;
+  const contentChannel = searchParams.get("contentChannel") || undefined;
   const campaigns = await prisma.campaign.findMany({
     where: {
       deletedAt: null,
       month,
+      contentChannel,
       ...(productId
         ? {
             OR: [
@@ -32,9 +34,15 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       product: true,
       products: { include: { product: true }, orderBy: { sortOrder: "asc" } },
       topicRules: {
-        where: { status: "ACTIVE" },
+        where: {
+          status: "ACTIVE",
+          ...(contentChannel
+            ? { contentChannel: { in: [contentChannel, "ALL"] } }
+            : {}),
+        },
         select: {
           campaignId: true,
+          contentChannel: true,
           topicCategory: true,
           applicableStage: true,
           milkType: true,
@@ -47,16 +55,21 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   });
   return ok(
     campaigns.map(({ topicRules, ...campaign }) => {
+      const scopedTopicRules = topicRules.filter((rule) =>
+        [campaign.contentChannel, "ALL"].includes(
+          rule.contentChannel || "XIAOHONGSHU",
+        ),
+      );
       const brandName = campaign.product?.brandName ||
         campaign.products[0]?.product.brandName || null;
-      const requiresProductStage = campaignRequiresProductStage(topicRules);
+      const requiresProductStage = campaignRequiresProductStage(scopedTopicRules);
       const detailed = campaignUsesDetailedProductStages(brandName, campaign.month);
       return {
         ...campaign,
         requiresProductStage,
         stageOptions: requiresProductStage
           ? (detailed ? DETAILED_PRODUCT_STAGE_OPTIONS : PRODUCT_STAGE_TOPIC_OPTIONS)
-              .filter((option) => topicRules.some((rule) =>
+              .filter((option) => scopedTopicRules.some((rule) =>
                 rule.topicCategory === "PRODUCT_STAGE" &&
                 (detailed
                   ? rule.applicableStage === option.value
@@ -87,6 +100,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     customerRegistrationNotes?: string;
     bodyRequired?: boolean;
     clickableTopicRequired?: boolean;
+    contentChannel?: "XIAOHONGSHU" | "DOUYIN";
   };
   const productIds = [
     ...new Set([
@@ -94,6 +108,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
       ...(body.productId ? [body.productId] : []),
     ]),
   ];
+  const contentChannel = body.contentChannel === "DOUYIN" ? "DOUYIN" : "XIAOHONGSHU";
   if (!productIds.length || !body.name?.trim() || !body.month) {
     return fail("至少一个产品、活动名称和月份为必填项");
   }
@@ -108,6 +123,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   const existingMonthlyRuleSet = await prisma.campaign.findFirst({
     where: {
       month: body.month,
+      contentChannel,
       deletedAt: null,
       OR: [
         { product: { is: { brandName: brands[0] } } },
@@ -125,6 +141,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
         ruleSource: "LOCAL_DRAFT",
         productId: productIds.length === 1 ? productIds[0] : null,
         name: body.name.trim(),
+        contentChannel,
         month: body.month,
         year: Number(body.month.slice(0, 4)),
         startDate: new Date(body.startDate || `${body.month}-01`),

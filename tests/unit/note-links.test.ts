@@ -4,6 +4,7 @@ import {
   extractNoteLinksFromText,
   resolveImportedNoteLink,
 } from "@/lib/note-links";
+import { normalizeUrl } from "@/lib/topic";
 
 const discoveryUrl =
   "https://www.xiaohongshu.com/discovery/item/6a4867200000000011007d92?source=webshare&xhsshare=pc_web&xsec_token=CBx0JoKq5oj169Vy8ZiPhRdn-bvJf8F3BxQVS-qYT7i50=&xsec_source=pc_share";
@@ -68,17 +69,25 @@ describe("统一小红书链接提取", () => {
     });
   });
 
-  it("无效内容和抖音链接不会阻止同批有效小红书链接", () => {
+  it("同时识别抖音与小红书链接并保留平台身份", () => {
     const result = extractNoteLinksFromText(
       `无效说明\nhttps://www.douyin.com/video/123\n${discoveryUrl}`,
     );
-    expect(result.links).toHaveLength(1);
+    expect(result.links).toHaveLength(2);
+    expect(result.links[0]).toMatchObject({ platform: "DOUYIN", type: "LONG" });
     expect(result.unrecognized).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ reason: "未识别到链接" }),
-        expect.objectContaining({ reason: "抖音链接暂不支持小红书自动审核" }),
       ]),
     );
+  });
+
+  it("抖音长链接规范化时移除跟踪参数但保留作品身份", () => {
+    expect(
+      normalizeUrl(
+        "https://www.douyin.com/video/123?share_token=secret&utm_source=copy",
+      ),
+    ).toBe("https://www.douyin.com/video/123");
   });
 });
 
@@ -94,19 +103,33 @@ describe("表格链接列解析", () => {
     expect(result.originalContent).toContain("打开笔记");
   });
 
-  it("单元格多个链接时优先提取小红书，不接收抖音渠道", () => {
+  it("单元格多个链接时按声明渠道提取对应平台", () => {
     const xhs = resolveImportedNoteLink({
       rawContent: `https://example.com/a ${discoveryUrl}`,
     });
     expect(xhs.url).toBe(discoveryUrl);
     const douyin = resolveImportedNoteLink({
-      rawContent: discoveryUrl,
+      rawContent: "https://www.douyin.com/video/123",
       declaredChannel: "抖音",
     });
     expect(douyin).toMatchObject({
-      status: "UNSUPPORTED",
-      url: "",
+      status: "RECOGNIZED",
+      url: "https://www.douyin.com/video/123",
       platform: "DOUYIN",
+    });
+  });
+
+  it("拒绝抖音用户页、搜索页、直播页和渠道错配", () => {
+    for (const url of [
+      "https://www.douyin.com/user/abc",
+      "https://www.douyin.com/search/奶粉",
+      "https://live.douyin.com/123",
+    ]) {
+      expect(classifyNoteUrl(url)).toMatchObject({ platform: "DOUYIN", supported: false });
+    }
+    expect(resolveImportedNoteLink({ rawContent: discoveryUrl, declaredChannel: "抖音" })).toMatchObject({
+      status: "UNRECOGNIZED",
+      failureReason: expect.stringContaining("内容渠道与链接平台不一致"),
     });
   });
 

@@ -42,6 +42,12 @@ const e2eAccountPublicKeyPath =
 const e2eXhsProfilePath =
   process.env.E2E_XHS_PROFILE_PATH?.trim() ||
   path.join(process.cwd(), ".playwright", "xhs-e2e-profile");
+const e2eDouyinProfilePath =
+  process.env.E2E_DOUYIN_PROFILE_PATH?.trim() ||
+    path.join(process.cwd(), ".playwright", "douyin-e2e-profile");
+const e2eNextDistDir =
+  process.env.E2E_NEXT_DIST_DIR?.trim() ||
+  path.join(".playwright", "next-e2e");
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -85,6 +91,8 @@ export default defineConfig({
         process.env.EXTENSION_TOKEN || "local-extension-demo-token",
       VERIDIA_ACCOUNT_SIGNING_PUBLIC_KEY_PATH: e2eAccountPublicKeyPath,
       XHS_PROFILE_PATH: e2eXhsProfilePath,
+      DOUYIN_PROFILE_PATH: e2eDouyinProfilePath,
+      VERIDIA_NEXT_DIST_DIR: e2eNextDistDir,
       AUTOMATION_LOCAL_MOCK_WAIT_CAP_MS: "5",
       ...(executablePath ? { PLAYWRIGHT_EXECUTABLE_PATH: executablePath } : {}),
     },

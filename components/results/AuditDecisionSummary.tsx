@@ -308,7 +308,7 @@ export default function AuditDecisionSummary({
                 <div>
                   <span>状态</span>
                   <strong>
-                    {row.noteType === "VIDEO_NOTE" || row.imageStatus === "VIDEO_NOTE"
+                    {["VIDEO", "VIDEO_NOTE"].includes(row.noteType) || row.imageStatus === "VIDEO_NOTE"
                       ? "视频笔记，不参与图片数量审核"
                       : row.imageStatus === "COMPLIANT"
                         ? "数量合规"

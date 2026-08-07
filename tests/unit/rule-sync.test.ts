@@ -17,6 +17,20 @@ import {
 } from "@/lib/rules/sync";
 
 describe("GitHub 规则同步", () => {
+  it("旧规则包缺少作用域时默认限定为小红书", () => {
+    const payload = validateRulePayload(builtinRules);
+    expect(
+      payload.campaigns.every(
+        (campaign) => campaign.contentChannel === "XIAOHONGSHU",
+      ),
+    ).toBe(true);
+    expect(
+      payload.topicRules.every(
+        (rule) => rule.contentChannel === "XIAOHONGSHU",
+      ),
+    ).toBe(true);
+  });
+
   it("导出旧本地规则备份时补齐达能阶段话题关联", () => {
     const payload = validateRulePayload(builtinRules);
     const brokenRules = payload.topicRules.map((rule) =>

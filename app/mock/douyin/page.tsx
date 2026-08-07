@@ -1,0 +1,60 @@
+import type { ExtractedNote } from "@/lib/types";
+import { redirect } from "next/navigation";
+/* eslint-disable @next/next/no-img-element -- local mock must expose native image DOM to the extractor */
+
+type MockCase = "video" | "image-text" | "topics" | "unclickable" | "not-found" | "logged-out" | "security" | "no-permission" | "app-launch" | "empty" | "multi-image" | "network-error" | "load-timeout";
+
+function noteFor(caseName: MockCase): ExtractedNote {
+  const base: ExtractedNote = {
+    url: "", noteId: `douyin-${caseName}`, title: "抖音模拟作品", body: "这是用于验证抖音多平台采集底座的模拟作品正文。", noteType: "VIDEO", imageExtractionStatus: "VIDEO_NOTE", imageCount: 0,
+    topics: [{ displayText: "#抖音模拟话题", isLinkElement: true, hasHref: true, href: "/search/%E6%8A%96%E9%9F%B3%E6%A8%A1%E6%8B%9F%E8%AF%9D%E9%A2%98", styleFeature: true, source: "DOM" }],
+    pageStatus: "NORMAL", authorName: "抖音模拟作者", publishedAt: "2026-08-07T08:00:00.000Z", isPublic: true, extractedAt: new Date().toISOString(), adapterName: "playwright-douyin", adapterVersion: "1.0.0",
+  };
+  if (caseName === "topics") {
+    return {
+      ...base,
+      topics: [
+        ...base.topics,
+        {
+          displayText: "#抖音第二话题",
+          isLinkElement: true,
+          hasHref: true,
+          href: "/search/%E6%8A%96%E9%9F%B3%E7%AC%AC%E4%BA%8C%E8%AF%9D%E9%A2%98",
+          styleFeature: true,
+          source: "DOM",
+        },
+      ],
+    };
+  }
+  if (caseName === "image-text" || caseName === "multi-image") return { ...base, noteType: "IMAGE_TEXT", imageExtractionStatus: "SUCCESS", imageCount: caseName === "multi-image" ? 5 : 3 };
+  if (caseName === "unclickable") return { ...base, topics: base.topics.map((topic) => ({ ...topic, isLinkElement: false, hasHref: false, href: null })) };
+  if (caseName === "empty") return { ...base, body: "", topics: [], technicalWarnings: ["BODY_NOT_RECOGNIZED", "TOPICS_NOT_RECOGNIZED"] };
+  const statuses: Partial<Record<MockCase, ExtractedNote["pageStatus"]>> = { "not-found": "NOTE_NOT_FOUND", "logged-out": "LOGIN_EXPIRED", security: "SECURITY_VERIFICATION", "no-permission": "NO_PERMISSION" };
+  const status = statuses[caseName];
+  return status ? { ...base, pageStatus: status as ExtractedNote["pageStatus"] } : base;
+}
+
+export default async function MockDouyinPage({ searchParams }: { searchParams: Promise<{ case?: string }> }) {
+  const requested = (await searchParams).case || "video";
+  if (requested === "short-link") {
+    redirect("/mock/douyin?case=video&redirectedFrom=short-link");
+  }
+  const allowed: MockCase[] = ["video", "image-text", "topics", "unclickable", "not-found", "logged-out", "security", "no-permission", "app-launch", "empty", "multi-image", "network-error", "load-timeout"];
+  const caseName = (allowed.includes(requested as MockCase) ? requested : "video") as MockCase;
+  const note = noteFor(caseName);
+  const statusText: Record<MockCase, string | undefined> = { video: undefined, "image-text": undefined, topics: undefined, unclickable: undefined, empty: undefined, "multi-image": undefined, "not-found": "作品不存在，该作品已删除", "logged-out": "登录后继续，请扫码登录", security: "访问频繁，需要安全验证", "no-permission": "私密作品，暂无权限查看", "app-launch": "打开抖音 App 查看", "network-error": "模拟临时网络连接中断", "load-timeout": "模拟页面加载超时" };
+  return (
+    <main data-douyin-page-status={caseName} style={{ padding: 48 }}>
+      <article>
+        <h1>{note.title}</h1>
+        {statusText[caseName] ? <p>{statusText[caseName]}</p> : <>
+          <div data-testid="douyin-author">{note.authorName}</div>
+          <p data-testid="douyin-description">{note.body}</p>
+          {note.noteType === "VIDEO" ? <video aria-label="抖音模拟视频" /> : Array.from({ length: note.imageCount || 0 }, (_, index) => <img data-testid="douyin-image" src={`/mock-media/douyin/${index + 1}.jpg`} alt={`模拟图片${index + 1}`} key={index} />)}
+          <div>{note.topics.map((topic) => topic.isLinkElement ? <a data-douyin-topic href={topic.href || "#"} key={topic.displayText}>{topic.displayText}</a> : <span key={topic.displayText}>{topic.displayText}</span>)}</div>
+        </>}
+      </article>
+      <script id="mock-douyin-extraction-data" type="application/json" dangerouslySetInnerHTML={{ __html: JSON.stringify(note).replace(/</gu, "\\u003c") }} />
+    </main>
+  );
+}

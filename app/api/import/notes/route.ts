@@ -143,11 +143,7 @@ export async function POST(request: Request) {
     const campaignCandidates = (await prisma.campaign.findMany({
       include: {
         products: { select: { productId: true } },
-        _count: {
-          select: {
-            topicRules: { where: { status: "ACTIVE" } },
-          },
-        },
+        topicRules: { where: { status: "ACTIVE" }, select: { contentChannel: true } },
       },
     })).map((campaign) => ({
       id: campaign.id,
@@ -159,7 +155,8 @@ export async function POST(request: Request) {
       deletedAt: campaign.deletedAt,
       productId: campaign.productId,
       productIds: campaign.products.map((item) => item.productId),
-      ruleCount: campaign._count.topicRules,
+      contentChannel: campaign.contentChannel,
+      ruleChannels: campaign.topicRules.map((rule) => rule.contentChannel),
     }));
     const stageRulesCache = new Map<
       string,
@@ -283,7 +280,10 @@ export async function POST(request: Request) {
         }),
         errors: [...parsed.errors],
       };
-      if (storeResolution.status !== "MATCHED") {
+      if (
+        checked.channel !== "DOUYIN" &&
+        storeResolution.status !== "MATCHED"
+      ) {
         checked.errors.push(
           `${storeResolution.status}：${storeResolution.failureReason}`,
         );
@@ -324,7 +324,13 @@ export async function POST(request: Request) {
       const campaignResolution = resolveImportedActivity({
         activityName: checked.importedCampaignName,
         productId: product?.id,
-        candidates: campaignCandidates,
+        candidates: campaignCandidates.map((candidate) => ({
+          ...candidate,
+          ruleCount: [checked.channel, "ALL"].includes(candidate.contentChannel)
+            ? candidate.ruleChannels.filter((channel) => [checked.channel, "ALL"].includes(channel)).length
+            : 0,
+        })),
+        allowMissingRules: checked.channel === "DOUYIN",
       });
       checked.campaignMatchStatus = campaignResolution.status;
       const campaign = campaignResolution.campaign;
@@ -406,6 +412,7 @@ export async function POST(request: Request) {
             campaignId: campaign.id,
             topicCategory: "PRODUCT_STAGE",
             status: "ACTIVE",
+            contentChannel: { in: [checked.channel, "ALL"] },
           },
           select: { applicableStage: true, milkType: true },
         });
@@ -453,13 +460,16 @@ export async function POST(request: Request) {
     const validRows = rows.filter((row) => row.errors.length === 0);
     let imported = 0;
     let batchId: string | null = null;
+    let batchIds: string[] = [];
     let importRecordId: string | null = null;
     let importedAt: Date | null = null;
     if (commit) {
-      const productIds = [...new Set(validRows.map((row) => row.productId!))];
-      const campaignIds = [
-        ...new Set(validRows.map((row) => row.campaignId!)),
-      ];
+      const channelDistribution = Object.fromEntries(
+        (["XIAOHONGSHU", "DOUYIN"] as const).map((channel) => [
+          channel,
+          validRows.filter((row) => row.channel === channel).length,
+        ]),
+      );
       const syncState = await prisma.ruleSyncState.findUnique({
         where: { id: "active" },
         select: { currentVersion: true },
@@ -483,6 +493,7 @@ export async function POST(request: Request) {
               ),
               skippedCount,
               status: "COMPLETED",
+              channelDistribution: JSON.stringify(channelDistribution),
               summary: JSON.stringify({
                 templateVersion: tabular.templateVersion,
                 templateBrand: tabular.templateBrand,
@@ -531,32 +542,58 @@ export async function POST(request: Request) {
             storeMappingStatus: row.storeMappingStatus,
             orderNumber: row.orderNumber,
           }));
-          const batch = tasks.length
-            ? await createAutomaticBatchInTransaction(
+          const lastQueueOrder = (
+            await tx.auditBatch.aggregate({ _max: { queueOrder: true } })
+          )._max.queueOrder;
+          const baseQueueOrder = (lastQueueOrder ?? -1) + 1;
+          const batches = [];
+          for (const [queueOrder, channel] of (
+            ["XIAOHONGSHU", "DOUYIN"] as const
+          ).entries()) {
+            const channelTasks = tasks.filter(
+              (task) => task.channel === channel,
+            );
+            if (!channelTasks.length) continue;
+            const channelProductIds = [
+              ...new Set(channelTasks.map((task) => task.productId)),
+            ];
+            const channelCampaignIds = [
+              ...new Set(channelTasks.map((task) => task.campaignId)),
+            ];
+            batches.push(
+              await createAutomaticBatchInTransaction(
                 tx,
                 {
-                  name: `表格自动审核 · ${file.name}`,
+                  name: `表格自动审核 · ${contentChannelLabel(channel)} · ${file.name}`,
                   importRecordId: importRecord.id,
                   source: "EXCEL",
                   createdBy: user.id,
                   productId:
-                    productIds.length === 1 ? productIds[0] : undefined,
+                    channelProductIds.length === 1
+                      ? channelProductIds[0]
+                      : undefined,
                   campaignId:
-                    campaignIds.length === 1 ? campaignIds[0] : undefined,
-                  tasks,
+                    channelCampaignIds.length === 1
+                      ? channelCampaignIds[0]
+                      : undefined,
+                  queueOrder: baseQueueOrder + queueOrder,
+                  allowQueuedBehindActive: true,
+                  tasks: channelTasks,
                 },
                 syncState?.currentVersion || null,
-              )
-            : null;
-          return { batch, importRecord };
+              ),
+            );
+          }
+          return { batches, importRecord };
         },
         { timeout: 60_000 },
       );
-      batchId = committed.batch?.id || null;
+      batchIds = committed.batches.map((batch) => batch.id);
+      batchId = batchIds[0] || null;
       importRecordId = committed.importRecord.id;
       importedAt = committed.importRecord.createdAt;
       imported = validRows.length;
-      if (committed.batch) kickAutomaticAuditQueue();
+      if (committed.batches.length) kickAutomaticAuditQueue();
     }
 
     const previewSelection = selectImportPreviewRows(
@@ -573,11 +610,19 @@ export async function POST(request: Request) {
       invalidCount: rows.length - validRows.length,
       imported,
       batchId,
+      batchIds,
       auditBatchId: batchId,
       importRecordId,
       fileName: file.name,
       importedAt,
       importedCount: imported,
+      channelDistribution: Object.fromEntries(
+        (["XIAOHONGSHU", "DOUYIN"] as const).map((channel) => [
+          channel,
+          validRows.filter((row) => row.channel === channel).length,
+        ]),
+      ),
+      plannedBatchCount: new Set(validRows.map((row) => row.channel)).size,
       skipDuplicates,
       ...previewSelection,
     });

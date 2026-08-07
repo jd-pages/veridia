@@ -13,7 +13,7 @@ export type AuditStatus =
   | "NOTE_NOT_FOUND"
   | "NEEDS_REVIEW"
   | "READ_FAILED";
-export type NoteType = "IMAGE_TEXT" | "VIDEO_NOTE" | "UNKNOWN";
+export type NoteType = "IMAGE_TEXT" | "VIDEO" | "VIDEO_NOTE" | "UNKNOWN";
 export type ImageExtractionStatus =
   | "SUCCESS"
   | "VIDEO_NOTE"
@@ -92,6 +92,8 @@ export interface AuditContext {
   productId: string;
   campaignId: string;
   campaignName: string;
+  contentChannel?: "XIAOHONGSHU" | "DOUYIN";
+  rulesConfigured?: boolean;
   ruleMonth?: string;
   brandName?: string;
   basicRewardRequired?: boolean;

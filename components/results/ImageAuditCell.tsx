@@ -14,7 +14,7 @@ export default function ImageAuditCell({ row }: { row: ResultRow }) {
       </span>
     );
   }
-  if (row.noteType === "VIDEO_NOTE" || row.imageStatus === "VIDEO_NOTE") {
+  if (["VIDEO", "VIDEO_NOTE"].includes(row.noteType) || row.imageStatus === "VIDEO_NOTE") {
     return (
       <div className={styles.stack}>
         <AuditStatusTag value="VIDEO_NOTE" />

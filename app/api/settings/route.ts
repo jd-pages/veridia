@@ -2,14 +2,14 @@ import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { SYSTEM_ADMIN_ROLES } from "@/lib/permissions";
 import {
-  ensureXhsPacingSettings,
+  ensureAutomationPacingSettings,
   normalizeXhsPacingSetting,
 } from "@/lib/automation/pacing";
 
 export const GET = withApiErrorBoundary(async function GET() {
   const user = await requireApiUser(SYSTEM_ADMIN_ROLES);
   if (user instanceof Response) return user;
-  await ensureXhsPacingSettings();
+  await ensureAutomationPacingSettings();
   const settings = await prisma.systemSetting.findMany({
     where: {
       isSecret: false,

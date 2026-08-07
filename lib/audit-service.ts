@@ -14,11 +14,16 @@ import {
   normalizeConfiguredProductStageValue,
   productStageTopicLabel,
 } from "@/lib/product-stage";
+import {
+  resolveTaskAutomationPlatform,
+  type AutomationPlatform,
+} from "@/lib/automation/platform";
 
 export async function getAuditContext(
   productId: string,
   campaignId: string,
   productStage?: string | null,
+  contentChannel: AutomationPlatform = "XIAOHONGSHU",
 ): Promise<AuditContext> {
   const [product, campaign] = await Promise.all([
     prisma.product.findFirst({
@@ -57,6 +62,7 @@ export async function getAuditContext(
     where: {
       brandName,
       status: "ACTIVE",
+      contentChannel: { in: [contentChannel, "ALL"] },
       AND: [
         {
           OR: [
@@ -83,6 +89,7 @@ export async function getAuditContext(
       brandName,
       campaignId,
       status: "ACTIVE",
+      contentChannel: { in: [contentChannel, "ALL"] },
     },
     select: {
       campaignId: true,
@@ -91,7 +98,8 @@ export async function getAuditContext(
       topic: true,
     },
   });
-  const requiresProductStage = campaignRequiresProductStage(
+  const campaignChannelMatches = [contentChannel, "ALL"].includes(campaign.contentChannel);
+  const requiresProductStage = campaignChannelMatches && campaignRequiresProductStage(
     campaignStageRequirementRules,
   );
   if (requiresProductStage && !normalizedProductStage) {
@@ -128,10 +136,12 @@ export async function getAuditContext(
     productId,
     campaignId,
     campaignName: campaign.name,
+    contentChannel,
+    rulesConfigured: campaignChannelMatches && uniqueRules.length > 0,
     ruleMonth: campaign.month,
     brandName,
     basicRewardRequired:
-      brandName === "佳贝艾特" &&
+      contentChannel === "XIAOHONGSHU" && brandName === "佳贝艾特" &&
       campaign.name === "佳贝艾特2026年8月小红书种草审核",
     requiresProductStage,
     productStage: normalizedProductStage || null,
@@ -188,13 +198,18 @@ export async function getAuditContext(
 export async function runAuditTask(taskId: string, payload: ExtractedNote) {
   const task = await prisma.auditTask.findUnique({ where: { id: taskId } });
   if (!task) throw new Error("审核任务不存在");
+  const contentChannel = resolveTaskAutomationPlatform(task);
+  if (!contentChannel) throw new Error("审核任务未关联有效内容平台");
 
   const baseContext = await getAuditContext(
     task.productId,
     task.campaignId,
     task.productStage,
+    contentChannel,
   );
-  const storeTopicRequirement = await resolveStoreTopicAuditRequirement(task);
+  const storeTopicRequirement = baseContext.rulesConfigured
+    ? await resolveStoreTopicAuditRequirement(task)
+    : null;
   if (storeTopicRequirement) {
     await prisma.auditTask.update({
       where: { id: task.id },
@@ -224,11 +239,16 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
   const result = await prisma.$transaction(async (tx) => {
     const existingByPlatformId = payload.noteId
       ? await tx.noteRecord.findUnique({
-          where: { platformNoteId: payload.noteId },
+          where: {
+            contentChannel_platformNoteId: {
+              contentChannel,
+              platformNoteId: payload.noteId,
+            },
+          },
         })
       : null;
-    const existingByUrl = await tx.noteRecord.findUnique({
-      where: { url: payload.url },
+    const existingByUrl = await tx.noteRecord.findFirst({
+      where: { url: payload.url, contentChannel },
     });
     let existingNote = existingByPlatformId || existingByUrl;
     if (
@@ -256,6 +276,7 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
       existingNote = existingByPlatformId;
     }
     const noteData = {
+      contentChannel,
       platformNoteId: payload.noteId,
       url: payload.url,
       finalUrl: payload.finalUrl ?? payload.url,
@@ -306,6 +327,7 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
             }) === "CLICKABLE",
           ),
           domPath: topic.domPath,
+          source: topic.source || null,
         })),
       });
     }
@@ -407,6 +429,8 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
       data:
         evaluation.autoStatus === "READ_FAILED"
           ? { status: "READ_FAILED", finishedAt: new Date() }
+          : evaluation.autoStatus === "NEEDS_REVIEW"
+            ? { status: "NEEDS_REVIEW", finishedAt: new Date() }
           : completedAuditTaskUpdate(),
     });
 

@@ -47,6 +47,7 @@ export type XhsBrowserControlState =
   | "RESTART_REQUIRED";
 
 type AuditLock = {
+  platform: "XIAOHONGSHU";
   batchId: string;
   taskId: string | null;
   startedAt: string;
@@ -766,11 +767,12 @@ export async function markXhsSessionIssue(
 }
 
 export function updateXhsAuditLock(
-  lock: Omit<AuditLock, "heartbeatAt" | "profilePath"> | null,
+  lock: Omit<AuditLock, "platform" | "heartbeatAt" | "profilePath"> | null,
 ) {
   state.auditLock = lock
     ? {
-        ...lock,
+      ...lock,
+        platform: "XIAOHONGSHU",
         heartbeatAt: new Date().toISOString(),
         profilePath: PROFILE_DIRECTORY,
       }
@@ -797,6 +799,7 @@ export async function getXhsSessionDiagnostics() {
   const auditPageDiagnostics = await getXhsAuditPageDiagnostics();
   return {
     ...session,
+    platform: "XIAOHONGSHU",
     sessionState: state.sessionState,
     profilePath: PROFILE_DIRECTORY,
     partition: "Playwright persistent context",

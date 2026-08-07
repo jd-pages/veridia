@@ -70,6 +70,17 @@ export function auditNoteIdentity(value: string | null | undefined) {
     ) {
       return `xhs-short:${hostname}${url.pathname.replace(/\/$/u, "")}`;
     }
+    const douyinMatch = /^\/(?:video|note|share\/(?:video|note))\/([^/?#]+)/iu.exec(url.pathname);
+    if (
+      douyinMatch &&
+      (hostname === "douyin.com" || hostname.endsWith(".douyin.com") ||
+        hostname === "iesdouyin.com" || hostname.endsWith(".iesdouyin.com"))
+    ) {
+      return `douyin-content:${douyinMatch[1].toLocaleLowerCase()}`;
+    }
+    if (hostname === "v.douyin.com" || hostname.endsWith(".v.douyin.com")) {
+      return `douyin-short:${hostname}${url.pathname.replace(/\/$/u, "")}`;
+    }
   } catch {
     // 非标准 URL 仍可通过规范化后的原值比较。
   }
@@ -106,7 +117,7 @@ function candidateWhere(url: string): Prisma.AuditTaskWhereInput[] {
     { finalUrl: url },
     { finalUrl: normalizedUrl },
   ];
-  const identityValue = identity.replace(/^xhs-(?:note|short):/u, "");
+  const identityValue = identity.replace(/^(?:xhs-(?:note|short)|douyin-(?:content|short)):/u, "");
   if (identity.startsWith("xhs-note:") && identityValue) {
     conditions.push(
       { url: { contains: identityValue } },
@@ -119,6 +130,28 @@ function candidateWhere(url: string): Prisma.AuditTaskWhereInput[] {
       },
     );
   } else if (identity.startsWith("xhs-short:") && identityValue) {
+    const path = new URL(normalizedUrl).pathname;
+    conditions.push(
+      { url: { contains: path } },
+      { normalizedUrl: { contains: path } },
+    );
+  } else if (identity.startsWith("douyin-content:") && identityValue) {
+    conditions.push(
+      { url: { contains: identityValue } },
+      { normalizedUrl: { contains: identityValue } },
+      { finalUrl: { contains: identityValue } },
+      {
+        auditResults: {
+          some: {
+            note: {
+              contentChannel: "DOUYIN",
+              platformNoteId: identityValue,
+            },
+          },
+        },
+      },
+    );
+  } else if (identity.startsWith("douyin-short:") && identityValue) {
     const path = new URL(normalizedUrl).pathname;
     conditions.push(
       { url: { contains: path } },
@@ -158,7 +191,12 @@ export async function findBlockingAuditTask(input: {
       auditResults: {
         select: {
           note: {
-            select: { platformNoteId: true, url: true, finalUrl: true },
+            select: {
+              contentChannel: true,
+              platformNoteId: true,
+              url: true,
+              finalUrl: true,
+            },
           },
         },
         orderBy: { auditedAt: "desc" },
@@ -173,7 +211,7 @@ export async function findBlockingAuditTask(input: {
       auditTaskLinksMatch(input.url, task) ||
       task.auditResults.some(({ note }) => {
         const platformIdentity = note.platformNoteId
-          ? `xhs-note:${note.platformNoteId.toLocaleLowerCase()}`
+          ? `${note.contentChannel === "DOUYIN" ? "douyin-content" : "xhs-note"}:${note.platformNoteId.toLocaleLowerCase()}`
           : "";
         return (
           inputIdentity === platformIdentity ||
@@ -229,7 +267,12 @@ export async function findBlockingAuditTasks(input: {
       auditResults: {
         select: {
           note: {
-            select: { platformNoteId: true, url: true, finalUrl: true },
+            select: {
+              contentChannel: true,
+              platformNoteId: true,
+              url: true,
+              finalUrl: true,
+            },
           },
         },
         orderBy: { auditedAt: "desc" },
@@ -245,7 +288,7 @@ export async function findBlockingAuditTasks(input: {
         auditTaskLinksMatch(url, task) ||
         task.auditResults.some(({ note }) => {
           const platformIdentity = note.platformNoteId
-            ? `xhs-note:${note.platformNoteId.toLocaleLowerCase()}`
+            ? `${note.contentChannel === "DOUYIN" ? "douyin-content" : "xhs-note"}:${note.platformNoteId.toLocaleLowerCase()}`
             : "";
           return (
             inputIdentity === platformIdentity ||

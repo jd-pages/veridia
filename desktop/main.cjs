@@ -410,6 +410,7 @@ function serverEnvironment() {
       process.env.VERIDIA_BUILD_DATE || buildInfo().buildDate || "",
     VERIDIA_DATABASE_VERSION: latestMigrationName(),
     XHS_PROFILE_PATH: directories.sessions,
+    DOUYIN_PROFILE_PATH: path.join(directories.sessions, "douyin-profile"),
     AUTOMATION_EVIDENCE_PATH: path.join(directories.logs, "evidence"),
     PLAYWRIGHT_BROWSER_CHANNEL: "",
     PLAYWRIGHT_BROWSERS_PATH: browserRoot,

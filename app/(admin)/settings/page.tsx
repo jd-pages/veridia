@@ -81,6 +81,8 @@ interface XhsSessionDiagnostics {
     heartbeatAt: string;
     profilePath: string;
   } | null;
+  browserInstanceCount?: number;
+  interactivePageOpen?: boolean;
 }
 
 const xhsSessionStateLabels: Record<string, string> = {
@@ -101,6 +103,15 @@ const pacingFields = [
   ["XHS_COOLDOWN_TASK_COUNT", "连续审核冷却篇数"],
   ["XHS_COOLDOWN_MS", "连续审核冷却时间（毫秒）"],
 ] as const;
+const douyinPacingFields = [
+  ["DOUYIN_AUDIT_WAIT_MIN_MS", "单篇后最短等待（毫秒）"],
+  ["DOUYIN_AUDIT_WAIT_MAX_MS", "单篇后最长等待（毫秒）"],
+  ["DOUYIN_NETWORK_MAX_RETRIES", "网络异常最大重试次数"],
+  ["DOUYIN_NETWORK_RETRY_FIRST_MS", "第一次重试等待（毫秒）"],
+  ["DOUYIN_NETWORK_RETRY_SECOND_MS", "第二次重试等待（毫秒）"],
+  ["DOUYIN_COOLDOWN_TASK_COUNT", "连续审核冷却篇数"],
+  ["DOUYIN_COOLDOWN_MS", "连续审核冷却时间（毫秒）"],
+] as const;
 
 export default function SettingsPage() {
   const { message, modal } = App.useApp();
@@ -112,6 +123,8 @@ export default function SettingsPage() {
   const [ruleSync, setRuleSync] = useState<RuleSyncStatus | null>(null);
   const [xhsSession, setXhsSession] = useState<XhsSessionDiagnostics | null>(null);
   const [xhsBusy, setXhsBusy] = useState(false);
+  const [douyinSession, setDouyinSession] = useState<XhsSessionDiagnostics | null>(null);
+  const [douyinBusy, setDouyinBusy] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [syncingRules, setSyncingRules] = useState(false);
   const [migratingData, setMigratingData] = useState(false);
@@ -131,7 +144,7 @@ export default function SettingsPage() {
             "SETUP_COMPLETED",
           ].includes(item.key) &&
           !item.key.startsWith("OPENAI_") &&
-          !item.key.startsWith("XHS_"),
+          !item.key.startsWith("XHS_") && !item.key.startsWith("DOUYIN_"),
       );
       setItems(data);
       setDrafts(
@@ -172,6 +185,14 @@ export default function SettingsPage() {
     }
   }, [message]);
   useEffect(() => { void loadXhsSession(); }, [loadXhsSession]);
+  const loadDouyinSession = useCallback(async () => {
+    try {
+      setDouyinSession(await apiFetch<XhsSessionDiagnostics>("/api/automation/session?platform=DOUYIN"));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "读取抖音会话失败");
+    }
+  }, [message]);
+  useEffect(() => { void loadDouyinSession(); }, [loadDouyinSession]);
 
   const runXhsAction = async (
     action:
@@ -192,6 +213,16 @@ export default function SettingsPage() {
     } finally {
       setXhsBusy(false);
     }
+  };
+
+  const runDouyinAction = async (action: "START_LOGIN" | "COMPLETE_LOGIN" | "CHECK_SESSION" | "RESTART_BROWSER" | "LOGOUT_SESSION") => {
+    setDouyinBusy(true);
+    try {
+      setDouyinSession(await apiFetch<XhsSessionDiagnostics>("/api/automation/session", {
+        method: "POST",
+        body: JSON.stringify({ platform: "DOUYIN", action }),
+      }));
+    } finally { setDouyinBusy(false); }
   };
 
   const changeDataDirectory = async () => {
@@ -311,6 +342,24 @@ export default function SettingsPage() {
           </Button>
         </Space>
       </Card>
+      <Card className="surface-card" title="抖音会话诊断" style={{ marginBottom: 16 }}>
+        <Descriptions column={{ xs: 1, md: 2, xl: 4 }}>
+          <Descriptions.Item label="当前会话状态"><Tag>{xhsSessionStateLabels[douyinSession?.sessionState || "UNKNOWN"]}</Tag></Descriptions.Item>
+          <Descriptions.Item label="浏览器实例">{douyinSession?.browserInstanceCount ?? 0}</Descriptions.Item>
+          <Descriptions.Item label="当前页面数量">{douyinSession?.pageCount ?? 0}</Descriptions.Item>
+          <Descriptions.Item label="控制状态"><Tag color={douyinSession?.controlReady ? "green" : "orange"}>{douyinSession?.controlReady ? "控制连接正常" : "尚未启动或需重启"}</Tag></Descriptions.Item>
+          <Descriptions.Item label="Profile 路径" span={2}><span style={{ wordBreak: "break-all" }}>{douyinSession?.profilePath || "—"}</span></Descriptions.Item>
+          <Descriptions.Item label="当前审核批次">{douyinSession?.auditLock?.batchId || "无"}</Descriptions.Item>
+          <Descriptions.Item label="人工交互页">{douyinSession?.interactivePageOpen ? "已打开" : "未打开"}</Descriptions.Item>
+        </Descriptions>
+        <Space wrap>
+          <Button loading={douyinBusy} onClick={() => void runDouyinAction("START_LOGIN")}>打开抖音浏览器</Button>
+          <Button loading={douyinBusy} onClick={() => void runDouyinAction("COMPLETE_LOGIN")}>我已完成登录/验证</Button>
+          <Button loading={douyinBusy} onClick={() => void runDouyinAction("CHECK_SESSION")}>重新检测登录状态</Button>
+          <Button loading={douyinBusy} onClick={() => void runDouyinAction("RESTART_BROWSER")}>重启抖音浏览器</Button>
+          <Button danger loading={douyinBusy} onClick={() => void runDouyinAction("LOGOUT_SESSION")}>清除抖音登录状态</Button>
+        </Space>
+      </Card>
       <Card
         className="surface-card"
         title="小红书访问节奏"
@@ -353,6 +402,18 @@ export default function SettingsPage() {
         >
           保存访问节奏
         </Button>
+      </Card>
+      <Card className="surface-card" title="抖音访问节奏" style={{ marginBottom: 16 }}>
+        <Alert showIcon type="info" message="抖音与小红书使用独立 Profile、独立锁和独立节奏；审核并发数固定为 1。" style={{ marginBottom: 12 }} />
+        <Descriptions column={{ xs: 1, md: 2, xl: 4 }}>
+          <Descriptions.Item label="审核并发数">1（固定）</Descriptions.Item>
+          {douyinPacingFields.map(([key, label]) => <Descriptions.Item label={label} key={key}><Input value={drafts[key] || ""} onChange={(event) => setDrafts((current) => ({ ...current, [key]: event.target.value }))} /></Descriptions.Item>)}
+        </Descriptions>
+        <Button type="primary" disabled={!canManageSystem} onClick={async () => {
+          await Promise.all(douyinPacingFields.map(([key]) => apiFetch("/api/settings", { method: "PUT", body: JSON.stringify({ key, value: drafts[key] }) })));
+          message.success("抖音访问节奏已保存");
+          await load();
+        }}>保存抖音访问节奏</Button>
       </Card>
       <Card className="surface-card" title="软件与更新" style={{ marginBottom: 16 }}>
         <Descriptions column={{ xs: 1, md: 2 }}>

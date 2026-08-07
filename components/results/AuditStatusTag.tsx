@@ -36,6 +36,7 @@ const toneByValue: Record<string, Tone> = {
   RUNNING: "info",
   IMAGE_TEXT: "info",
   VIDEO_NOTE: "purple",
+  VIDEO: "purple",
 };
 
 const toneClass: Record<Tone, string> = {

@@ -1,6 +1,9 @@
 import type { LocalAccountRole } from "@/lib/accounts/types";
 import { prisma } from "@/lib/db";
-import { clearAutomaticBatchRuntime } from "@/lib/automation/queue";
+import {
+  clearAutomaticBatchRuntime,
+  kickAutomaticAuditQueue,
+} from "@/lib/automation/queue";
 import {
   canClearAutomaticBatch,
   clearableAutomaticBatchStatuses,
@@ -150,5 +153,6 @@ export async function clearAutomaticBatchFromTaskView(input: {
   });
 
   clearAutomaticBatchRuntime(input.batchId);
+  kickAutomaticAuditQueue();
   return result;
 }

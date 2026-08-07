@@ -37,7 +37,10 @@ export async function GET(
     ...campaign,
     brandNames,
     topicRules: campaign.topicRules.filter(
-      (rule) => rule.brandName && brandNames.includes(rule.brandName),
+      (rule) =>
+        rule.brandName &&
+        brandNames.includes(rule.brandName) &&
+        [campaign.contentChannel, "ALL"].includes(rule.contentChannel),
     ),
   });
 }
@@ -57,6 +60,10 @@ export async function PUT(
         ruleSource: "LOCAL_DRAFT",
         ...(typeof body.name === "string" ? { name: body.name.trim() } : {}),
         ...(typeof body.month === "string" ? { month: body.month } : {}),
+        ...(body.contentChannel === "XIAOHONGSHU" ||
+        body.contentChannel === "DOUYIN"
+          ? { contentChannel: body.contentChannel }
+          : {}),
         ...(typeof body.startDate === "string"
           ? { startDate: new Date(body.startDate) }
           : {}),

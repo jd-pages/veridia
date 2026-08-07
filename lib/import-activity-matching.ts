@@ -31,6 +31,7 @@ export function resolveImportedActivity(input: {
   activityName: unknown;
   productId: string | null | undefined;
   candidates: readonly ImportActivityCandidate[];
+  allowMissingRules?: boolean;
 }): ImportActivityResolution {
   const inputName = String(input.activityName ?? "").trim();
   const fail = (
@@ -70,7 +71,7 @@ export function resolveImportedActivity(input: {
       campaign,
     );
   }
-  if (campaign.ruleCount < 1) {
+  if (campaign.ruleCount < 1 && !input.allowMissingRules) {
     return fail("NO_RULES", "该活动尚未配置审核规则", campaign);
   }
   return { status: "MATCHED", inputName, campaign, error: "" };

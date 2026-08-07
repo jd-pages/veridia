@@ -24,8 +24,37 @@ export function compareTopic(
 export function normalizeUrl(input: string): string {
   const url = new URL(input.trim());
   url.hash = "";
+  const isDouyin =
+    url.hostname === "douyin.com" ||
+    url.hostname.endsWith(".douyin.com") ||
+    url.hostname === "iesdouyin.com" ||
+    url.hostname.endsWith(".iesdouyin.com");
+  const douyinTrackingParameters = new Set([
+    "enter_from",
+    "enter_method",
+    "from_ssr",
+    "previous_page",
+    "scene",
+    "share_app_id",
+    "share_author_id",
+    "share_iid",
+    "share_link_id",
+    "share_scene",
+    "share_token",
+    "timestamp",
+    "tt_from",
+    "ug_source",
+    "utm_campaign",
+    "utm_medium",
+    "utm_source",
+  ]);
   for (const key of [...url.searchParams.keys()]) {
-    if (["share_from_user_hidden", "xhsshare", "appuid", "apptime"].includes(key)) {
+    if (
+      ["share_from_user_hidden", "xhsshare", "appuid", "apptime"].includes(
+        key,
+      ) ||
+      (isDouyin && douyinTrackingParameters.has(key.toLocaleLowerCase()))
+    ) {
       url.searchParams.delete(key);
     }
   }

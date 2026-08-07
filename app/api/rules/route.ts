@@ -11,11 +11,13 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const productId = searchParams.get("productId") || undefined;
   const brandName = searchParams.get("brandName")?.trim() || undefined;
   const month = searchParams.get("month")?.trim() || undefined;
+  const contentChannel = searchParams.get("contentChannel")?.trim() || undefined;
   const rules = await prisma.topicRule.findMany({
     where: {
       campaignId,
       productId,
       brandName,
+      contentChannel,
       ...(month ? { campaign: { is: { month, deletedAt: null } } } : {}),
     },
     include: { campaign: true, product: true },
@@ -43,12 +45,14 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     minCount?: number;
     sortOrder?: number;
     notes?: string;
+    contentChannel?: "XIAOHONGSHU" | "DOUYIN" | "ALL";
   };
   const topic = normalizeTopic(body.topic || "");
   if (!body.ruleType || !topic) return fail("规则类型和标准话题为必填项");
   const brandName = body.brandName?.trim();
   if (!brandName) return fail("规则必须归属品牌");
   const ruleType = body.ruleType;
+  let resolvedContentChannel = body.contentChannel || "XIAOHONGSHU";
   if ((body.scope ?? "CAMPAIGN") === "CAMPAIGN" && !body.campaignId) {
     return fail("活动规则必须选择所属活动");
   }
@@ -76,6 +80,14 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     if (!campaign || !campaignBrands.includes(brandName)) {
       return fail("所选活动不属于当前品牌");
     }
+    resolvedContentChannel =
+      body.contentChannel ||
+      (["XIAOHONGSHU", "DOUYIN", "ALL"].includes(campaign.contentChannel)
+        ? (campaign.contentChannel as "XIAOHONGSHU" | "DOUYIN" | "ALL")
+        : "XIAOHONGSHU");
+    if (body.contentChannel && ![campaign.contentChannel, "ALL"].includes(body.contentChannel)) {
+      return fail("规则内容平台与所属活动不一致");
+    }
   }
   try {
     const rule = await prisma.$transaction(async (tx) => {
@@ -91,6 +103,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
         data: {
           ruleSource: "LOCAL_DRAFT",
           brandName,
+          contentChannel: resolvedContentChannel,
           campaignId: body.campaignId || null,
           productId: body.productId || null,
           scope: body.scope || "CAMPAIGN",

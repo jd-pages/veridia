@@ -1,0 +1,212 @@
+import "server-only";
+import os from "node:os";
+import path from "node:path";
+import type { Browser, BrowserContext, BrowserType, Page } from "playwright";
+import { prisma } from "@/lib/db";
+import { classifyDouyinPage } from "./douyin-page-classification";
+import { createAuditPage, launchWindowsHiddenChromium } from "./windows-hidden-chromium";
+import { AutomaticExtractionError } from "./failure";
+
+const SESSION_ID = "douyin";
+const PROFILE_DIRECTORY = path.resolve(
+  process.env.DOUYIN_PROFILE_PATH ||
+    path.join(process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir(), "VERIDIA", "sessions", "douyin-profile"),
+);
+
+type DouyinSessionState = "LOGGED_IN" | "LOGGED_OUT" | "SECURITY_RESTRICTED" | "NETWORK_ERROR" | "UNKNOWN";
+type AuditLock = { platform: "DOUYIN"; batchId: string; taskId: string | null; startedAt: string; heartbeatAt: string; status: string; profilePath: string };
+type State = {
+  browser?: Browser;
+  context?: BrowserContext;
+  closeBrowser?: () => Promise<void>;
+  auditPage?: Page;
+  auditPagePromise?: Promise<Page>;
+  interactivePage?: Page;
+  launchPromise?: Promise<BrowserContext>;
+  sessionState: DouyinSessionState;
+  auditLock?: AuditLock;
+  launchCount: number;
+  auditPageCreateCount: number;
+  auditPageReuseCount: number;
+  closing: boolean;
+  controlError?: string;
+};
+const globalState = globalThis as typeof globalThis & { douyinBrowserManagerState?: State };
+const state = globalState.douyinBrowserManagerState ?? (globalState.douyinBrowserManagerState = {
+  sessionState: "UNKNOWN",
+  launchCount: 0,
+  auditPageCreateCount: 0,
+  auditPageReuseCount: 0,
+  closing: false,
+});
+
+let chromiumPromise: Promise<BrowserType> | undefined;
+function chromium() {
+  chromiumPromise ??= import("playwright").then((module) => module.chromium);
+  return chromiumPromise;
+}
+function living(page?: Page) { return page && !page.isClosed() ? page : undefined; }
+
+async function setWindowState(page: Page, windowState: "minimized" | "normal") {
+  try {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const { windowId } = await session.send("Browser.getWindowForTarget");
+      await session.send("Browser.setWindowBounds", { windowId, bounds: { windowState } });
+      return true;
+    } finally { await session.detach().catch(() => undefined); }
+  } catch { return false; }
+}
+
+async function saveSession(status: DouyinSessionState, message?: string | null) {
+  state.sessionState = status;
+  const mapped = { LOGGED_IN: "READY", LOGGED_OUT: "LOGIN_REQUIRED", SECURITY_RESTRICTED: "SECURITY_CHECK", NETWORK_ERROR: "NETWORK_ERROR", UNKNOWN: "UNKNOWN" }[status];
+  return prisma.automationSession.upsert({
+    where: { id: SESSION_ID },
+    create: { id: SESSION_ID, platform: "DOUYIN", status: mapped, profilePath: PROFILE_DIRECTORY, lastCheckedAt: new Date(), lastError: message || null },
+    update: { status: mapped, profilePath: PROFILE_DIRECTORY, lastCheckedAt: new Date(), lastError: message || null },
+  });
+}
+
+export async function getDouyinAutomationSession() {
+  return prisma.automationSession.upsert({
+    where: { id: SESSION_ID },
+    create: { id: SESSION_ID, platform: "DOUYIN", status: "UNKNOWN", profilePath: PROFILE_DIRECTORY },
+    update: { profilePath: PROFILE_DIRECTORY },
+  });
+}
+
+async function ensureContext() {
+  if (state.context && state.browser?.isConnected()) return state.context;
+  if (state.launchPromise) return state.launchPromise;
+  await getDouyinAutomationSession();
+  state.launchPromise = (async () => {
+    const browserType = await chromium();
+    if (process.platform === "win32") {
+      const connection = await launchWindowsHiddenChromium(browserType, PROFILE_DIRECTORY);
+      state.browser = connection.browser;
+      state.closeBrowser = connection.close;
+      return connection.context;
+    }
+    const context = await browserType.launchPersistentContext(PROFILE_DIRECTORY, {
+      headless: false,
+      locale: "zh-CN",
+      timezoneId: "Asia/Shanghai",
+      viewport: { width: 1440, height: 960 },
+      ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH?.trim() ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH.trim() } : {}),
+    });
+    state.browser = context.browser() || undefined;
+    state.closeBrowser = () => context.close();
+    return context;
+  })().then((context) => {
+    state.context = context;
+    state.launchCount += 1;
+    state.controlError = undefined;
+    context.once("close", () => {
+      state.context = undefined;
+      state.browser = undefined;
+      state.auditPage = undefined;
+      state.interactivePage = undefined;
+      if (!state.closing) state.controlError = "抖音专用浏览器已关闭";
+    });
+    console.info("[抖音浏览器] Persistent Context 已就绪", JSON.stringify({ profilePath: path.basename(PROFILE_DIRECTORY), launchCount: state.launchCount, pageCount: context.pages().length }));
+    return context;
+  }).finally(() => { state.launchPromise = undefined; });
+  return state.launchPromise;
+}
+
+export async function getDouyinAuditPage(input?: { taskId?: string; url?: string }) {
+  const existing = living(state.auditPage);
+  if (existing && state.context && state.browser?.isConnected()) {
+    state.auditPageReuseCount += 1;
+    return existing;
+  }
+  if (state.auditPagePromise) return state.auditPagePromise;
+  state.auditPagePromise = (async () => {
+    const context = await ensureContext();
+    const page = await createAuditPage(context);
+    if (process.platform === "win32") await setWindowState(page, "minimized");
+    state.auditPage = page;
+    state.auditPageCreateCount += 1;
+    page.once("close", () => { if (state.auditPage === page) state.auditPage = undefined; });
+    console.info("[抖音浏览器] 创建后台审核页面", JSON.stringify({ taskId: input?.taskId || null, pageCount: context.pages().length, auditPageCreateCount: state.auditPageCreateCount, bringToFrontCalled: false }));
+    return page;
+  })().finally(() => { state.auditPagePromise = undefined; });
+  return state.auditPagePromise;
+}
+
+export async function showDouyinManualIntervention(page: Page, reason: string) {
+  state.interactivePage = living(state.interactivePage) || page;
+  await setWindowState(state.interactivePage, "normal");
+  await state.interactivePage.bringToFront();
+  console.info("[抖音浏览器] 显示人工交互页面", JSON.stringify({ reason, pageCount: page.context().pages().length }));
+}
+
+export async function checkDouyinSessionState(preferredPage?: Page) {
+  const context = await ensureContext();
+  const page = living(preferredPage) || living(state.interactivePage) || living(state.auditPage) || context.pages().find((candidate) => !candidate.isClosed()) || await getDouyinAuditPage();
+  try {
+    if (!page.url().includes("douyin.com")) await page.goto("https://www.douyin.com/", { waitUntil: "domcontentloaded", timeout: 30_000 });
+    const [title, text] = await Promise.all([page.title().catch(() => ""), page.locator("body").innerText({ timeout: 5_000 }).catch(() => "")]);
+    const classified = classifyDouyinPage({ url: page.url(), title, visibleText: text });
+    if (classified.state === "SECURITY_RESTRICTED") { await saveSession("SECURITY_RESTRICTED", "抖音要求安全验证"); return "SECURITY_RESTRICTED" as const; }
+    if (classified.state === "NOT_LOGGED_IN") { await saveSession("LOGGED_OUT", "抖音登录状态失效"); return "LOGGED_OUT" as const; }
+    await saveSession("LOGGED_IN");
+    if (page !== living(state.interactivePage)) await setWindowState(page, "minimized");
+    return "LOGGED_IN" as const;
+  } catch (error) {
+    await saveSession("NETWORK_ERROR", error instanceof Error ? error.message : "抖音登录检测失败");
+    return "NETWORK_ERROR" as const;
+  }
+}
+
+export async function startDouyinLogin() {
+  const page = await getDouyinAuditPage();
+  await page.goto("https://www.douyin.com/", { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => undefined);
+  await showDouyinManualIntervention(page, "LOGIN_REQUIRED");
+  return getDouyinSessionDiagnostics();
+}
+export async function completeDouyinLogin() {
+  const interactivePage = living(state.interactivePage);
+  const result = await checkDouyinSessionState(interactivePage);
+  if (result === "LOGGED_IN" && interactivePage) {
+    state.interactivePage = undefined;
+    await setWindowState(interactivePage, "minimized");
+  }
+  return getDouyinSessionDiagnostics();
+}
+export async function restartDouyinBrowser() { await closeDouyinBrowserContext(); await ensureContext(); return getDouyinSessionDiagnostics(); }
+export async function logoutDouyinSession() {
+  const context = state.context;
+  if (context) {
+    await context.clearCookies();
+    for (const page of context.pages()) {
+      await page
+        .evaluate(() => {
+          window.localStorage.clear();
+          window.sessionStorage.clear();
+        })
+        .catch(() => undefined);
+    }
+  }
+  await closeDouyinBrowserContext();
+  await saveSession("LOGGED_OUT", "用户已退出抖音专用浏览器");
+  return getDouyinSessionDiagnostics();
+}
+export async function closeDouyinBrowserContext() {
+  state.closing = true;
+  const close = state.closeBrowser;
+  const context = state.context;
+  state.context = undefined; state.browser = undefined; state.auditPage = undefined; state.interactivePage = undefined; state.closeBrowser = undefined;
+  try { if (close) await close().catch(() => undefined); else await context?.close().catch(() => undefined); } finally { state.closing = false; }
+}
+export async function closeDouyinAuditPageForTesting() { await living(state.auditPage)?.close(); return getDouyinSessionDiagnostics(); }
+export async function ensureDouyinBrowserControlReady() { try { await ensureContext(); } catch (error) { throw new AutomaticExtractionError("BROWSER_CONTROL_ERROR", "抖音专用浏览器连接异常", { technicalMessage: error instanceof Error ? error.message : String(error) }); } }
+export async function markDouyinSessionIssue(status: "LOGIN_EXPIRED" | "SECURITY_RESTRICTED", message: string) { return saveSession(status === "LOGIN_EXPIRED" ? "LOGGED_OUT" : "SECURITY_RESTRICTED", message); }
+export function updateDouyinAuditLock(input: Omit<AuditLock, "platform" | "heartbeatAt" | "profilePath"> | null) { state.auditLock = input ? { ...input, platform: "DOUYIN", heartbeatAt: new Date().toISOString(), profilePath: PROFILE_DIRECTORY } : undefined; }
+export function heartbeatDouyinAuditLock(batchId: string, status: string) { if (state.auditLock?.batchId !== batchId) return; state.auditLock = { ...state.auditLock, status, heartbeatAt: new Date().toISOString() }; }
+export function clearDouyinAuditLockForBatch(batchId: string) { if (state.auditLock?.batchId !== batchId) return false; state.auditLock = undefined; return true; }
+export async function getDouyinSessionDiagnostics() {
+  const session = await getDouyinAutomationSession();
+  return { ...session, platform: "DOUYIN", profilePath: PROFILE_DIRECTORY, sessionState: state.sessionState, browserInstanceCount: state.context ? 1 : 0, pageCount: state.context?.pages().filter((page) => !page.isClosed()).length || 0, auditPageOpen: Boolean(living(state.auditPage)), auditPageCreateCount: state.auditPageCreateCount, auditPageReuseCount: state.auditPageReuseCount, interactivePageOpen: Boolean(living(state.interactivePage)), auditLock: state.auditLock || null, controlReady: Boolean(state.context && state.browser?.isConnected()), controlLastError: state.controlError || null };
+}

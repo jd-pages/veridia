@@ -500,7 +500,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "E2E Excel 后续成功",
   ]);
   sheet.addRow([
-    "https://www.douyin.com/video/123456",
+    `${E2E_ORIGIN}/mock/douyin?case=video&e2e-import=${suffix}-douyin`,
     product.code,
     product.name,
     campaign.name,
@@ -542,8 +542,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       errors: string[];
     }>;
   };
-  expect(importPreview.validCount).toBe(3);
-  expect(importPreview.invalidCount).toBe(1);
+  expect(importPreview.validCount).toBe(4);
+  expect(importPreview.invalidCount).toBe(0);
   expect(importPreview.unknownHeaders).toEqual(
     expect.arrayContaining(["产品编码", "活动月份", "备注"]),
   );
@@ -560,8 +560,12 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     errors: [],
   });
   expect(importPreview.rows[3]).toMatchObject({
-    recognitionStatus: "UNSUPPORTED",
-    failureReason: "内容渠道为抖音，暂不支持小红书自动审核",
+    recognitionStatus: "RECOGNIZED",
+    errors: [],
+  });
+  expect(importPreview).toMatchObject({
+    plannedBatchCount: 2,
+    channelDistribution: { XIAOHONGSHU: 3, DOUYIN: 1 },
   });
   const importBatchIdsAfterPreview = (
     (await (
@@ -569,6 +573,57 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     ).json()).data as Array<{ id: string }>
   ).map((item) => item.id);
   expect(importBatchIdsAfterPreview).toEqual(importBatchIdsBeforePreview);
+
+  const douyinWorkbook = new ExcelJS.Workbook();
+  const douyinSheet = douyinWorkbook.addWorksheet("导入");
+  douyinSheet.addRow([
+    "笔记链接",
+    "产品编码",
+    "产品名称",
+    "活动名称",
+    "活动月份",
+    "产品阶段话题",
+    "内容渠道",
+    "店铺名称",
+    "成交平台",
+    "备注",
+  ]);
+  douyinSheet.addRow([
+    "https://www.douyin.com/video/987654321",
+    product.code,
+    product.name,
+    campaign.name,
+    campaign.month,
+    "IFFO",
+    "DOUYIN",
+    "京东健康官方进口超市",
+    "京东",
+    "E2E 抖音独立文件预检",
+  ]);
+  const douyinPreviewResponse = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: "e2e-douyin-import.xlsx",
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await douyinWorkbook.xlsx.writeBuffer()),
+      },
+      commit: "false",
+      skipDuplicates: "true",
+    },
+  });
+  expect(douyinPreviewResponse.ok()).toBeTruthy();
+  const douyinPreview = (await douyinPreviewResponse.json()).data as {
+    validCount: number;
+    invalidCount: number;
+    rows: Array<{ channel: string; recognitionStatus: string; errors: string[] }>;
+  };
+  expect(douyinPreview).toMatchObject({ validCount: 1, invalidCount: 0 });
+  expect(douyinPreview.rows[0]).toMatchObject({
+    channel: "DOUYIN",
+    recognitionStatus: "RECOGNIZED",
+    errors: [],
+  });
 
   const committedImportResponse = await page.request.post("/api/import/notes", {
     multipart: {
@@ -586,6 +641,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const committedImport = (await committedImportResponse.json()).data as {
     imported: number;
     batchId: string;
+    batchIds: string[];
     auditBatchId: string;
     importRecordId: string;
     fileName: string;
@@ -593,11 +649,12 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     importedCount: number;
   };
   expect(committedImport).toMatchObject({
-    imported: 3,
-    importedCount: 3,
+    imported: 4,
+    importedCount: 4,
     auditBatchId: committedImport.batchId,
     fileName: "e2e-automatic-import.xlsx",
   });
+  expect(committedImport.batchIds).toHaveLength(2);
   expect(committedImport.importRecordId).toBeTruthy();
   expect(new Date(committedImport.importedAt).toString()).not.toBe("Invalid Date");
   const excelBatch = await waitForBatch(page, committedImport.batchId, [
@@ -613,6 +670,12 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
         task.importRecordId === committedImport.importRecordId,
     ),
   ).toBe(true);
+  const douyinExcelBatch = await waitForBatch(page, committedImport.batchIds[1], [
+    "COMPLETED",
+  ]);
+  expect(douyinExcelBatch.channel).toBe("DOUYIN");
+  expect(douyinExcelBatch.stats.needsReview).toBe(1);
+  expect(douyinExcelBatch.importRecordId).toBe(committedImport.importRecordId);
 
   const importOptionsResponse = await page.request.get(
     "/api/results/import-batches",
@@ -629,8 +692,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       expect.objectContaining({
         id: committedImport.importRecordId,
         fileName: "e2e-automatic-import.xlsx",
-        resultCount: 3,
-        label: expect.stringContaining("导入 3 条"),
+        resultCount: 4,
+        label: expect.stringContaining("导入 4 条"),
       }),
     ]),
   );
@@ -641,7 +704,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     total: number;
     items: Array<{ task: { importRecordId: string } }>;
   };
-  expect(importResults.total).toBe(3);
+  expect(importResults.total).toBe(4);
   expect(
     importResults.items.every(
       (item) => item.task.importRecordId === committedImport.importRecordId,
@@ -657,12 +720,19 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       .first()
       .locator(".ant-select-selection-item"),
   ).toContainText("e2e-automatic-import.xlsx");
-  await expect(page.getByText("当前筛选共 3 条")).toBeVisible();
+  await expect(page.getByText("当前筛选共 4 条")).toBeVisible();
 
   const clearImportedBatchResponse = await page.request.post(
     `/api/automation/batches/${committedImport.batchId}/clear`,
   );
   expect(clearImportedBatchResponse.ok()).toBeTruthy();
+  expect(
+    (
+      await page.request.post(
+        `/api/automation/batches/${committedImport.batchIds[1]}/clear`,
+      )
+    ).ok(),
+  ).toBeTruthy();
   const clearedBatchLookup = await page.request.get(
     `/api/automation/batches?batchId=${committedImport.batchId}&includeTasks=false`,
   );
@@ -670,7 +740,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const retainedImportResults = await page.request.get(
     `/api/results?importRecordId=${encodeURIComponent(committedImport.importRecordId)}&page=1&pageSize=100`,
   );
-  expect((await retainedImportResults.json()).data.total).toBe(3);
+  expect((await retainedImportResults.json()).data.total).toBe(4);
   const retainedImportOptions = (await (
     await page.request.get("/api/results/import-batches")
   ).json()).data as Array<{ id: string }>;

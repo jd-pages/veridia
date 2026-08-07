@@ -84,6 +84,7 @@ interface Campaign {
   id: string;
   name: string;
   month: string;
+  contentChannel?: "XIAOHONGSHU" | "DOUYIN";
   productId: string | null;
   product?: Product | null;
   products?: Array<{ product: Product }>;
@@ -169,6 +170,7 @@ interface AuditBatch {
   } | null;
   name: string | null;
   source: string;
+  channel: "XIAOHONGSHU" | "DOUYIN" | null;
   status: string;
   productStage: string | null;
   createdAt: string;
@@ -194,6 +196,8 @@ interface AutomationSession {
   controlReady?: boolean;
   controlLastError?: string | null;
   lastLoginAt: string | null;
+  lastCheckedAt?: string | null;
+  profilePath?: string;
   lastError: string | null;
 }
 
@@ -203,11 +207,14 @@ interface ImportPreview {
   invalidCount: number;
   imported: number;
   batchId?: string | null;
+  batchIds?: string[];
   auditBatchId?: string | null;
   importRecordId?: string | null;
   fileName?: string;
   importedAt?: string | null;
   importedCount?: number;
+  plannedBatchCount?: number;
+  channelDistribution?: Record<"XIAOHONGSHU" | "DOUYIN", number>;
   rowsTruncated?: boolean;
   errorRowsTruncated?: boolean;
   templateVersion: string;
@@ -372,6 +379,9 @@ export default function TasksPage() {
   const [batches, setBatches] = useState<AuditBatch[]>([]);
   const [trackedBatchIds, setTrackedBatchIds] = useState<string[]>([]);
   const [session, setSession] = useState<AutomationSession | null>(null);
+  const [sessionPlatform, setSessionPlatform] = useState<
+    "XIAOHONGSHU" | "DOUYIN"
+  >("XIAOHONGSHU");
   const [selectedBatchId, setSelectedBatchId] = useState(
     ALL_CURRENT_BATCHES,
   );
@@ -386,6 +396,7 @@ export default function TasksPage() {
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
   const selectedProduct = Form.useWatch("productId", form);
+  const selectedContentChannel = Form.useWatch("contentChannel", form) || "XIAOHONGSHU";
   const selectedCampaign = Form.useWatch("campaignId", form);
   const selectedStage = Form.useWatch("productStage", form);
   const selectedCampaignDefinition = useMemo(
@@ -393,7 +404,8 @@ export default function TasksPage() {
     [campaigns, selectedCampaign],
   );
   const selectedCampaignRequiresStage = Boolean(
-    selectedCampaignDefinition?.requiresProductStage,
+    selectedContentChannel === "XIAOHONGSHU" &&
+      selectedCampaignDefinition?.requiresProductStage,
   );
   const availableProducts = useMemo(() => {
     if (!selectedCampaignDefinition) return [];
@@ -447,7 +459,9 @@ export default function TasksPage() {
         apiFetch<AuditBatch[]>(`/api/automation/batches?${batchQuery}`, {
           cache: "no-store",
         }),
-        apiFetch<AutomationSession>("/api/automation/session"),
+        apiFetch<AutomationSession>(
+          `/api/automation/session?platform=${sessionPlatform}`,
+        ),
       ]);
       if (requestSequence !== loadSequence.current) return;
       let dataFailure: PromiseRejectedResult | undefined;
@@ -549,7 +563,7 @@ export default function TasksPage() {
       }
       setLoading(false);
     },
-    [message],
+    [message, sessionPlatform],
   );
 
   useEffect(() => {
@@ -579,6 +593,7 @@ export default function TasksPage() {
 
   useEffect(() => {
     if (
+      selectedContentChannel === "DOUYIN" ||
       !selectedProduct ||
       !selectedCampaign ||
       (selectedCampaignRequiresStage && !selectedStage)
@@ -609,6 +624,7 @@ export default function TasksPage() {
     };
   }, [
     message,
+    selectedContentChannel,
     selectedCampaign,
     selectedCampaignRequiresStage,
     selectedProduct,
@@ -734,6 +750,7 @@ export default function TasksPage() {
     productId: string;
     campaignId: string;
     productStage?: string;
+    contentChannel: "XIAOHONGSHU" | "DOUYIN";
     urls: string;
     notes?: string;
   }) => {
@@ -762,7 +779,7 @@ export default function TasksPage() {
       );
       if (result.unrecognized.length) {
         message.warning(
-          `${result.unrecognized.length} 段内容未识别到有效小红书链接，其他有效链接已正常创建`,
+          `${result.unrecognized.length} 段内容未识别到有效作品链接，其他有效链接已正常创建`,
         );
       }
       form.setFieldValue("urls", "");
@@ -801,13 +818,20 @@ export default function TasksPage() {
       setPreviewView("ERRORS");
       setPreviewPage(1);
       if (commit) {
-        const nextBatchIds = result.batchId
-          ? [...new Set([...trackedBatchIds, result.batchId])]
+        const committedBatchIds = result.batchIds?.length
+          ? result.batchIds
+          : result.batchId
+            ? [result.batchId]
+            : [];
+        const nextBatchIds = committedBatchIds.length
+          ? [...new Set([...trackedBatchIds, ...committedBatchIds])]
           : trackedBatchIds;
         setTrackedBatchIds(nextBatchIds);
         setSelectedBatchId(ALL_CURRENT_BATCHES);
         setTaskPage(1);
-        message.success(`已导入 ${result.imported} 条，自动审核已开始`);
+        message.success(
+          `已导入 ${result.imported} 条，已按内容平台拆分为 ${committedBatchIds.length} 个串行批次`,
+        );
         await load(
           true,
           nextBatchIds,
@@ -920,7 +944,7 @@ export default function TasksPage() {
     try {
       const result = await apiFetch<AutomationSession>("/api/automation/session", {
         method: "POST",
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, platform: sessionPlatform }),
       });
       setSession(result);
       if (action === "START_LOGIN") {
@@ -1025,6 +1049,22 @@ export default function TasksPage() {
         bordered={false}
         className={`${styles.consoleCard} ${styles.sessionCard}`}
       >
+        <div className={styles.sectionHeader}>
+          <div>
+            <span className={styles.eyebrow}>自动审核环境</span>
+            <h2>内容平台专用浏览器</h2>
+          </div>
+          <Tabs
+            activeKey={sessionPlatform}
+            onChange={(value) =>
+              setSessionPlatform(value as "XIAOHONGSHU" | "DOUYIN")
+            }
+            items={[
+              { key: "XIAOHONGSHU", label: "小红书" },
+              { key: "DOUYIN", label: "抖音" },
+            ]}
+          />
+        </div>
         <div className={styles.sessionIdentity}>
           <span className={styles.sessionIcon}>
             <SafetyCertificateOutlined />
@@ -1034,7 +1074,11 @@ export default function TasksPage() {
               {businessUiText.secureBrowserSession}
             </span>
             <div className={styles.sessionTitle}>
-              <strong>小红书专用浏览器</strong>
+              <strong data-testid="automation-session-browser-title">
+                {sessionPlatform === "DOUYIN"
+                  ? "抖音专用浏览器"
+                  : "小红书专用浏览器"}
+              </strong>
               <GovernanceStatus
                 value={session?.status || "UNKNOWN"}
                 domain="session"
@@ -1053,6 +1097,13 @@ export default function TasksPage() {
                 ? `最近登录 ${new Date(session.lastLoginAt).toLocaleString("zh-CN")}`
                 : "尚未保存可复用的登录状态"}
             </p>
+            <p>
+              最近检测：
+              {session?.lastCheckedAt
+                ? new Date(session.lastCheckedAt).toLocaleString("zh-CN")
+                : "尚未检测"}
+              ；浏览器控制：{session?.controlState || "NOT_STARTED"}
+            </p>
             {session?.lastError ? (
               <span className={styles.inlineError}>{session.lastError}</span>
             ) : null}
@@ -1068,7 +1119,7 @@ export default function TasksPage() {
             icon={<LoginOutlined />}
             onClick={() => void loginAction("START_LOGIN")}
           >
-            登录小红书
+            {sessionPlatform === "DOUYIN" ? "登录抖音" : "登录小红书"}
           </Button>
           <Button
             type="primary"
@@ -1080,7 +1131,8 @@ export default function TasksPage() {
             重新检测
           </Button>
           <Button onClick={() => void loginAction("RESTART_BROWSER")}>
-            重新启动专用浏览器
+            重新启动
+            {sessionPlatform === "DOUYIN" ? "抖音" : "小红书"}专用浏览器
           </Button>
         </Space>}
       </Card>
@@ -1111,12 +1163,24 @@ export default function TasksPage() {
                   className={styles.configForm}
                   layout="vertical"
                   onFinish={(values) => void createBatch(values)}
+                  initialValues={{ contentChannel: "XIAOHONGSHU" }}
                 >
                       <Form.Item name="name" label="批次名称">
                         <Input placeholder="例如：7月达人笔记第一批" />
                       </Form.Item>
                       <Row gutter={16}>
-                        <Col xs={24} md={12}>
+                        <Col xs={24} md={8}>
+                          <Form.Item name="contentChannel" label="内容平台" rules={[{ required: true }]}>
+                            <Select
+                              options={[{ value: "XIAOHONGSHU", label: "小红书" }, { value: "DOUYIN", label: "抖音" }]}
+                              onChange={() => {
+                                form.resetFields(["campaignId", "productId", "productStage", "urls"]);
+                                setRequirements(null);
+                              }}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} md={8}>
                           <Form.Item
                             name="campaignId"
                             label="所属活动"
@@ -1132,12 +1196,17 @@ export default function TasksPage() {
                               }}
                               options={campaigns.map((item) => ({
                                 value: item.id,
-                                label: `${item.month} · ${item.name}`,
+                                label: `${item.month} · ${item.name}${
+                                  selectedContentChannel === "DOUYIN" &&
+                                  (item.contentChannel || "XIAOHONGSHU") !== "DOUYIN"
+                                    ? "（仅作采集归档，未配置抖音规则）"
+                                    : ""
+                                }`,
                               }))}
                             />
                           </Form.Item>
                         </Col>
-                        <Col xs={24} md={12}>
+                        <Col xs={24} md={8}>
                           <Form.Item
                             name="productId"
                             label="所属产品"
@@ -1234,7 +1303,7 @@ export default function TasksPage() {
                       ) : null}
                       <Form.Item
                         name="urls"
-                        label="小红书笔记链接"
+                        label={`${selectedContentChannel === "DOUYIN" ? "抖音作品" : "小红书笔记"}链接`}
                         rules={[{ required: true }]}
                         extra={
                           <Space direction="vertical" size={2}>
@@ -1255,7 +1324,7 @@ export default function TasksPage() {
                       >
                         <Input.TextArea
                           rows={7}
-                          placeholder={"https://www.xiaohongshu.com/explore/xxxx\nhttp://xhslink.com/o/xxxx\nhttp://xhslink.cn/o/xxxx"}
+                          placeholder={selectedContentChannel === "DOUYIN" ? "https://www.douyin.com/video/xxxx\nhttps://v.douyin.com/xxxx" : "https://www.xiaohongshu.com/explore/xxxx\nhttp://xhslink.com/o/xxxx\nhttp://xhslink.cn/o/xxxx"}
                         />
                       </Form.Item>
                       <Form.Item name="notes" label="内部备注">
@@ -1266,7 +1335,7 @@ export default function TasksPage() {
                         size="large"
                         htmlType="submit"
                         loading={submitting}
-                        disabled={browserControlBlocked}
+                        disabled={selectedContentChannel === "XIAOHONGSHU" && browserControlBlocked}
                         icon={<PlayCircleOutlined />}
                         className={styles.primaryAction}
                       >
@@ -1371,8 +1440,7 @@ export default function TasksPage() {
                       loading={importing}
                       disabled={
                         !preview ||
-                        preview.validCount === 0 ||
-                        browserControlBlocked
+                        preview.validCount === 0
                       }
                       onClick={() => void submitExcel(true)}
                     >
@@ -1425,12 +1493,31 @@ export default function TasksPage() {
                         <Descriptions.Item label="数据行">
                           {preview.total} 条
                         </Descriptions.Item>
+                        <Descriptions.Item label="小红书">
+                          {preview.channelDistribution?.XIAOHONGSHU || 0} 条
+                        </Descriptions.Item>
+                        <Descriptions.Item label="抖音">
+                          {preview.channelDistribution?.DOUYIN || 0} 条
+                        </Descriptions.Item>
+                        <Descriptions.Item label="自动拆分">
+                          {preview.plannedBatchCount || 0} 个平台子批次（全局串行）
+                        </Descriptions.Item>
                       </Descriptions>
                       {preview.rowsTruncated ? (
                         <Alert
                           type="info"
                           showIcon
                           message={`预检结果共 ${preview.total} 条，页面仅展示前 ${preview.rows.length} 条；全部有效数据仍会正常入队。`}
+                        />
+                      ) : selectedContentChannel === "DOUYIN" &&
+                        selectedCampaign &&
+                        selectedProduct ? (
+                        <Alert
+                          showIcon
+                          type="warning"
+                          className={styles.requirementsAlert}
+                          message="抖音采集模式"
+                          description="当前未配置抖音业务规则。系统将采集作品证据并进入待人工复核，不会套用小红书规则。"
                         />
                       ) : null}
                       <Space wrap>
@@ -1770,6 +1857,44 @@ export default function TasksPage() {
         </div>
         {selectedBatch ? (
           <>
+            {isCombinedQueue && batches.length > 1 ? (
+              <div className={styles.platformBatchGrid}>
+                {batches.map((batch) => (
+                  <button
+                    type="button"
+                    key={batch.id}
+                    className={styles.platformBatchCard}
+                    onClick={() => {
+                      setSelectedBatchId(batch.id);
+                      setTaskPage(1);
+                      setTaskExecutionFilter("ALL");
+                      void load(
+                        true,
+                        trackedBatchIds,
+                        1,
+                        taskPageSize,
+                        batch.id,
+                        "ALL",
+                      );
+                    }}
+                  >
+                    <span>
+                      {batch.channel === "DOUYIN" ? "抖音" : "小红书"}
+                    </span>
+                    <GovernanceStatus value={batch.status} domain="process" />
+                    <strong>
+                      {batch.stats.succeeded + batch.stats.failed + batch.stats.needsReview}
+                      <small> / {batch.stats.total}</small>
+                    </strong>
+                    <Progress
+                      percent={batch.stats.progress}
+                      showInfo={false}
+                      size="small"
+                    />
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <div className={styles.batchOverview}>
               <div className={styles.batchHeading}>
                 <div>

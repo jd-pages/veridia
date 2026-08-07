@@ -248,7 +248,7 @@ function compactSelfReview(row: CompactAuditResultExportSourceRow) {
     return "N-帖子无法查看";
   }
   if (
-    /CONTENT_CHANNEL_UNSUPPORTED|UNSUPPORTED_CONTENT_CHANNEL|内容渠道.{0,8}(?:不支持|暂不支持)|(?:不支持|暂不支持).{0,8}内容渠道|非小红书|抖音|快手/iu.test(
+    /CONTENT_CHANNEL_UNSUPPORTED|UNSUPPORTED_CONTENT_CHANNEL|内容渠道.{0,8}(?:不支持|暂不支持)|(?:不支持|暂不支持).{0,8}内容渠道|快手/iu.test(
       evidence,
     )
   ) {

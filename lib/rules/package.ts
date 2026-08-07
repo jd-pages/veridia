@@ -40,6 +40,7 @@ const payloadSchema = z.object({
   campaigns: z.array(
     z.object({
       key: nonEmpty,
+      contentChannel: z.enum(["XIAOHONGSHU", "DOUYIN"]).optional().default("XIAOHONGSHU"),
       name: nonEmpty,
       month: z.string().regex(/^\d{4}-\d{2}$/u),
       year: z.number().int().nullable(),
@@ -73,6 +74,7 @@ const payloadSchema = z.object({
   topicRules: z.array(
     z.object({
       key: nonEmpty,
+      contentChannel: z.enum(["XIAOHONGSHU", "DOUYIN", "ALL"]).optional().default("XIAOHONGSHU"),
       brand: nonEmpty.nullable().optional(),
       campaignKey: nullableText,
       productKey: nullableText,
@@ -271,7 +273,11 @@ export async function exportCurrentRulePayload(options?: {
     campaigns.map((campaign) => [
       campaign.id,
       campaign.publishedKey ||
-        stableKey("activity", [campaign.name, campaign.month]),
+        stableKey("activity", [
+          campaign.contentChannel,
+          campaign.name,
+          campaign.month,
+        ]),
     ]),
   );
   const storedStageGroups: RulePackageStageGroup[] = storedGroups.map(
@@ -299,6 +305,10 @@ export async function exportCurrentRulePayload(options?: {
           rule.applicableStage,
           normalizeTopic(rule.topic),
         ]),
+      contentChannel:
+        rule.contentChannel === "DOUYIN" || rule.contentChannel === "ALL"
+          ? rule.contentChannel
+          : "XIAOHONGSHU",
       brand:
         rule.brandName ||
         (rule.productId ? productBrandById.get(rule.productId) : null) ||
@@ -351,6 +361,8 @@ export async function exportCurrentRulePayload(options?: {
     })),
     campaigns: campaigns.map((campaign) => ({
       key: campaignKeyById.get(campaign.id),
+      contentChannel:
+        campaign.contentChannel === "DOUYIN" ? "DOUYIN" : "XIAOHONGSHU",
       name: campaign.name,
       month: campaign.month,
       year: campaign.year,
@@ -506,13 +518,18 @@ export async function applyRulePayload(
           where: { publishedKey: item.key },
         })) ||
         (await tx.campaign.findFirst({
-          where: { name: item.name, month: item.month },
+          where: {
+            name: item.name,
+            month: item.month,
+            contentChannel: item.contentChannel,
+          },
         }));
       const data = {
         publishedKey: item.key,
         ruleSource: source,
         productId: null,
         name: item.name,
+        contentChannel: item.contentChannel,
         month: item.month,
         year: item.year,
         startDate: new Date(item.startDate),
@@ -603,6 +620,7 @@ export async function applyRulePayload(
           ? productIds.get(item.productKey) || null
           : null,
         brandName: inferredBrand,
+        contentChannel: item.contentChannel,
         scope: item.scope,
         ruleType: item.ruleType,
         topicCategory: item.topicCategory,

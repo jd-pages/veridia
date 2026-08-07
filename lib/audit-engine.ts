@@ -118,6 +118,46 @@ export function evaluateAudit(
     pageUrl: note.finalUrl || note.url,
   };
 
+  if (context.rulesConfigured === false) {
+    evaluations.push({
+      ruleKey: "BUSINESS_RULE_SCOPE",
+      ruleName: "业务审核规则",
+      expectedValue: `${context.contentChannel === "DOUYIN" ? "抖音" : "内容平台"}专属业务规则`,
+      actualValue: "尚未配置",
+      passed: true,
+      evidence: { contentChannel: context.contentChannel || null, campaignId: context.campaignId },
+    });
+    return {
+      pageStatus: note.pageStatus,
+      bodyStatus: note.body?.trim() ? "PRESENT" : "UNKNOWN",
+      effectiveBodyLength: countEffectiveBodyCharacters(note.body, note.topics.map((topic) => topic.displayText)),
+      bodyCompliant: true,
+      noteType: note.noteType ?? "UNKNOWN",
+      imageExtractionStatus: note.imageExtractionStatus ?? "NOT_CHECKED",
+      imageStatus: "NOT_REQUIRED",
+      imageCount: Number.isInteger(note.imageCount) ? Number(note.imageCount) : null,
+      imageCompliant: null,
+      topicsCompliant: true,
+      clickableCompliant: true,
+      storeTopicStatus: "NOT_CHECKED",
+      expectedStoreTopic: null,
+      expectedStoreTopics: [],
+      requiredStoreTopics: [],
+      matchedStoreTopic: null,
+      matchedStoreTopics: [],
+      matchedRequiredStoreTopics: [],
+      storeTopicFailureReason: null,
+      publicStatus: "UNKNOWN",
+      retentionStatus: "NOT_REQUIRED",
+      retentionDueAt: null,
+      missingTopics: [],
+      forbiddenTopics: [],
+      autoStatus: "NEEDS_REVIEW",
+      failureReasons: ["抖音采集成功，业务规则未配置"],
+      ruleResults: evaluations,
+    };
+  }
+
   const pagePassed = note.pageStatus === "NORMAL";
   evaluations.push({
     ruleKey: "GLOBAL_PAGE_STATUS",
@@ -176,7 +216,7 @@ export function evaluateAudit(
   let imageCount: number | null = null;
   let imageCompliant: boolean | null = null;
 
-  if (pagePassed && noteType === "VIDEO_NOTE") {
+  if (pagePassed && ["VIDEO", "VIDEO_NOTE"].includes(noteType)) {
     imageStatus = "VIDEO_NOTE";
     evaluations.push({
       ruleKey: "GLOBAL_IMAGE_COUNT",

@@ -1,10 +1,16 @@
-export type NoteLinkPlatform = "XIAOHONGSHU" | "DOUYIN" | "UNKNOWN";
-export type XiaohongshuLinkType = "LONG" | "SHORT";
+import {
+  platformFromUrl,
+  type AutomationPlatform,
+} from "@/lib/automation/platform";
+
+export type NoteLinkPlatform = AutomationPlatform | "UNKNOWN";
+export type NoteLinkType = "LONG" | "SHORT";
+export type XiaohongshuLinkType = NoteLinkType;
 
 export interface ExtractedNoteLink {
   url: string;
-  platform: "XIAOHONGSHU";
-  type: XiaohongshuLinkType;
+  platform: AutomationPlatform;
+  type: NoteLinkType;
 }
 
 export interface UnrecognizedNoteLinkSegment {
@@ -21,7 +27,7 @@ export interface NoteLinkExtractionResult {
 }
 
 const HTTP_URL_PATTERN = /https?:\/\/[^\s<>"'“”‘’]+/giu;
-const TRAILING_PUNCTUATION = /[，,。.；;！!）)】\]}>》”’]+$/u;
+const TRAILING_PUNCTUATION = /[，。；：！？、\]}>》”’]+$/u;
 
 function hostnameMatches(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -48,47 +54,60 @@ export function extractHttpUrlsFromText(input: string): string[] {
     });
 }
 
+function classifyDouyinUrl(url: URL) {
+  const hostname = url.hostname.toLowerCase();
+  if (
+    process.env.NODE_ENV !== "production" &&
+    ["localhost", "127.0.0.1"].includes(hostname) &&
+    url.pathname === "/mock/douyin"
+  ) {
+    return { type: "LONG" as const, supported: true, reason: null };
+  }
+  if (hostnameMatches(hostname, "v.douyin.com")) {
+    return {
+      type: "SHORT" as const,
+      supported: url.pathname !== "/",
+      reason: url.pathname === "/" ? "抖音短链接缺少跳转路径" : null,
+    };
+  }
+  if (
+    hostnameMatches(hostname, "douyin.com") ||
+    hostnameMatches(hostname, "iesdouyin.com")
+  ) {
+    const supported =
+      /^\/(?:video|note)\/[^/?#]+/iu.test(url.pathname) ||
+      /^\/share\/(?:video|note)\/[^/?#]+/iu.test(url.pathname);
+    return {
+      type: "LONG" as const,
+      supported,
+      reason: supported ? null : "不是抖音作品详情链接",
+    };
+  }
+  return null;
+}
+
 export function classifyNoteUrl(input: string): {
   platform: NoteLinkPlatform;
-  type: XiaohongshuLinkType | null;
+  type: NoteLinkType | null;
   supported: boolean;
   reason: string | null;
 } {
   try {
     const url = new URL(cleanUrlCandidate(input));
     if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return {
-        platform: "UNKNOWN",
-        type: null,
-        supported: false,
-        reason: "链接协议不是 HTTP 或 HTTPS",
-      };
+      return { platform: "UNKNOWN", type: null, supported: false, reason: "链接协议不是 HTTP 或 HTTPS" };
     }
-    const hostname = url.hostname.toLocaleLowerCase();
+    const hostname = url.hostname.toLowerCase();
+    const douyin = classifyDouyinUrl(url);
+    if (douyin) return { platform: "DOUYIN", ...douyin };
     if (
       process.env.NODE_ENV !== "production" &&
       ["localhost", "127.0.0.1"].includes(hostname) &&
       url.pathname === "/mock/xhs"
     ) {
-      return {
-        platform: "XIAOHONGSHU",
-        type: "LONG",
-        supported: true,
-        reason: null,
-      };
+      return { platform: "XIAOHONGSHU", type: "LONG", supported: true, reason: null };
     }
-    if (hostnameMatches(hostname, "douyin.com")) {
-      return {
-        platform: "DOUYIN",
-        type: null,
-        supported: false,
-        reason: "抖音链接暂不支持小红书自动审核",
-      };
-    }
-    if (
-      hostnameMatches(hostname, "xhslink.com") ||
-      hostnameMatches(hostname, "xhslink.cn")
-    ) {
+    if (hostnameMatches(hostname, "xhslink.com") || hostnameMatches(hostname, "xhslink.cn")) {
       return {
         platform: "XIAOHONGSHU",
         type: "SHORT",
@@ -107,19 +126,9 @@ export function classifyNoteUrl(input: string): {
         reason: supported ? null : "不是小红书笔记详情链接",
       };
     }
-    return {
-      platform: "UNKNOWN",
-      type: null,
-      supported: false,
-      reason: "未识别的平台链接",
-    };
+    return { platform: "UNKNOWN", type: null, supported: false, reason: "未识别的平台链接" };
   } catch {
-    return {
-      platform: "UNKNOWN",
-      type: null,
-      supported: false,
-      reason: "链接格式不正确",
-    };
+    return { platform: "UNKNOWN", type: null, supported: false, reason: "链接格式不正确" };
   }
 }
 
@@ -128,47 +137,43 @@ export function isSupportedXiaohongshuNoteUrl(input: string) {
   return result.platform === "XIAOHONGSHU" && result.supported;
 }
 
-export function extractNoteLinksFromText(
-  input: string | string[],
-): NoteLinkExtractionResult {
+export function isSupportedDouyinNoteUrl(input: string) {
+  const result = classifyNoteUrl(input);
+  return result.platform === "DOUYIN" && result.supported;
+}
+
+export function extractNoteLinksFromText(input: string | string[]): NoteLinkExtractionResult {
   const values = Array.isArray(input) ? input : [input];
   const rawInput = values.join("\n");
   const candidates = values.flatMap(extractHttpUrlsFromText);
   const recognized = candidates.flatMap<ExtractedNoteLink>((candidate) => {
     const classification = classifyNoteUrl(candidate);
-    return classification.platform === "XIAOHONGSHU" &&
-      classification.supported &&
-      classification.type
-      ? [{ url: candidate, platform: "XIAOHONGSHU", type: classification.type }]
+    return classification.platform !== "UNKNOWN" && classification.supported && classification.type
+      ? [{ url: candidate, platform: classification.platform, type: classification.type }]
       : [];
   });
   const links: ExtractedNoteLink[] = [];
   const seen = new Set<string>();
   for (const link of recognized) {
-    const deduplicationKey = new URL(link.url).toString();
-    if (seen.has(deduplicationKey)) continue;
-    seen.add(deduplicationKey);
+    const key = `${link.platform}:${new URL(link.url).toString()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     links.push(link);
   }
-
   const unrecognized: UnrecognizedNoteLinkSegment[] = [];
   for (const segment of values.flatMap((value) => value.split(/\r?\n/u))) {
     const text = segment.trim();
     if (!text) continue;
     const urls = extractHttpUrlsFromText(text);
-    if (urls.some(isSupportedXiaohongshuNoteUrl)) continue;
+    if (urls.some((url) => classifyNoteUrl(url).supported)) continue;
     const classifications = urls.map(classifyNoteUrl);
-    const reason = classifications.some((item) => item.platform === "DOUYIN")
-      ? "抖音链接暂不支持小红书自动审核"
-      : classifications.some((item) => item.platform === "XIAOHONGSHU")
-        ? classifications.find((item) => item.reason)?.reason ||
-          "未识别到有效小红书笔记链接"
-        : urls.length
-          ? "未识别的平台链接"
-          : "未识别到链接";
-    unrecognized.push({ input: text, reason });
+    unrecognized.push({
+      input: text,
+      reason:
+        classifications.find((item) => item.reason)?.reason ||
+        (urls.length ? "未识别的平台链接" : "未识别到链接"),
+    });
   }
-
   return {
     rawInput,
     recognizedCount: recognized.length,
@@ -179,10 +184,9 @@ export function extractNoteLinksFromText(
 }
 
 export function detectContentPlatform(input: string): NoteLinkPlatform {
-  const urls = extractHttpUrlsFromText(input);
-  for (const url of urls) {
-    const platform = classifyNoteUrl(url).platform;
-    if (platform !== "UNKNOWN") return platform;
+  for (const url of extractHttpUrlsFromText(input)) {
+    const platform = platformFromUrl(url);
+    if (platform) return platform;
   }
   return "UNKNOWN";
 }
@@ -195,58 +199,35 @@ export function resolveImportedNoteLink(input: {
   const rawContent = input.rawContent.trim();
   const hyperlinkTarget = input.hyperlinkTarget?.trim() || "";
   const declaredChannel = input.declaredChannel?.trim() || "";
-  const declaredPlatform: NoteLinkPlatform = /抖音|douyin/iu.test(
-    declaredChannel,
-  )
+  const declaredPlatform: NoteLinkPlatform = /抖音|douyin/iu.test(declaredChannel)
     ? "DOUYIN"
     : /小红书|xiaohongshu|xhs/iu.test(declaredChannel)
       ? "XIAOHONGSHU"
       : "UNKNOWN";
-  const extraction = extractNoteLinksFromText(
-    hyperlinkTarget ? [hyperlinkTarget, rawContent] : rawContent,
-  );
-  const inferredPlatform = detectContentPlatform(
-    [hyperlinkTarget, rawContent].filter(Boolean).join("\n"),
-  );
-  const platform =
-    declaredPlatform === "UNKNOWN" ? inferredPlatform : declaredPlatform;
-  if (platform === "DOUYIN") {
-    return {
-      originalContent: rawContent || hyperlinkTarget,
-      url: "",
-      platform,
-      status: "UNSUPPORTED" as const,
-      failureReason: "内容渠道为抖音，暂不支持小红书自动审核",
-      extraction,
-    };
-  }
-  const url = extraction.links[0]?.url || "";
+  const extraction = extractNoteLinksFromText(hyperlinkTarget ? [hyperlinkTarget, rawContent] : rawContent);
+  const inferredPlatform = detectContentPlatform([hyperlinkTarget, rawContent].filter(Boolean).join("\n"));
+  const platform = declaredPlatform === "UNKNOWN" ? inferredPlatform : declaredPlatform;
   if (!rawContent && !hyperlinkTarget) {
-    return {
-      originalContent: "",
-      url: "",
-      platform,
-      status: "UNRECOGNIZED" as const,
-      failureReason: "链接（必填）列为空",
-      extraction,
-    };
+    return { originalContent: "", url: "", platform, status: "UNRECOGNIZED" as const, failureReason: "链接（必填）列为空", extraction };
   }
-  if (!url) {
+  const matchingLink = extraction.links.find((link) => platform === "UNKNOWN" || link.platform === platform);
+  if (!matchingLink) {
+    const mismatch = extraction.links[0] && declaredPlatform !== "UNKNOWN" && extraction.links[0].platform !== declaredPlatform;
     return {
       originalContent: rawContent || hyperlinkTarget,
       url: "",
       platform,
       status: "UNRECOGNIZED" as const,
-      failureReason:
-        extraction.unrecognized[0]?.reason ||
-        "未识别到有效小红书笔记链接",
+      failureReason: mismatch
+        ? `内容渠道与链接平台不一致：填写为${declaredPlatform === "DOUYIN" ? "抖音" : "小红书"}`
+        : extraction.unrecognized[0]?.reason || "未识别到有效作品详情链接",
       extraction,
     };
   }
   return {
     originalContent: rawContent || hyperlinkTarget,
-    url,
-    platform: "XIAOHONGSHU" as const,
+    url: matchingLink.url,
+    platform: matchingLink.platform,
     status: "RECOGNIZED" as const,
     failureReason: "",
     extraction,

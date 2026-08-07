@@ -34,6 +34,11 @@ export async function PUT(
         data: {
           ruleSource: "LOCAL_DRAFT",
           ...(typeof body.ruleType === "string" ? { ruleType: body.ruleType } : {}),
+          ...(body.contentChannel === "XIAOHONGSHU" ||
+          body.contentChannel === "DOUYIN" ||
+          body.contentChannel === "ALL"
+            ? { contentChannel: body.contentChannel }
+            : {}),
           ...(typeof body.topic === "string"
             ? { topic: normalizeTopic(body.topic) }
             : {}),

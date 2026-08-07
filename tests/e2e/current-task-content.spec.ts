@@ -240,7 +240,7 @@ test("运行中阻止第二批次，暂停后可创建并汇总筛选", async ({
   );
   expect(blockedResponse.status()).toBe(409);
   expect((await blockedResponse.json()).error).toContain(
-    "当前已有小红书自动审核任务正在运行",
+    "当前已有内容平台自动审核任务正在运行",
   );
   await page.request.post(`/api/automation/batches/${firstBatchId}/control`, {
     data: { action: "PAUSE" },

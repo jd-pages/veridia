@@ -1,26 +1,27 @@
 import "server-only";
 import { prisma } from "@/lib/db";
 import { runAuditTask } from "@/lib/audit-service";
-import { extractAuditTaskAutomatically } from "./extract";
 import {
   automaticFailureLabels,
   toAutomaticExtractionError,
+  type AutomaticFailureCode,
 } from "./failure";
-import {
-  clearXhsAuditLockForBatch,
-  ensureXhsBrowserControlReady,
-  heartbeatXhsAuditLock,
-  markXhsSessionIssue,
-  updateXhsAuditLock,
-} from "./browser";
 import { recordProcessingFailureResult } from "@/lib/processing-failure-result";
-import { getXhsPacingSettings, jitteredDelay } from "./pacing";
+import { jitteredDelay } from "./pacing";
 import { completedAuditBatchUpdate } from "./task-lifecycle";
+import { automationRuntime } from "./platform-runtime";
+import {
+  automationPlatformLabels,
+  parseAutomationPlatform,
+  resolveTaskAutomationPlatform,
+  type AutomationPlatform,
+} from "./platform";
 
 type QueueState = {
   runner?: Promise<void>;
   recovery?: Promise<void>;
   activeBatchId?: string;
+  activePlatform?: AutomationPlatform;
 };
 
 const globalForQueue = globalThis as typeof globalThis & {
@@ -43,10 +44,11 @@ async function waitWhileBatchRunning(
   batchId: string,
   milliseconds: number,
   lockStatus: string,
+  heartbeat: (batchId: string, status: string) => void,
 ) {
   const deadline = Date.now() + milliseconds;
   while (Date.now() < deadline) {
-    heartbeatXhsAuditLock(batchId, lockStatus);
+    heartbeat(batchId, lockStatus);
     const batch = await prisma.auditBatch.findUnique({
       where: { id: batchId },
       select: { status: true },
@@ -131,10 +133,46 @@ async function finalizeBatch(batchId: string) {
 
 async function processBatch(batchId: string) {
   if (queueState.activeBatchId && queueState.activeBatchId !== batchId) {
-    throw new Error("当前已有小红书自动审核任务正在运行，请完成、暂停或取消当前任务后再启动新任务。");
+    throw new Error("当前已有内容平台自动审核任务正在运行，请完成、暂停或取消当前任务后再启动新任务。");
   }
+  const platformTask = await prisma.auditTask.findFirst({
+    where: { batchId },
+    orderBy: [{ queueOrder: "asc" }, { createdAt: "asc" }],
+    select: { channel: true, platform: true, url: true },
+  });
+  const batchPlatform = parseAutomationPlatform(
+    (await prisma.auditBatch.findUnique({ where: { id: batchId }, select: { channel: true } }))?.channel,
+  );
+  const platform = batchPlatform || (platformTask ? resolveTaskAutomationPlatform(platformTask) : null);
+  if (!platform) {
+    const finishedAt = new Date();
+    await prisma.$transaction([
+      prisma.auditTask.updateMany({
+        where: { batchId, status: { in: ["PENDING", "PROCESSING"] } },
+        data: {
+          status: "NEEDS_REVIEW",
+          failureCode: "CONTENT_CHANNEL_UNKNOWN",
+          failureMessage: "无法确定作品内容平台，请检查内容渠道与作品链接",
+          finishedAt,
+        },
+      }),
+      prisma.auditBatch.updateMany({
+        where: { id: batchId, status: { in: ["QUEUED", "RUNNING"] } },
+        data: {
+          status: "FAILED",
+          lastErrorCode: "CONTENT_CHANNEL_UNKNOWN",
+          lastErrorMessage: "批次内容平台无法确定",
+          currentTaskId: null,
+          finishedAt,
+        },
+      }),
+    ]);
+    return;
+  }
+  const runtime = automationRuntime(platform);
   queueState.activeBatchId = batchId;
-  const pacing = await getXhsPacingSettings();
+  queueState.activePlatform = platform;
+  const pacing = await runtime.pacing();
   let completedSinceCooldown = 0;
   const lockStartedAt = new Date().toISOString();
   const started = await prisma.auditBatch.updateMany({
@@ -148,7 +186,7 @@ async function processBatch(batchId: string) {
   });
   if (!started.count) {
     queueState.activeBatchId = undefined;
-    updateXhsAuditLock(null);
+    runtime.updateLock(null);
     return;
   }
 
@@ -156,7 +194,7 @@ async function processBatch(batchId: string) {
     const batch = await prisma.auditBatch.findUnique({ where: { id: batchId } });
     if (!batch || !["RUNNING", "QUEUED"].includes(batch.status)) {
       queueState.activeBatchId = undefined;
-      updateXhsAuditLock(null);
+      runtime.updateLock(null);
       return;
     }
 
@@ -167,7 +205,7 @@ async function processBatch(batchId: string) {
     if (!task) {
       await finalizeBatch(batchId);
       queueState.activeBatchId = undefined;
-      updateXhsAuditLock(null);
+      runtime.updateLock(null);
       return;
     }
 
@@ -218,10 +256,10 @@ async function processBatch(batchId: string) {
     if (!markedCurrent.count) {
       await keepProcessingOnlyWhileBatchRuns(batchId, task.id);
       queueState.activeBatchId = undefined;
-      updateXhsAuditLock(null);
+      runtime.updateLock(null);
       return;
     }
-    updateXhsAuditLock({
+    runtime.updateLock({
       batchId,
       taskId: task.id,
       startedAt: lockStartedAt,
@@ -233,14 +271,14 @@ async function processBatch(batchId: string) {
 
     let mustPauseBatch = false;
     let sessionFailureCode = "";
-    let extraction: Awaited<ReturnType<typeof extractAuditTaskAutomatically>> | null = null;
+    let extraction: Awaited<ReturnType<typeof runtime.extract>> | null = null;
     try {
       let currentTask = processingTask;
       for (let retry = 0; ; retry += 1) {
         const extractionStartedAt = Date.now();
         try {
           console.info("[自动审核] 开始读取", JSON.stringify({ batchId, taskId: task.id, retry }));
-          extraction = await extractAuditTaskAutomatically(currentTask);
+          extraction = await runtime.extract(currentTask);
           console.info("[自动审核] 读取完成", JSON.stringify({
             batchId,
             taskId: task.id,
@@ -269,13 +307,13 @@ async function processBatch(batchId: string) {
             code: extractionError.code,
             waitMs: retryDelay,
           }));
-          if (!(await waitWhileBatchRunning(batchId, retryDelay, "RETRY_WAIT"))) {
+          if (!(await waitWhileBatchRunning(batchId, retryDelay, "RETRY_WAIT", runtime.heartbeatLock))) {
             await prisma.auditTask.update({
               where: { id: task.id },
               data: { status: "PENDING", startedAt: null, finishedAt: null },
             });
             queueState.activeBatchId = undefined;
-            updateXhsAuditLock(null);
+            runtime.updateLock(null);
             return;
           }
           currentTask = await prisma.auditTask.update({
@@ -291,7 +329,7 @@ async function processBatch(batchId: string) {
       const auditResult = await runAuditTask(processingTask.id, extraction.note);
       if (extraction.warnings.length || auditResult.autoStatus === "NEEDS_REVIEW") {
         const warningMessage = extraction.warnings
-          .map((code) => automaticFailureLabels[code])
+          .map((code) => automaticFailureLabels[code as AutomaticFailureCode] || code)
           .join("；");
         await prisma.auditTask.updateMany({
           where: { id: processingTask.id, status: "PROCESSING" },
@@ -368,10 +406,7 @@ async function processBatch(batchId: string) {
           },
         });
         if (!browserControlIssue) {
-          await markXhsSessionIssue(
-            securityRestricted ? "SECURITY_RESTRICTED" : "LOGGED_OUT",
-            extractionError.message,
-          );
+          await runtime.markSessionIssue(securityRestricted, extractionError.message);
         }
         console.warn("[自动审核] 基础会话或浏览器控制异常，批次已暂停", JSON.stringify({
           batchId,
@@ -408,7 +443,7 @@ async function processBatch(batchId: string) {
     }
     if (mustPauseBatch) {
       queueState.activeBatchId = undefined;
-      updateXhsAuditLock({
+      runtime.updateLock({
         batchId,
         taskId: task.id,
         startedAt: lockStartedAt,
@@ -422,7 +457,7 @@ async function processBatch(batchId: string) {
     });
     if (!latestBatch || latestBatch.status !== "RUNNING") {
       queueState.activeBatchId = undefined;
-      updateXhsAuditLock(null);
+      runtime.updateLock(null);
       return;
     }
     const nextTask = await prisma.auditTask.findFirst({
@@ -432,7 +467,7 @@ async function processBatch(batchId: string) {
     if (!nextTask) {
       await finalizeBatch(batchId);
       queueState.activeBatchId = undefined;
-      updateXhsAuditLock(null);
+      runtime.updateLock(null);
       return;
     }
     completedSinceCooldown += 1;
@@ -448,9 +483,9 @@ async function processBatch(batchId: string) {
         },
       });
       console.info("[自动审核] 访问冷却开始", JSON.stringify({ batchId, cooldownMs }));
-      if (!(await waitWhileBatchRunning(batchId, cooldownMs, "COOLDOWN"))) {
+      if (!(await waitWhileBatchRunning(batchId, cooldownMs, "COOLDOWN", runtime.heartbeatLock))) {
         queueState.activeBatchId = undefined;
-        updateXhsAuditLock(null);
+        runtime.updateLock(null);
         return;
       }
       console.info("[自动审核] 访问冷却结束", JSON.stringify({ batchId }));
@@ -465,9 +500,9 @@ async function processBatch(batchId: string) {
       ? Math.min(configuredWait, LOCAL_MOCK_WAIT_CAP_MS)
       : configuredWait;
     console.info("[自动审核] 单篇完成等待", JSON.stringify({ batchId, taskId: task.id, waitMs: actualWait }));
-    if (!(await waitWhileBatchRunning(batchId, actualWait, "INTER_TASK_WAIT"))) {
+    if (!(await waitWhileBatchRunning(batchId, actualWait, "INTER_TASK_WAIT", runtime.heartbeatLock))) {
       queueState.activeBatchId = undefined;
-      updateXhsAuditLock(null);
+      runtime.updateLock(null);
       return;
     }
   }
@@ -479,7 +514,7 @@ async function runQueue() {
     const sessionBlockedBatch = await prisma.auditBatch.findFirst({
       where: {
         clearedAt: null,
-        status: { in: ["LOGIN_EXPIRED", "SECURITY_RESTRICTED"] },
+        status: { in: ["PAUSED", "LOGIN_EXPIRED", "SECURITY_RESTRICTED"] },
       },
       select: { id: true },
     });
@@ -489,7 +524,7 @@ async function runQueue() {
         clearedAt: null,
         status: { in: ["QUEUED", "RUNNING"] },
       },
-      orderBy: { createdAt: "asc" },
+      orderBy: [{ queueOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     });
     if (!batch) return;
     await processBatch(batch.id);
@@ -500,7 +535,7 @@ export function kickAutomaticAuditQueue() {
   if (!queueState.runner) {
     queueState.runner = runQueue()
       .catch((error) => {
-        updateXhsAuditLock(null);
+        if (queueState.activePlatform) automationRuntime(queueState.activePlatform).updateLock(null);
         console.error(
           "[自动审核队列] 运行失败",
           error instanceof Error ? error.message : "未知错误",
@@ -509,6 +544,7 @@ export function kickAutomaticAuditQueue() {
       .finally(() => {
         queueState.runner = undefined;
         queueState.activeBatchId = undefined;
+        queueState.activePlatform = undefined;
       });
   }
 }
@@ -517,7 +553,7 @@ export function clearAutomaticBatchRuntime(batchId: string) {
   if (queueState.activeBatchId === batchId) {
     queueState.activeBatchId = undefined;
   }
-  return clearXhsAuditLockForBatch(batchId);
+  return automationRuntime("XIAOHONGSHU").clearLock(batchId) || automationRuntime("DOUYIN").clearLock(batchId);
 }
 
 export async function controlAutomaticBatch(
@@ -528,13 +564,15 @@ export async function controlAutomaticBatch(
     where: { id: batchId, clearedAt: null },
   });
   if (!batch) throw new Error("自动审核批次不存在");
+  const platform = parseAutomationPlatform(batch.channel) || "XIAOHONGSHU";
+  const runtime = automationRuntime(platform);
 
   if (
     ["CONTINUE", "RETRY_FAILED"].includes(action) &&
     batch.lastErrorCode === "BROWSER_CONTROL_ERROR"
   ) {
     try {
-      await ensureXhsBrowserControlReady(true);
+      await runtime.ensureBrowserReady();
     } catch {
       throw new Error(
         "审核浏览器连接异常，请先点击“重新启动专用浏览器”，确认控制连接正常后再继续。",
@@ -547,11 +585,11 @@ export async function controlAutomaticBatch(
     ["LOGIN_EXPIRED", "SECURITY_RESTRICTED"].includes(batch.status)
   ) {
     const session = await prisma.automationSession.findUnique({
-      where: { id: "xiaohongshu" },
+      where: { id: runtime.sessionId },
       select: { status: true },
     });
     if (session?.status !== "READY") {
-      throw new Error("请先在小红书专用浏览器中完成登录或安全验证，并重新检测登录状态。");
+      throw new Error(`请先在${automationPlatformLabels[platform]}专用浏览器中完成登录或安全验证，并重新检测登录状态。`);
     }
 
     const legacyPausedTasks = await prisma.auditTask.findMany({
@@ -624,7 +662,7 @@ export async function controlAutomaticBatch(
     });
     if (queueState.activeBatchId === batchId || !queueState.activeBatchId) {
       queueState.activeBatchId = undefined;
-      updateXhsAuditLock(null);
+      runtime.updateLock(null);
     }
     return cancelled;
   }

@@ -64,4 +64,17 @@ describe("导入活动精确匹配", () => {
       candidates: [{ ...campaign, ruleCount: 0 }],
     }).status).toBe("NO_RULES");
   });
+
+  it("抖音首阶段允许精确关联活动但不借用小红书规则", () => {
+    const result = resolveImportedActivity({
+      activityName: campaign.name,
+      productId: "product-danone",
+      candidates: [{ ...campaign, ruleCount: 0 }],
+      allowMissingRules: true,
+    });
+    expect(result).toMatchObject({
+      status: "MATCHED",
+      campaign: { id: campaign.id, ruleCount: 0 },
+    });
+  });
 });

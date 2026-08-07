@@ -27,6 +27,14 @@ const defaultE2eProfilePath = path.resolve(
 const e2eProfilePath = path.resolve(
   process.env.E2E_XHS_PROFILE_PATH?.trim() || defaultE2eProfilePath,
 );
+const e2eDouyinProfilePath = path.resolve(
+  process.env.E2E_DOUYIN_PROFILE_PATH?.trim() ||
+    path.resolve(process.cwd(), ".playwright", "douyin-e2e-profile"),
+);
+const e2eNextDistDir = path.resolve(
+  process.env.E2E_NEXT_DIST_DIR?.trim() ||
+    path.resolve(process.cwd(), ".playwright", "next-e2e"),
+);
 
 async function prepareEphemeralAccountKey() {
   const pair = generateKeyPairSync("ed25519");
@@ -91,6 +99,16 @@ async function resetE2eBrowserProfile() {
     throw new Error("E2E 小红书 Profile 必须位于项目 .playwright 目录内");
   }
   await rm(e2eProfilePath, { recursive: true, force: true });
+  const douyinRelative = path.relative(playwrightRoot, e2eDouyinProfilePath);
+  if (douyinRelative.startsWith("..") || path.isAbsolute(douyinRelative)) {
+    throw new Error("E2E 抖音 Profile 必须位于项目 .playwright 目录内");
+  }
+  await rm(e2eDouyinProfilePath, { recursive: true, force: true });
+  const nextDistRelative = path.relative(playwrightRoot, e2eNextDistDir);
+  if (nextDistRelative.startsWith("..") || path.isAbsolute(nextDistRelative)) {
+    throw new Error("E2E Next 缓存必须位于项目 .playwright 目录内");
+  }
+  await rm(e2eNextDistDir, { recursive: true, force: true });
 }
 
 async function main() {

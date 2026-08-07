@@ -16,6 +16,7 @@ export interface RulePackageProduct {
 
 export interface RulePackageCampaign {
   key: string;
+  contentChannel: "XIAOHONGSHU" | "DOUYIN";
   name: string;
   month: string;
   year: number | null;
@@ -47,6 +48,7 @@ export interface RulePackageStageGroup {
 
 export interface RulePackageTopicRule {
   key: string;
+  contentChannel: "XIAOHONGSHU" | "DOUYIN" | "ALL";
   brand?: string | null;
   campaignKey: string | null;
   productKey: string | null;
