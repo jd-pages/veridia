@@ -117,6 +117,8 @@ export function evaluateAudit(
   const topicClickabilityContext: TopicClickabilityContext = {
     pageUrl: note.finalUrl || note.url,
   };
+  const isDouyin = context.contentChannel === "DOUYIN";
+  const publicAuditRequired = !isDouyin && context.publicRequired;
 
   if (context.rulesConfigured === false) {
     evaluations.push({
@@ -147,7 +149,7 @@ export function evaluateAudit(
       matchedStoreTopics: [],
       matchedRequiredStoreTopics: [],
       storeTopicFailureReason: null,
-      publicStatus: "UNKNOWN",
+      publicStatus: isDouyin ? "NOT_REQUIRED" : "UNKNOWN",
       retentionStatus: "NOT_REQUIRED",
       retentionDueAt: null,
       missingTopics: [],
@@ -194,7 +196,7 @@ export function evaluateAudit(
       matchedStoreTopics: [],
       matchedRequiredStoreTopics: [],
       storeTopicFailureReason: null,
-      publicStatus: "UNKNOWN",
+      publicStatus: isDouyin ? "NOT_REQUIRED" : "UNKNOWN",
       retentionStatus: "NOT_REQUIRED",
       retentionDueAt: null,
       missingTopics: [],
@@ -357,18 +359,18 @@ export function evaluateAudit(
     if (bodyStageFailure) failures.push(bodyStageFailure);
   }
 
-  const publicStatus: AuditEvaluation["publicStatus"] = !context.publicRequired
+  const publicStatus: AuditEvaluation["publicStatus"] = !publicAuditRequired
     ? "NOT_REQUIRED"
     : note.isPublic === true
       ? "PUBLIC"
       : note.isPublic === false
         ? "NOT_PUBLIC"
         : "UNKNOWN";
-  const publicPassed = !context.publicRequired || publicStatus !== "NOT_PUBLIC";
+  const publicPassed = !publicAuditRequired || publicStatus !== "NOT_PUBLIC";
   evaluations.push({
     ruleKey: "GLOBAL_PUBLIC_STATUS",
     ruleName: "笔记公开状态",
-    expectedValue: context.publicRequired ? "当前必须公开" : "不要求",
+    expectedValue: publicAuditRequired ? "当前必须公开" : "不参与审核",
     actualValue:
       publicStatus === "PUBLIC"
         ? "已公开"
@@ -376,10 +378,15 @@ export function evaluateAudit(
           ? "未公开"
           : publicStatus === "UNKNOWN"
             ? "无法自动确认"
-            : "不要求",
+            : "无需审核",
     passed: publicPassed,
     failureReason: publicPassed ? undefined : "笔记当前未公开",
-    evidence: { isPublic: note.isPublic ?? null },
+    evidence: {
+      isPublic: note.isPublic ?? null,
+      contentChannel: context.contentChannel || null,
+      campaignPublicRequired: context.publicRequired,
+      effectivePublicRequired: publicAuditRequired,
+    },
   });
   if (!publicPassed) failures.push("笔记当前未公开");
 

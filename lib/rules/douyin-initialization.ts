@@ -44,6 +44,7 @@ export function buildDouyinRuleCopies(payload: RulePackagePayload) {
     key: douyinCampaignKey(campaign.key),
     contentChannel: "DOUYIN",
     name: douyinCampaignName(campaign.name),
+    publicRequired: false,
   }));
   const topicRules: RulePackageTopicRule[] = payload.topicRules
     .filter(
@@ -85,7 +86,7 @@ export async function ensureBuiltinDouyinRules(payload: RulePackagePayload) {
   for (const item of copies.campaigns) {
     let campaign = await prisma.campaign.findUnique({
       where: { publishedKey: item.key },
-      select: { id: true },
+      select: { id: true, publicRequired: true },
     });
     if (!campaign) {
       const linkedProducts = item.productKeys
@@ -111,7 +112,7 @@ export async function ensureBuiltinDouyinRules(payload: RulePackagePayload) {
           prohibitedImageGuidance: item.prohibitedImageGuidance,
           bodyRequired: item.bodyRequired,
           minBodyLength: item.minBodyLength,
-          publicRequired: item.publicRequired,
+          publicRequired: false,
           retentionDays: item.retentionDays,
           rewardDescription: item.rewardDescription,
           visualReviewGuidance: item.visualReviewGuidance,
@@ -126,10 +127,16 @@ export async function ensureBuiltinDouyinRules(payload: RulePackagePayload) {
             })),
           },
         },
-        select: { id: true },
+        select: { id: true, publicRequired: true },
       });
       createdCampaigns += 1;
       createdProductRelations += linkedProducts.length;
+    } else if (campaign.publicRequired) {
+      campaign = await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: { publicRequired: false },
+        select: { id: true, publicRequired: true },
+      });
     }
     campaignIds.set(item.key, campaign.id);
   }

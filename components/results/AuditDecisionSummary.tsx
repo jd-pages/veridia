@@ -61,6 +61,13 @@ function auditStatusText(value?: string) {
   return "待人工复核";
 }
 
+function publicStatusText(value?: string) {
+  if (value === "PUBLIC") return "当前公开";
+  if (value === "NOT_PUBLIC") return "当前不公开";
+  if (value === "NOT_REQUIRED") return "无需审核";
+  return "待确认";
+}
+
 export default function AuditDecisionSummary({
   row,
   detail,
@@ -218,11 +225,7 @@ export default function AuditDecisionSummary({
               图片数量：{row.imageCount === null ? "未能确认" : `${row.imageCount} 张`}
             </span>
             <span>
-              公开状态：{row.publicStatus === "PUBLIC"
-                ? "当前公开"
-                : row.publicStatus === "NOT_PUBLIC"
-                  ? "当前不公开"
-                  : "待确认"}
+              公开状态：{publicStatusText(row.publicStatus)}
             </span>
           </div>
         ) : null}
@@ -448,11 +451,7 @@ export default function AuditDecisionSummary({
                   <div>
                     <span>状态</span>
                     <strong>
-                      {row.publicStatus === "PUBLIC"
-                        ? "当前公开"
-                        : row.publicStatus === "NOT_PUBLIC"
-                          ? "当前不公开"
-                          : "待确认"}
+                      {publicStatusText(row.publicStatus)}
                     </strong>
                   </div>
                 </div>

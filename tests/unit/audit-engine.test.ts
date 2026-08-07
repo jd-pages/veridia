@@ -79,6 +79,74 @@ describe("audit engine", () => {
     expect(result.imageCount).toBeNull();
     expect(result.failureReasons.join("；")).not.toContain("图片数量不足");
   });
+  it("抖音正常作品不参与公开状态审核，历史活动值为 true 也不会误入复核", () => {
+    const note = createMockNote("passed");
+    note.isPublic = null;
+    const result = evaluateAudit(note, {
+      ...context,
+      contentChannel: "DOUYIN",
+      rulesConfigured: true,
+      publicRequired: true,
+    });
+    expect(result.publicStatus).toBe("NOT_REQUIRED");
+    expect(result.autoStatus).toBe("PASSED");
+    expect(result.failureReasons.join("；")).not.toContain("公开");
+  });
+  it("小红书公开状态规则保持原有行为", () => {
+    const note = createMockNote("passed");
+    note.isPublic = null;
+    const result = evaluateAudit(note, {
+      ...context,
+      contentChannel: "XIAOHONGSHU",
+      rulesConfigured: true,
+      publicRequired: true,
+    });
+    expect(result.publicStatus).toBe("UNKNOWN");
+    expect(result.autoStatus).toBe("NEEDS_REVIEW");
+  });
+  it("抖音无权限页面仍按 NO_PERMISSION 短路，不会因公开免审变成 NORMAL", () => {
+    const note = createMockNote("passed");
+    note.pageStatus = "NO_PERMISSION";
+    const result = evaluateAudit(note, {
+      ...context,
+      contentChannel: "DOUYIN",
+      rulesConfigured: true,
+      publicRequired: false,
+    });
+    expect(result.pageStatus).toBe("NO_PERMISSION");
+    expect(result.autoStatus).toBe("NEEDS_REVIEW");
+    expect(result.publicStatus).toBe("NOT_REQUIRED");
+    expect(result.bodyStatus).toBe("UNKNOWN");
+    expect(result.storeTopicStatus).toBe("NOT_CHECKED");
+  });
+  it("正文字符数只计算完整 body，不会叠加来自同一 caption 的标题摘要", () => {
+    const note = createMockNote("passed");
+    note.title = "这是正文的标题摘要";
+    note.body = "这是完整抖音作品正文，标题摘要不应被再次拼接计入正文字符数。";
+    const result = evaluateAudit(note, {
+      ...context,
+      contentChannel: "DOUYIN",
+      rulesConfigured: true,
+      minBodyLength: 1,
+    });
+    expect(result.effectiveBodyLength).toBe(
+      countEffectiveBodyCharacters(note.body, note.topics.map((topic) => topic.displayText)),
+    );
+  });
+  it("结构化数据确认 caption 真实为空时按正文规则失败而不是无理由复核", () => {
+    const note = createMockNote("passed");
+    note.body = "";
+    note.technicalWarnings = [];
+    const result = evaluateAudit(note, {
+      ...context,
+      contentChannel: "DOUYIN",
+      rulesConfigured: true,
+      bodyRequired: true,
+    });
+    expect(result.bodyStatus).toBe("EMPTY");
+    expect(result.autoStatus).toBe("FAILED");
+    expect(result.failureReasons.join("；")).toContain("笔记正文为空");
+  });
   it("抖音使用独立规则且缺少小红书新手爸妈话题不会失败", () => {
     const xhsCampaign = defaultRules.campaigns.find(
       (campaign) => campaign.key === "activity_bd673ea91f342c12a819",

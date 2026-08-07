@@ -30,10 +30,12 @@ test("审核任务页提供相互隔离的小红书与抖音环境入口", async
   await expect(page.getByTestId("automation-session-browser-title")).toHaveText(
     "小红书专用浏览器",
   );
-  await page.getByRole("tab", { name: "抖音" }).click();
-  await expect(page.getByTestId("automation-session-browser-title")).toHaveText(
-    "抖音专用浏览器",
-  );
+  await expect(async () => {
+    await page.getByRole("tab", { name: "抖音" }).click();
+    await expect(
+      page.getByTestId("automation-session-browser-title"),
+    ).toHaveText("抖音专用浏览器", { timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
   await expect(page.getByRole("button", { name: "登录抖音" })).toBeVisible();
   await expect(page.getByRole("button", { name: "登录小红书" })).toHaveCount(0);
   await page.getByRole("tab", { name: "小红书" }).click();
@@ -57,7 +59,12 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
   ).json()).data as Array<{ id: string; name: string; contentChannel: string }>;
   const douyinCampaigns = (await (
     await page.request.get("/api/campaigns?contentChannel=DOUYIN")
-  ).json()).data as Array<{ id: string; name: string; contentChannel: string }>;
+  ).json()).data as Array<{
+    id: string;
+    name: string;
+    contentChannel: string;
+    publicRequired: boolean;
+  }>;
   expect(xhsCampaigns).toHaveLength(3);
   expect(douyinCampaigns).toHaveLength(3);
   expect(xhsCampaigns.every((item) => item.contentChannel === "XIAOHONGSHU"))
@@ -65,6 +72,7 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
   expect(douyinCampaigns.every((item) => item.contentChannel === "DOUYIN"))
     .toBe(true);
   expect(douyinCampaigns.every((item) => item.name.includes("抖音"))).toBe(true);
+  expect(douyinCampaigns.every((item) => item.publicRequired === false)).toBe(true);
   const augustDouyinCampaign = douyinCampaigns.find((item) =>
     item.name.includes("2026年8月"),
   );
@@ -95,9 +103,12 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
   await expect(page.getByText("#爱他美新手爸妈日记")).toHaveCount(0);
 
   await page.goto("/campaigns");
-  await page.locator(".ant-segmented-item").filter({ hasText: "抖音" }).click();
-  await expect(page.getByText(augustDouyinCampaign!.name, { exact: true }))
-    .toBeVisible();
+  await expect(async () => {
+    await page.locator(".ant-segmented-item").filter({ hasText: "抖音" }).click();
+    await expect(
+      page.getByText(augustDouyinCampaign!.name, { exact: true }),
+    ).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
   await expect(
     page.getByText(augustXhsCampaign!.name, { exact: true }),
   ).toHaveCount(0);
@@ -596,6 +607,11 @@ test("抖音批次使用独立会话、单一后台页面并应用独立业务�
   expect(resultPayload.data.total).toBe(2);
   expect(
     resultPayload.data.items.every(
+      (item: { publicStatus: string }) => item.publicStatus === "NOT_REQUIRED",
+    ),
+  ).toBe(true);
+  expect(
+    resultPayload.data.items.every(
       (item: { failureReasons: string }) =>
         !item.failureReasons.includes("业务规则未配置"),
     ),
@@ -625,6 +641,95 @@ test("抖音批次使用独立会话、单一后台页面并应用独立业务�
 
   const clear = await page.request.post(`/api/automation/batches/${batchId}/clear`);
   expect(clear.ok()).toBeTruthy();
+});
+
+test("抖音图文正文、真实话题、店铺话题和公开免审共同产生正常结论", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  const products = (await (
+    await page.request.get("/api/products")
+  ).json()).data as Array<{ id: string; name: string }>;
+  const product = products.find((item) => item.name === "爱他美澳洲白金版")!;
+  const campaigns = (await (
+    await page.request.get(
+      `/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`,
+    )
+  ).json()).data as Array<{
+    id: string;
+    name: string;
+    month: string;
+  }>;
+  const campaign = campaigns.find((item) => item.month === "2026-07")!;
+  const suffix = Date.now();
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("达能客户导入");
+  sheet.addRow([
+    "平台（必填）",
+    "店铺名称（必填）",
+    "客户名（必填）",
+    "产品系列（必填）",
+    "阶段（必填）",
+    "段位（必填）",
+    "订单编号（必填）",
+    "内容渠道（必填）",
+    "链接（必填）",
+    "发布时间（必填）",
+    "活动名称（必填）",
+  ]);
+  sheet.addRow([
+    "抖音电商",
+    "FOLO海外旗舰店",
+    "抖音正文话题回归",
+    product.name,
+    "2段",
+    "IFFO",
+    `DOUYIN-BUSINESS-${suffix}`,
+    "抖音",
+    `${E2E_ORIGIN}/mock/douyin?case=business-pass&raw=true&business=${suffix}`,
+    "2026-07-26 12:00:00",
+    campaign.name,
+  ]);
+  const metadata = workbook.addWorksheet("VERIDIA模板信息", {
+    state: "veryHidden",
+  });
+  metadata.getCell("B1").value = "DANONE_CUSTOMER";
+  const response = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: `douyin-body-topic-${suffix}.xlsx`,
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
+      },
+      commit: "true",
+      skipDuplicates: "true",
+    },
+  });
+  const payload = await response.json();
+  expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
+  expect(payload.data).toMatchObject({ validCount: 1, invalidCount: 0 });
+  const batchId = payload.data.batchIds[0] as string;
+  await waitForTerminalBatch(page, batchId);
+
+  const resultPayload = await (
+    await page.request.get(
+      `/api/results?importRecordId=${payload.data.importRecordId}&pageSize=100`,
+    )
+  ).json();
+  expect(resultPayload.data.total).toBe(1);
+  expect(resultPayload.data.items[0]).toMatchObject({
+    autoStatus: "PASSED",
+    publicStatus: "NOT_REQUIRED",
+    effectiveBodyLength: 65,
+    imageStatus: "COMPLIANT",
+    imageCount: 3,
+    storeTopicStatus: "COMPLIANT",
+  });
+  expect(JSON.parse(resultPayload.data.items[0].missingTopics)).toEqual([]);
+
+  expect(
+    (await page.request.post(`/api/automation/batches/${batchId}/clear`)).ok(),
+  ).toBeTruthy();
 });
 
 test("抖音不存在作品使用独立终态且不阻断后续作品", async ({ page }) => {

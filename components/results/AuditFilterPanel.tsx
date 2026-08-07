@@ -417,6 +417,7 @@ export default function AuditFilterPanel({
                 options={[
                   { value: "PUBLIC", label: "当前公开" },
                   { value: "NOT_PUBLIC", label: "当前不公开" },
+                  { value: "NOT_REQUIRED", label: "无需审核" },
                   { value: "UNKNOWN", label: "待确认" },
                 ]}
                 onChange={(value) =>

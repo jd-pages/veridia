@@ -2,7 +2,7 @@ import type { ExtractedNote } from "@/lib/types";
 import { redirect } from "next/navigation";
 /* eslint-disable @next/next/no-img-element -- local mock must expose native image DOM to the extractor */
 
-type MockCase = "video" | "image-text" | "topics" | "unclickable" | "not-found" | "logged-out" | "security" | "no-permission" | "app-launch" | "empty" | "multi-image" | "network-error" | "load-timeout";
+type MockCase = "video" | "image-text" | "business-pass" | "topics" | "unclickable" | "not-found" | "logged-out" | "security" | "no-permission" | "app-launch" | "empty" | "multi-image" | "network-error" | "load-timeout";
 
 function noteFor(caseName: MockCase): ExtractedNote {
   const base: ExtractedNote = {
@@ -26,6 +26,29 @@ function noteFor(caseName: MockCase): ExtractedNote {
       ],
     };
   }
+  if (caseName === "business-pass") {
+    return {
+      ...base,
+      body: `${"抖音图文正文".repeat(10)}抖音图文正`,
+      noteType: "IMAGE_TEXT",
+      imageExtractionStatus: "SUCCESS",
+      imageCount: 3,
+      isPublic: null,
+      topics: [
+        "#爱他美澳洲白金版",
+        "#FOLO海外旗舰店",
+        "#二段奶粉推荐",
+      ].map((displayText) => ({
+        displayText,
+        isClickable: true,
+        isLinkElement: true,
+        hasHref: true,
+        href: `/search/${encodeURIComponent(displayText.slice(1))}`,
+        styleFeature: true,
+        source: "STRUCTURED_RESPONSE",
+      })),
+    };
+  }
   if (caseName === "image-text" || caseName === "multi-image") return { ...base, noteType: "IMAGE_TEXT", imageExtractionStatus: "SUCCESS", imageCount: caseName === "multi-image" ? 5 : 3 };
   if (caseName === "unclickable") return { ...base, topics: base.topics.map((topic) => ({ ...topic, isLinkElement: false, hasHref: false, href: null })) };
   if (caseName === "empty") return { ...base, body: "", topics: [], technicalWarnings: ["BODY_NOT_RECOGNIZED", "TOPICS_NOT_RECOGNIZED"] };
@@ -34,14 +57,15 @@ function noteFor(caseName: MockCase): ExtractedNote {
   return status ? { ...base, pageStatus: status as ExtractedNote["pageStatus"] } : base;
 }
 
-export default async function MockDouyinPage({ searchParams }: { searchParams: Promise<{ case?: string; topic?: string; clickable?: string }> }) {
+export default async function MockDouyinPage({ searchParams }: { searchParams: Promise<{ case?: string; topic?: string; clickable?: string; raw?: string }> }) {
   const params = await searchParams;
   const requested = params.case || "video";
   if (requested === "short-link") {
     redirect("/mock/douyin?case=video&redirectedFrom=short-link");
   }
-  const allowed: MockCase[] = ["video", "image-text", "topics", "unclickable", "not-found", "logged-out", "security", "no-permission", "app-launch", "empty", "multi-image", "network-error", "load-timeout"];
+  const allowed: MockCase[] = ["video", "image-text", "business-pass", "topics", "unclickable", "not-found", "logged-out", "security", "no-permission", "app-launch", "empty", "multi-image", "network-error", "load-timeout"];
   const caseName = (allowed.includes(requested as MockCase) ? requested : "video") as MockCase;
+  const rawExtraction = params.raw === "true";
   const baseNote = noteFor(caseName);
   const injectedTopic = String(params.topic || "").trim();
   const injectedTopicClickable = params.clickable !== "false";
@@ -65,19 +89,31 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
         ],
       }
     : baseNote;
-  const statusText: Record<MockCase, string | undefined> = { video: undefined, "image-text": undefined, topics: undefined, unclickable: undefined, empty: undefined, "multi-image": undefined, "not-found": "作品不存在，该作品已删除", "logged-out": "登录后继续，请扫码登录", security: "访问频繁，需要安全验证", "no-permission": "私密作品，暂无权限查看", "app-launch": "打开抖音 App 查看", "network-error": "模拟临时网络连接中断", "load-timeout": "模拟页面加载超时" };
+  const statusText: Record<MockCase, string | undefined> = { video: undefined, "image-text": undefined, "business-pass": undefined, topics: undefined, unclickable: undefined, empty: undefined, "multi-image": undefined, "not-found": "作品不存在，该作品已删除", "logged-out": "登录后继续，请扫码登录", security: "访问频繁，需要安全验证", "no-permission": "私密作品，暂无权限查看", "app-launch": "打开抖音 App 查看", "network-error": "模拟临时网络连接中断", "load-timeout": "模拟页面加载超时" };
   return (
     <main data-douyin-page-status={caseName} style={{ padding: 48 }}>
       <article>
         <h1>{note.title}</h1>
         {statusText[caseName] ? <p>{statusText[caseName]}</p> : <>
           <div data-testid="douyin-author">{note.authorName}</div>
-          <p data-testid="douyin-description">{note.body}</p>
+          {rawExtraction && caseName === "business-pass" ? (
+            <div className="unstable-caption-container">
+              <span>
+                {note.body}
+                {note.topics.map((topic) => (
+                  <a data-douyin-topic href={topic.href || "#"} key={topic.displayText}>
+                    {topic.displayText}
+                  </a>
+                ))}
+              </span>
+              <button type="button">展开</button>
+            </div>
+          ) : <p data-testid="douyin-description">{note.body}</p>}
           {note.noteType === "VIDEO" ? <video aria-label="抖音模拟视频" /> : Array.from({ length: note.imageCount || 0 }, (_, index) => <img data-testid="douyin-image" src={`/mock-media/douyin/${index + 1}.jpg`} alt={`模拟图片${index + 1}`} key={index} />)}
-          <div>{note.topics.map((topic) => topic.isLinkElement ? <a data-douyin-topic href={topic.href || "#"} key={topic.displayText}>{topic.displayText}</a> : <span key={topic.displayText}>{topic.displayText}</span>)}</div>
+          {rawExtraction && caseName === "business-pass" ? null : <div>{note.topics.map((topic) => topic.isLinkElement ? <a data-douyin-topic href={topic.href || "#"} key={topic.displayText}>{topic.displayText}</a> : <span key={topic.displayText}>{topic.displayText}</span>)}</div>}
         </>}
       </article>
-      <script id="mock-douyin-extraction-data" type="application/json" dangerouslySetInnerHTML={{ __html: JSON.stringify(note).replace(/</gu, "\\u003c") }} />
+      {rawExtraction ? null : <script id="mock-douyin-extraction-data" type="application/json" dangerouslySetInnerHTML={{ __html: JSON.stringify(note).replace(/</gu, "\\u003c") }} />}
     </main>
   );
 }

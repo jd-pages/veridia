@@ -40,7 +40,7 @@ describe("抖音独立业务规则初始化", () => {
         prohibitedImageGuidance: source.prohibitedImageGuidance,
         bodyRequired: source.bodyRequired,
         minBodyLength: source.minBodyLength,
-        publicRequired: source.publicRequired,
+        publicRequired: false,
         retentionDays: source.retentionDays,
         rewardDescription: source.rewardDescription,
         visualReviewGuidance: source.visualReviewGuidance,
@@ -50,6 +50,7 @@ describe("抖音独立业务规则初始化", () => {
         status: source.status,
       });
       expect(target?.key).not.toBe(source.key);
+      expect(source.publicRequired).toBe(true);
     }
   });
 
@@ -123,5 +124,19 @@ describe("抖音独立业务规则初始化", () => {
     expect(sql).toContain("'DOUYIN'");
     expect(sql).toContain("爱他美新手爸妈日记");
     expect(sql).not.toMatch(/\b(?:DELETE|DROP|TRUNCATE|UPDATE)\b/iu);
+  });
+
+  it("only disables public-status audit for Douyin campaigns", () => {
+    const sql = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "prisma/migrations/202608070004_douyin_public_not_required/migration.sql",
+      ),
+      "utf8",
+    );
+    expect(sql).toContain('WHERE "contentChannel" = \'DOUYIN\'');
+    expect(sql).toContain('SET "publicRequired" = false');
+    expect(sql).not.toMatch(/\b(?:DELETE|DROP|TRUNCATE)\b/iu);
+    expect(sql).not.toMatch(/audit_(?:results|tasks|batches)/iu);
   });
 });

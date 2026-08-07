@@ -32,6 +32,7 @@ export type InteractionExtractionStatus =
 
 export interface ExtractedTopic {
   displayText: string;
+  isClickable?: boolean;
   isLinkElement: boolean;
   hasHref: boolean;
   href?: string | null;

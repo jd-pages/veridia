@@ -45,7 +45,11 @@ function createDouyinResponseCollector(
       appendRequestChain(response.request(), redirectChain);
       redirectChain.push(response.url());
     }
-    if (/\/aweme\/v1\/web\/aweme\/(?:post|detail)\//iu.test(response.url())) {
+    if (
+      /(?:\/aweme\/v1\/web\/aweme\/(?:post|detail)\/?|aweme_detail)/iu.test(
+        response.url(),
+      )
+    ) {
       payloads.push(
         response.json()
           .then((payload) => ({ payload, responseUrl: response.url() }))
@@ -64,7 +68,13 @@ function createDouyinResponseCollector(
         for (const candidate of resolved) {
           if (!candidate) continue;
           const item = findDouyinAwemeItem(candidate.payload, contentId);
-          if (item) return { item, responseUrl: candidate.responseUrl };
+          if (item) {
+            return {
+              item,
+              responseUrl: candidate.responseUrl,
+              source: "NETWORK_RESPONSE",
+            };
+          }
         }
         await page.waitForTimeout(150);
       }
