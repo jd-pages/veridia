@@ -1,6 +1,8 @@
 export interface ImportOrderedAuditResult {
   id: string;
   createdAt: Date;
+  resultSlotOrder?: number;
+  resultSlotCreatedAt?: Date | null;
   task: {
     batchId: string | null;
     queueOrder: number;
@@ -13,15 +15,17 @@ export function sortAuditResultsByImportOrder<
   T extends ImportOrderedAuditResult,
 >(rows: readonly T[]) {
   return [...rows].sort((left, right) => {
-    const leftGroup = left.task.batch?.createdAt || left.task.createdAt;
-    const rightGroup = right.task.batch?.createdAt || right.task.createdAt;
+    const leftGroup =
+      left.resultSlotCreatedAt || left.task.batch?.createdAt || left.task.createdAt;
+    const rightGroup =
+      right.resultSlotCreatedAt || right.task.batch?.createdAt || right.task.createdAt;
     const groupDifference = leftGroup.getTime() - rightGroup.getTime();
     if (groupDifference) return groupDifference;
 
-    if (left.task.batchId === right.task.batchId) {
-      const rowDifference = left.task.queueOrder - right.task.queueOrder;
-      if (rowDifference) return rowDifference;
-    }
+    const rowDifference =
+      (left.resultSlotOrder ?? left.task.queueOrder) -
+      (right.resultSlotOrder ?? right.task.queueOrder);
+    if (rowDifference) return rowDifference;
 
     const taskDifference =
       left.task.createdAt.getTime() - right.task.createdAt.getTime();

@@ -8,6 +8,7 @@ import {
   parseCommercePlatform,
   parseContentChannel,
 } from "@/lib/result-source";
+import { currentAuditResultWhere } from "@/lib/audit-result-lifecycle";
 
 export interface ResultQueryFilters {
   ids?: string[];
@@ -139,7 +140,7 @@ export function buildLocalDateRange(
 export function buildAuditResultWhere(
   filters: ResultQueryFilters,
 ): Prisma.AuditResultWhereInput {
-  const and: Prisma.AuditResultWhereInput[] = [];
+  const and: Prisma.AuditResultWhereInput[] = [currentAuditResultWhere];
 
   const legacyChannel = filters.platform
     ? parseContentChannel(filters.platform)

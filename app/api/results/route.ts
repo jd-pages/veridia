@@ -39,7 +39,12 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
           include: { reviewer: { select: { displayName: true } } },
         },
       },
-      orderBy: { auditedAt: "desc" },
+      orderBy: [
+        { resultSlotCreatedAt: "desc" },
+        { resultSlotOrder: "asc" },
+        { createdAt: "asc" },
+        { id: "asc" },
+      ],
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),

@@ -36,6 +36,7 @@ export interface AutomaticTaskInput {
   orderNumber?: string | null;
   source?: string;
   replacesResultId?: string | null;
+  queueOrder?: number;
 }
 
 export interface CreateAutomaticBatchInput {
@@ -144,7 +145,7 @@ export async function createAutomaticBatchInTransaction(
       milkType: task.milkType || null,
       source: task.source || input.source,
       status: "PENDING",
-      queueOrder: index,
+      queueOrder: task.queueOrder ?? index,
       replacesResultId: task.replacesResultId || null,
       notes: task.notes?.trim() || null,
       platform: task.platform?.trim() || batchPlatform,

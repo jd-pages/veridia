@@ -335,7 +335,7 @@ model AuditTask {
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
   batch               AuditBatch?        @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  importRecord        ImportRecord?       @relation(fields: [importRecordId], references: [id], onDelete: SetNull)
+  importRecord        ImportRecord?      @relation(fields: [importRecordId], references: [id], onDelete: SetNull)
   product             Product            @relation(fields: [productId], references: [id])
   campaign            Campaign           @relation(fields: [campaignId], references: [id])
   extractions         ExtractionRecord[]
@@ -356,18 +356,18 @@ model AuditTask {
 }
 
 model AuditBatch {
-  id               String      @id @default(cuid())
+  id               String        @id @default(cuid())
   name             String?
   importRecordId   String?
   productId        String?
   campaignId       String?
   productStage     String?
-  source           String      @default("MANUAL")
+  source           String        @default("MANUAL")
   channel          String?
-  queueOrder       Int         @default(0)
-  status           String      @default("QUEUED")
-  totalCount       Int         @default(0)
-  intervalMs       Int         @default(5000)
+  queueOrder       Int           @default(0)
+  status           String        @default("QUEUED")
+  totalCount       Int           @default(0)
+  intervalMs       Int           @default(5000)
   currentTaskId    String?
   lastErrorCode    String?
   lastErrorMessage String?
@@ -378,11 +378,11 @@ model AuditBatch {
   cancelledAt      DateTime?
   clearedAt        DateTime?
   clearedBy        String?
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
-  product          Product?    @relation(fields: [productId], references: [id])
-  campaign         Campaign?   @relation(fields: [campaignId], references: [id])
-  creator          User?       @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  product          Product?      @relation(fields: [productId], references: [id])
+  campaign         Campaign?     @relation(fields: [campaignId], references: [id])
+  creator          User?         @relation(fields: [createdBy], references: [id], onDelete: SetNull)
   importRecord     ImportRecord? @relation(fields: [importRecordId], references: [id], onDelete: SetNull)
   tasks            AuditTask[]
 
@@ -495,6 +495,11 @@ model ExtractionRecord {
 model AuditResult {
   id                         String         @id @default(cuid())
   auditTaskId                String
+  originTaskId               String?
+  resultSlotOrder            Int            @default(0)
+  resultSlotCreatedAt        DateTime?
+  supersededAt               DateTime?
+  supersededByResultId       String?
   noteId                     String
   ruleVersion                Int
   softwareVersion            String         @default("unknown")
@@ -542,6 +547,9 @@ model AuditResult {
   @@index([imageStatus, auditedAt])
   @@index([auditTaskId, auditedAt])
   @@index([noteId])
+  @@index([originTaskId])
+  @@index([supersededByResultId])
+  @@index([supersededAt, resultSlotCreatedAt, resultSlotOrder])
   @@map("audit_results")
 }
 
@@ -676,21 +684,21 @@ model RulePackageBackup {
 }
 
 model ImportRecord {
-  id           String   @id @default(cuid())
-  fileName     String
-  importType   String
-  totalCount   Int
-  validCount   Int
-  invalidCount Int
-  skippedCount Int      @default(0)
-  status       String
-  summary      String
-  channelDistribution String @default("{}")
-  createdBy    String?
-  createdAt    DateTime @default(now())
-  creator      User?        @relation(fields: [createdBy], references: [id], onDelete: SetNull)
-  auditBatches AuditBatch[]
-  auditTasks   AuditTask[]
+  id                  String       @id @default(cuid())
+  fileName            String
+  importType          String
+  totalCount          Int
+  validCount          Int
+  invalidCount        Int
+  skippedCount        Int          @default(0)
+  status              String
+  summary             String
+  channelDistribution String       @default("{}")
+  createdBy           String?
+  createdAt           DateTime     @default(now())
+  creator             User?        @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  auditBatches        AuditBatch[]
+  auditTasks          AuditTask[]
 
   @@index([importType, createdAt])
   @@map("import_records")

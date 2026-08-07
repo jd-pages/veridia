@@ -9,6 +9,10 @@ import {
   type ProcessingFailureStatus,
 } from "@/lib/processing-failure";
 import { resolveTaskAutomationPlatform } from "@/lib/automation/platform";
+import {
+  markAuditResultSuperseded,
+  resolveAuditResultSlot,
+} from "@/lib/audit-result-lifecycle";
 
 const globalForFailureBackfill = globalThis as typeof globalThis & {
   processingFailureBackfill?: Promise<number>;
@@ -63,6 +67,7 @@ export async function recordProcessingFailureResult(input: {
         campaign: true,
         product: true,
         auditResults: {
+          where: { supersededAt: null },
           orderBy: { auditedAt: "desc" },
           take: 1,
         },
@@ -80,6 +85,19 @@ export async function recordProcessingFailureResult(input: {
         finishedAt,
       },
     });
+
+    // A pure infrastructure failure during re-audit does not constitute a new
+    // business result. Keep the previous valid result current until a complete
+    // audit result (including NOTE_NOT_FOUND) is saved successfully.
+    if (task.replacesResultId && !noteNotFound) {
+      const previousResult = await tx.auditResult.findFirst({
+        where: { id: task.replacesResultId, supersededAt: null },
+      });
+      if (!previousResult) {
+        throw new Error("待重新审核的原结果不存在或已被更新");
+      }
+      return previousResult;
+    }
 
     const existingNote = await tx.noteRecord.findFirst({
       where: { url: task.url, contentChannel },
@@ -189,23 +207,10 @@ export async function recordProcessingFailureResult(input: {
       aiStatus: "DISABLED",
       auditedAt: finishedAt,
     };
-    const replacementResult = task.replacesResultId
-      ? await tx.auditResult.findUnique({
-          where: { id: task.replacesResultId },
-        })
-      : null;
-    const latestResult = replacementResult || task.auditResults[0];
+    const latestResult = task.auditResults[0];
 
     let savedResult;
-    if (replacementResult) {
-      await tx.ruleResult.deleteMany({
-        where: { auditResultId: replacementResult.id },
-      });
-      savedResult = await tx.auditResult.update({
-        where: { id: replacementResult.id },
-        data: { ...resultData, auditTaskId: task.id },
-      });
-    } else if (
+    if (
       latestResult &&
       hasProcessingFailureMarker(latestResult.ruleSnapshot)
     ) {
@@ -214,12 +219,23 @@ export async function recordProcessingFailureResult(input: {
         data: resultData,
       });
     } else {
+      const resultSlot = await resolveAuditResultSlot(tx, task);
       savedResult = await tx.auditResult.create({
         data: {
           auditTaskId: task.id,
+          originTaskId: resultSlot.originTaskId,
+          resultSlotOrder: resultSlot.resultSlotOrder,
+          resultSlotCreatedAt: resultSlot.resultSlotCreatedAt,
           ...resultData,
         },
       });
+      if (resultSlot.replacementResultId) {
+        await markAuditResultSuperseded(tx, {
+          previousResultId: resultSlot.replacementResultId,
+          nextResultId: savedResult.id,
+          supersededAt: finishedAt,
+        });
+      }
     }
     if (noteNotFound) {
       console.info(
@@ -247,6 +263,14 @@ async function runMissingProcessingFailureBackfill() {
       where: {
         status: { in: [...processingFailureTaskStatuses] },
         auditResults: { none: {} },
+        OR: [
+          { replacesResultId: null },
+          {
+            failureCode: {
+              in: ["NOTE_NOT_FOUND", "PAGE_NOT_FOUND", "NOTE_DELETED"],
+            },
+          },
+        ],
       },
       select: {
         id: true,

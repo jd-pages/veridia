@@ -210,7 +210,7 @@ async function processBatch(batchId: string) {
     }
 
     const existingResult = await prisma.auditResult.findFirst({
-      where: { auditTaskId: task.id },
+      where: { auditTaskId: task.id, supersededAt: null },
       orderBy: { auditedAt: "desc" },
       select: { autoStatus: true },
     });
@@ -601,6 +601,7 @@ export async function controlAutomaticBatch(
       const transientResults = await prisma.auditResult.findMany({
         where: {
           auditTaskId: { in: taskIds },
+          supersededAt: null,
           pageStatus: { in: ["LOGIN_EXPIRED", "SECURITY_VERIFICATION"] },
         },
         select: { id: true },

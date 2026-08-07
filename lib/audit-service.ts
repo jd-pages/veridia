@@ -18,6 +18,10 @@ import {
   resolveTaskAutomationPlatform,
   type AutomationPlatform,
 } from "@/lib/automation/platform";
+import {
+  markAuditResultSuperseded,
+  resolveAuditResultSlot,
+} from "@/lib/audit-result-lifecycle";
 
 export async function getAuditContext(
   productId: string,
@@ -407,31 +411,22 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
       failureReason: item.failureReason,
       evidence: JSON.stringify(item.evidence),
     }));
-    let auditResult;
-    if (task.replacesResultId) {
-      const target = await tx.auditResult.findUnique({
-        where: { id: task.replacesResultId },
-        select: { id: true },
-      });
-      if (!target) throw new Error("待重新审核的原结果不存在");
-      await tx.ruleResult.deleteMany({
-        where: { auditResultId: task.replacesResultId },
-      });
-      auditResult = await tx.auditResult.update({
-        where: { id: task.replacesResultId },
-        data: {
-          ...auditResultData,
-          ruleResults: { create: ruleResultData },
-        },
-        include: { ruleResults: true },
-      });
-    } else {
-      auditResult = await tx.auditResult.create({
-        data: {
-          ...auditResultData,
-          ruleResults: { create: ruleResultData },
-        },
-        include: { ruleResults: true },
+    const resultSlot = await resolveAuditResultSlot(tx, task);
+    const auditResult = await tx.auditResult.create({
+      data: {
+        ...auditResultData,
+        originTaskId: resultSlot.originTaskId,
+        resultSlotOrder: resultSlot.resultSlotOrder,
+        resultSlotCreatedAt: resultSlot.resultSlotCreatedAt,
+        ruleResults: { create: ruleResultData },
+      },
+      include: { ruleResults: true },
+    });
+    if (resultSlot.replacementResultId) {
+      await markAuditResultSuperseded(tx, {
+        previousResultId: resultSlot.replacementResultId,
+        nextResultId: auditResult.id,
+        supersededAt: new Date(),
       });
     }
 

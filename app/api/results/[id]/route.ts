@@ -32,6 +32,19 @@ export async function GET(
     },
   });
   if (!result) return fail("审核结果不存在", 404);
+  let latestResultId = result.id;
+  let nextResultId = result.supersededByResultId;
+  const visitedResultIds = new Set([result.id]);
+  while (nextResultId && !visitedResultIds.has(nextResultId)) {
+    visitedResultIds.add(nextResultId);
+    const nextResult = await prisma.auditResult.findUnique({
+      where: { id: nextResultId },
+      select: { id: true, supersededByResultId: true },
+    });
+    if (!nextResult) break;
+    latestResultId = nextResult.id;
+    nextResultId = nextResult.supersededByResultId;
+  }
   const normalizedStage = normalizeProductStageTopicValue(
     result.task.productStage,
   );
@@ -58,7 +71,13 @@ export async function GET(
     include: { user: { select: { displayName: true } } },
     orderBy: { createdAt: "desc" },
   });
-  return ok({ ...result, currentStageGroup, operationLogs });
+  return ok({
+    ...result,
+    isCurrent: result.supersededAt === null,
+    latestResultId,
+    currentStageGroup,
+    operationLogs,
+  });
 }
 
 export const DELETE = withApiErrorBoundary(async function DELETE(

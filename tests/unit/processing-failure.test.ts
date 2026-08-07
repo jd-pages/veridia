@@ -48,6 +48,7 @@ describe("处理失败结果口径", () => {
       buildAuditResultWhere({ status: "PROCESS_FAILED" }),
     ).toEqual({
       AND: [
+        { supersededAt: null },
         {
           task: {
             status: { in: [...processingFailureTaskStatuses] },
@@ -59,24 +60,22 @@ describe("处理失败结果口径", () => {
 
   it("人工复核筛选区分待复核和无需复核", () => {
     expect(
-      buildAuditResultWhere({ manualStatus: "PENDING" }),
-    ).toMatchObject({
-      AND: [
-        {
-          autoStatus: "NEEDS_REVIEW",
-          manualReviews: { none: {} },
-        },
-      ],
-    });
+      buildAuditResultWhere({ manualStatus: "PENDING" }).AND,
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        autoStatus: "NEEDS_REVIEW",
+        manualReviews: { none: {} },
+      }),
+    ]));
     expect(
       buildAuditResultWhere({ manualStatus: "NOT_REQUIRED" }),
     ).toMatchObject({
-      AND: [
+      AND: expect.arrayContaining([
         {
           autoStatus: { not: "NEEDS_REVIEW" },
           manualReviews: { none: {} },
         },
-      ],
+      ]),
     });
   });
 
@@ -145,17 +144,17 @@ describe("处理失败结果口径", () => {
     expect(buildAuditResultWhere({
       commercePlatform: "JD",
       channel: "XIAOHONGSHU",
-    })).toMatchObject({
-      AND: [{
-        task: {
+    }).AND).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        task: expect.objectContaining({
           commercePlatform: "JD",
           OR: expect.arrayContaining([
             { channel: "XIAOHONGSHU" },
             { channel: null, platform: "XIAOHONGSHU" },
           ]),
-        },
-      }],
-    });
+        }),
+      }),
+    ]));
     expect(
       readResultQueryFilters(
         new URLSearchParams("commercePlatform=DOUYIN_ECOMMERCE&channel=DOUYIN"),
@@ -165,20 +164,28 @@ describe("处理失败结果口径", () => {
 
   it("笔记不存在使用独立筛选并从普通不通过、待复核中排除", () => {
     expect(buildAuditResultWhere({ status: "NOTE_NOT_FOUND" })).toMatchObject({
-      AND: [
+      AND: expect.arrayContaining([
         {
           OR: expect.arrayContaining([
             { autoStatus: "NOTE_NOT_FOUND" },
             { pageStatus: { in: ["NOTE_NOT_FOUND", "NOT_FOUND", "DELETED"] } },
           ]),
         },
-      ],
+      ]),
     });
     expect(buildAuditResultWhere({ status: "FAILED" })).toMatchObject({
-      AND: [{ autoStatus: "FAILED" }, { NOT: expect.any(Object) }],
+      AND: expect.arrayContaining([
+        { supersededAt: null },
+        { autoStatus: "FAILED" },
+        { NOT: expect.any(Object) },
+      ]),
     });
     expect(buildAuditResultWhere({ status: "NEEDS_REVIEW" })).toMatchObject({
-      AND: [{ autoStatus: "NEEDS_REVIEW" }, { NOT: expect.any(Object) }],
+      AND: expect.arrayContaining([
+        { supersededAt: null },
+        { autoStatus: "NEEDS_REVIEW" },
+        { NOT: expect.any(Object) },
+      ]),
     });
   });
 
@@ -191,7 +198,9 @@ describe("处理失败结果口径", () => {
     expect(filters).not.toHaveProperty("clickableStatus");
     expect(filters).not.toHaveProperty("ruleVersion");
     expect(filters).not.toHaveProperty("retentionStatus");
-    expect(buildAuditResultWhere(filters)).toEqual({});
+    expect(buildAuditResultWhere(filters)).toEqual({
+      AND: [{ supersededAt: null }],
+    });
     expect(() => buildAuditResultWhere({ platform: "UNKNOWN" })).toThrow(
       "平台筛选条件不正确",
     );
@@ -212,7 +221,10 @@ describe("处理失败结果口径", () => {
     );
     expect(filters.ids).toEqual(["result-1", "result-2", "result-1"]);
     expect(buildAuditResultWhere(filters)).toEqual({
-      AND: [{ id: { in: ["result-1", "result-2"] } }],
+      AND: [
+        { supersededAt: null },
+        { id: { in: ["result-1", "result-2"] } },
+      ],
     });
   });
 });

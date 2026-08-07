@@ -1099,7 +1099,19 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   );
   const reAuditedData = (await reAuditedResults.json()).data;
   expect(reAuditedData.total).toBe(1);
-  expect(reAuditedData.items[0].id).toBe(unavailableResult.id);
+  expect(reAuditedData.items[0].id).not.toBe(unavailableResult.id);
+  expect(reAuditedData.items[0].task.replacesResultId).toBe(
+    unavailableResult.id,
+  );
+  const historicalResultResponse = await page.request.get(
+    `/api/results/${unavailableResult.id}`,
+  );
+  expect(historicalResultResponse.ok()).toBeTruthy();
+  expect((await historicalResultResponse.json()).data).toMatchObject({
+    id: unavailableResult.id,
+    isCurrent: false,
+    latestResultId: reAuditedData.items[0].id,
+  });
 
   const auditedDate = new Date(resultCoverage.items[0].auditedAt);
   const auditDay = [
@@ -1428,7 +1440,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       )
     ).json()
   ).data;
-  expect(retryHistory.total).toBe(2);
+  expect(retryHistory.total).toBe(1);
 
   const extensionUrl = `${E2E_ORIGIN}/mock/xhs?case=unclickable-topic&extension=${suffix}`;
   const extensionTaskResponse = await page.request.post("/api/tasks", {

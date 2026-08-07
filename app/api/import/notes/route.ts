@@ -541,6 +541,7 @@ export async function POST(request: Request) {
             requiredStoreTopics: row.requiredStoreTopics,
             storeMappingStatus: row.storeMappingStatus,
             orderNumber: row.orderNumber,
+            queueOrder: row.rowNumber,
           }));
           const lastQueueOrder = (
             await tx.auditBatch.aggregate({ _max: { queueOrder: true } })

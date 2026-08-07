@@ -13,6 +13,7 @@ export async function countAuditResultsByImportRecord(ids: string[]) {
     FROM "audit_tasks" AS "task"
     LEFT JOIN "audit_results" AS "result"
       ON "result"."auditTaskId" = "task"."id"
+     AND "result"."supersededAt" IS NULL
     WHERE "task"."importRecordId" IN (${Prisma.join(ids)})
     GROUP BY "task"."importRecordId"
   `);

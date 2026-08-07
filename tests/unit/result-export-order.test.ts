@@ -34,4 +34,36 @@ describe("审核结果导出顺序", () => {
       "second-2",
     ]);
   });
+
+  it("重新审核结果使用稳定槽位而不是新批次和新任务顺序", () => {
+    const importAt = new Date("2026-08-06T01:00:00.000Z");
+    const row = (
+      id: string,
+      resultSlotOrder: number,
+      taskBatchAt: Date,
+      taskQueueOrder: number,
+    ) => ({
+      id,
+      createdAt: taskBatchAt,
+      resultSlotOrder,
+      resultSlotCreatedAt: importAt,
+      task: {
+        batchId: `batch-${id}`,
+        queueOrder: taskQueueOrder,
+        createdAt: taskBatchAt,
+        batch: { createdAt: taskBatchAt },
+      },
+    });
+    const rows = [
+      row("third", 4, new Date("2026-08-06T01:00:00.000Z"), 2),
+      row("second-latest", 3, new Date("2026-08-07T10:00:00.000Z"), 0),
+      row("first", 2, new Date("2026-08-06T01:00:00.000Z"), 0),
+    ];
+
+    expect(sortAuditResultsByImportOrder(rows).map((item) => item.id)).toEqual([
+      "first",
+      "second-latest",
+      "third",
+    ]);
+  });
 });

@@ -9,6 +9,7 @@ import {
   createRandomDeviceId,
   PRIMARY_LOCAL_DEVICE_ID,
 } from "./device-id";
+import { currentAuditResultWhere } from "@/lib/audit-result-lifecycle";
 
 function localDate(value: Date) {
   const year = value.getFullYear();
@@ -58,6 +59,7 @@ export async function refreshLocalUsageSummary(
     createdAt: { gte: start, lt: end },
   };
   const resultFilter = {
+    ...currentAuditResultWhere,
     auditedAt: { gte: start, lt: end },
     task: { createdBy: localUserId },
   };

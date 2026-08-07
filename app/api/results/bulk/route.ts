@@ -17,9 +17,12 @@ export async function POST(request: Request) {
   const ids = [...new Set(body.ids || [])].slice(0, 100);
   if (!ids.length || !body.action) return fail("请选择结果和批量操作");
   const results = await prisma.auditResult.findMany({
-    where: { id: { in: ids } },
+    where: { id: { in: ids }, supersededAt: null },
     include: { task: true },
   });
+  if (results.length !== ids.length) {
+    return fail("部分审核结果已被更新，请刷新后重新选择最新结果", 409);
+  }
   if (body.action === "RE_AUDIT") {
     try {
       const campaignIds = new Map(
@@ -60,6 +63,7 @@ export async function POST(request: Request) {
           orderNumber: result.task.orderNumber,
           source: "RE_AUDIT",
           replacesResultId: result.id,
+          queueOrder: result.resultSlotOrder,
         })),
       });
       await prisma.operationLog.create({

@@ -16,8 +16,8 @@ export async function POST(
     campaignId?: string;
   };
   if (!body.result) return fail("请选择人工审核结果");
-  const auditResult = await prisma.auditResult.findUnique({
-    where: { id },
+  const auditResult = await prisma.auditResult.findFirst({
+    where: { id, supersededAt: null },
     include: { task: true },
   });
   if (!auditResult) return fail("审核结果不存在", 404);

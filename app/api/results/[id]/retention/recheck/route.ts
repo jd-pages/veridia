@@ -12,8 +12,8 @@ export async function POST(
   const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
   const { id } = await params;
-  const result = await prisma.auditResult.findUnique({
-    where: { id },
+  const result = await prisma.auditResult.findFirst({
+    where: { id, supersededAt: null },
     include: { note: true, task: true },
   });
   if (!result) return fail("审核结果不存在", 404);
@@ -57,6 +57,8 @@ export async function POST(
         storeMappingStatus: result.task.storeMappingStatus,
         orderNumber: result.task.orderNumber,
         notes: `基于历史审核结果 ${result.id} 的公开留存复查`,
+        replacesResultId: result.id,
+        queueOrder: result.resultSlotOrder,
       },
     ],
   });

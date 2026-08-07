@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { parseStoredStringArray } from "@/lib/stored-json";
 import { buildResultRiskWhere } from "@/lib/result-risk";
+import { currentAuditResultWhere } from "@/lib/audit-result-lifecycle";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -17,6 +18,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const campaignId = searchParams.get("campaignId")?.trim() || undefined;
   const riskScope = {
     AND: [
+      currentAuditResultWhere,
       {
         auditedAt: {
           gte: riskMonth.startOf("month").toDate(),
@@ -38,7 +40,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const [results, noteUnavailable, topicMissing, imageInsufficient] =
     await prisma.$transaction([
       prisma.auditResult.findMany({
-        where: { auditedAt: { gte: start } },
+        where: { ...currentAuditResultWhere, auditedAt: { gte: start } },
         select: {
           autoStatus: true,
           topicsCompliant: true,
