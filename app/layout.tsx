@@ -1,48 +1,12 @@
 import type { Metadata } from "next";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
-import {
-  Inter,
-  Manrope,
-  Noto_Sans_SC,
-  Noto_Serif_SC,
-} from "next/font/google";
+import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/manrope/wght.css";
+import "@fontsource-variable/noto-sans-sc/wght.css";
+import "@fontsource-variable/noto-serif-sc/wght.css";
 import "antd/dist/reset.css";
 import "./globals.css";
 import AppLocaleProvider from "@/components/AppLocaleProvider";
-
-const manrope = Manrope({
-  variable: "--font-manrope",
-  subsets: ["latin"],
-  weight: "variable",
-  display: "swap",
-  fallback: ["Inter", "Arial", "sans-serif"],
-});
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-  weight: "variable",
-  display: "swap",
-  fallback: ["Arial", "sans-serif"],
-});
-
-const notoSansSC = Noto_Sans_SC({
-  variable: "--font-noto-sans-sc",
-  subsets: ["latin"],
-  weight: "variable",
-  display: "swap",
-  preload: false,
-  fallback: ["PingFang SC", "Microsoft YaHei", "sans-serif"],
-});
-
-const notoSerifSC = Noto_Serif_SC({
-  variable: "--font-noto-serif-sc",
-  subsets: ["latin"],
-  weight: "variable",
-  display: "swap",
-  preload: false,
-  fallback: ["Source Han Serif SC", "SimSun", "serif"],
-});
 
 export const metadata: Metadata = {
   title: "VERIDIA",
@@ -55,9 +19,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN">
-      <body
-        className={`${inter.variable} ${manrope.variable} ${notoSansSC.variable} ${notoSerifSC.variable}`}
-      >
+      <body>
         <AntdRegistry>
           <AppLocaleProvider>{children}</AppLocaleProvider>
         </AntdRegistry>
