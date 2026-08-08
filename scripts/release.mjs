@@ -21,7 +21,6 @@ const originals = new Map(
 );
 const workRoot = path.join(root, ".release-work");
 const logsRoot = path.join(workRoot, "logs");
-fs.rmSync(workRoot, { recursive: true, force: true });
 fs.mkdirSync(logsRoot, { recursive: true });
 
 function quoteWindowsCommandArgument(value) {

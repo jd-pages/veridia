@@ -83,7 +83,7 @@ describe("本地打包发布门禁", () => {
     const softwareBatBytes = fs.readFileSync(
       path.resolve(process.cwd(), "发布新版.bat"),
     );
-    const softwareBat = new TextDecoder("gbk").decode(softwareBatBytes);
+    const softwareBat = new TextDecoder("utf-8").decode(softwareBatBytes);
     const rulesBatBytes = fs.readFileSync(
       path.resolve(process.cwd(), "发布规则新版.bat"),
     );
@@ -110,18 +110,29 @@ describe("本地打包发布门禁", () => {
       "utf8",
     );
 
-    expect(softwareBat).toContain("fixed-workflow.mjs publish");
-    expect(softwareBat).toContain("validate-software-release.mjs");
-    expect(softwareBat).toContain("EXE、blockmap、latest.yml");
-    expect(softwareBat).not.toContain("rules:publish");
+    const orchestrator = fs.readFileSync(
+      path.resolve(
+        process.cwd(),
+        "scripts",
+        "software-publish-orchestrator.mjs",
+      ),
+      "utf8",
+    );
+
+    expect(softwareBat).toContain("software-publish-orchestrator.mjs");
+    expect(softwareBat).toContain("%*");
+    expect(softwareBat).not.toContain("fixed-workflow.mjs publish");
+    expect(softwareBat).not.toContain("validate-software-release.mjs");
+    expect(softwareBat).not.toMatch(/npm(?:\.cmd)?[^\r\n]*rules:publish/iu);
     expect([...softwareBatBytes.subarray(0, 3)]).not.toEqual([
       0xef, 0xbb, 0xbf,
     ]);
-    expect(softwareBat).toContain("chcp 936 >nul");
-    expect(softwareBat).not.toContain("chcp 65001 >nul");
-    expect(softwareBat).toContain("software-release-bat.log");
-    expect(softwareBat.match(/^pause$/gmu)).toHaveLength(4);
-    expect(softwareBat).toContain("exit /b 0");
+    expect(softwareBat).toContain("chcp 65001 >nul");
+    expect(softwareBat).not.toContain("chcp 936 >nul");
+    expect(orchestrator).toContain(".release-work");
+    expect(orchestrator).toContain("software-release-");
+    expect(softwareBat.match(/^pause$/gmu)).toHaveLength(2);
+    expect(softwareBat).toContain("exit /b %VERIDIA_EXIT_CODE%");
     expect(softwareBat).not.toMatch(/^\s*exit(?:\s|$)(?!\/b)/gmu);
     expect(rulesBat).toContain("rules:publish");
     expect(rulesBat).not.toContain("fixed-workflow.mjs publish");
@@ -150,6 +161,10 @@ describe("本地打包发布门禁", () => {
       executableLines.filter((line) => /^[\u3400-\u9fff]/u.test(line)),
     ).toEqual([]);
     expect(workflow).toContain('"trigger-actions"');
+    expect(orchestrator).toContain('"release.mjs"');
+    expect(orchestrator).toContain("waitForActions");
+    expect(orchestrator).toContain("verifyRemoteRelease");
+    expect(orchestrator).toContain("--dry-run");
     expect(releaseWorkflow).toContain("检查自动更新发布三件套");
     expect(releaseWorkflow).toContain(
       "validate-software-release.mjs --directory=dist-installer",

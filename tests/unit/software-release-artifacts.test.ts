@@ -85,4 +85,17 @@ describe("软件发布三件套", () => {
     expect(result.latestValid).toBe(true);
     expect(result.blockmapValid).toBe(true);
   });
+
+  it("latest.yml 版本错误时停止", () => {
+    const value = fixture();
+    const latestPath = path.join(value.directory, "latest.yml");
+    fs.writeFileSync(
+      latestPath,
+      fs.readFileSync(latestPath, "utf8").replace("version: 1.1.0", "version: 1.1.1"),
+    );
+
+    expect(() => validateSoftwareReleaseArtifacts(value)).toThrow(
+      "latest.yml 与 VERIDIA-Setup-1.1.0.exe",
+    );
+  });
 });

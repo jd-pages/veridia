@@ -1,71 +1,36 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-chcp 936 >nul
+chcp 65001 >nul
 cd /d "%~dp0"
-title VERIDIA Publish Release
+title VERIDIA æ­£å¼å‘å¸ƒ
 
-set "VERIDIA_RELEASE_LOG_DIR=%CD%\.release-work\logs"
-set "VERIDIA_RELEASE_LOG=%VERIDIA_RELEASE_LOG_DIR%\software-release-bat.log"
+echo ========================================
+echo VERIDIA æ­£å¼å‘å¸ƒ
+echo ========================================
+echo.
 
-if not exist "%VERIDIA_RELEASE_LOG_DIR%" mkdir "%VERIDIA_RELEASE_LOG_DIR%" >nul 2>&1
->"%VERIDIA_RELEASE_LOG%" echo VERIDIA software release diagnostics
->>"%VERIDIA_RELEASE_LOG%" echo Project: %CD%
->>"%VERIDIA_RELEASE_LOG%" echo Arguments: %*
-
-where node >nul 2>&1
+where node.exe >nul 2>&1
 if errorlevel 1 goto node_missing
 
-echo ÕýÔÚ¼ì²éÈí¼þ·¢²¼±ØÐèÎÄ¼þ£ºEXE¡¢blockmap¡¢latest.yml...
-node scripts\validate-software-release.mjs %* 2>>"%VERIDIA_RELEASE_LOG%"
+node scripts\software-publish-orchestrator.mjs %*
 set "VERIDIA_EXIT_CODE=%ERRORLEVEL%"
->>"%VERIDIA_RELEASE_LOG%" echo Validation exit code: %VERIDIA_EXIT_CODE%
-if not "%VERIDIA_EXIT_CODE%"=="0" goto validation_failed
 
 echo.
-echo ·¢²¼Ç°¼ì²éÒÑÍ¨¹ý£¬ÏÂÃæ½«½øÈëÈí¼þ·¢²¼È·ÈÏÁ÷³Ì¡£
-echo Õï¶ÏÈÕÖ¾£º%VERIDIA_RELEASE_LOG%
-node scripts\fixed-workflow.mjs publish %* 2>>"%VERIDIA_RELEASE_LOG%"
-set "VERIDIA_EXIT_CODE=%ERRORLEVEL%"
->>"%VERIDIA_RELEASE_LOG%" echo Workflow exit code: %VERIDIA_EXIT_CODE%
-if not "%VERIDIA_EXIT_CODE%"=="0" goto workflow_failed
+if not "%VERIDIA_EXIT_CODE%"=="0" (
+  echo VERIDIA æ­£å¼å‘å¸ƒæœªå®Œæˆï¼Œè¯·æ ¹æ®ä¸Šæ–¹ä¸­æ–‡é”™è¯¯æ‘˜è¦å’Œæ—¥å¿—å¤„ç†ã€‚
+  echo æ²¡æœ‰è‡ªåŠ¨é‡è¯•ã€resetã€è¦†ç›– Tagï¼Œä¹Ÿæ²¡æœ‰æ‰§è¡Œ rules:publishã€‚
+) else (
+  echo VERIDIA å‘å¸ƒå…¥å£å·²æ­£å¸¸ç»“æŸã€‚
+  echo æœ¬æ¬¡æœªæ‰§è¡Œ rules:publishï¼Œæœ¬æ¬¡æœªå‘å¸ƒè¿œç¨‹è§„åˆ™ã€‚
+)
 
 echo.
-echo Èí¼þ·¢²¼Á÷³ÌÒÑÕý³£½áÊø¡£
-echo Õï¶ÏÈÕÖ¾£º%VERIDIA_RELEASE_LOG%
 pause
-exit /b 0
+exit /b %VERIDIA_EXIT_CODE%
 
 :node_missing
->>"%VERIDIA_RELEASE_LOG%" echo Error: Node.js was not found in PATH.
+echo æœªæ‰¾åˆ° Node.jsï¼Œæ— æ³•å¯åŠ¨ VERIDIA æ­£å¼å‘å¸ƒã€‚
+echo è¯·ç¡®è®¤ Node.js å·²å®‰è£…å¹¶åŠ å…¥ PATHã€‚
 echo.
-echo Èí¼þ·¢²¼ÒÑÍ£Ö¹£ºÕÒ²»µ½ Node.js¡£
-echo Çë°²×° Node.js ²¢È·ÈÏ node ÒÑ¼ÓÈë PATH¡£
-echo Õï¶ÏÈÕÖ¾£º%VERIDIA_RELEASE_LOG%
 pause
 exit /b 1
-
-:validation_failed
-echo.
-echo Èí¼þ·¢²¼ÒÑÍ£Ö¹£º·¢²¼Ç°¼ì²éÎ´Í¨¹ý¡£
-call :show_log
-echo Çë²é¿´ÉÏ·½¾ßÌåÔ­Òò»òÕï¶ÏÈÕÖ¾£º%VERIDIA_RELEASE_LOG%
-echo Ã»ÓÐ´´½¨ Tag¡¢Release£¬Ò²Ã»ÓÐÉÏ´«ÈÎºÎÎÄ¼þ¡£
-echo ±¾Á÷³Ì²»»áÔËÐÐ¹æÔò·¢²¼ÃüÁî£¬Ò²²»»á·¢²¼Ô¶³Ì¹æÔò¡£
-pause
-exit /b %VERIDIA_EXIT_CODE%
-
-:workflow_failed
-echo.
-echo Èí¼þ·¢²¼ÒÑÍ£Ö¹£º·¢²¼Á÷³Ì·µ»Ø´íÎó¡£
-call :show_log
-echo Çë²é¿´ÉÏ·½¾ßÌåÔ­Òò»òÕï¶ÏÈÕÖ¾£º%VERIDIA_RELEASE_LOG%
-echo ²»»á×Ô¶¯ÖØÊÔ»òÉÏ´«²»ÍêÕûÎÄ¼þ¡£
-pause
-exit /b %VERIDIA_EXIT_CODE%
-
-:show_log
-echo.
-echo ---------- Õï¶ÏÈÕÖ¾ ----------
-powershell.exe -NoProfile -Command "Get-Content -LiteralPath $env:VERIDIA_RELEASE_LOG -Encoding UTF8"
-echo ---------- ÈÕÖ¾½áÊø ----------
-exit /b 0
