@@ -58,6 +58,11 @@ describe("审核详情展示过滤", () => {
     expect(decision).toContain("row.task.storeName");
     expect(decision).toContain("row.task.orderNumber");
     expect(decision).toContain("formatAuditTime(row.auditedAt)");
+    expect(decision).toContain("发帖时间");
+    expect(decision).toContain("formatPlatformPublishedAt");
+    expect(decision).toContain("row.note.publishedAtRaw");
+    expect(decision).toContain("导入时间");
+    expect(decision).toContain("实际审核时间");
     expect(decision).toContain("复制订单编号");
   });
 
@@ -143,8 +148,21 @@ describe("审核详情展示过滤", () => {
     expect(retentionApi).toContain("retention");
     expect(schema).toContain("retentionStatus");
     expect(schema).toContain("publishedAt");
+    expect(schema).toContain("publishedAtRaw");
+    expect(schema).toContain("publishedAtSource");
     expect(schema).toContain("authorName");
     expect(auditEngine).toContain('ruleKey: "PRODUCT_STAGE_BODY"');
     expect(auditEngine).toContain('ruleKey: "GLOBAL_RETENTION"');
+  });
+
+  it("平台发帖时间只来自自动提取负载，不使用 Excel 发帖时间补位", () => {
+    const auditService = source("lib/audit-service.ts");
+    expect(auditService).toContain("payload.publishedAt");
+    expect(auditService).toContain("payload.publishedAtRaw");
+    expect(auditService).toContain(
+      "evaluateAudit({ ...payload, publishedAt: null }, context)",
+    );
+    expect(auditService).not.toContain("importedPublishTimeValue");
+    expect(auditService).not.toContain("importedMetadata.publishTime");
   });
 });

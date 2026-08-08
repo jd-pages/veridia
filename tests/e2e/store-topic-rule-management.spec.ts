@@ -120,7 +120,11 @@ test("活动与规则可独立维护店铺话题规则", async ({ page }) => {
   expect((await disabled.json()).data.enabled).toBe(false);
   const products = (await (await page.request.get("/api/products")).json()).data as Array<{ id: string; name: string }>;
   const product = products.find((item) => item.name === "爱他美澳洲白金版")!;
-  const campaigns = (await (await page.request.get(`/api/campaigns?productId=${product.id}`)).json()).data as Array<{ name: string; month: string }>;
+  const campaigns = (await (
+    await page.request.get(
+      `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+    )
+  ).json()).data as Array<{ name: string; month: string }>;
   const campaign = campaigns.find((item) => item.month === "2026-07")!;
   const workbook = new ExcelJS.Workbook();
   const importSheet = workbook.addWorksheet("兼容导入");

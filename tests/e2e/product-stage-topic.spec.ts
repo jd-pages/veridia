@@ -26,7 +26,9 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
     products.find((item) => item.name.includes("澳洲白金版")) || products[0];
   const campaigns = (
     await (
-      await page.request.get(`/api/campaigns?productId=${product.id}`)
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+      )
     ).json()
   ).data as Array<{ id: string; name: string }>;
   const campaign = campaigns.find((item) =>
@@ -347,7 +349,9 @@ test("佳贝艾特活动过滤产品、隐藏阶段并允许无阶段创建任�
 
   const products = (await (await page.request.get("/api/products")).json())
     .data as Array<{ id: string; name: string; brandName: string }>;
-  const campaigns = (await (await page.request.get("/api/campaigns")).json())
+  const campaigns = (await (
+    await page.request.get("/api/campaigns?contentChannel=XIAOHONGSHU")
+  ).json())
     .data as Array<{
       id: string;
       name: string;

@@ -3,9 +3,14 @@ import { createMockNote, mockCaseLabels, type MockCase } from "@/lib/mock-data";
 export default async function MockXhsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ case?: string }>;
+  searchParams: Promise<{
+    case?: string;
+    publishedText?: string;
+    commentTime?: string;
+  }>;
 }) {
-  const requested = (await searchParams).case || "passed";
+  const params = await searchParams;
+  const requested = params.case || "passed";
   const caseName = (
     Object.hasOwn(mockCaseLabels, requested) ? requested : "passed"
   ) as MockCase;
@@ -121,6 +126,14 @@ export default async function MockXhsPage({
             ),
           )}
         </div>
+        <div data-xhs-published-text className="note-publish-time">
+          {params.publishedText || "07-08 上海"}
+        </div>
+        {params.commentTime ? (
+          <section className="comment-list">
+            <span className="comment-time date">{params.commentTime}</span>
+          </section>
+        ) : null}
       </article>
       <script
         id="mock-extraction-data"

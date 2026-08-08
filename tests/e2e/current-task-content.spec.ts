@@ -46,7 +46,9 @@ test("审核任务页只展示当前批次的执行记录和笔记", async ({ pa
     products.find((item) => item.name.includes("澳洲白金版")) || products[0];
   const campaigns = (
     await (
-      await page.request.get(`/api/campaigns?productId=${product.id}`)
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+      )
     ).json()
   ).data as Array<{ id: string; name: string }>;
   const campaign = campaigns.find((item) =>
@@ -203,7 +205,9 @@ test("运行中阻止第二批次，暂停后可创建并汇总筛选", async ({
     products.find((item) => item.name.includes("澳洲白金版")) || products[0];
   const campaigns = (
     await (
-      await page.request.get(`/api/campaigns?productId=${product.id}`)
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+      )
     ).json()
   ).data as Array<{ id: string; name: string }>;
   const campaign = campaigns.find((item) =>
@@ -340,7 +344,9 @@ test("自动审核进度卡片按执行状态和人工复核状态筛选", async
     products.find((item) => item.name.includes("澳洲白金版")) || products[0];
   const campaigns = (
     await (
-      await page.request.get(`/api/campaigns?productId=${product.id}`)
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+      )
     ).json()
   ).data as Array<{ id: string; name: string }>;
   const campaign = campaigns.find((item) =>
@@ -472,7 +478,9 @@ test("300 条任务分片入队且执行记录只读取当前页", async ({ page
     products.find((item) => item.name.includes("澳洲白金版")) || products[0];
   const campaigns = (
     await (
-      await page.request.get(`/api/campaigns?productId=${product.id}`)
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+      )
     ).json()
   ).data as Array<{ id: string; name: string }>;
   const campaign = campaigns.find((item) =>

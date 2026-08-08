@@ -71,7 +71,9 @@ test("清除当前批次仅移出任务页并保留正式审核结果", async ({
     products.find((item) => item.name.includes("澳洲白金版")) || products[0];
   const campaigns = (
     await (
-      await page.request.get(`/api/campaigns?productId=${product.id}`)
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+      )
     ).json()
   ).data as Array<{ id: string; name: string }>;
   const campaign = campaigns.find((item) =>

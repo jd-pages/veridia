@@ -65,6 +65,8 @@ export interface ExtractedNote {
   pageStatus: PageStatus;
   authorName?: string | null;
   publishedAt?: string | null;
+  publishedAtRaw?: string | null;
+  publishedAtSource?: string | null;
   isPublic?: boolean | null;
   extractedAt: string;
   adapterName: string;

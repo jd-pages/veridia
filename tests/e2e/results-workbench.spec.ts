@@ -396,9 +396,19 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await expect(drawer.getByRole("region", { name: "审核明细" })).toBeVisible();
   await expect(drawer.getByRole("region", { name: "链接操作" })).toBeVisible();
   await expect(drawer.getByRole("region", { name: "人工复核记录" })).toBeVisible();
-  for (const label of ["渠道", "平台", "店铺", "订单编号", "实际审核时间"]) {
+  for (const label of [
+    "渠道",
+    "平台",
+    "店铺",
+    "订单编号",
+    "发帖时间",
+    "实际审核时间",
+  ]) {
     await expect(drawer.getByText(label, { exact: true })).toBeVisible();
   }
+  await expect(
+    drawer.getByText("发帖时间", { exact: true }).locator("..").locator("strong"),
+  ).toHaveText(/^(?:—|(?:\d{2}-\d{2}|\d{4}-\d{2}-\d{2})(?: \d{2}:\d{2}(?::\d{2})?)?)$/u);
   await expect(drawer.getByText("笔记基础信息", { exact: true })).toHaveCount(0);
   await expect(drawer.getByText(/笔记ID/u)).toHaveCount(0);
   await expect(page).toHaveURL(/\/results$/u);
@@ -454,8 +464,11 @@ test("审核详情只展示业务判断卡片并隐藏自动取证技术字段",
     }),
   ).toBeVisible();
   await expect(
-    topConclusion.getByText(/^\d{2}月\d{2}日 \d{2}:\d{2}$/u),
-  ).toBeVisible();
+    topConclusion
+      .getByText("实际审核时间", { exact: true })
+      .locator("..")
+      .locator("strong"),
+  ).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u);
 });
 
 test("成交平台、内容渠道和订单编号可同时筛选并重置", async ({ page }) => {

@@ -175,6 +175,19 @@ async function main() {
     await activateLocalAccount(await signActivationCode(accountPrivateKey));
   }
   await ensureBuiltinRules();
+  // Legacy XHS scenarios intentionally omit contentChannel while newer
+  // multi-platform scenarios always request DOUYIN explicitly. Keep the
+  // isolated baseline deterministic so an unqualified same-month lookup does
+  // not depend on insertion timing and accidentally select the Douyin twin.
+  const baselineTimestamp = Date.now();
+  await prisma.campaign.updateMany({
+    where: { contentChannel: "DOUYIN" },
+    data: { updatedAt: new Date(baselineTimestamp - 1_000) },
+  });
+  await prisma.campaign.updateMany({
+    where: { contentChannel: "XIAOHONGSHU" },
+    data: { updatedAt: new Date(baselineTimestamp) },
+  });
   if ((await prisma.auditResult.count()) === 0) {
     const product = await prisma.product.findFirstOrThrow({
       where: { deletedAt: null },

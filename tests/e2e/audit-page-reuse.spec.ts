@@ -62,7 +62,9 @@ test("连续审核与网络重试复用唯一后台 auditPage", async ({ page })
     products.find((item) => item.name.includes("澳洲白金版")) || products[0];
   const campaigns = (
     await (
-      await page.request.get(`/api/campaigns?productId=${product.id}`)
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+      )
     ).json()
   ).data as Array<{ id: string; name: string }>;
   const campaign = campaigns.find((item) =>

@@ -38,7 +38,7 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
   expect(product).toBeTruthy();
 
   const campaignsResponse = await page.request.get(
-    `/api/campaigns?productId=${product.id}`,
+    `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
   );
   const campaigns = (await campaignsResponse.json()).data as Array<{
     id: string;
@@ -456,7 +456,9 @@ test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", as
     name: string;
   }>;
   const product = products.find((item) => item.name.includes("澳洲白金版"))!;
-  const campaigns = (await (await page.request.get("/api/campaigns")).json()).data as Array<{
+  const campaigns = (await (
+    await page.request.get("/api/campaigns?contentChannel=XIAOHONGSHU")
+  ).json()).data as Array<{
     name: string;
   }>;
   const campaign = campaigns.find((item) => item.name.includes("爱他美2026年8月"))!;
@@ -526,7 +528,9 @@ test("达能代发模板从产品名末尾识别段数并保存模板来源", as
   expect((await page.request.post("/api/auth/login", {
     data: { username: "admin", password: "Admin123!" },
   })).ok()).toBeTruthy();
-  const campaigns = (await (await page.request.get("/api/campaigns")).json()).data as Array<{
+  const campaigns = (await (
+    await page.request.get("/api/campaigns?contentChannel=XIAOHONGSHU")
+  ).json()).data as Array<{
     id: string;
     name: string;
     month: string;

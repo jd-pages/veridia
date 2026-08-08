@@ -2,12 +2,29 @@ import { describe, expect, it } from "vitest";
 import type { Page } from "playwright";
 import {
   extractDouyinStructuredTopics,
+  extractDouyinStructuredPublishedAt,
   findDouyinAwemeItem,
   findDouyinAwemeItemFromSerializedPayloads,
   playwrightDouyinAdapter,
 } from "@/lib/automation/douyin-adapter";
 
 describe("抖音结构化作品证据", () => {
+  it("只从当前 contentId 对应作品读取结构化发布时间", () => {
+    const payload = {
+      aweme_list: [
+        { aweme_id: "other", create_time: 1_700_000_000 },
+        { aweme_id: "target", publish_time: 1_786_071_651 },
+      ],
+    };
+    const target = findDouyinAwemeItem(payload, "target");
+    expect(target).not.toBeNull();
+    expect(extractDouyinStructuredPublishedAt(target!, "target")).toMatchObject({
+      raw: expect.stringMatching(/^2026-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u),
+      source: "DOUYIN_STRUCTURED:publish_time",
+      contentId: "target",
+    });
+    expect(findDouyinAwemeItem(payload, "missing")).toBeNull();
+  });
   it("从作品列表中精确选择目标 contentId，而不是取最新作品", () => {
     const target = findDouyinAwemeItem({
       aweme_list: [
@@ -83,6 +100,12 @@ describe("抖音结构化作品证据", () => {
       authorName: "真实作者",
       imageCount: 3,
       pageType: "IMAGE_TEXT_DETAIL",
+      publishedAtRaw: expect.stringMatching(/^2026-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u),
+      publishedAtSource: "DOUYIN_STRUCTURED:create_time",
+    });
+    expect(note.pageEvidence?.publishedAtCandidate).toMatchObject({
+      contentId: "7658919904867844532",
+      source: "DOUYIN_STRUCTURED:create_time",
     });
     expect(note.topics).toEqual([
       expect.objectContaining({

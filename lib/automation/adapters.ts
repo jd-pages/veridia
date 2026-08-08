@@ -106,8 +106,8 @@ export class PlaywrightXiaohongshuAdapter
     );
     const urlCandidates = createEmptyCandidates();
     urlCandidates.noteIdCandidates = noteIdCandidatesFromUrls([
-      originalUrl,
       domSnapshot.finalUrl,
+      originalUrl,
       ...(context.redirectChain || []),
     ]);
     const candidates = mergeCandidates(
@@ -147,13 +147,45 @@ export class PlaywrightXiaohongshuAdapter
       imageCandidateCount: reliableImageCandidates.length,
     });
     const { noteType, imageExtractionStatus, imageCount } = mediaDecision;
+    const currentNoteId = candidates.noteIdCandidates[0]?.value || null;
+    const publishedAtCandidates = candidates.publishedAtCandidates.map(
+      (candidate) =>
+        candidate.source.startsWith("DOM_MAIN_NOTE") && !candidate.contentId
+          ? { ...candidate, contentId: currentNoteId }
+          : candidate,
+    );
+    const currentPublishedAtCandidates = publishedAtCandidates.filter(
+      (candidate) => candidate.contentId === currentNoteId,
+    );
+    const structuredPublishedAt = currentPublishedAtCandidates.find(
+      (candidate) =>
+        candidate.source.startsWith("NETWORK_JSON") && candidate.value,
+    ) || currentPublishedAtCandidates.find(
+      (candidate) => candidate.source.startsWith("PAGE_JSON") && candidate.value,
+    ) || null;
+    const domPublishedAt = currentPublishedAtCandidates.find((candidate) =>
+      candidate.source.startsWith("DOM_MAIN_NOTE"),
+    ) || null;
+    const publishedAtEvidence = domSnapshot.pageStatus === "NORMAL" && currentNoteId
+      ? structuredPublishedAt
+        ? {
+            ...structuredPublishedAt,
+            // The current-note DOM is the authority for what the platform
+            // visibly showed (for example "07-27" or "昨天 19:05").
+            raw: domPublishedAt?.raw || structuredPublishedAt.raw,
+            source: domPublishedAt
+              ? `${structuredPublishedAt.source}|${domPublishedAt.source}`
+              : structuredPublishedAt.source,
+          }
+        : domPublishedAt
+      : null;
 
     return {
       url: originalUrl,
       finalUrl: domSnapshot.finalUrl,
       pageTitle: domSnapshot.pageTitle,
       pageType: "NOTE_DETAIL",
-      noteId: candidates.noteIdCandidates[0]?.value || null,
+      noteId: currentNoteId,
       title,
       body,
       topics,
@@ -168,7 +200,9 @@ export class PlaywrightXiaohongshuAdapter
       commentCount: interactionMetrics.commentCount,
       interactionExtractionStatus: interactionMetrics.status,
       interactionTechnicalMessage: interactionMetrics.technicalMessage,
-      publishedAt: null,
+      publishedAt: publishedAtEvidence?.value || null,
+      publishedAtRaw: publishedAtEvidence?.raw || null,
+      publishedAtSource: publishedAtEvidence?.source || null,
       extractedAt: new Date().toISOString(),
       adapterName: this.name,
       adapterVersion: this.version,
@@ -187,6 +221,7 @@ export class PlaywrightXiaohongshuAdapter
         })),
         topicCandidates: candidates.topicCandidates.slice(0, 100),
         imageCandidates: candidates.imageCandidates.slice(0, 100),
+        publishedAtCandidate: publishedAtEvidence,
         mediaEvidence: {
           livePhotoMarker: domSnapshot.hasLivePhotoMarker,
           carouselPageIndicator: domSnapshot.carouselPageIndicator,

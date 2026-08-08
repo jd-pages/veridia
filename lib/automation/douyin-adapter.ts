@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import type { ExtractedNote, ExtractedTopic } from "@/lib/types";
+import { parseStructuredPublishedAt } from "@/lib/platform-published-at";
 import {
   douyinContentIdentityFromUrl,
   safeDouyinDiagnosticUrl,
@@ -228,16 +229,30 @@ function structuredImageCount(item: JsonRecord) {
   return 0;
 }
 
-function structuredPublishedAt(item: JsonRecord) {
-  const raw = Number(item.create_time || item.createTime || 0);
-  if (!Number.isFinite(raw) || raw <= 0) return null;
-  const millis = raw < 10_000_000_000 ? raw * 1_000 : raw;
-  return new Date(millis).toISOString();
+export function extractDouyinStructuredPublishedAt(
+  item: JsonRecord,
+  contentId: string,
+) {
+  for (const key of [
+    "create_time",
+    "createTime",
+    "publish_time",
+    "publishTime",
+  ]) {
+    const candidate = parseStructuredPublishedAt(
+      item[key],
+      `DOUYIN_STRUCTURED:${key}`,
+      contentId,
+    );
+    if (candidate) return candidate;
+  }
+  return null;
 }
 
 export async function collectDouyinEvidence(page: Page) {
   return page.evaluate(() => {
-    const scope = document.querySelector("[data-e2e='note-detail']") || document;
+    const detailRoot = document.querySelector("[data-e2e='note-detail']");
+    const scope = detailRoot || document;
     const selectors = [
       "[data-e2e='video-desc']",
       "[data-e2e='aweme-desc']",
@@ -342,6 +357,15 @@ export async function collectDouyinEvidence(page: Page) {
         .map((image) => (image as HTMLImageElement).currentSrc || (image as HTMLImageElement).src)
         .filter((src) => src && !src.includes("avatar")),
     );
+    const publishedTimeElement = detailRoot
+      ? [...detailRoot.querySelectorAll(
+          "[data-e2e='video-publish-time'],[data-testid='douyin-publish-time'],time[datetime]",
+        )].find((element) =>
+          !element.closest("[class*='comment'],[data-e2e*='comment'],[class*='recommend'],[data-e2e*='recommend']") &&
+          (/发布时间[：:]\s*\d{4}-\d{1,2}-\d{1,2}/u.test(element.textContent || "") ||
+            element.hasAttribute("datetime")),
+        )
+      : null;
     return {
       title: scope.querySelector("h1")?.textContent?.trim() || document.title,
       titleSource: scope.querySelector("h1") ? "DOM_H1" : "DOCUMENT_TITLE",
@@ -353,7 +377,13 @@ export async function collectDouyinEvidence(page: Page) {
       authorName: scope.querySelector(
         "[data-e2e='video-author-name'], [data-e2e='user-info'], [data-testid='douyin-author']",
       )?.textContent?.trim() || null,
-      publishedAt: scope.querySelector("time")?.getAttribute("datetime") || null,
+      publishedAt: publishedTimeElement
+        ? publishedTimeElement.getAttribute("datetime") ||
+          (publishedTimeElement.textContent || "").trim()
+        : null,
+      publishedAtSource: publishedTimeElement
+        ? "DOUYIN_DOM_CURRENT_DETAIL:publish-time"
+        : null,
       structuredPayloads: scripts,
       visibleText: document.body?.innerText?.slice(0, 20_000) || "",
     };
@@ -454,16 +484,25 @@ export class PlaywrightDouyinAdapter {
         : null;
     const author = structuredItem ? asRecord(structuredItem.author) : null;
     const authorName = asString(author?.nickname || author?.name) || evidence.authorName;
-    const publishedAt = structuredItem
-      ? structuredPublishedAt(structuredItem) || evidence.publishedAt
-      : evidence.publishedAt;
+    const contentId = options.contentId || urlIdentity?.contentId || null;
+    const structuredPublishedAt = structuredItem && contentId
+      ? extractDouyinStructuredPublishedAt(structuredItem, contentId)
+      : null;
+    const domPublishedAt = contentId
+      ? parseStructuredPublishedAt(
+          evidence.publishedAt,
+          evidence.publishedAtSource || "DOUYIN_DOM_CURRENT_DETAIL:publish-time",
+          contentId,
+        )
+      : null;
+    const publishedAtEvidence = structuredPublishedAt || domPublishedAt;
 
     return {
       url: originalUrl,
       finalUrl,
       pageTitle: await page.title(),
       pageType: noteType === "VIDEO" ? "VIDEO_DETAIL" : "IMAGE_TEXT_DETAIL",
-      noteId: options.contentId || urlIdentity?.contentId || null,
+      noteId: contentId,
       title: evidence.title || body || null,
       body: body || null,
       noteType,
@@ -474,7 +513,9 @@ export class PlaywrightDouyinAdapter {
       topics: [...uniqueTopics.values()],
       pageStatus: "NORMAL",
       authorName: authorName || null,
-      publishedAt: publishedAt || null,
+      publishedAt: publishedAtEvidence?.value || null,
+      publishedAtRaw: publishedAtEvidence?.raw || null,
+      publishedAtSource: publishedAtEvidence?.source || null,
       isPublic: null,
       extractedAt: new Date().toISOString(),
       adapterName: this.name,
@@ -502,6 +543,7 @@ export class PlaywrightDouyinAdapter {
         structuredHashtagCount: structuredTopicValues.length,
         domHashtagCount: evidence.topics.length,
         finalTopicCount: uniqueTopics.size,
+        publishedAtCandidate: publishedAtEvidence,
         topicEvidence: [...uniqueTopics.values()].map((topic) => ({
           displayText: topic.displayText,
           source: topic.source || null,

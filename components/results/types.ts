@@ -76,6 +76,9 @@ export interface ResultRow {
     platformNoteId: string | null;
     title: string | null;
     body: string | null;
+    publishedAt: string | null;
+    publishedAtRaw: string | null;
+    publishedAtSource: string | null;
     lastCapturedAt: string;
     topics: AuditTopic[];
   };
@@ -162,7 +165,6 @@ export interface ResultSummary {
 export interface ResultDetail extends ResultRow {
   note: ResultRow["note"] & {
     authorName: string | null;
-    publishedAt: string | null;
     isPublic: boolean | null;
     extractions: Array<{
       id: string;

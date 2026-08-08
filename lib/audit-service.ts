@@ -242,7 +242,9 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
     ...baseContext,
     storeTopicRequirement,
   };
-  const evaluation = evaluateAudit(payload, context);
+  // Platform publication time is collection metadata only. It is persisted
+  // below for display, but is intentionally excluded from every audit rule.
+  const evaluation = evaluateAudit({ ...payload, publishedAt: null }, context);
   const sanitizedPayload = { ...payload };
   delete sanitizedPayload.imageUrls;
   const ai = await evaluateSemanticRelevance({
@@ -290,6 +292,15 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
       });
       existingNote = existingByPlatformId;
     }
+    const parsedPublishedAt = payload.publishedAt
+      ? new Date(payload.publishedAt)
+      : null;
+    const platformPublishedAt =
+      payload.pageStatus === "NORMAL" &&
+      parsedPublishedAt &&
+      !Number.isNaN(parsedPublishedAt.getTime())
+        ? parsedPublishedAt
+        : null;
     const noteData = {
       contentChannel,
       platformNoteId: payload.noteId,
@@ -298,7 +309,13 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
       title: payload.title,
       body: payload.body,
       authorName: payload.authorName,
-      publishedAt: payload.publishedAt ? new Date(payload.publishedAt) : null,
+      publishedAt: platformPublishedAt,
+      publishedAtRaw: payload.pageStatus === "NORMAL"
+        ? payload.publishedAtRaw ?? null
+        : null,
+      publishedAtSource: payload.pageStatus === "NORMAL"
+        ? payload.publishedAtSource ?? null
+        : null,
       pageStatus: payload.pageStatus,
       isPublic: payload.isPublic ?? null,
       noteType: evaluation.noteType,

@@ -24,9 +24,9 @@ describe("审核结果来源信息", () => {
     expect(contentChannelLabel("XIAOHONGSHU")).toBe("小红书");
   });
 
-  it("实际审核时间按月日时分展示且无效值安全回退", () => {
-    const value = new Date(2026, 7, 5, 16, 42).toISOString();
-    expect(formatAuditTime(value)).toBe("08月05日 16:42");
+  it("实际审核时间固定按上海时区完整展示且无效值安全回退", () => {
+    const value = "2026-08-05T08:42:19.000Z";
+    expect(formatAuditTime(value)).toBe("2026-08-05 16:42:19");
     expect(formatAuditTime(null)).toBe("—");
     expect(formatAuditTime("not-a-date")).toBe("—");
   });

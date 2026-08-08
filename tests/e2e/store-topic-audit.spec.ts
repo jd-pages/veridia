@@ -33,7 +33,11 @@ test("Excel 店铺忽略英文大小写完成精确映射", async ({
   const product = products.find((item) => item.name === "爱他美澳洲白金版")!;
   expect(product).toBeTruthy();
   const campaigns = (
-    await (await page.request.get(`/api/campaigns?productId=${product.id}`)).json()
+    await (
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+      )
+    ).json()
   ).data as Array<{ id: string; name: string }>;
   const campaign = campaigns.find((item) => item.name.includes("爱他美2026年7月"))!;
   expect(campaign).toBeTruthy();
@@ -124,7 +128,11 @@ test("同一店铺任意命中第二条可点击话题即通过并保存结构�
       .data as Array<{ id: string; name: string }>;
     const product = products.find((item) => item.name === "爱他美澳洲白金版")!;
     const campaigns = (
-      await (await page.request.get(`/api/campaigns?productId=${product.id}`)).json()
+      await (
+        await page.request.get(
+          `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+        )
+      ).json()
     ).data as Array<{ id: string; name: string }>;
     const campaign = campaigns.find((item) => item.name.includes("爱他美2026年8月"))!;
     expect(product).toBeTruthy();

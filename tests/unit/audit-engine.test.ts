@@ -61,6 +61,34 @@ const context: AuditContext = {
 };
 
 describe("audit engine", () => {
+  it.each(["passed", "failed"] as const)(
+    "平台发帖时间不会改变 %s 案例的审核结论和失败原因",
+    (caseName) => {
+      const note = createMockNote(caseName);
+      const withoutPublishedAt = evaluateAudit(
+        {
+          ...note,
+          publishedAt: null,
+          publishedAtRaw: null,
+          publishedAtSource: null,
+        },
+        context,
+      );
+      const withPublishedAt = evaluateAudit(note, context);
+      expect(withPublishedAt.autoStatus).toBe(withoutPublishedAt.autoStatus);
+      expect(withPublishedAt.failureReasons).toEqual(
+        withoutPublishedAt.failureReasons,
+      );
+    },
+  );
+
+  it("笔记不存在且没有发帖时间时不增加第二个失败原因", () => {
+    const note = createMockNote("not-found");
+    note.publishedAt = null;
+    const result = evaluateAudit(note, context);
+    expect(result.autoStatus).toBe("NOTE_NOT_FOUND");
+    expect(result.failureReasons).toEqual(["笔记不存在"]);
+  });
   it("抖音尚未配置业务规则时只保存采集结果并进入人工复核", () => {
     const result = evaluateAudit(
       { ...createMockNote("passed"), noteType: "VIDEO", adapterName: "playwright-douyin" },

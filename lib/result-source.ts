@@ -1,3 +1,5 @@
+import { formatShanghaiDateTime } from "@/lib/platform-published-at";
+
 export const contentChannels = ["XIAOHONGSHU", "DOUYIN"] as const;
 export const commercePlatforms = [
   "JD",
@@ -90,12 +92,5 @@ export function cleanSourceField(value: unknown) {
 }
 
 export function formatAuditTime(value: unknown) {
-  if (!value) return "—";
-  const date = new Date(String(value));
-  if (Number.isNaN(date.getTime())) return "—";
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hour = String(date.getHours()).padStart(2, "0");
-  const minute = String(date.getMinutes()).padStart(2, "0");
-  return `${month}月${day}日 ${hour}:${minute}`;
+  return formatShanghaiDateTime(value);
 }

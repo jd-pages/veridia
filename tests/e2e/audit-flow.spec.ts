@@ -122,7 +122,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     products.find((item) => item.name.includes("澳洲白金版")) ||
     products[0];
   expect(product).toBeTruthy();
-  const campaignsResponse = await page.request.get(`/api/campaigns?productId=${product.id}`);
+  const campaignsResponse = await page.request.get(
+    `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+  );
   const availableCampaigns = (await campaignsResponse.json()).data as Array<{
     id: string;
     name: string;
@@ -1516,9 +1518,14 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(linkFormat.unrecognized).toEqual(
     expect.arrayContaining([expect.objectContaining({ reason: "未识别到链接" })]),
   );
-  await page.request.post(`/api/automation/batches/${linkFormat.batchId}/control`, {
-    data: { action: "CANCEL" },
-  });
+ await page.request.post(`/api/automation/batches/${linkFormat.batchId}/control`, {
+   data: { action: "CANCEL" },
+ });
+  await waitForBatch(page, linkFormat.batchId, [
+    "CANCELLED",
+    "COMPLETED",
+    "COMPLETED_WITH_ERRORS",
+  ]);
   const linkBatch = (
     (await (await page.request.get("/api/automation/batches")).json()).data as Array<{
       id: string;

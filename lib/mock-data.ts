@@ -55,6 +55,8 @@ export function createMockNote(
     pageStatus: "NORMAL",
     authorName: "营养记录员小安",
     publishedAt: "2026-07-08T08:30:00.000Z",
+    publishedAtRaw: "2026-07-08 16:30:00",
+    publishedAtSource: "MOCK_PLATFORM",
     isPublic: true,
     extractedAt: new Date().toISOString(),
     adapterName: "mock-xhs",

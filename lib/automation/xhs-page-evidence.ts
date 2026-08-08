@@ -7,6 +7,11 @@ import type {
 } from "@/lib/types";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
+import {
+  parseStructuredPublishedAt,
+  parseXhsPublishedAtText,
+  type PlatformPublishedAtEvidence,
+} from "@/lib/platform-published-at";
 import { detectUnavailableXhsPage } from "./page-classification";
 
 export interface TextCandidate {
@@ -39,6 +44,7 @@ export interface XhsPageCandidates {
   bodyCandidates: TextCandidate[];
   topicCandidates: TopicCandidate[];
   imageCandidates: ImageCandidate[];
+  publishedAtCandidates: PlatformPublishedAtEvidence[];
   hasVideo: boolean;
   loginEvidence: string[];
   responseSummaries: ResponseSummary[];
@@ -243,6 +249,60 @@ function addImageCandidate(
   }
 }
 
+function addPublishedAtCandidate(
+  target: PlatformPublishedAtEvidence[],
+  candidate: PlatformPublishedAtEvidence | null,
+) {
+  if (!candidate) return;
+  if (
+    !target.some(
+      (item) =>
+        item.value === candidate.value &&
+        item.source === candidate.source &&
+        item.contentId === candidate.contentId,
+    )
+  ) {
+    target.push(candidate);
+  }
+}
+
+function structuredNoteId(record: Record<string, unknown>, path: string[]) {
+  const explicit = [record.note_id, record.noteId, record.target_note_id]
+    .map((value) => String(value ?? "").trim())
+    .find((value) => NOTE_ID_PATTERN.test(value));
+  if (explicit) return explicit;
+  const id = String(record.id ?? "").trim();
+  return NOTE_ID_PATTERN.test(id) && path.some((item) => /note|card|item/iu.test(item))
+    ? id
+    : null;
+}
+
+function addStructuredPublishedAtCandidates(
+  target: PlatformPublishedAtEvidence[],
+  record: Record<string, unknown>,
+  noteId: string | null,
+  source: string,
+) {
+  if (!noteId) return;
+  for (const key of [
+    "create_time",
+    "createTime",
+    "publish_time",
+    "publishTime",
+    "timestamp",
+    "time",
+  ]) {
+    addPublishedAtCandidate(
+      target,
+      parseStructuredPublishedAt(
+        record[key],
+        `${source}:${key}`,
+        noteId,
+      ),
+    );
+  }
+}
+
 export function createEmptyCandidates(): XhsPageCandidates {
   return {
     noteIdCandidates: [],
@@ -250,6 +310,7 @@ export function createEmptyCandidates(): XhsPageCandidates {
     bodyCandidates: [],
     topicCandidates: [],
     imageCandidates: [],
+    publishedAtCandidates: [],
     hasVideo: false,
     loginEvidence: [],
     responseSummaries: [],
@@ -332,6 +393,27 @@ export function collectJsonCandidates(
     }
 
     const record = value as Record<string, unknown>;
+    const recordNoteId = structuredNoteId(record, path);
+    addStructuredPublishedAtCandidates(
+      result.publishedAtCandidates,
+      record,
+      recordNoteId,
+      source,
+    );
+    const nestedNote = (record.note_card || record.noteCard) as
+      | Record<string, unknown>
+      | undefined;
+    if (nestedNote && typeof nestedNote === "object" && !Array.isArray(nestedNote)) {
+      addStructuredPublishedAtCandidates(
+        result.publishedAtCandidates,
+        nestedNote,
+        structuredNoteId(nestedNote, [...path, "note_card"]) ||
+          (typeof record.id === "string" && NOTE_ID_PATTERN.test(record.id)
+            ? record.id
+            : recordNoteId),
+        source,
+      );
+    }
     if (
       typeof record.id === "string" &&
       (record.note_card || record.noteCard) &&
@@ -404,6 +486,9 @@ export function mergeCandidates(...items: XhsPageCandidates[]) {
     }
     for (const candidate of item.imageCandidates) {
       addImageCandidate(merged.imageCandidates, candidate);
+    }
+    for (const candidate of item.publishedAtCandidates) {
+      addPublishedAtCandidate(merged.publishedAtCandidates, candidate);
     }
     merged.hasVideo ||= item.hasVideo;
     for (const evidence of item.loginEvidence) {
@@ -605,6 +690,52 @@ export async function collectDomPageSnapshot(
       ],
       "DOM",
     );
+
+    const mainNoteRoot = roots.find(visible) || null;
+    const publicationPattern = /^(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|昨天\s*\d{1,2}:\d{2}(?::\d{2})?|\d{1,4}天前|\d{1,6}小时前|\d{1,6}分钟前)(?:\s|$)/u;
+    const publicationNodes = mainNoteRoot
+      ? [
+          ...mainNoteRoot.querySelectorAll(
+            "[data-xhs-published-text],[data-testid='note-publish-time'],[data-testid*='publish-time'],time,[class*='publish-time'],[class*='publish-date'],[class*='note-time'],[class*='date']",
+          ),
+        ]
+      : [];
+    const descriptionElement = mainNoteRoot?.querySelector(
+      "#detail-desc,[data-testid='note-content'],[data-testid='note-desc'],[class*='note-desc'],[class*='note-content'] [class*='desc']",
+    );
+    const commentElement = mainNoteRoot?.querySelector(
+      "[data-testid*='comment'],[class*='comment']",
+    );
+    const publishedAtTextCandidates = publicationNodes
+      .filter((element) => {
+        if (!visible(element) || element.closest(excluded)) return false;
+        if (
+          descriptionElement &&
+          !(descriptionElement.compareDocumentPosition(element) &
+            Node.DOCUMENT_POSITION_FOLLOWING)
+        ) {
+          return false;
+        }
+        if (
+          commentElement &&
+          !(element.compareDocumentPosition(commentElement) &
+            Node.DOCUMENT_POSITION_FOLLOWING)
+        ) {
+          return false;
+        }
+        return publicationPattern.test((element.textContent || "").trim());
+      })
+      .map((element) => ({
+        raw: (element.textContent || "").replace(/\s+/gu, " ").trim(),
+        source: `DOM_MAIN_NOTE:${elementPath(element)}`,
+      }))
+      .filter(
+        (item, index, all) =>
+          all.findIndex(
+            (candidate) =>
+              candidate.raw === item.raw && candidate.source === item.source,
+          ) === index,
+      );
 
     for (const root of roots.filter(visible)) {
       const candidates = [...root.querySelectorAll("p,div,span")]
@@ -990,6 +1121,7 @@ export async function collectDomPageSnapshot(
       carouselTotal,
       loginEvidence,
       jsonPayloads,
+      publishedAtTextCandidates,
       keyElementCount: uniqueElements([
         "#detail-title",
         "#detail-desc",
@@ -1024,6 +1156,12 @@ export async function collectDomPageSnapshot(
   urlCandidates.noteIdCandidates = noteIdCandidatesFromUrls([
     snapshot.finalUrl,
   ]);
+  const currentNoteId = urlCandidates.noteIdCandidates[0]?.value || null;
+  const domPublishedAtCandidates = snapshot.publishedAtTextCandidates
+    .map((candidate) =>
+      parseXhsPublishedAtText(candidate.raw, candidate.source, currentNoteId),
+    )
+    .filter((candidate): candidate is PlatformPublishedAtEvidence => Boolean(candidate));
   const merged = mergeCandidates(
     urlCandidates,
     {
@@ -1032,6 +1170,7 @@ export async function collectDomPageSnapshot(
       bodyCandidates: snapshot.bodyCandidates,
       topicCandidates: snapshot.topicCandidates,
       imageCandidates: snapshot.imageCandidates,
+      publishedAtCandidates: domPublishedAtCandidates,
       hasVideo: snapshot.hasVideo,
       loginEvidence: snapshot.loginEvidence,
       responseSummaries: [],

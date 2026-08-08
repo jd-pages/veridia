@@ -28,6 +28,7 @@ describe("小红书自动取证候选解析", () => {
             {
               id: "6a5cb375000000000301c549",
               note_card: {
+                create_time: 1_786_071_651,
                 title: "奶粉体验记录",
                 desc: "正文内容 #新生儿奶粉 #爱他美新手爸妈日记",
                 tag_list: [
@@ -53,6 +54,34 @@ describe("小红书自动取证候选解析", () => {
     );
     expect(candidates.imageCandidates).toHaveLength(2);
     expect(candidates.imageCandidates[0]?.url).not.toContain("secret");
+    expect(candidates.publishedAtCandidates).toEqual([
+      expect.objectContaining({
+        contentId: "6a5cb375000000000301c549",
+        raw: expect.stringMatching(/^2026-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u),
+        source: "NETWORK_JSON:create_time",
+      }),
+    ]);
+  });
+
+  it("多个笔记结构化时间保持各自 noteId 关联，不会取第一条补位", () => {
+    const candidates = collectJsonCandidates({
+      items: [
+        {
+          id: "6a5cb375000000000301c541",
+          note_card: { create_time: 1_700_000_000 },
+        },
+        {
+          id: "6a5cb375000000000301c542",
+          note_card: { create_time: 1_786_071_651 },
+        },
+      ],
+    });
+    expect(
+      candidates.publishedAtCandidates.map((candidate) => candidate.contentId),
+    ).toEqual([
+      "6a5cb375000000000301c541",
+      "6a5cb375000000000301c542",
+    ]);
   });
 
   it("DOM 文本候选和可点击候选合并时优先保留可点击证据", () => {

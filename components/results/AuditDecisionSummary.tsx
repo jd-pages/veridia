@@ -11,6 +11,7 @@ import {
 import { isUnavailableNoteResult } from "@/lib/result-display";
 import { resultDetailLinks } from "@/lib/result-links";
 import { parseStoredStringArray } from "@/lib/stored-json";
+import { formatPlatformPublishedAt } from "@/lib/platform-published-at";
 import {
   commercePlatformLabel,
   contentChannelLabel,
@@ -186,6 +187,15 @@ export default function AuditDecisionSummary({
                 {orderNumber}
               </Typography.Text>
             )}
+          </div>
+          <div>
+            <span>发帖时间</span>
+            <strong>
+              {formatPlatformPublishedAt(
+                row.note.publishedAt,
+                row.note.publishedAtRaw,
+              )}
+            </strong>
           </div>
           <div>
             <span>实际审核时间</span>

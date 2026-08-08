@@ -419,6 +419,8 @@ model NoteRecord {
   body                  String?
   authorName            String?
   publishedAt           DateTime?
+  publishedAtRaw        String?
+  publishedAtSource     String?
   pageStatus            String             @default("NORMAL")
   isPublic              Boolean?
   noteType              String             @default("UNKNOWN")
