@@ -234,15 +234,17 @@ function command(executable, args, options = {}) {
     stdio: options.inherit ? "inherit" : "pipe",
   });
   if (result.error) throw result.error;
-  const stdout = (result.stdout || "").trim();
-  const stderr = (result.stderr || "").trim();
+  const stdoutRaw = result.stdout || "";
+  const stderrRaw = result.stderr || "";
+  const stdout = stdoutRaw.trim();
+  const stderr = stderrRaw.trim();
   if (result.status !== 0 && !options.allowFailure) {
     throw new SoftwarePublishError(
       "COMMAND_FAILED",
       `${executable} ${args.join(" ")} 执行失败（退出码 ${result.status ?? "未知"}）${stderr ? `：${stderr}` : ""}`,
     );
   }
-  return { status: result.status, stdout, stderr };
+  return { status: result.status, stdout, stderr, stdoutRaw, stderrRaw };
 }
 
 function git(args, options) {
@@ -481,10 +483,48 @@ function printPlan(plan, logger) {
   logger.line("");
 }
 
-function assertOnlyVersionFilesChanged() {
-  const changed = lines(
-    git(["-c", "core.quotepath=false", "status", "--short"]).stdout,
-  ).map((line) => line.slice(3));
+export function parseGitPorcelainPaths(value) {
+  const output = String(value || "");
+  if (!output) return [];
+  if (output.includes("\0")) {
+    const records = output.split("\0");
+    const paths = [];
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (!record) continue;
+      if (record.length < 4 || record[2] !== " ") {
+        throw new SoftwarePublishError(
+          "INVALID_GIT_STATUS",
+          `无法解析 Git porcelain 记录：${JSON.stringify(record)}`,
+        );
+      }
+      const status = record.slice(0, 2);
+      paths.push(record.slice(3));
+      if (/[RC]/u.test(status)) index += 1;
+    }
+    return paths;
+  }
+
+  return output
+    .split("\n")
+    .map((line) => line.endsWith("\r") ? line.slice(0, -1) : line)
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      if (line.length < 4 || line[2] !== " ") {
+        throw new SoftwarePublishError(
+          "INVALID_GIT_STATUS",
+          `无法解析 Git porcelain 行：${JSON.stringify(line)}`,
+        );
+      }
+      const status = line.slice(0, 2);
+      const payload = line.slice(3);
+      if (!/[RC]/u.test(status)) return payload;
+      const separator = payload.lastIndexOf(" -> ");
+      return separator >= 0 ? payload.slice(separator + 4) : payload;
+    });
+}
+
+export function assertOnlyVersionFiles(changed) {
   const allowed = new Set(["package.json", "package-lock.json"]);
   const unexpected = changed.filter((file) => !allowed.has(file));
   if (unexpected.length > 0) {
@@ -493,6 +533,17 @@ function assertOnlyVersionFilesChanged() {
       `发布验证产生了非版本文件修改：\n${unexpected.join("\n")}`,
     );
   }
+}
+
+function assertOnlyVersionFilesChanged() {
+  const result = git([
+    "-c",
+    "core.quotepath=false",
+    "status",
+    "--porcelain=v1",
+    "-z",
+  ]);
+  assertOnlyVersionFiles(parseGitPorcelainPaths(result.stdoutRaw));
 }
 
 function assertNoGoogleFontBuildDependency() {

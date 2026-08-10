@@ -12,6 +12,8 @@ export function formatSoftwarePublishFailure(
   error: unknown,
   logPath: string,
 ): string[];
+export function parseGitPorcelainPaths(value: string): string[];
+export function assertOnlyVersionFiles(changed: string[]): void;
 
 export interface SoftwarePublishPlanInput {
   dirty: boolean;

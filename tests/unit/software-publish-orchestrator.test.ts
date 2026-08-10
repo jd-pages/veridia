@@ -3,10 +3,12 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  assertOnlyVersionFiles,
   createSoftwarePublishPlan,
   executeSoftwarePublishPlan,
   formatSoftwarePublishFailure,
   nextPatchVersion,
+  parseGitPorcelainPaths,
   SoftwarePublishError,
 } from "../../scripts/software-publish-orchestrator.mjs";
 
@@ -173,5 +175,31 @@ describe("一键软件发布编排", () => {
     expect(output).toContain("- 创建Tag");
     expect(output).toContain("- 创建Release");
     expect(output).toContain("- 执行rules:publish");
+  });
+
+  it("完整保留 Git porcelain 路径且兼容状态、空格、rename、CRLF 与 NUL", () => {
+    expect(parseGitPorcelainPaths(" M package.json\r\n")).toEqual(["package.json"]);
+    expect(parseGitPorcelainPaths(" M package-lock.json\r\n")).toEqual(["package-lock.json"]);
+    expect(parseGitPorcelainPaths("M  package.json\nMM app/page.tsx\n?? unexpected.txt\n")).toEqual([
+      "package.json",
+      "app/page.tsx",
+      "unexpected.txt",
+    ]);
+    expect(parseGitPorcelainPaths("?? file with spaces.txt\nR  old name.txt -> new name.txt\n")).toEqual([
+      "file with spaces.txt",
+      "new name.txt",
+    ]);
+    expect(parseGitPorcelainPaths(" M package.json\0R  new name.txt\0old name.txt\0?? C:\\temp file.txt\0")).toEqual([
+      "package.json",
+      "new name.txt",
+      "C:\\temp file.txt",
+    ]);
+  });
+
+  it("版本白名单只允许真实版本源，业务源码修改仍会阻止发布", () => {
+    expect(() => assertOnlyVersionFiles(["package.json", "package-lock.json"])).not.toThrow();
+    expect(() => assertOnlyVersionFiles(["package.json", "app/page.tsx"])).toThrow(
+      "发布验证产生了非版本文件修改：\napp/page.tsx",
+    );
   });
 });
