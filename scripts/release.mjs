@@ -3,6 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import {
+  printValidation as printFullGateAttestationValidation,
+  validateFullGateAttestation,
+} from "./testing/full-gate-attestation.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bump = process.argv[2];
@@ -127,6 +131,29 @@ function repositoryUpdateUrl() {
 }
 
 try {
+  const allowLocalAttestationReuse =
+    process.env.VERIDIA_ALLOW_FULL_ATTESTATION_REUSE === "true";
+  let reuseFullGate = false;
+  if (allowLocalAttestationReuse) {
+    let validation = validateFullGateAttestation(root);
+    printFullGateAttestationValidation(validation);
+    if (!validation.valid) {
+      run("FULL验收凭证失效，重新执行完整门禁", "npm.cmd", [
+        "run",
+        "verify:full",
+      ]);
+      validation = validateFullGateAttestation(root);
+      if (!validation.valid) {
+        throw new Error(
+          `FULL 门禁执行后仍未生成有效凭证：${validation.reasons.join("；")}`,
+        );
+      }
+    }
+    reuseFullGate = true;
+    process.stdout.write(
+      "本次本地安装包验收复用当前 HEAD 的有效 FULL 门禁结果，跳过重复完整 E2E。\n",
+    );
+  }
   if (bump !== "current") {
     run("升级版本号", "npm.cmd", [
       "version",
@@ -137,37 +164,11 @@ try {
   const version = JSON.parse(fs.readFileSync(packagePath, "utf8")).version;
   if (bump !== "current") updateChangelog(version);
 
-  run("生成 Prisma Client", "npm.cmd", ["run", "db:generate"]);
-  run("检查 Prisma Client", "npm.cmd", ["run", "prisma:assert"]);
-  run("TypeScript检查", "npm.cmd", ["run", "typecheck"]);
-  run("ESLint", "npm.cmd", ["run", "lint"]);
-  run("单元测试", "npm.cmd", ["test"]);
-  run("桌面健康检查", "npm.cmd", ["run", "test:desktop-health"]);
-
-  const e2eDatabasePath = path.join(root, "prisma", "release-e2e.db");
-  const e2eNextDistDir = path.join(".playwright", "next-release");
-  fs.rmSync(e2eDatabasePath, { force: true });
-  fs.rmSync(path.join(root, e2eNextDistDir), {
-    recursive: true,
-    force: true,
-  });
-  const e2eEnv = {
-    DATABASE_URL: "file:./release-e2e.db",
-    E2E_DATABASE_URL: `file:${e2eDatabasePath}`,
-    AUTH_SECRET: "release-e2e-local-secret",
-    EXTENSION_TOKEN: "local-extension-demo-token",
-    AI_ENABLED: "false",
-    E2E_PORT: "3210",
-    E2E_REUSE_SERVER: "false",
-    VERIDIA_NEXT_DIST_DIR: e2eNextDistDir,
-    E2E_XHS_PROFILE_PATH: path.join(root, ".playwright", "xhs-release-profile"),
-    PLAYWRIGHT_BROWSER_CHANNEL: "",
-    RUST_LOG: "info",
-  };
-  run("端到端数据库迁移", "npm.cmd", ["run", "db:init-empty"], e2eEnv);
-  run("端到端测试数据初始化", "npm.cmd", ["run", "db:seed"], e2eEnv);
-  run("端到端测试", "npm.cmd", ["run", "test:e2e"], e2eEnv);
-  run("预发布Next构建", "npm.cmd", ["run", "build"]);
+  if (!reuseFullGate) {
+    run("正式FULL门禁", "npm.cmd", ["run", "verify:full"], {
+      VERIDIA_DISABLE_ATTESTATION_WRITE: "true",
+    });
+  }
   run("敏感信息扫描", "node", [
     path.join(root, "scripts", "sensitive-scan.mjs"),
   ]);

@@ -594,9 +594,29 @@ async function localPackage() {
     );
     return;
   }
-  run("node", [path.join(root, "scripts", "release.mjs"), releaseMode]);
-  run("node", [path.join(root, "scripts", "finalize-release.mjs"), "summary"]);
-  const version = packageInfo().version;
+  const temporaryVersionFiles = [
+    path.join(root, "package.json"),
+    path.join(root, "package-lock.json"),
+    path.join(root, "CHANGELOG.md"),
+  ];
+  const originalVersionFiles = new Map(
+    temporaryVersionFiles.map((file) => [file, fs.readFileSync(file)]),
+  );
+  let version;
+  try {
+    run("node", [path.join(root, "scripts", "release.mjs"), releaseMode], {
+      env: { VERIDIA_ALLOW_FULL_ATTESTATION_REUSE: "true" },
+    });
+    run("node", [path.join(root, "scripts", "finalize-release.mjs"), "summary"]);
+    version = packageInfo().version;
+  } finally {
+    for (const [file, content] of originalVersionFiles) {
+      fs.writeFileSync(file, content);
+    }
+  }
+  if (git(["status", "--porcelain"]).stdout) {
+    throw new Error("本地验收临时版本恢复后工作区不干净，已停止生成验收记录。");
+  }
   fs.mkdirSync(path.dirname(acceptancePath), { recursive: true });
   fs.writeFileSync(
     acceptancePath,

@@ -4,19 +4,14 @@ import { TextDecoder } from "node:util";
 import { describe, expect, it } from "vitest";
 
 describe("本地打包发布门禁", () => {
-  it("先确定候选版本，再完成全部检查，最后才构建安装包", () => {
+  it("正式发布复用统一 FULL 门禁，最后才构建安装包", () => {
     const source = fs.readFileSync(
       path.resolve(process.cwd(), "scripts", "release.mjs"),
       "utf8",
     );
     const steps = [
       'run("升级版本号"',
-      'run("生成 Prisma Client"',
-      'run("检查 Prisma Client"',
-      'run("TypeScript检查"',
-      'run("ESLint"',
-      'run("单元测试"',
-      'run("桌面健康检查"',
+      'run("正式FULL门禁"',
       'run("准备并检查 Electron 运行文件"',
       '"构建Windows安装包"',
     ];
@@ -37,18 +32,16 @@ describe("本地打包发布门禁", () => {
     expect(source).not.toContain("action-gh-release");
   });
 
-  it("本地打包验收为 E2E 使用独立且重置后的 Next.js 构建目录", () => {
+  it("本地打包验收只在严格凭证有效时跳过重复 FULL", () => {
     const source = fs.readFileSync(
       path.resolve(process.cwd(), "scripts", "release.mjs"),
       "utf8",
     );
 
-    expect(source).toContain(
-      'const e2eNextDistDir = path.join(".playwright", "next-release")',
-    );
-    expect(source).toContain("fs.rmSync(path.join(root, e2eNextDistDir)");
-    expect(source).toContain("VERIDIA_NEXT_DIST_DIR: e2eNextDistDir");
-    expect(source).toContain('E2E_REUSE_SERVER: "false"');
+    expect(source).toContain("validateFullGateAttestation(root)");
+    expect(source).toContain("FULL验收凭证失效，重新执行完整门禁");
+    expect(source).toContain('run("正式FULL门禁"');
+    expect(source).toContain('VERIDIA_DISABLE_ATTESTATION_WRITE: "true"');
   });
 
   it("云端发布安装完整开发依赖并在打包前检查 Electron 运行文件", () => {

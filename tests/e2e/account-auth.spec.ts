@@ -6,11 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const privateKeyPath = path.join(
-  os.tmpdir(),
-  "veridia-e2e-account-signing",
-  "private.pem",
-);
+const privateKeyPath =
+  process.env.VERIDIA_ACCOUNT_SIGNING_PRIVATE_KEY_PATH ||
+  path.join(os.tmpdir(), "veridia-e2e-account-signing", "private.pem");
 
 function signedCode(payload: Record<string, unknown>) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");

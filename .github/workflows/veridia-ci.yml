@@ -2,11 +2,9 @@ name: VERIDIA 代码检查
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
 
 concurrency:
   group: veridia-ci-${{ github.ref }}
@@ -14,22 +12,21 @@ concurrency:
 
 jobs:
   verify:
-    name: 检查与测试
+    name: 分层验证门禁
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
-      DATABASE_URL: file:./release-e2e.db
       AUTH_SECRET: ci-only-auth-secret
       EXTENSION_TOKEN: local-extension-demo-token
       AI_ENABLED: "false"
       PLAYWRIGHT_BROWSER_CHANNEL: ""
-      E2E_PORT: "3100"
-      E2E_REUSE_SERVER: "false"
       RUST_LOG: info
 
     steps:
       - name: 检出源码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 配置 Node.js
         uses: actions/setup-node@v4
@@ -40,48 +37,34 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      - name: 复用不可变测试基础设施缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/ms-playwright
+            .playwright/e2e-template
+            .playwright/next-e2e
+            .next/cache
+          key: ${{ runner.os }}-veridia-test-${{ hashFiles('package-lock.json', 'playwright.config.ts', 'prisma/schema.prisma', 'prisma/migrations/**', 'tests/e2e/setup-database.ts', 'scripts/testing/**') }}
+
       - name: 安装端到端测试浏览器
         run: npx playwright install chromium
 
-      - name: 创建隔离测试目录
+      - name: 创建日志目录
         shell: pwsh
-        run: New-Item -ItemType Directory -Force -Path .ci, artifacts/ci-logs | Out-Null
+        run: New-Item -ItemType Directory -Force -Path artifacts/ci-logs | Out-Null
 
-      - name: 生成并检查 Prisma Client
+      - name: Pull Request 回归门禁
+        if: github.event_name == 'pull_request'
         shell: pwsh
-        run: |
-          npm run db:generate *>&1 | Tee-Object artifacts/ci-logs/prisma-generate.log
-          npm run prisma:assert *>&1 | Tee-Object -Append artifacts/ci-logs/prisma-generate.log
+        run: npm run verify:regression *>&1 | Tee-Object artifacts/ci-logs/verify-regression.log
 
-      - name: TypeScript 检查
+      - name: main 正式 FULL 门禁
+        if: github.event_name == 'push'
         shell: pwsh
-        run: npm run typecheck *>&1 | Tee-Object artifacts/ci-logs/typecheck.log
-
-      - name: ESLint
-        shell: pwsh
-        run: npm run lint *>&1 | Tee-Object artifacts/ci-logs/eslint.log
-
-      - name: 单元测试
-        shell: pwsh
-        run: npm test *>&1 | Tee-Object artifacts/ci-logs/unit-tests.log
-
-      - name: 桌面健康检查
-        shell: pwsh
-        run: npm run test:desktop-health *>&1 | Tee-Object artifacts/ci-logs/desktop-health.log
-
-      - name: 初始化隔离数据库
-        shell: pwsh
-        run: |
-          npm run db:init-empty *>&1 | Tee-Object artifacts/ci-logs/database.log
-          npm run db:seed *>&1 | Tee-Object -Append artifacts/ci-logs/database.log
-
-      - name: 端到端测试
-        shell: pwsh
-        run: npm run test:e2e *>&1 | Tee-Object artifacts/ci-logs/e2e.log
-
-      - name: Next.js 生产构建
-        shell: pwsh
-        run: npm run build *>&1 | Tee-Object artifacts/ci-logs/next-build.log
+        env:
+          VERIDIA_DISABLE_ATTESTATION_WRITE: "true"
+        run: npm run verify:full *>&1 | Tee-Object artifacts/ci-logs/verify-full.log
 
       - name: 上传检查日志
         if: always()

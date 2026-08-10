@@ -56,7 +56,7 @@ export default defineConfig({
       ? undefined
       : "**/*.stress.spec.ts",
   fullyParallel: false,
-  workers: 1,
+  workers: Number(process.env.E2E_WORKERS || 1),
   timeout: 45_000,
   expect: { timeout: 10_000 },
   reporter: [["list"], ["html", { open: "never" }]],
