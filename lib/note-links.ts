@@ -59,7 +59,7 @@ function classifyDouyinUrl(url: URL) {
   if (
     process.env.NODE_ENV !== "production" &&
     ["localhost", "127.0.0.1"].includes(hostname) &&
-    url.pathname === "/mock/douyin"
+    url.pathname.startsWith("/mock/douyin")
   ) {
     return { type: "LONG" as const, supported: true, reason: null };
   }

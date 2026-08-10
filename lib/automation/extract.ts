@@ -32,6 +32,10 @@ import {
 } from "./page-classification";
 import { playwrightAdapters } from "./adapters";
 import {
+  assertPlatformRouting,
+  resolveTaskAutomationPlatform,
+} from "./platform";
+import {
   collectDomPageSnapshot,
   createEmptyCandidates,
   createXhsResponseCollector,
@@ -303,6 +307,13 @@ function logPageIdentity(task: AuditTask, identity: PageIdentity) {
 export async function extractAuditTaskAutomatically(
   task: AuditTask,
 ): Promise<AutomaticExtractionOutcome> {
+  assertPlatformRouting({
+    taskPlatform: resolveTaskAutomationPlatform(task),
+    activePlatform: "XIAOHONGSHU",
+    browserPlatform: "XIAOHONGSHU",
+    adapterPlatform: "XIAOHONGSHU",
+    classifierPlatform: "XIAOHONGSHU",
+  });
   const mock = isMockUrl(task.url);
   if (!mock) {
     const session = await getAutomationSession();

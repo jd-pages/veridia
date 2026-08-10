@@ -11,6 +11,7 @@ import { prisma } from "@/lib/db";
 import packageJson from "@/package.json";
 import { classifyAutomaticPage } from "./page-classification";
 import {
+  controlledPageCount,
   createAuditPage,
   launchWindowsHiddenChromium,
 } from "./windows-hidden-chromium";
@@ -30,6 +31,10 @@ const PROFILE_DIRECTORY = path.resolve(
   /* turbopackIgnore: true */
   process.env.XHS_PROFILE_PATH || DEFAULT_PROFILE_DIRECTORY,
 );
+
+export function getXhsAutomationProfilePath() {
+  return PROFILE_DIRECTORY;
+}
 
 export type XhsSessionState =
   | "LOGGED_IN"
@@ -546,7 +551,7 @@ export async function getXhsAuditPageDiagnostics() {
     browserInstanceCount: state.context ? 1 : 0,
     browserProcessId: state.browserProcessId ?? null,
     reusedBrowserProcess: state.reusedBrowserProcess ?? false,
-    pageCount: state.context?.pages().filter((item) => !item.isClosed()).length || 0,
+    pageCount: controlledPageCount(state.context),
     auditPageOpen: Boolean(page),
     auditPageCreateCount: state.auditPageCreateCount,
     auditPageReuseCount: state.auditPageReuseCount,

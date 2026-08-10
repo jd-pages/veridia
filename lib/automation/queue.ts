@@ -11,6 +11,7 @@ import { jitteredDelay } from "./pacing";
 import { completedAuditBatchUpdate } from "./task-lifecycle";
 import { automationRuntime } from "./platform-runtime";
 import {
+  assertPlatformRouting,
   automationPlatformLabels,
   parseAutomationPlatform,
   resolveTaskAutomationPlatform,
@@ -273,6 +274,27 @@ async function processBatch(batchId: string) {
     let sessionFailureCode = "";
     let extraction: Awaited<ReturnType<typeof runtime.extract>> | null = null;
     try {
+      const taskPlatform = resolveTaskAutomationPlatform(processingTask);
+      assertPlatformRouting({
+        taskPlatform,
+        activePlatform: platform,
+        browserPlatform: runtime.browserPlatform,
+        adapterPlatform: runtime.adapterPlatform,
+        classifierPlatform: runtime.classifierPlatform,
+      });
+      console.info("[自动审核] 平台路由已确认", JSON.stringify({
+        batchId,
+        taskId: processingTask.id,
+        taskChannel: processingTask.channel,
+        taskPlatform,
+        activePlatform: platform,
+        browserSessionType: runtime.browserSessionType,
+        profilePath: runtime.profilePath(),
+        adapterName: runtime.adapterName,
+        adapterPlatform: runtime.adapterPlatform,
+        classifierName: runtime.classifierName,
+        classifierPlatform: runtime.classifierPlatform,
+      }));
       let currentTask = processingTask;
       for (let retry = 0; ; retry += 1) {
         const extractionStartedAt = Date.now();

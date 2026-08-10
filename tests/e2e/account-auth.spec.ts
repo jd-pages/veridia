@@ -152,7 +152,7 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
   // This scenario cold-loads several protected pages and API routes in the
   // Next.js dev server. Windows CI can legitimately exceed the global 45s
   // timeout while compiling those routes, even though each assertion passes.
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
 
   const account = activationCode({
     username: `compact_ui_${Date.now()}`,
@@ -178,7 +178,7 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
   await page.getByLabel("用户名").fill(account.username);
   await page.getByLabel("密码").fill(account.password);
   await page.locator('button[type="submit"]').click();
-  await expect(page).toHaveURL(/\/dashboard$/u);
+  await expect(page).toHaveURL(/\/dashboard$/u, { timeout: 30_000 });
 
   await page.reload();
   await expect(page).toHaveURL(/\/dashboard$/u);

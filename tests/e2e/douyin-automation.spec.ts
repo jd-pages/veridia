@@ -21,6 +21,30 @@ async function waitForTerminalBatch(page: Page, batchId: string) {
   );
 }
 
+async function createDouyinBatchForUrl(page: Page, url: string) {
+  const products = (await (
+    await page.request.get("/api/products")
+  ).json()).data as Array<{ id: string; brandName: string }>;
+  const product = products.find((item) => item.brandName === "达能") || products[0];
+  const campaigns = (await (
+    await page.request.get(
+      `/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`,
+    )
+  ).json()).data as Array<{ id: string }>;
+  const response = await page.request.post("/api/automation/batches", {
+    data: {
+      contentChannel: "DOUYIN",
+      productId: product.id,
+      campaignId: campaigns[0].id,
+      productStage: "IFFO_P1",
+      urls: [url],
+    },
+  });
+  const payload = await response.json();
+  expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
+  return payload.data.batchId as string;
+}
+
 test("审核任务页提供相互隔离的小红书与抖音环境入口", async ({ page }) => {
   await login(page);
   await page.goto("/mock/douyin?case=topics");
@@ -50,6 +74,60 @@ test("审核任务页提供相互隔离的小红书与抖音环境入口", async
   expect(xhs.platform).toBe("XIAOHONGSHU");
   expect(douyin.platform).toBe("DOUYIN");
   expect(xhs.profilePath).not.toBe(douyin.profilePath);
+});
+
+test("未登录但公开可访问的抖音作品保持 NORMAL 并继续提取", async ({ page }) => {
+  await login(page);
+  const batchId = await createDouyinBatchForUrl(
+    page,
+    `${E2E_ORIGIN}/mock/douyin?case=public-logged-out&dy=${Date.now()}`,
+  );
+  await waitForTerminalBatch(page, batchId);
+  const batch = (await (
+    await page.request.get(`/api/automation/batches?batchId=${batchId}`)
+  ).json()).data[0];
+  expect(batch.channel).toBe("DOUYIN");
+  expect(batch.tasks[0].failureCode || "").not.toMatch(
+    /LOGIN|PAGE_OPEN_FAILED|NETWORK_ERROR/u,
+  );
+  const result = (await (
+    await page.request.get(`/api/results?batchId=${batchId}&pageSize=10`)
+  ).json()).data.items[0];
+  expect(result).toMatchObject({
+    pageStatus: "NORMAL",
+    publicStatus: "NOT_REQUIRED",
+  });
+  expect(result.effectiveBodyLength).toBeGreaterThan(0);
+  expect(
+    (await page.request.post(`/api/automation/batches/${batchId}/clear`)).ok(),
+  ).toBeTruthy();
+});
+
+test("page.goto 超时但抖音作品 DOM 已出现时继续提取", async ({ page }) => {
+  await login(page);
+  const batchId = await createDouyinBatchForUrl(
+    page,
+    `${E2E_ORIGIN}/mock/douyin/stream-timeout?dy=${Date.now()}`,
+  );
+  await waitForTerminalBatch(page, batchId);
+  const batch = (await (
+    await page.request.get(`/api/automation/batches?batchId=${batchId}`)
+  ).json()).data[0];
+  expect(batch.tasks[0].failureCode || "").not.toMatch(
+    /LOAD_TIMEOUT|PAGE_OPEN_FAILED|NETWORK_ERROR/u,
+  );
+  const result = (await (
+    await page.request.get(`/api/results?batchId=${batchId}&pageSize=10`)
+  ).json()).data.items[0];
+  expect(result).toMatchObject({
+    pageStatus: "NORMAL",
+    noteType: "IMAGE_TEXT",
+    imageCount: 2,
+    publicStatus: "NOT_REQUIRED",
+  });
+  expect(
+    (await page.request.post(`/api/automation/batches/${batchId}/clear`)).ok(),
+  ).toBeTruthy();
 });
 
 test("规则与活动管理按内容渠道展示独立抖音副本", async ({ page }) => {
@@ -786,6 +864,18 @@ test("抖音临时网络错误最多重试两次且不创建新页面", async ({
     failureCode: "NETWORK_ERROR",
     attempts: 3,
   });
+  expect(payload.data[0].tasks[0].failureMessage).toContain(
+    "抖音作品页面打开失败",
+  );
+  const failedResult = (await (
+    await page.request.get(`/api/results?batchId=${batchId}&pageSize=10`)
+  ).json()).data.items[0];
+  expect(JSON.parse(failedResult.failureReasons)).toContain(
+    "抖音作品页面打开失败，需人工确认",
+  );
+  expect(JSON.parse(failedResult.failureReasons).join("；")).not.toContain(
+    "小红书页面打开失败",
+  );
   const after = (await (await page.request.get("/api/automation/session?platform=DOUYIN")).json()).data;
   expect(after.auditPageCreateCount).toBe(before.auditPageCreateCount);
   expect(after.pageCount).toBeLessThanOrEqual(2);

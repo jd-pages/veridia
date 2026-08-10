@@ -1,7 +1,7 @@
 import "server-only";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { Browser, BrowserContext, BrowserType } from "playwright";
 
@@ -15,7 +15,7 @@ type HiddenChromiumConnection = {
   reusedProcess: boolean;
   executablePath: string;
   browserVersion: string;
-  remoteDebuggingMode: "port";
+  remoteDebuggingMode: "port" | "playwright";
   remoteDebuggingPolicy: "ALLOWED" | "BLOCKED" | "NOT_CONFIGURED";
   close: () => Promise<void>;
 };
@@ -178,6 +178,7 @@ export async function launchWindowsHiddenChromium(
     };
   }
 
+  await mkdir(profilePath, { recursive: true });
   await rm(path.join(profilePath, DEVTOOLS_ACTIVE_PORT), { force: true }).catch(
     () => undefined,
   );
@@ -207,10 +208,55 @@ export async function launchWindowsHiddenChromium(
     profilePath,
     child,
     () => stderr.trim(),
-  ).catch((error) => {
+  ).catch(async (directLaunchError) => {
     if (child.exitCode === null) child.kill();
-    throw error;
+    await rm(path.join(profilePath, DEVTOOLS_ACTIVE_PORT), { force: true })
+      .catch(() => undefined);
+    try {
+      const context = await chromium.launchPersistentContext(profilePath, {
+        headless: false,
+        executablePath: executable,
+        args: ["--start-minimized"],
+        locale: "zh-CN",
+        timezoneId: "Asia/Shanghai",
+        viewport: { width: 1440, height: 960 },
+      });
+      const fallbackBrowser = context.browser();
+      if (!fallbackBrowser) {
+        await context.close().catch(() => undefined);
+        throw new Error("Playwright Persistent Context 未返回 Browser");
+      }
+      return {
+        fallback: true as const,
+        browser: fallbackBrowser,
+        context,
+        directLaunchError,
+      };
+    } catch (fallbackError) {
+      const directMessage = directLaunchError instanceof Error
+        ? directLaunchError.message
+        : String(directLaunchError);
+      const fallbackMessage = fallbackError instanceof Error
+        ? fallbackError.message
+        : String(fallbackError);
+      throw new Error(
+        `Chromium 直接启动与 Playwright 回退均失败：${directMessage}；${fallbackMessage}`,
+      );
+    }
   });
+  if ("fallback" in browser) {
+    return {
+      browser: browser.browser,
+      context: browser.context,
+      processId: null,
+      reusedProcess: false,
+      executablePath: executable,
+      browserVersion: browser.browser.version(),
+      remoteDebuggingMode: "playwright",
+      remoteDebuggingPolicy: policy,
+      close: () => browser.context.close(),
+    };
+  }
   const context = browser.contexts()[0];
   if (!context) {
     await closeBrowser(browser, child);
@@ -239,4 +285,13 @@ export async function launchWindowsHiddenChromium(
 
 export async function createAuditPage(context: BrowserContext) {
   return context.newPage();
+}
+
+export function controlledPageCount(context: BrowserContext | undefined) {
+  return (
+    context
+      ?.pages()
+      .filter((page) => !page.isClosed() && page.url() !== "about:blank")
+      .length || 0
+  );
 }

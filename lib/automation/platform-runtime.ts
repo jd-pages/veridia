@@ -8,6 +8,7 @@ import { extractDouyinAuditTaskAutomatically } from "./douyin-extract";
 import {
   clearXhsAuditLockForBatch,
   ensureXhsBrowserControlReady,
+  getXhsAutomationProfilePath,
   heartbeatXhsAuditLock,
   markXhsSessionIssue,
   updateXhsAuditLock,
@@ -15,6 +16,7 @@ import {
 import {
   clearDouyinAuditLockForBatch,
   ensureDouyinBrowserControlReady,
+  getDouyinAutomationProfilePath,
   heartbeatDouyinAuditLock,
   markDouyinSessionIssue,
   updateDouyinAuditLock,
@@ -24,6 +26,13 @@ import { getAutomationPacingSettings } from "./pacing";
 export interface PlatformAutomationRuntime {
   platform: AutomationPlatform;
   sessionId: string;
+  browserSessionType: "XHS_PERSISTENT_CONTEXT" | "DOUYIN_PERSISTENT_CONTEXT";
+  browserPlatform: AutomationPlatform;
+  adapterName: "playwright-xiaohongshu" | "playwright-douyin";
+  adapterPlatform: AutomationPlatform;
+  classifierName: "classifyAutomaticPage" | "classifyDouyinPage";
+  classifierPlatform: AutomationPlatform;
+  profilePath: () => string;
   extract: (task: AuditTask) => Promise<AutomaticExtractionOutcome>;
   pacing: () => ReturnType<typeof getAutomationPacingSettings>;
   ensureBrowserReady: () => Promise<unknown>;
@@ -40,6 +49,13 @@ const runtimeRegistry: Record<
   DOUYIN: () => ({
       platform: "DOUYIN",
       sessionId: "douyin",
+      browserSessionType: "DOUYIN_PERSISTENT_CONTEXT",
+      browserPlatform: "DOUYIN",
+      adapterName: "playwright-douyin",
+      adapterPlatform: "DOUYIN",
+      classifierName: "classifyDouyinPage",
+      classifierPlatform: "DOUYIN",
+      profilePath: () => getDouyinAutomationProfilePath(),
       extract: (task: AuditTask) => extractDouyinAuditTaskAutomatically(task),
       pacing: () => getAutomationPacingSettings("DOUYIN"),
       ensureBrowserReady: () => ensureDouyinBrowserControlReady(),
@@ -51,6 +67,13 @@ const runtimeRegistry: Record<
   XIAOHONGSHU: () => ({
     platform: "XIAOHONGSHU",
     sessionId: "xiaohongshu",
+    browserSessionType: "XHS_PERSISTENT_CONTEXT",
+    browserPlatform: "XIAOHONGSHU",
+    adapterName: "playwright-xiaohongshu",
+    adapterPlatform: "XIAOHONGSHU",
+    classifierName: "classifyAutomaticPage",
+    classifierPlatform: "XIAOHONGSHU",
+    profilePath: () => getXhsAutomationProfilePath(),
     extract: (task: AuditTask) => extractAuditTaskAutomatically(task),
     pacing: () => getAutomationPacingSettings("XIAOHONGSHU"),
     ensureBrowserReady: () => ensureXhsBrowserControlReady(true),

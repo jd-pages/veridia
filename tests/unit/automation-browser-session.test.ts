@@ -31,6 +31,7 @@ describe("小红书持久会话与访问节奏", () => {
     expect(hiddenChromium).not.toContain("hidden: true");
     expect(hiddenChromium).toContain("return context.newPage()");
     expect(hiddenChromium).toContain('"--remote-debugging-port=0"');
+    expect(hiddenChromium).toContain('page.url() !== "about:blank"');
     expect(browser).not.toContain("PW_CHROMIUM_ATTACH_TO_OTHER");
     expect(source("playwright.config.ts")).not.toContain(
       "PW_CHROMIUM_ATTACH_TO_OTHER",
@@ -137,6 +138,12 @@ describe("抖音独立持久会话与后台审核页", () => {
     expect(browser.match(/launchPersistentContext\(/gu)).toHaveLength(1);
     expect(browser).toContain('"douyin-profile"');
     expect(browser).toContain("DOUYIN_PROFILE_PATH");
+    expect(source("desktop/main.cjs")).toContain(
+      "DOUYIN_PROFILE_PATH: directories.douyinSessions",
+    );
+    expect(source("desktop/main.cjs")).not.toContain(
+      'path.join(directories.sessions, "douyin-profile")',
+    );
     expect(browser).toContain("auditPage?: Page");
     expect(browser).toContain("auditPagePromise?: Promise<Page>");
     expect(browser).toContain("createAuditPage(context)");

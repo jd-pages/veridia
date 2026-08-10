@@ -48,7 +48,7 @@ async function waitForBatch(
 }
 
 test("本地账号登录、创建任务、审核、详情、Excel 与插件提交链路", async ({ page }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   await page.goto("/login");
   await page.getByLabel("用户名").fill("admin");
   await page.getByLabel("密码").fill("Admin123!");

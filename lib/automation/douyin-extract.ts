@@ -1,25 +1,52 @@
 import "server-only";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import type { AuditTask } from "@prisma/client";
 import type { Frame, Page, Request, Response } from "playwright";
 import { prisma } from "@/lib/db";
 import { AutomaticExtractionError, toAutomaticExtractionError } from "./failure";
 import type { AutomaticFailureCode } from "./failure";
 import type { AutomaticExtractionOutcome } from "./extract";
-import { getDouyinAuditPage, showDouyinManualIntervention } from "./douyin-browser";
+import {
+  getDouyinAuditPage,
+  getDouyinAutomationProfilePath,
+  showDouyinManualIntervention,
+} from "./douyin-browser";
 import {
   douyinContentIdentityFromUrl,
   isDouyinShortUrl,
   readDouyinPageIdentity,
   safeDouyinDiagnosticUrl,
+  toWellFormedBrowserText,
 } from "./douyin-page-classification";
 import {
   findDouyinAwemeItem,
   playwrightDouyinAdapter,
   type DouyinStructuredEvidence,
 } from "./douyin-adapter";
+import {
+  assertPlatformRouting,
+  resolveTaskAutomationPlatform,
+} from "./platform";
 
 function uniqueValues(values: string[]) {
-  return [...new Set(values.filter(Boolean))];
+  return [
+    ...new Set(values.filter(Boolean).map(toWellFormedBrowserText)),
+  ];
+}
+
+function sanitizeDouyinBrowserValue(value: unknown): unknown {
+  if (typeof value === "string") return toWellFormedBrowserText(value);
+  if (Array.isArray(value)) return value.map(sanitizeDouyinBrowserValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        sanitizeDouyinBrowserValue(item),
+      ]),
+    );
+  }
+  return value;
 }
 
 function appendRequestChain(request: Request, redirectChain: string[]) {
@@ -37,6 +64,7 @@ function createDouyinResponseCollector(
   redirectChain: string[],
 ) {
   const payloads: Array<Promise<{ payload: unknown; responseUrl: string } | null>> = [];
+  const mainDocuments: Array<{ url: string; status: number }> = [];
   const onResponse = (response: Response) => {
     if (
       response.request().resourceType() === "document" &&
@@ -44,6 +72,7 @@ function createDouyinResponseCollector(
     ) {
       appendRequestChain(response.request(), redirectChain);
       redirectChain.push(response.url());
+      mainDocuments.push({ url: response.url(), status: response.status() });
     }
     if (
       /(?:\/aweme\/v1\/web\/aweme\/(?:post|detail)\/?|aweme_detail)/iu.test(
@@ -60,6 +89,7 @@ function createDouyinResponseCollector(
   page.on("response", onResponse);
 
   return {
+    mainDocuments,
     async waitFor(contentId: string, timeoutMs: number): Promise<DouyinStructuredEvidence | null> {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
@@ -84,6 +114,84 @@ function createDouyinResponseCollector(
       page.off("response", onResponse);
     },
   };
+}
+
+type DouyinNavigationAttempt = {
+  url: string;
+  ok: boolean;
+  status: number | null;
+  responseUrl: string | null;
+  durationMs: number;
+  timedOut: boolean;
+  errorName: string | null;
+  errorMessage: string | null;
+};
+
+async function navigateDouyinPage(
+  page: Page,
+  url: string,
+  timeout: number,
+  redirectChain: string[],
+) {
+  const startedAt = Date.now();
+  try {
+    const response = await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout,
+    });
+    if (response) {
+      appendRequestChain(response.request(), redirectChain);
+      redirectChain.push(response.url());
+    }
+    return {
+      response,
+      attempt: {
+        url: safeDouyinDiagnosticUrl(url),
+        ok: true,
+        status: response?.status() ?? null,
+        responseUrl: response ? safeDouyinDiagnosticUrl(response.url()) : null,
+        durationMs: Date.now() - startedAt,
+        timedOut: false,
+        errorName: null,
+        errorMessage: null,
+      } satisfies DouyinNavigationAttempt,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      response: null,
+      attempt: {
+        url: safeDouyinDiagnosticUrl(url),
+        ok: false,
+        status: null,
+        responseUrl: null,
+        durationMs: Date.now() - startedAt,
+        timedOut: /timeout/iu.test(message),
+        errorName: error instanceof Error ? error.name : null,
+        errorMessage: message.slice(0, 1_000),
+      } satisfies DouyinNavigationAttempt,
+    };
+  }
+}
+
+async function captureDouyinFailureScreenshot(page: Page, task: AuditTask) {
+  const evidenceDirectory = process.env.AUTOMATION_EVIDENCE_PATH
+    ? path.resolve(process.env.AUTOMATION_EVIDENCE_PATH)
+    : path.join(
+        /* turbopackIgnore: true */ process.cwd(),
+        ".playwright",
+        "evidence",
+      );
+  await mkdir(evidenceDirectory, { recursive: true });
+  const screenshotPath = path.join(
+    evidenceDirectory,
+    `${task.id}-douyin-attempt-${task.attempts}-${Date.now()}.png`,
+  );
+  const saved = await page
+    .screenshot({ path: screenshotPath, fullPage: false, timeout: 5_000 })
+    .then(() => true)
+    .catch(() => false);
+  return saved ? screenshotPath : null;
 }
 
 function lastContentIdentity(values: string[]) {
@@ -122,12 +230,16 @@ async function saveDouyinPageMetadata(input: {
     where: { id: input.taskId },
     data: {
       finalUrl: input.finalUrl,
-      pageTitle: input.pageTitle,
+      pageTitle: input.pageTitle
+        ? toWellFormedBrowserText(input.pageTitle)
+        : null,
       pageType: input.pageType,
       redirectChain: JSON.stringify(uniqueValues(input.redirectChain)),
       failureEvidence: input.evidence === undefined
         ? undefined
-        : input.evidence ? JSON.stringify(input.evidence) : null,
+        : input.evidence
+          ? JSON.stringify(sanitizeDouyinBrowserValue(input.evidence))
+          : null,
     },
   });
 }
@@ -135,6 +247,13 @@ async function saveDouyinPageMetadata(input: {
 export async function extractDouyinAuditTaskAutomatically(
   task: AuditTask,
 ): Promise<AutomaticExtractionOutcome> {
+  assertPlatformRouting({
+    taskPlatform: resolveTaskAutomationPlatform(task),
+    activePlatform: "DOUYIN",
+    browserPlatform: "DOUYIN",
+    adapterPlatform: playwrightDouyinAdapter.platform,
+    classifierPlatform: "DOUYIN",
+  });
   const page = await getDouyinAuditPage({ taskId: task.id, url: task.url });
   const redirectChain: string[] = [task.url];
   const onFrame = (frame: Frame) => {
@@ -150,12 +269,14 @@ export async function extractDouyinAuditTaskAutomatically(
   let pageType: string | null = isDouyinShortUrl(task.url) ? "SHORT_LINK" : null;
   let httpStatus: number | null = null;
   let structured: DouyinStructuredEvidence | null = null;
+  const navigationAttempts: DouyinNavigationAttempt[] = [];
+  let identitySnapshot: Awaited<ReturnType<typeof readDouyinPageIdentity>> | null = null;
 
   try {
     const mockUrl = (() => {
       try {
         const url = new URL(task.url);
-        return ["localhost", "127.0.0.1"].includes(url.hostname) && url.pathname === "/mock/douyin"
+        return ["localhost", "127.0.0.1"].includes(url.hostname) && url.pathname.startsWith("/mock/douyin")
           ? url
           : null;
       } catch {
@@ -170,15 +291,24 @@ export async function extractDouyinAuditTaskAutomatically(
     }
 
     const mock = Boolean(mockUrl);
-    let response = await page.goto(task.url, {
-      waitUntil: "domcontentloaded",
-      timeout: mock ? 15_000 : 45_000,
-    });
+    const navigationTimeout = Math.max(
+      500,
+      Number(
+        process.env.DOUYIN_NAVIGATION_TIMEOUT_MS ||
+          (mockUrl?.pathname.endsWith("/stream-timeout")
+            ? 500
+            : mock ? 15_000 : 45_000),
+      ),
+    );
+    let navigation = await navigateDouyinPage(
+      page,
+      task.url,
+      navigationTimeout,
+      redirectChain,
+    );
+    navigationAttempts.push(navigation.attempt);
+    let response = navigation.response;
     httpStatus = response?.status() ?? null;
-    if (response) {
-      appendRequestChain(response.request(), redirectChain);
-      redirectChain.push(response.url());
-    }
 
     let contentIdentity = lastContentIdentity([
       task.url,
@@ -190,19 +320,20 @@ export async function extractDouyinAuditTaskAutomatically(
       canonicalUrl = contentIdentity.canonicalUrl;
       const currentIdentity = douyinContentIdentityFromUrl(page.url());
       if (!currentIdentity || currentIdentity.contentId !== contentIdentity.contentId) {
-        response = await page.goto(canonicalUrl, {
-          waitUntil: "domcontentloaded",
-          timeout: 45_000,
-        });
+        navigation = await navigateDouyinPage(
+          page,
+          canonicalUrl,
+          navigationTimeout,
+          redirectChain,
+        );
+        navigationAttempts.push(navigation.attempt);
+        response = navigation.response;
         httpStatus = response?.status() ?? httpStatus;
-        if (response) {
-          appendRequestChain(response.request(), redirectChain);
-          redirectChain.push(response.url());
-        }
       }
     }
 
     await waitForDouyinPageEvidence(page, mock ? 2_000 : 10_000);
+    httpStatus = httpStatus ?? responseCollector.mainDocuments.at(-1)?.status ?? null;
     contentIdentity = contentIdentity || lastContentIdentity([
       task.url,
       ...redirectChain,
@@ -220,7 +351,9 @@ export async function extractDouyinAuditTaskAutomatically(
       page,
       httpStatus,
       canonicalUrl,
+      contentIdentity?.contentId || null,
     );
+    identitySnapshot = identity;
     pageTitle = identity.title;
     pageType = identity.pageType;
     console.info("[抖音自动审核] 页面状态", JSON.stringify({
@@ -231,8 +364,13 @@ export async function extractDouyinAuditTaskAutomatically(
       pageType: identity.pageType,
       state: identity.state,
       matchedCondition: identity.matchedCondition,
+      documentReadyState: identity.documentReadyState,
+      bodyLength: identity.bodyLength,
+      visibleTextLength: identity.visibleTextLength,
+      hasContentEvidence: identity.hasContentEvidence,
       redirectCount: uniqueValues(redirectChain).length,
       structuredEvidence: Boolean(structured),
+      navigationAttempts,
     }));
 
     if (identity.state === "NOT_LOGGED_IN") {
@@ -263,14 +401,25 @@ export async function extractDouyinAuditTaskAutomatically(
       throw new AutomaticExtractionError("REDIRECT_FAILED", "抖音短链接未跳转到作品详情页");
     }
     if (identity.state !== "NORMAL") {
+      const failedNavigation = navigationAttempts.findLast((item) => !item.ok);
+      if (failedNavigation) {
+        throw new AutomaticExtractionError(
+          failedNavigation.timedOut ? "LOAD_TIMEOUT" : "NETWORK_ERROR",
+          failedNavigation.timedOut
+            ? "抖音作品页面打开超时，需人工确认"
+            : "抖音作品页面打开失败，需人工确认",
+          { technicalMessage: failedNavigation.errorMessage },
+        );
+      }
       throw new AutomaticExtractionError("STRUCTURE_MISMATCH", "未识别为抖音作品详情页");
     }
 
-    const note = await playwrightDouyinAdapter.extract(page, task.url, {
+    const extractedNote = await playwrightDouyinAdapter.extract(page, task.url, {
       canonicalUrl,
       contentId: contentIdentity?.contentId || null,
       structured,
     });
+    const note = sanitizeDouyinBrowserValue(extractedNote) as typeof extractedNote;
     note.redirectChain = uniqueValues(redirectChain).map(safeDouyinDiagnosticUrl);
     const evidence = {
       ...(note.pageEvidence || {}),
@@ -280,6 +429,24 @@ export async function extractDouyinAuditTaskAutomatically(
       pageType: note.pageType,
       redirectChain: note.redirectChain,
       contentId: note.noteId || null,
+      activePlatform: "DOUYIN",
+      browserSessionType: "DOUYIN_PERSISTENT_CONTEXT",
+      profilePath: getDouyinAutomationProfilePath(),
+      automationAdapter: playwrightDouyinAdapter.name,
+      pageClassifier: "classifyDouyinPage",
+      pageGoto: navigationAttempts,
+      mainDocumentResponses: responseCollector.mainDocuments.map((item) => ({
+        ...item,
+        url: safeDouyinDiagnosticUrl(item.url),
+      })),
+      httpStatus,
+      documentReadyState: identity.documentReadyState,
+      pageTitle: identity.title,
+      currentUrl: safeDouyinDiagnosticUrl(identity.currentUrl),
+      bodyLength: identity.bodyLength,
+      visibleTextLength: identity.visibleTextLength,
+      pageStatus: identity.state,
+      navigationError: navigationAttempts.findLast((item) => !item.ok) || null,
     };
     note.pageEvidence = evidence;
     await saveDouyinPageMetadata({
@@ -295,17 +462,52 @@ export async function extractDouyinAuditTaskAutomatically(
       warnings: (note.technicalWarnings || []) as AutomaticFailureCode[],
     };
   } catch (error) {
-    const normalized = toAutomaticExtractionError(error);
+    let normalized = toAutomaticExtractionError(error);
     if (/timeout/iu.test(normalized.message) && normalized.code === "NETWORK_ERROR") {
-      throw new AutomaticExtractionError("LOAD_TIMEOUT", "抖音页面加载超时", normalized.details);
+      normalized = new AutomaticExtractionError(
+        "LOAD_TIMEOUT",
+        "抖音作品页面打开超时，需人工确认",
+        { ...(normalized.details || {}), technicalMessage: normalized.message },
+      );
+    } else if (normalized.code === "NETWORK_ERROR") {
+      normalized = new AutomaticExtractionError(
+        "NETWORK_ERROR",
+        "抖音作品页面打开失败，需人工确认",
+        { ...(normalized.details || {}), technicalMessage: normalized.message },
+      );
     }
+    const screenshotPath = await captureDouyinFailureScreenshot(page, task)
+      .catch(() => null);
+    const navigationError = navigationAttempts.findLast((item) => !item.ok) || null;
     const evidence = {
       ...(normalized.details || {}),
       failureCode: normalized.code,
+      failureMessage: normalized.message,
+      technicalMessage: normalized.details?.technicalMessage || navigationError?.errorMessage || null,
       originalUrl: safeDouyinDiagnosticUrl(task.url),
+      normalizedUrl: safeDouyinDiagnosticUrl(task.normalizedUrl),
       finalUrl: canonicalUrl ? safeDouyinDiagnosticUrl(canonicalUrl) : null,
       browserUrl: safeDouyinDiagnosticUrl(page.url()),
+      currentUrl: safeDouyinDiagnosticUrl(page.url()),
       redirectChain: uniqueValues(redirectChain).map(safeDouyinDiagnosticUrl),
+      activePlatform: "DOUYIN",
+      browserSessionType: "DOUYIN_PERSISTENT_CONTEXT",
+      profilePath: getDouyinAutomationProfilePath(),
+      automationAdapter: playwrightDouyinAdapter.name,
+      pageClassifier: "classifyDouyinPage",
+      pageGoto: navigationAttempts,
+      mainDocumentResponses: responseCollector.mainDocuments.map((item) => ({
+        ...item,
+        url: safeDouyinDiagnosticUrl(item.url),
+      })),
+      httpStatus,
+      documentReadyState: identitySnapshot?.documentReadyState || null,
+      pageTitle: identitySnapshot?.title || pageTitle,
+      bodyLength: identitySnapshot?.bodyLength || 0,
+      visibleTextLength: identitySnapshot?.visibleTextLength || 0,
+      pageStatus: identitySnapshot?.state || null,
+      navigationError,
+      screenshotPath,
       detectedAt: new Date().toISOString(),
     };
     normalized.attachDetails(evidence);

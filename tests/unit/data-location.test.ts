@@ -78,6 +78,10 @@ describe("Windows 数据位置管理", () => {
       path.join(layout.sessions, "session.json"),
       "local-session",
     );
+    fs.writeFileSync(
+      path.join(layout.douyinSessions, "session.json"),
+      "douyin-session",
+    );
 
     const result = dataLocation.copyManagedData(source, target);
 
@@ -91,6 +95,13 @@ describe("Windows 数据位置管理", () => {
         "utf8",
       ),
     ).toBe("local-session");
+    expect(
+      fs.readFileSync(
+        path.join(target, "sessions", "douyin-profile", "session.json"),
+        "utf8",
+      ),
+    ).toBe("douyin-session");
+    expect(layout.douyinSessions).not.toContain("xiaohongshu-profile");
   });
 
   it("安装包使用可选择目录的当前用户标准安装向导", () => {

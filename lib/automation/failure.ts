@@ -13,6 +13,7 @@ export type AutomaticFailureCode =
   | "BODY_NOT_RECOGNIZED"
   | "TOPICS_NOT_RECOGNIZED"
   | "BROWSER_CONTROL_ERROR"
+  | "PLATFORM_ROUTING_MISMATCH"
   | "CANCELLED";
 
 export const automaticFailureLabels: Record<AutomaticFailureCode, string> = {
@@ -30,6 +31,7 @@ export const automaticFailureLabels: Record<AutomaticFailureCode, string> = {
   BODY_NOT_RECOGNIZED: "未识别到正文",
   TOPICS_NOT_RECOGNIZED: "未识别到话题",
   BROWSER_CONTROL_ERROR: "审核浏览器控制连接异常",
+  PLATFORM_ROUTING_MISMATCH: "自动审核平台路由不一致",
   CANCELLED: "任务已取消",
 };
 

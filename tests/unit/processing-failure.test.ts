@@ -36,6 +36,12 @@ describe("处理失败结果口径", () => {
       "人工复核",
     );
     expect(
+      processingFailureReason("NETWORK_ERROR", null, "DOUYIN"),
+    ).toBe("抖音作品页面打开失败，需人工确认");
+    expect(
+      processingFailureReason("NETWORK_ERROR", null, "XIAOHONGSHU"),
+    ).toBe("小红书页面打开失败，需人工确认");
+    expect(
       processingFailureReason(
         "STRUCTURE_MISMATCH",
         "页面结构已匹配，但没有提取到标题或正文",

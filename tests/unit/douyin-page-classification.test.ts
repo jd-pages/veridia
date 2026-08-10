@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyDouyinPage, isDouyinContentDetailUrl, isDouyinShortUrl, safeDouyinDiagnosticUrl } from "@/lib/automation/douyin-page-classification";
+import { classifyDouyinPage, isDouyinContentDetailUrl, isDouyinShortUrl, safeDouyinDiagnosticUrl, toWellFormedBrowserText } from "@/lib/automation/douyin-page-classification";
 
 describe("抖音页面分类", () => {
   it("仅接受作品详情与短链接", () => {
@@ -24,6 +24,33 @@ describe("抖音页面分类", () => {
     expect(classifyDouyinPage({ url: "https://www.douyin.com/video/123", visibleText: "" }).state).toBe("NORMAL");
   });
 
+  it("公开作品主体已渲染时不把评论区登录提示判为登录墙", () => {
+    expect(classifyDouyinPage({
+      url: "https://www.douyin.com/note/123",
+      visibleText: "作品正文 登录后查看更多评论 请扫码登录",
+      hasContentEvidence: true,
+    })).toMatchObject({
+      state: "NORMAL",
+      matchedCondition: "content-detail-url",
+    });
+  });
+
+  it("只有作品主体缺失且存在明确登录提示时才判为登录墙", () => {
+    expect(classifyDouyinPage({
+      url: "https://www.douyin.com/note/123",
+      visibleText: "登录后继续，请扫码登录",
+      hasContentEvidence: false,
+    })).toMatchObject({ state: "NOT_LOGGED_IN", matchedCondition: "login-wall" });
+  });
+
+  it("导航超时但作品证据已出现时仍判为正常", () => {
+    expect(classifyDouyinPage({
+      url: "https://www.douyin.com/note/123",
+      timedOut: true,
+      hasContentEvidence: true,
+    }).state).toBe("NORMAL");
+  });
+
   it("区分 App 唤起页和普通作品详情", () => {
     expect(
       classifyDouyinPage({
@@ -41,6 +68,12 @@ describe("抖音页面分类", () => {
 
   it("诊断日志移除查询参数", () => {
     expect(safeDouyinDiagnosticUrl("https://www.douyin.com/video/123?token=secret#x")).toBe("https://www.douyin.com/video/123");
+  });
+
+  it("持久化前替换浏览器文本中的孤立 UTF-16 代理字符", () => {
+    expect(toWellFormedBrowserText(`正常\ud83d文本\udc00😀`)).toBe(
+      "正常�文本�😀",
+    );
   });
 
   it("识别抖音图文不存在的真实页面文案", () => {

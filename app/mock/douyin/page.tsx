@@ -2,7 +2,7 @@ import type { ExtractedNote } from "@/lib/types";
 import { redirect } from "next/navigation";
 /* eslint-disable @next/next/no-img-element -- local mock must expose native image DOM to the extractor */
 
-type MockCase = "video" | "image-text" | "business-pass" | "topics" | "unclickable" | "not-found" | "logged-out" | "security" | "no-permission" | "app-launch" | "empty" | "multi-image" | "network-error" | "load-timeout";
+type MockCase = "video" | "image-text" | "business-pass" | "public-logged-out" | "topics" | "unclickable" | "not-found" | "logged-out" | "security" | "no-permission" | "app-launch" | "empty" | "multi-image" | "network-error" | "load-timeout";
 
 function noteFor(caseName: MockCase): ExtractedNote {
   const base: ExtractedNote = {
@@ -63,7 +63,7 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
   if (requested === "short-link") {
     redirect("/mock/douyin?case=video&redirectedFrom=short-link");
   }
-  const allowed: MockCase[] = ["video", "image-text", "business-pass", "topics", "unclickable", "not-found", "logged-out", "security", "no-permission", "app-launch", "empty", "multi-image", "network-error", "load-timeout"];
+  const allowed: MockCase[] = ["video", "image-text", "business-pass", "public-logged-out", "topics", "unclickable", "not-found", "logged-out", "security", "no-permission", "app-launch", "empty", "multi-image", "network-error", "load-timeout"];
   const caseName = (allowed.includes(requested as MockCase) ? requested : "video") as MockCase;
   const rawExtraction = params.raw === "true";
   const baseNote = noteFor(caseName);
@@ -89,7 +89,7 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
         ],
       }
     : baseNote;
-  const statusText: Record<MockCase, string | undefined> = { video: undefined, "image-text": undefined, "business-pass": undefined, topics: undefined, unclickable: undefined, empty: undefined, "multi-image": undefined, "not-found": "作品不存在，该作品已删除", "logged-out": "登录后继续，请扫码登录", security: "访问频繁，需要安全验证", "no-permission": "私密作品，暂无权限查看", "app-launch": "打开抖音 App 查看", "network-error": "模拟临时网络连接中断", "load-timeout": "模拟页面加载超时" };
+  const statusText: Record<MockCase, string | undefined> = { video: undefined, "image-text": undefined, "business-pass": undefined, "public-logged-out": undefined, topics: undefined, unclickable: undefined, empty: undefined, "multi-image": undefined, "not-found": "作品不存在，该作品已删除", "logged-out": "登录后继续，请扫码登录", security: "访问频繁，需要安全验证", "no-permission": "私密作品，暂无权限查看", "app-launch": "打开抖音 App 查看", "network-error": "模拟临时网络连接中断", "load-timeout": "模拟页面加载超时" };
   return (
     <main data-douyin-page-status={caseName} style={{ padding: 48 }}>
       <article data-e2e="note-detail">
@@ -118,6 +118,11 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
           ) : null}
         </>}
       </article>
+      {caseName === "public-logged-out" ? (
+        <aside data-testid="douyin-comment-login">
+          登录后查看更多评论，请扫码登录
+        </aside>
+      ) : null}
       {rawExtraction && params.recommendedTime ? (
         <aside data-e2e="recommend-list">
           <span>发布时间：{params.recommendedTime}</span>

@@ -399,7 +399,7 @@ export class PlaywrightDouyinAdapter {
     try {
       const url = new URL(value);
       return url.hostname.endsWith("douyin.com") || url.hostname.endsWith("iesdouyin.com") ||
-        (["localhost", "127.0.0.1"].includes(url.hostname) && url.pathname === "/mock/douyin");
+        (["localhost", "127.0.0.1"].includes(url.hostname) && url.pathname.startsWith("/mock/douyin"));
     } catch { return false; }
   }
 

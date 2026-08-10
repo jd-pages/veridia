@@ -4,7 +4,11 @@ import path from "node:path";
 import type { Browser, BrowserContext, BrowserType, Page } from "playwright";
 import { prisma } from "@/lib/db";
 import { classifyDouyinPage } from "./douyin-page-classification";
-import { createAuditPage, launchWindowsHiddenChromium } from "./windows-hidden-chromium";
+import {
+  controlledPageCount,
+  createAuditPage,
+  launchWindowsHiddenChromium,
+} from "./windows-hidden-chromium";
 import { AutomaticExtractionError } from "./failure";
 
 const SESSION_ID = "douyin";
@@ -12,6 +16,10 @@ const PROFILE_DIRECTORY = path.resolve(
   process.env.DOUYIN_PROFILE_PATH ||
     path.join(process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir(), "VERIDIA", "sessions", "douyin-profile"),
 );
+
+export function getDouyinAutomationProfilePath() {
+  return PROFILE_DIRECTORY;
+}
 
 type DouyinSessionState = "LOGGED_IN" | "LOGGED_OUT" | "SECURITY_RESTRICTED" | "NETWORK_ERROR" | "UNKNOWN";
 type AuditLock = { platform: "DOUYIN"; batchId: string; taskId: string | null; startedAt: string; heartbeatAt: string; status: string; profilePath: string };
@@ -116,23 +124,36 @@ async function ensureContext() {
 }
 
 export async function getDouyinAuditPage(input?: { taskId?: string; url?: string }) {
-  const existing = living(state.auditPage);
-  if (existing && state.context && state.browser?.isConnected()) {
-    state.auditPageReuseCount += 1;
-    return existing;
+  try {
+    const existing = living(state.auditPage);
+    if (existing && state.context && state.browser?.isConnected()) {
+      state.auditPageReuseCount += 1;
+      return existing;
+    }
+    if (state.auditPagePromise) return await state.auditPagePromise;
+    state.auditPagePromise = (async () => {
+      const context = await ensureContext();
+      const page = await createAuditPage(context);
+      if (process.platform === "win32") await setWindowState(page, "minimized");
+      state.auditPage = page;
+      state.auditPageCreateCount += 1;
+      page.once("close", () => { if (state.auditPage === page) state.auditPage = undefined; });
+      console.info("[抖音浏览器] 创建后台审核页面", JSON.stringify({ taskId: input?.taskId || null, pageCount: context.pages().length, auditPageCreateCount: state.auditPageCreateCount, bringToFrontCalled: false }));
+      return page;
+    })().finally(() => { state.auditPagePromise = undefined; });
+    return await state.auditPagePromise;
+  } catch (error) {
+    if (error instanceof AutomaticExtractionError) throw error;
+    throw new AutomaticExtractionError(
+      "BROWSER_CONTROL_ERROR",
+      "抖音专用浏览器连接异常，当前批次已暂停。请重新启动专用浏览器后继续。",
+      {
+        technicalMessage: error instanceof Error
+          ? error.message.slice(0, 500)
+          : String(error).slice(0, 500),
+      },
+    );
   }
-  if (state.auditPagePromise) return state.auditPagePromise;
-  state.auditPagePromise = (async () => {
-    const context = await ensureContext();
-    const page = await createAuditPage(context);
-    if (process.platform === "win32") await setWindowState(page, "minimized");
-    state.auditPage = page;
-    state.auditPageCreateCount += 1;
-    page.once("close", () => { if (state.auditPage === page) state.auditPage = undefined; });
-    console.info("[抖音浏览器] 创建后台审核页面", JSON.stringify({ taskId: input?.taskId || null, pageCount: context.pages().length, auditPageCreateCount: state.auditPageCreateCount, bringToFrontCalled: false }));
-    return page;
-  })().finally(() => { state.auditPagePromise = undefined; });
-  return state.auditPagePromise;
 }
 
 export async function showDouyinManualIntervention(page: Page, reason: string) {
@@ -208,5 +229,5 @@ export function heartbeatDouyinAuditLock(batchId: string, status: string) { if (
 export function clearDouyinAuditLockForBatch(batchId: string) { if (state.auditLock?.batchId !== batchId) return false; state.auditLock = undefined; return true; }
 export async function getDouyinSessionDiagnostics() {
   const session = await getDouyinAutomationSession();
-  return { ...session, platform: "DOUYIN", profilePath: PROFILE_DIRECTORY, sessionState: state.sessionState, browserInstanceCount: state.context ? 1 : 0, pageCount: state.context?.pages().filter((page) => !page.isClosed()).length || 0, auditPageOpen: Boolean(living(state.auditPage)), auditPageCreateCount: state.auditPageCreateCount, auditPageReuseCount: state.auditPageReuseCount, interactivePageOpen: Boolean(living(state.interactivePage)), auditLock: state.auditLock || null, controlReady: Boolean(state.context && state.browser?.isConnected()), controlLastError: state.controlError || null };
+  return { ...session, platform: "DOUYIN", profilePath: PROFILE_DIRECTORY, sessionState: state.sessionState, browserInstanceCount: state.context ? 1 : 0, pageCount: controlledPageCount(state.context), auditPageOpen: Boolean(living(state.auditPage)), auditPageCreateCount: state.auditPageCreateCount, auditPageReuseCount: state.auditPageReuseCount, interactivePageOpen: Boolean(living(state.interactivePage)), auditLock: state.auditLock || null, controlReady: Boolean(state.context && state.browser?.isConnected()), controlLastError: state.controlError || null };
 }

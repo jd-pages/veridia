@@ -31,7 +31,9 @@ function createDirectoryLayout(root) {
   return {
     root: resolvedRoot,
     data: path.join(resolvedRoot, "data"),
+    sessionsRoot: path.join(resolvedRoot, "sessions"),
     sessions: path.join(resolvedRoot, "sessions", "xiaohongshu-profile"),
+    douyinSessions: path.join(resolvedRoot, "sessions", "douyin-profile"),
     config: path.join(resolvedRoot, "config"),
     backups: path.join(resolvedRoot, "backups"),
     logs: path.join(resolvedRoot, "logs"),
@@ -40,7 +42,16 @@ function createDirectoryLayout(root) {
 
 function ensureManagedDirectories(root) {
   const layout = createDirectoryLayout(root);
-  for (const key of ["root", "data", "sessions", "config", "backups", "logs"]) {
+  for (const key of [
+    "root",
+    "data",
+    "sessionsRoot",
+    "sessions",
+    "douyinSessions",
+    "config",
+    "backups",
+    "logs",
+  ]) {
     fs.mkdirSync(layout[key], { recursive: true });
   }
   return layout;

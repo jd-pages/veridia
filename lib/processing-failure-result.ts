@@ -36,10 +36,6 @@ export async function recordProcessingFailureResult(input: {
   failureMessage: string | null;
   finishedAt?: Date;
 }) {
-  const reason = processingFailureReason(
-    input.failureCode,
-    input.failureMessage,
-  );
   const finishedAt = input.finishedAt || new Date();
   const noteNotFound = [
     "NOTE_NOT_FOUND",
@@ -53,6 +49,11 @@ export async function recordProcessingFailureResult(input: {
   if (!taskScope) throw new Error("审核任务不存在");
   const contentChannel = resolveTaskAutomationPlatform(taskScope);
   if (!contentChannel) throw new Error("审核任务未关联有效内容平台");
+  const reason = processingFailureReason(
+    input.failureCode,
+    input.failureMessage,
+    contentChannel,
+  );
   const currentContext = await getAuditContext(
     taskScope.productId,
     taskScope.campaignId,
