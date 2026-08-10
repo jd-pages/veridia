@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createSoftwarePublishPlan,
   executeSoftwarePublishPlan,
+  formatSoftwarePublishFailure,
   nextPatchVersion,
   SoftwarePublishError,
 } from "../../scripts/software-publish-orchestrator.mjs";
@@ -158,5 +159,19 @@ describe("一键软件发布编排", () => {
 
     expect(source).not.toMatch(/(?:npm|npm\.cmd)[^\r\n]*rules:publish/iu);
     expect(source).not.toContain('"rules:publish"');
+  });
+
+  it("失败收尾输出稳定中文阶段且声明没有执行外部发布动作", () => {
+    const error = new SoftwarePublishError("FULL_GATE_FAILED", "退出码 1", {
+      stage: "正式FULL门禁",
+    });
+    const output = formatSoftwarePublishFailure(error, "C:\\logs\\release.log").join("\n");
+    expect(output).toContain("VERIDIA 正式发布未完成");
+    expect(output).toContain("失败阶段：正式FULL门禁");
+    expect(output).toContain("错误摘要：退出码 1");
+    expect(output).toContain("- Push发布版本");
+    expect(output).toContain("- 创建Tag");
+    expect(output).toContain("- 创建Release");
+    expect(output).toContain("- 执行rules:publish");
   });
 });

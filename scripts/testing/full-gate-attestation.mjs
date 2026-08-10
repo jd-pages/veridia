@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-export const ATTESTATION_SCHEMA_VERSION = 1;
+export const ATTESTATION_SCHEMA_VERSION = 2;
 export const ATTESTATION_RELATIVE_PATH = ".release-work/verification/full-gate-attestation.json";
 
 function git(root, args) {
@@ -47,8 +47,12 @@ export function collectAttestationState(root = process.cwd()) {
   const verificationScripts = [
     ...recursiveFiles(root, "scripts/testing"),
     "scripts/release.mjs",
+    "scripts/software-publish-orchestrator.mjs",
+    "scripts/software-publish-orchestrator.d.mts",
+    "scripts/software-publish-bat-tail.mjs",
     "scripts/fixed-workflow.mjs",
     "scripts/sensitive-scan.mjs",
+    "发布新版.bat",
   ];
   const status = git(root, ["status", "--porcelain", "--untracked-files=normal"]);
   return {
@@ -58,6 +62,13 @@ export function collectAttestationState(root = process.cwd()) {
     packageLockHash: hashFiles(root, ["package-lock.json"]),
     packageJsonHash: hashFiles(root, ["package.json"]),
     playwrightConfigHash: hashFiles(root, ["playwright.config.ts"]),
+    nextTypeIsolationHash: hashFiles(root, [
+      "next.config.ts",
+      "tsconfig.json",
+      "tsconfig.e2e.json",
+      "scripts/testing/next-type-isolation.mjs",
+      "scripts/testing/prepare-formal-next.mjs",
+    ]),
     testManifestHash: hashFiles(root, testFiles),
     prismaMigrationHash: hashFiles(root, migrationFiles),
     prismaSchemaHash: hashFiles(root, ["prisma/schema.prisma", "prisma/schema.postgresql.prisma"]),
@@ -140,6 +151,7 @@ export function validateFullGateAttestation(root = process.cwd()) {
     packageLockHash: "package-lock.json",
     packageJsonHash: "package.json",
     playwrightConfigHash: "Playwright 配置",
+    nextTypeIsolationHash: "Next/E2E 类型隔离配置",
     testManifestHash: "正式测试集/测试清单",
     prismaMigrationHash: "Prisma migrations",
     prismaSchemaHash: "Prisma schema",

@@ -93,6 +93,8 @@ export default defineConfig({
       XHS_PROFILE_PATH: e2eXhsProfilePath,
       DOUYIN_PROFILE_PATH: e2eDouyinProfilePath,
       VERIDIA_NEXT_DIST_DIR: e2eNextDistDir,
+      VERIDIA_NEXT_TSCONFIG_PATH:
+        process.env.E2E_NEXT_TSCONFIG_PATH?.trim() || "tsconfig.e2e.json",
       AUTOMATION_LOCAL_MOCK_WAIT_CAP_MS: "5",
       ...(executablePath ? { PLAYWRIGHT_EXECUTABLE_PATH: executablePath } : {}),
     },

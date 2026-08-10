@@ -16,11 +16,39 @@ const releaseWorkflow = "veridia-release.yml";
 const dryRun = process.argv.includes("--dry-run");
 
 export class SoftwarePublishError extends Error {
-  constructor(code, message) {
-    super(message);
+  constructor(code, message, options = {}) {
+    super(message, options.cause ? { cause: options.cause } : undefined);
     this.name = "SoftwarePublishError";
     this.code = code;
+    this.stage = options.stage;
   }
+}
+
+export function formatSoftwarePublishFailure(error, logPath) {
+  const message = error instanceof Error ? error.message : String(error);
+  const stage = error instanceof SoftwarePublishError && error.stage
+    ? error.stage
+    : "正式发布编排";
+  const lines = [
+    "========================================",
+    "VERIDIA 正式发布未完成",
+    "========================================",
+    `失败阶段：${stage}`,
+    `错误摘要：${message}`,
+    `日志：${logPath}`,
+  ];
+  if (error instanceof SoftwarePublishError && error.code === "FULL_GATE_FAILED") {
+    lines.push(
+      "本次未：",
+      "- Push发布版本",
+      "- 创建Tag",
+      "- 创建Release",
+      "- 执行rules:publish",
+    );
+  } else {
+    lines.push("远端状态请以上方执行阶段和日志为准；脚本不会自动覆盖或回滚远端状态。");
+  }
+  return lines;
 }
 
 export function parseReleaseVersion(value) {
@@ -531,10 +559,18 @@ function runFullValidation(plan, logger) {
   logger.line("开始完整正式发布门禁和本地安装包构建。");
   assertNoGoogleFontBuildDependency();
   git(["diff", "--check"]);
-  command("node", [path.join(projectRoot, "scripts", "release.mjs"), "current"], {
-    inherit: true,
-    env: { VERIDIA_APP_VERSION: plan.targetVersion },
-  });
+  try {
+    command("node", [path.join(projectRoot, "scripts", "release.mjs"), "current"], {
+      inherit: true,
+      env: { VERIDIA_APP_VERSION: plan.targetVersion },
+    });
+  } catch (error) {
+    throw new SoftwarePublishError(
+      "FULL_GATE_FAILED",
+      error instanceof Error ? error.message : String(error),
+      { cause: error, stage: "正式FULL门禁" },
+    );
+  }
   assertOnlyVersionFilesChanged();
   assertNoGoogleFontBuildDependency();
   git(["diff", "--check"]);
@@ -932,11 +968,11 @@ async function main() {
     logger.line(`SHA-256：${result.release.installerSha256}`);
     logger.line("本次未执行 rules:publish，本次未发布远程规则。");
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     logger.line("");
-    logger.line(`发布失败：${message}`);
+    for (const line of formatSoftwarePublishFailure(error, logger.logPath)) {
+      logger.line(line);
+    }
     logger.line("不会自动 reset、rebase、覆盖 Tag 或重试发布。");
-    logger.line(`诊断日志：${logger.logPath}`);
     process.exitCode = 1;
   }
 }

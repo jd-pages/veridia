@@ -122,6 +122,18 @@ describe("本地打包发布门禁", () => {
     ]);
     expect(softwareBat).toContain("chcp 65001 >nul");
     expect(softwareBat).not.toContain("chcp 936 >nul");
+    expect(softwareBat).toContain("software-publish-bat-tail.mjs failure");
+    expect(softwareBat).toContain("software-publish-bat-tail.mjs success");
+    expect(softwareBatBytes.includes(Buffer.from("\r\n"))).toBe(true);
+    expect(softwareBat).not.toMatch(/[\u0080-\uffff]/u);
+    const batTail = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts", "software-publish-bat-tail.mjs"),
+      "utf8",
+    );
+    expect(batTail).toContain("VERIDIA 正式发布未完成");
+    expect(batTail).toContain("VERIDIA 发布入口已正常结束");
+    expect(orchestrator).toContain("失败阶段：");
+    expect(orchestrator).toContain("VERIDIA 正式发布未完成");
     expect(orchestrator).toContain(".release-work");
     expect(orchestrator).toContain("software-release-");
     expect(softwareBat.match(/^pause$/gmu)).toHaveLength(2);

@@ -7,6 +7,12 @@ import { randomUUID } from "node:crypto";
 import { chromium } from "playwright";
 import ts from "typescript";
 import { copyE2eDatabaseForRun } from "./e2e-database-template.mjs";
+import {
+  captureFile,
+  cleanupTestNextGeneratedTypes,
+  e2eTsconfigPath,
+  restoreFile,
+} from "./next-type-isolation.mjs";
 
 const root = process.cwd();
 const args = process.argv.slice(2);
@@ -21,6 +27,8 @@ let serverProcess;
 let testProcess;
 let warmupBrowser;
 let cleaned = false;
+let nextEnvSnapshot;
+const nextDistDir = ".playwright/next-e2e";
 
 function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -104,6 +112,17 @@ async function cleanup(reason) {
   try { fs.rmSync(runDatabase, { force: true }); } catch (error) {
     writeMetadata({ cleanupWarning: error instanceof Error ? error.message : String(error) });
   }
+  try {
+    const removedNextTypes = cleanupTestNextGeneratedTypes(root, nextDistDir);
+    if (removedNextTypes.length > 0) writeMetadata({ removedNextTypes });
+  } catch (error) {
+    writeMetadata({ nextTypeCleanupWarning: error instanceof Error ? error.message : String(error) });
+  }
+  try {
+    if (nextEnvSnapshot) restoreFile(path.join(root, "next-env.d.ts"), nextEnvSnapshot);
+  } catch (error) {
+    writeMetadata({ nextEnvRestoreWarning: error instanceof Error ? error.message : String(error) });
+  }
   writeMetadata({ finishedAt: new Date().toISOString(), cleanupReason: reason, cleaned: true });
 }
 
@@ -166,6 +185,7 @@ function countTests(environment) {
 
 async function main() {
   invalidateMalformedNextCache();
+  nextEnvSnapshot = captureFile(path.join(root, "next-env.d.ts"));
   const port = await findFreePort();
   const database = copyE2eDatabaseForRun(runDirectory);
   const executablePath = browserExecutablePath();
@@ -184,7 +204,8 @@ async function main() {
     E2E_DOUYIN_PROFILE_PATH: douyinProfilePath,
     VERIDIA_ACCOUNT_SIGNING_PUBLIC_KEY_PATH: publicKeyPath,
     VERIDIA_ACCOUNT_SIGNING_PRIVATE_KEY_PATH: privateKeyPath,
-    VERIDIA_NEXT_DIST_DIR: ".playwright/next-e2e",
+    VERIDIA_NEXT_DIST_DIR: nextDistDir,
+    VERIDIA_NEXT_TSCONFIG_PATH: e2eTsconfigPath(root),
     AUTH_SECRET: process.env.AUTH_SECRET || "e2e-local-secret",
     EXTENSION_TOKEN: process.env.EXTENSION_TOKEN || "local-extension-demo-token",
     AI_ENABLED: "false",

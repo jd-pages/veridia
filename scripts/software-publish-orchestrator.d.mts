@@ -1,6 +1,17 @@
 export class SoftwarePublishError extends Error {
+  constructor(
+    code: string,
+    message: string,
+    options?: { cause?: unknown; stage?: string },
+  );
   code: string;
+  stage?: string;
 }
+
+export function formatSoftwarePublishFailure(
+  error: unknown,
+  logPath: string,
+): string[];
 
 export interface SoftwarePublishPlanInput {
   dirty: boolean;

@@ -9,6 +9,13 @@ import {
   selectTestScope,
   validateManifest,
 } from "../../scripts/testing/test-matrix.mjs";
+import {
+  captureFile,
+  cleanupKnownTestNextGeneratedTypes,
+  cleanupTestNextGeneratedTypes,
+  restoreFile,
+} from "../../scripts/testing/next-type-isolation.mjs";
+import os from "node:os";
 
 describe("分层测试门禁", () => {
   it("正式 E2E 清单与 Playwright 正式测试文件完全一致且没有 skip", () => {
@@ -76,7 +83,62 @@ describe("分层测试门禁", () => {
     for (const field of ["runId", "port", "databasePath", "profilePath", "serverPid", "browserPid"]) expect(runner).toContain(field);
     expect(runner).toContain("taskkill");
     expect(runner).toContain("runDirectory");
+    expect(runner).toContain("cleanupTestNextGeneratedTypes");
+    expect(runner).toContain("restoreFile");
+    expect(runner).toContain('await cleanup("outer-timeout")');
+    expect(runner).toContain('await cleanup("infrastructure-error")');
     expect(runner).not.toContain("Get-Process | Stop-Process");
+  });
+
+  it("正式 TypeScript 配置不包含 E2E generated types", () => {
+    const formal = JSON.parse(fs.readFileSync(path.resolve("tsconfig.json"), "utf8"));
+    const e2e = JSON.parse(fs.readFileSync(path.resolve("tsconfig.e2e.json"), "utf8"));
+    expect(formal.include.join("\n")).not.toContain(".playwright");
+    expect(formal.exclude).toContain(".playwright");
+    expect(e2e.extends).toBe("./tsconfig.json");
+  });
+
+  it("清理测试 generated types 时保留 Next 缓存且不触碰正式 .next", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "veridia-next-isolation-"));
+    const testDist = path.join(root, ".playwright", "next-e2e");
+    const badRoute = path.join(testDist, "dev", "types", "routes.d.ts");
+    const cache = path.join(testDist, "cache", "webpack.bin");
+    const formal = path.join(root, ".next", "types", "routes.d.ts");
+    fs.mkdirSync(path.dirname(badRoute), { recursive: true });
+    fs.mkdirSync(path.dirname(cache), { recursive: true });
+    fs.mkdirSync(path.dirname(formal), { recursive: true });
+    fs.writeFileSync(badRoute, "declare global { } }", "utf8");
+    fs.writeFileSync(cache, "cache", "utf8");
+    fs.writeFileSync(formal, "declare global {}", "utf8");
+
+    expect(cleanupTestNextGeneratedTypes(root, ".playwright/next-e2e")).toEqual([
+      ".playwright/next-e2e/dev/types",
+    ]);
+    expect(fs.existsSync(badRoute)).toBe(false);
+    expect(fs.existsSync(cache)).toBe(true);
+    expect(fs.existsSync(formal)).toBe(true);
+    expect(() => cleanupTestNextGeneratedTypes(root, ".next")).toThrow("拒绝清理非测试 Next 目录");
+  });
+
+  it("正式门禁准备会清除所有已识别测试 Next types", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "veridia-next-stale-"));
+    for (const name of ["next-e2e", "next-release"]) {
+      const file = path.join(root, ".playwright", name, "dev", "types", "routes.d.ts");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, "broken }", "utf8");
+    }
+    expect(cleanupKnownTestNextGeneratedTypes(root)).toHaveLength(2);
+    expect(fs.existsSync(path.join(root, ".playwright", "next-e2e", "dev", "types"))).toBe(false);
+  });
+
+  it("E2E 收尾可以原样恢复 Next 生成入口", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "veridia-next-env-"));
+    const file = path.join(root, "next-env.d.ts");
+    fs.writeFileSync(file, 'import "./.next/types/routes.d.ts";\n', "utf8");
+    const snapshot = captureFile(file);
+    fs.writeFileSync(file, 'import "./.playwright/next-e2e/dev/types/routes.d.ts";\n', "utf8");
+    restoreFile(file, snapshot);
+    expect(fs.readFileSync(file, "utf8")).toBe('import "./.next/types/routes.d.ts";\n');
   });
 
   it("Actions 只缓存依赖、浏览器、Next 和不可变 fixture，不缓存结果或用户会话", () => {

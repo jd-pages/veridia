@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   distDir: process.env.VERIDIA_NEXT_DIST_DIR || ".next",
+  typescript: {
+    tsconfigPath:
+      process.env.VERIDIA_NEXT_TSCONFIG_PATH || "tsconfig.json",
+  },
   output: "standalone",
   outputFileTracingIncludes: {
     "/*": [
