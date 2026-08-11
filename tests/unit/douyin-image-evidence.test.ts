@@ -11,6 +11,13 @@ describe("抖音图文图片证据稳定性", () => {
   beforeAll(async () => {
     browser = await chromium.launch({ headless: true, channel: "chrome" });
     page = await browser.newPage();
+    await page.route("https://cdn.example/**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "image/gif",
+        body: Buffer.from("R0lGODlhAQABAAAAACw=", "base64"),
+      }),
+    );
   }, 90_000);
 
   afterAll(async () => {
