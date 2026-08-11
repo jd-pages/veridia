@@ -5,6 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { assertPackagedPrismaClient } from "./prisma-runtime.mjs";
+import { assertPlaywrightChromiumRuntime } from "./playwright-chromium-runtime.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const updateUrl =
@@ -35,14 +36,28 @@ if (result.error) throw result.error;
 if (result.status !== 0) {
   process.exitCode = result.status ?? 1;
 } else {
+  const applicationRoot = path.join(
+    root,
+    "dist-installer",
+    "win-unpacked",
+    "resources",
+    "app",
+  );
   assertPackagedPrismaClient(
-    path.join(
+    applicationRoot,
+    "win-unpacked/resources/app",
+  );
+  const chromium = assertPlaywrightChromiumRuntime({
+    projectRoot: root,
+    browserRoot: path.join(
       root,
       "dist-installer",
       "win-unpacked",
       "resources",
-      "app",
+      "ms-playwright",
     ),
-    "win-unpacked/resources/app",
+  });
+  process.stdout.write(
+    `打包后 Playwright Chromium ${chromium.requirements.revision} 检查通过：${chromium.executablePath}\n`,
   );
 }

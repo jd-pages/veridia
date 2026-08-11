@@ -8,6 +8,7 @@ import {
   assertGeneratedPrismaClient,
   copyGeneratedPrismaClient,
 } from "./prisma-runtime.mjs";
+import { preparePlaywrightChromiumRuntime } from "./playwright-chromium-runtime.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const standaloneRoot = path.join(projectRoot, ".next", "standalone");
@@ -107,101 +108,37 @@ fs.rmSync(nodeRuntimeRoot, { recursive: true, force: true });
 fs.mkdirSync(nodeRuntimeRoot, { recursive: true });
 fs.copyFileSync(process.execPath, path.join(nodeRuntimeRoot, "node.exe"));
 
-fs.rmSync(browserRoot, { recursive: true, force: true });
-fs.mkdirSync(browserRoot, { recursive: true });
-const playwrightBrowsers = JSON.parse(
-  fs.readFileSync(
-    path.join(projectRoot, "node_modules", "playwright-core", "browsers.json"),
-    "utf8",
-  ),
-);
-const chromiumRevision = playwrightBrowsers.browsers.find(
-  (browser) => browser.name === "chromium",
-)?.revision;
-if (!chromiumRevision) {
-  throw new Error("无法确定当前 Playwright 对应的 Chromium 版本");
-}
-const expectedChromiumName = `chromium-${chromiumRevision}`;
-for (const entry of fs.readdirSync(browserRoot, { withFileTypes: true })) {
-  if (
-    entry.isDirectory() &&
-    entry.name.startsWith("chromium-") &&
-    entry.name !== expectedChromiumName
-  ) {
-    fs.rmSync(path.join(browserRoot, entry.name), {
-      recursive: true,
-      force: true,
-    });
-  }
-}
-const hasChromium = [
-  path.join(browserRoot, expectedChromiumName, "chrome-win64", "chrome.exe"),
-  path.join(browserRoot, expectedChromiumName, "chrome-win", "chrome.exe"),
-].some((candidate) => fs.existsSync(candidate));
-if (!hasChromium) {
-  process.stdout.write("正在下载 VERIDIA 随安装包提供的 Playwright Chromium...\n");
-  try {
-    execFileSync(
-      process.execPath,
-      [
-        path.join(projectRoot, "node_modules", "playwright", "cli.js"),
-        "install",
-        "chromium",
-      ],
-      {
-        cwd: projectRoot,
-        env: {
-          ...process.env,
-          PLAYWRIGHT_BROWSERS_PATH: browserRoot,
-          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: "120000",
-        },
-        stdio: "inherit",
-        timeout: 5 * 60 * 1000,
-      },
-    );
-  } catch {
-    const cacheRoots = [
-      process.env.PLAYWRIGHT_BROWSERS_PATH,
-      process.env.LOCALAPPDATA
-        ? path.join(process.env.LOCALAPPDATA, "ms-playwright")
-        : "",
-    ].filter(Boolean);
-    const cachedChromium = cacheRoots
-      .flatMap((cacheRoot) =>
-        fs.existsSync(cacheRoot)
-          ? fs
-              .readdirSync(cacheRoot, { withFileTypes: true })
-              .filter(
-                (entry) =>
-                  entry.isDirectory() && entry.name === expectedChromiumName,
-              )
-              .map((entry) => ({
-                name: entry.name,
-                path: path.join(cacheRoot, entry.name),
-              }))
-          : [],
-      )
-      .find(({ path: chromiumPath }) =>
+preparePlaywrightChromiumRuntime({
+  projectRoot,
+  destinationRoot: browserRoot,
+  download(downloadRoot) {
+    try {
+      execFileSync(
+        process.execPath,
         [
-          path.join(chromiumPath, "chrome-win64", "chrome.exe"),
-          path.join(chromiumPath, "chrome-win", "chrome.exe"),
-        ].some((candidate) => fs.existsSync(candidate)),
+          path.join(projectRoot, "node_modules", "playwright", "cli.js"),
+          "install",
+          "chromium",
+        ],
+        {
+          cwd: projectRoot,
+          env: {
+            ...process.env,
+            PLAYWRIGHT_BROWSERS_PATH: downloadRoot,
+            PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: "120000",
+          },
+          stdio: "inherit",
+          timeout: 5 * 60 * 1000,
+        },
       );
-    if (!cachedChromium) {
+    } catch (error) {
       throw new Error(
-        `Playwright Chromium ${chromiumRevision} 下载失败，且本机没有可复用的匹配浏览器缓存`,
+        "Playwright Chromium 官方下载失败或超时，本机也没有可复用的完整精确版本缓存",
+        { cause: error },
       );
     }
-    fs.cpSync(
-      cachedChromium.path,
-      path.join(browserRoot, cachedChromium.name),
-      { recursive: true },
-    );
-    process.stdout.write(
-      `官方下载超时，已安全复用本机 Playwright Chromium 缓存：${cachedChromium.name}\n`,
-    );
-  }
-}
+  },
+});
 
 let repository = process.env.GITHUB_REPOSITORY || "";
 if (!repository) {
