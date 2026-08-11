@@ -322,14 +322,21 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await page.goto("/tasks");
   await page.getByRole("tab", { name: "Excel 自动审核" }).click();
   const pageCountBeforeTemplateDownloads = page.context().pages().length;
+  const templateMenuButton = page.getByRole("button", { name: "下载导入模板" });
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const templateDownloadPromise = page.waitForEvent("download");
-    await page.getByRole("button", { name: "下载导入模板" }).click();
+    await templateMenuButton.evaluate((element) => {
+      element.scrollIntoView({ block: "center", inline: "nearest" });
+    });
+    await expect(templateMenuButton).toBeInViewport();
+    await templateMenuButton.click();
     const templateMenuItem = page.getByRole("menuitem", {
       name: "下载达能客户 Excel 模板",
     });
     await expect(templateMenuItem).toBeVisible();
-    await templateMenuItem.click({ force: true });
+    await templateMenuItem.scrollIntoViewIfNeeded();
+    await expect(templateMenuItem).toBeInViewport();
+    await templateMenuItem.click();
     const templateDownload = await templateDownloadPromise;
     expect(templateDownload.suggestedFilename()).toMatch(
       /^VERIDIA达能客户导入模板_.+_\d{4}-\d{2}-\d{2}\.xlsx$/u,
