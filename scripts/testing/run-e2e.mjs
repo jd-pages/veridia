@@ -14,6 +14,7 @@ import {
   e2eTsconfigPath,
   restoreFile,
 } from "./next-type-isolation.mjs";
+import { waitForStartupRoute } from "./e2e-readiness.mjs";
 
 const root = process.cwd();
 const args = process.argv.slice(2);
@@ -133,8 +134,9 @@ async function waitForHealth(baseURL) {
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`${baseURL}/api/health`);
-      if (response.ok) return;
-      lastError = `HTTP ${response.status}`;
+      const body = response.ok ? await response.json().catch(() => null) : null;
+      if (response.status === 200 && body?.ok === true) return;
+      lastError = `HTTP ${response.status}${response.ok ? "（响应不是 VERIDIA ready）" : ""}`;
     } catch (error) { lastError = error instanceof Error ? error.message : String(error); }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -156,16 +158,32 @@ async function warmup(baseURL, executablePath) {
   writeMetadata({ browserPid });
   const context = await warmupBrowser.newContext({ baseURL });
   const page = await context.newPage();
-  const loginResponse = await page.goto("/login", { waitUntil: "domcontentloaded" });
-  if (!loginResponse?.ok()) throw new Error(`预热 /login 失败: HTTP ${loginResponse?.status() ?? "无响应"}`);
+  const loginPageReady = await waitForStartupRoute({
+    label: "预热 /login",
+    request: () => page.goto("/login", { waitUntil: "domcontentloaded" }),
+  });
   await page.waitForFunction(() =>
     [...document.querySelectorAll("button")].some((button) =>
       Object.keys(button).some((key) => key.startsWith("__reactProps"))),
   null, { timeout: 30_000 });
-  const authentication = await context.request.post("/api/auth/login", {
-    data: { username: "admin", password: "Admin123!" },
+  const authStatusReady = await waitForStartupRoute({
+    label: "预热 /api/auth/status",
+    request: () => context.request.get("/api/auth/status"),
   });
-  if (!authentication.ok()) throw new Error(`预热登录失败: HTTP ${authentication.status()}`);
+  const authenticationReady = await waitForStartupRoute({
+    label: "预热 /api/auth/login",
+    request: () => context.request.post("/api/auth/login", {
+      data: { username: "admin", password: "Admin123!" },
+    }),
+  });
+  writeMetadata({
+    readiness: {
+      health: "READY",
+      loginPageAttempts: loginPageReady.attempts,
+      authStatusAttempts: authStatusReady.attempts,
+      authLoginAttempts: authenticationReady.attempts,
+    },
+  });
   for (const route of ["/tasks", "/results", "/campaigns", "/rules"]) {
     const response = await page.goto(route, { waitUntil: "domcontentloaded" });
     if (!response || response.status() >= 400) throw new Error(`预热 ${route} 失败: HTTP ${response?.status() ?? "无响应"}`);
