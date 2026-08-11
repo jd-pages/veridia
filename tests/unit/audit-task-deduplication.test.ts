@@ -15,6 +15,7 @@ import {
   findBlockingAuditTask,
   localNaturalDayRange,
 } from "@/lib/audit-task-deduplication";
+import { automaticAuditQueueState } from "@/lib/automation/runtime-state";
 
 function task(input?: {
   id?: string;
@@ -23,11 +24,15 @@ function task(input?: {
   finalUrl?: string | null;
   platformNoteId?: string | null;
   noteUrl?: string;
+  status?: string;
+  batchId?: string | null;
 }) {
   const url =
     input?.url || "https://www.xiaohongshu.com/explore/note-1";
   return {
     id: input?.id || "task-1",
+    status: input?.status || "PENDING",
+    batchId: input?.batchId ?? null,
     url,
     normalizedUrl: input?.normalizedUrl || url,
     finalUrl: input?.finalUrl ?? null,
@@ -35,6 +40,7 @@ function task(input?: {
       ? [
           {
             note: {
+              contentChannel: "XIAOHONGSHU",
               platformNoteId: input.platformNoteId,
               url: input.noteUrl || url,
               finalUrl: null,
@@ -48,6 +54,8 @@ function task(input?: {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.findMany.mockResolvedValue([]);
+  automaticAuditQueueState.runner = undefined;
+  automaticAuditQueueState.activeBatchId = undefined;
 });
 
 describe("审核任务按本地自然日去重", () => {
@@ -108,35 +116,13 @@ describe("审核任务按本地自然日去重", () => {
     const { start, end } = localNaturalDayRange(now);
     expect(start).toEqual(new Date(2026, 7, 3, 0, 0, 0, 0));
     expect(end).toEqual(new Date(2026, 7, 4, 0, 0, 0, 0));
-    expect(mocks.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          AND: [
-            {
-              OR: [
-                { batchId: null },
-                { batch: { clearedAt: null } },
-                { auditResults: { some: {} } },
-              ],
-            },
-            expect.objectContaining({ OR: expect.any(Array) }),
-            {
-              OR: [
-                { createdAt: { gte: start, lt: end } },
-                {
-                  auditResults: {
-                    some: { auditedAt: { gte: start, lt: end } },
-                  },
-                },
-              ],
-            },
-          ],
-        },
-      }),
-    );
-    expect(JSON.stringify(mocks.findMany.mock.calls[0][0].where)).not.toContain(
-      "campaignId",
-    );
+    const where = JSON.stringify(mocks.findMany.mock.calls[0][0].where);
+    expect(where).toContain('"status":"PENDING"');
+    expect(where).toContain('"status":"PROCESSING"');
+    expect(where).toContain('"supersededAt":null');
+    expect(where).toContain(JSON.stringify(start));
+    expect(where).toContain(JSON.stringify(end));
+    expect(where).not.toContain("campaignId");
   });
 
   it.each([
@@ -181,5 +167,48 @@ describe("审核任务按本地自然日去重", () => {
         finalUrl: null,
       }),
     ).toBe(false);
+  });
+
+  it("已取消且没有当前结果的任务立即释放当天占用", async () => {
+    mocks.findMany.mockResolvedValueOnce([task({ status: "CANCELLED" })]);
+    await expect(findBlockingAuditTask({
+      url: "https://www.xiaohongshu.com/explore/note-1",
+      now,
+    })).resolves.toBeNull();
+  });
+
+  it("已完成任务删除当前结果后立即释放当天占用", async () => {
+    mocks.findMany.mockResolvedValueOnce([task({ status: "COMPLETED" })]);
+    await expect(findBlockingAuditTask({
+      url: "https://www.xiaohongshu.com/explore/note-1",
+      now,
+    })).resolves.toBeNull();
+  });
+
+  it("当前有效结果仍然保持当天防重", async () => {
+    mocks.findMany.mockResolvedValueOnce([
+      task({ status: "COMPLETED", platformNoteId: "note-1" }),
+    ]);
+    await expect(findBlockingAuditTask({
+      url: "https://www.xiaohongshu.com/explore/note-1",
+      now,
+    })).resolves.toMatchObject({ reason: "TODAY_DUPLICATE" });
+  });
+
+  it("PROCESSING 只有存在当前真实 runner 时才占用当天防重", async () => {
+    const processing = task({ status: "PROCESSING", batchId: "batch-1" });
+    mocks.findMany.mockResolvedValueOnce([processing]);
+    await expect(findBlockingAuditTask({
+      url: "https://www.xiaohongshu.com/explore/note-1",
+      now,
+    })).resolves.toBeNull();
+
+    automaticAuditQueueState.activeBatchId = "batch-1";
+    automaticAuditQueueState.runner = Promise.resolve();
+    mocks.findMany.mockResolvedValueOnce([processing]);
+    await expect(findBlockingAuditTask({
+      url: "https://www.xiaohongshu.com/explore/note-1",
+      now,
+    })).resolves.toMatchObject({ reason: "TODAY_DUPLICATE" });
   });
 });

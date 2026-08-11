@@ -1,5 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import { PrismaClient } from "@prisma/client";
 import ExcelJS from "exceljs";
+import path from "node:path";
+
+const databaseUrl =
+  process.env.E2E_DATABASE_URL?.trim() ||
+  `file:${path.resolve(process.cwd(), "prisma", "e2e.db").replaceAll("\\", "/")}`;
 
 const resultExportHeaders = [
   "平台",
@@ -632,6 +638,7 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
 
 test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) => {
   await login(page);
+  const recreatedTaskIds: string[] = [];
   await expect
     .poll(
       async () => {
@@ -771,19 +778,21 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
     rulesBefore.data.map(({ id }) => id),
   );
 
-  const recreateResponse = await page.request.post("/api/automation/batches", {
+  const recreateResponse = await page.request.post("/api/tasks", {
     data: {
-      name: "E2E 删除后重新审核",
       urls: detail.data.task.url,
       productId: detail.data.task.product.id,
       campaignId: detail.data.task.campaign.id,
       productStage: detail.data.task.productStage,
     },
   });
-  expect(recreateResponse.status()).toBe(400);
-  expect((await recreateResponse.json()).error).toBe(
-    "该笔记今天已创建过审核任务，请勿重复创建。",
-  );
+  expect(recreateResponse.ok()).toBeTruthy();
+  const recreatePayload = (await recreateResponse.json()) as {
+    data: { created: Array<{ id: string }>; errors: unknown[] };
+  };
+  expect(recreatePayload.data.created).toHaveLength(1);
+  expect(recreatePayload.data.errors).toHaveLength(0);
+  recreatedTaskIds.push(recreatePayload.data.created[0].id);
 
   await page.reload();
   const beforeBatchDelete = (await (
@@ -879,9 +888,8 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
   await expect(page.getByText(/已选择\s*0\s*条/u)).toBeVisible();
 
   for (const { task: deletedTask } of batchCandidates) {
-    const response = await page.request.post("/api/automation/batches", {
+    const response = await page.request.post("/api/tasks", {
       data: {
-        name: "E2E 批量删除后重新审核",
         urls: deletedTask.url,
         productId: deletedTask.product.id,
         campaignId: deletedTask.campaign.id,
@@ -889,13 +897,13 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
       },
     });
     const payload = (await response.json()) as {
-      data?: { batchId?: string; created?: number };
+      data?: { created?: Array<{ id: string }>; errors?: unknown[] };
       error?: string;
     };
-    expect(response.status(), JSON.stringify(payload)).toBe(400);
-    expect(payload.error).toBe(
-      "该笔记今天已创建过审核任务，请勿重复创建。",
-    );
+    expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
+    expect(payload.data?.created).toHaveLength(1);
+    expect(payload.data?.errors).toHaveLength(0);
+    recreatedTaskIds.push(payload.data!.created![0].id);
   }
 
   const finalList = (await (
@@ -907,6 +915,14 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
   expect(finalIds).not.toContain(firstResultId);
   for (const deletedId of batchDeletedIds) {
     expect(finalIds).not.toContain(deletedId);
+  }
+  const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
+  try {
+    await prisma.auditTask.deleteMany({
+      where: { id: { in: recreatedTaskIds } },
+    });
+  } finally {
+    await prisma.$disconnect();
   }
   await page.reload();
   await expect(

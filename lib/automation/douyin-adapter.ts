@@ -221,12 +221,94 @@ export function extractDouyinStructuredTopics(item: JsonRecord) {
   return [...unique.values()];
 }
 
-function structuredImageCount(item: JsonRecord) {
-  for (const key of ["images", "image_infos", "image_list", "imageInfos"]) {
-    const value = item[key];
-    if (Array.isArray(value)) return value.length;
+function structuredImageIdentity(value: unknown, fallback: string) {
+  const record = asRecord(value);
+  if (!record) return fallback;
+  for (const key of ["image_id", "imageId", "uri", "id", "key"]) {
+    const id = asString(record[key]).trim();
+    if (id) return `id:${id}`;
   }
-  return 0;
+  const urlCandidates = [
+    record.url,
+    record.src,
+    record.download_url,
+    record.downloadUrl,
+    ...asArray(record.url_list || record.urlList),
+  ];
+  for (const candidate of urlCandidates) {
+    const raw = typeof candidate === "string"
+      ? candidate
+      : asString(asRecord(candidate)?.url);
+    if (!raw) continue;
+    try {
+      const url = new URL(raw);
+      url.search = "";
+      url.hash = "";
+      return `url:${url.toString()}`;
+    } catch {
+      return `url:${raw.split("?")[0]}`;
+    }
+  }
+  return fallback;
+}
+
+export function extractDouyinStructuredImageEvidence(item: JsonRecord) {
+  const containers: Array<{ value: JsonRecord; source: string }> = [
+    { value: item, source: "aweme" },
+  ];
+  for (const [key, value] of [
+    ["image_post_info", item.image_post_info],
+    ["imagePostInfo", item.imagePostInfo],
+    ["aweme_detail", item.aweme_detail],
+    ["awemeDetail", item.awemeDetail],
+  ] as const) {
+    const record = asRecord(value);
+    if (record) containers.push({ value: record, source: key });
+  }
+  for (const container of [...containers]) {
+    const nested = asRecord(
+      container.value.image_post_info || container.value.imagePostInfo,
+    );
+    if (nested) {
+      containers.push({
+        value: nested,
+        source: `${container.source}.image_post_info`,
+      });
+    }
+  }
+
+  let best = { count: 0, identities: [] as string[], source: null as string | null };
+  for (const container of containers) {
+    for (const key of [
+      "images",
+      "image_infos",
+      "image_list",
+      "imageInfos",
+      "images_v2",
+      "imagesV2",
+    ]) {
+      const values = asArray(container.value[key]);
+      if (!values.length) continue;
+      const identities = [
+        ...new Set(
+          values.map((value, index) =>
+            structuredImageIdentity(
+              value,
+              `${container.source}.${key}:index:${index}`,
+            ),
+          ),
+        ),
+      ];
+      if (identities.length > best.count) {
+        best = {
+          count: identities.length,
+          identities,
+          source: `${container.source}.${key}`,
+        };
+      }
+    }
+  }
+  return best;
 }
 
 export function extractDouyinStructuredPublishedAt(
@@ -350,13 +432,87 @@ export async function collectDouyinEvidence(page: Page) {
       .map((script) => script.textContent || "")
       .filter(Boolean)
       .slice(0, 10);
-    const imageSources = new Set(
-      Array.from(scope.querySelectorAll(
-        "[class*='dySwiperSlide'] img, [data-e2e='slide'] img, [data-testid='douyin-image']",
-      ))
-        .map((image) => (image as HTMLImageElement).currentSrc || (image as HTMLImageElement).src)
-        .filter((src) => src && !src.includes("avatar")),
-    );
+    const carouselRoots = Array.from(scope.querySelectorAll([
+      "[class*='dySwiper']",
+      "[class*='swiper']",
+      "[data-e2e='slide']",
+      "[data-testid='douyin-carousel']",
+      "[data-testid='douyin-image-carousel']",
+      "[data-testid='douyin-image']",
+    ].join(", ")));
+    if (!carouselRoots.length && detailRoot) carouselRoots.push(detailRoot);
+    const excludedSelector = [
+      "[class*='avatar']",
+      "[data-e2e*='avatar']",
+      "[class*='author'] [class*='head']",
+      "[class*='comment']",
+      "[data-e2e*='comment']",
+      "[class*='recommend']",
+      "[data-e2e*='recommend']",
+      "[class*='related']",
+      "[class*='qrcode']",
+      "[class*='logo']",
+    ].join(", ");
+    const normalizeMediaUrl = (value: string) => {
+      const raw = value.trim().split(/\s+/u)[0] || "";
+      if (!raw) return "";
+      try {
+        const url = new URL(raw, location.href);
+        url.search = "";
+        url.hash = "";
+        return url.toString();
+      } catch {
+        return raw.split("?")[0];
+      }
+    };
+    const imageKeys = new Set<string>();
+    for (const root of carouselRoots) {
+      const mediaNodes = [
+        ...(root.matches("img, source") ? [root] : []),
+        ...Array.from(root.querySelectorAll("img, source")),
+      ];
+      for (const node of mediaNodes) {
+        const element = node as HTMLElement;
+        if (element.closest(excludedSelector)) continue;
+        const media = element as HTMLImageElement;
+        const rawSource =
+          media.getAttribute("data-key") ||
+          media.getAttribute("data-image-id") ||
+          media.getAttribute("data-src") ||
+          media.getAttribute("data-original") ||
+          media.currentSrc ||
+          media.src ||
+          media.getAttribute("srcset") ||
+          "";
+        if (/avatar|logo|qrcode|loading|placeholder|comment|recommend/iu.test(rawSource)) {
+          continue;
+        }
+        const slide = element.closest(
+          "[data-swiper-slide-index],[data-index],[data-key],[data-e2e='slide']",
+        );
+        const stableIndex =
+          slide?.getAttribute("data-swiper-slide-index") ||
+          slide?.getAttribute("data-index") ||
+          slide?.getAttribute("data-key") ||
+          "";
+        const normalizedSource = normalizeMediaUrl(rawSource);
+        const key = stableIndex ? `slide:${stableIndex}` : normalizedSource;
+        if (key) imageKeys.add(key);
+      }
+    }
+    let carouselTotal = 0;
+    for (const root of carouselRoots) {
+      const text = root.textContent || "";
+      for (const match of text.matchAll(/\b\d+\s*[\/／]\s*(\d+)\b/gu)) {
+        carouselTotal = Math.max(carouselTotal, Number(match[1]) || 0);
+      }
+      for (const value of [
+        root.getAttribute("data-total"),
+        root.getAttribute("aria-setsize"),
+      ]) {
+        carouselTotal = Math.max(carouselTotal, Number(value) || 0);
+      }
+    }
     const publishedTimeElement = detailRoot
       ? [...detailRoot.querySelectorAll(
           "[data-e2e='video-publish-time'],[data-testid='douyin-publish-time'],time[datetime]",
@@ -373,7 +529,10 @@ export async function collectDouyinEvidence(page: Page) {
       descriptionSource,
       topics,
       hasVideo: Boolean(scope.querySelector("video")),
-      imageCount: imageSources.size,
+      imageCount: Math.max(imageKeys.size, carouselTotal),
+      imageKeys: [...imageKeys].sort(),
+      carouselReady: carouselRoots.length > 0,
+      carouselTotal,
       authorName: scope.querySelector(
         "[data-e2e='video-author-name'], [data-e2e='user-info'], [data-testid='douyin-author']",
       )?.textContent?.trim() || null,
@@ -390,10 +549,38 @@ export async function collectDouyinEvidence(page: Page) {
   });
 }
 
+async function collectStableDouyinImageEvidence(
+  page: Page,
+  initial: Awaited<ReturnType<typeof collectDouyinEvidence>>,
+) {
+  if (typeof page.waitForTimeout !== "function") return initial;
+  const deadline = Date.now() + 4_000;
+  let latest = initial;
+  let previousSignature = "";
+  let stableObservations = 0;
+  while (Date.now() < deadline) {
+    const signature = JSON.stringify({
+      count: latest.imageCount,
+      keys: latest.imageKeys || [],
+      total: latest.carouselTotal || 0,
+    });
+    if (latest.imageCount > 0 && signature === previousSignature) {
+      stableObservations += 1;
+      if (stableObservations >= 3) return latest;
+    } else {
+      stableObservations = latest.imageCount > 0 ? 1 : 0;
+      previousSignature = signature;
+    }
+    await page.waitForTimeout(150);
+    latest = await collectDouyinEvidence(page);
+  }
+  return latest;
+}
+
 export class PlaywrightDouyinAdapter {
   readonly platform = "DOUYIN" as const;
   readonly name = "playwright-douyin";
-  readonly version = "1.2.0";
+  readonly version = "1.3.0";
 
   canHandle(value: string) {
     try {
@@ -422,7 +609,7 @@ export class PlaywrightDouyinAdapter {
       };
     }
 
-    const evidence = await collectDouyinEvidence(page);
+    let evidence = await collectDouyinEvidence(page);
     const finalUrl = options.canonicalUrl || page.url();
     const urlIdentity = douyinContentIdentityFromUrl(finalUrl) ||
       douyinContentIdentityFromUrl(originalUrl);
@@ -460,15 +647,20 @@ export class PlaywrightDouyinAdapter {
       }
     }
 
-    const structuredImages = structuredItem ? structuredImageCount(structuredItem) : 0;
+    const structuredImages = structuredItem
+      ? extractDouyinStructuredImageEvidence(structuredItem)
+      : { count: 0, identities: [], source: null };
     const noteType = urlIdentity?.noteType ||
-      (structuredImages > 0 || evidence.imageCount > 0
+      (structuredImages.count > 0 || evidence.imageCount > 0
         ? "IMAGE_TEXT" as const
         : evidence.hasVideo
           ? "VIDEO" as const
           : "UNKNOWN" as const);
+    if (noteType === "IMAGE_TEXT" && structuredImages.count === 0) {
+      evidence = await collectStableDouyinImageEvidence(page, evidence);
+    }
     const imageCount = noteType === "IMAGE_TEXT"
-      ? structuredImages || evidence.imageCount
+      ? structuredImages.count || evidence.imageCount
       : 0;
     const structuredBody = structuredItem
       ? structuredCaption(structuredItem)
@@ -538,7 +730,11 @@ export class PlaywrightDouyinAdapter {
           : null,
         hasVideoElement: evidence.hasVideo,
         domImageCount: evidence.imageCount,
-        structuredImageCount: structuredImages,
+        structuredImageCount: structuredImages.count,
+        structuredImageSource: structuredImages.source,
+        structuredImageIdentities: structuredImages.identities,
+        domImageKeys: evidence.imageKeys || [],
+        domCarouselTotal: evidence.carouselTotal || 0,
         structuredPayloadCount: evidence.structuredPayloads.length,
         structuredHashtagCount: structuredTopicValues.length,
         domHashtagCount: evidence.topics.length,

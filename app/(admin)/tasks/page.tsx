@@ -51,7 +51,6 @@ import {
   type ImportTemplateFormat,
 } from "@/lib/import-template-download-client";
 import {
-  PRODUCT_STAGE_TOPIC_OPTIONS,
   productStageTopicLabel,
   stageTopicsForProductStage,
 } from "@/lib/product-stage";
@@ -68,11 +67,11 @@ import styles from "./tasks.module.css";
 import type { SessionUser } from "@/lib/auth";
 import { canAccessBusiness } from "@/lib/permissions";
 import { extractNoteLinksFromText } from "@/lib/note-links";
+import { nextSelectedProductStage } from "@/lib/product-stage-selection";
 import {
   taskExecutionFilterLabels,
   type TaskExecutionFilter,
 } from "@/lib/automation/task-execution-filter";
-import { canClearAutomaticBatch } from "@/lib/automation/task-view";
 
 interface Product {
   id: string;
@@ -90,6 +89,11 @@ interface Campaign {
   products?: Array<{ product: Product }>;
   requiresProductStage: boolean;
   stageOptions?: Array<{ value: string; label: string }>;
+}
+
+interface ProductStageSelection {
+  requiresProductStage: boolean;
+  options: Array<{ value: string; label: string }>;
 }
 
 interface AuditRequirements {
@@ -394,6 +398,9 @@ export default function TasksPage() {
   const [clearingBatchId, setClearingBatchId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [stageSelection, setStageSelection] =
+    useState<ProductStageSelection | null>(null);
+  const [stageOptionsLoading, setStageOptionsLoading] = useState(false);
   const [form] = Form.useForm();
   const selectedProduct = Form.useWatch("productId", form);
   const selectedContentChannel = Form.useWatch("contentChannel", form) || "XIAOHONGSHU";
@@ -404,8 +411,7 @@ export default function TasksPage() {
     [campaigns, selectedCampaign],
   );
   const selectedCampaignRequiresStage = Boolean(
-    selectedContentChannel === "XIAOHONGSHU" &&
-      selectedCampaignDefinition?.requiresProductStage,
+    stageSelection?.requiresProductStage,
   );
   const availableProducts = useMemo(() => {
     if (!selectedCampaignDefinition) return [];
@@ -592,10 +598,62 @@ export default function TasksPage() {
   }, [load]);
 
   useEffect(() => {
+    if (!selectedProduct || !selectedCampaign) {
+      setStageSelection(null);
+      setStageOptionsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setStageOptionsLoading(true);
+    apiFetch<ProductStageSelection>(
+      `/api/campaigns/${selectedCampaign}/stage-options?productId=${encodeURIComponent(selectedProduct)}&contentChannel=${encodeURIComponent(selectedContentChannel)}`,
+      { cache: "no-store" },
+    )
+      .then((selection) => {
+        if (cancelled) return;
+        setStageSelection(selection);
+        const currentStage = form.getFieldValue("productStage") as
+          | string
+          | undefined;
+        const nextStage = nextSelectedProductStage(
+          selection.options,
+          currentStage,
+        );
+        if (nextStage) {
+          form.setFieldValue("productStage", nextStage);
+        } else {
+          form.resetFields(["productStage"]);
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setStageSelection(null);
+        form.resetFields(["productStage"]);
+        message.error(
+          error instanceof Error ? error.message : "加载所属阶段失败",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setStageOptionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    form,
+    message,
+    selectedCampaign,
+    selectedContentChannel,
+    selectedProduct,
+  ]);
+
+  useEffect(() => {
     if (
-      selectedContentChannel === "DOUYIN" ||
       !selectedProduct ||
       !selectedCampaign ||
+      stageOptionsLoading ||
+      !stageSelection ||
+      (selectedCampaignRequiresStage && !stageSelection.options.length) ||
       (selectedCampaignRequiresStage && !selectedStage)
     ) {
       setRequirements(null);
@@ -629,6 +687,8 @@ export default function TasksPage() {
     selectedCampaignRequiresStage,
     selectedProduct,
     selectedStage,
+    stageOptionsLoading,
+    stageSelection,
   ]);
 
   useEffect(() => {
@@ -882,14 +942,6 @@ export default function TasksPage() {
 
   const requestClearSelectedBatch = () => {
     if (!selectedBatch || isCombinedQueue || clearingBatchId) return;
-    if (!canClearAutomaticBatch({
-      status: selectedBatch.status,
-      processingTaskCount: selectedBatch.stats.processing,
-      currentTaskId: selectedBatch.currentTask?.id,
-    })) {
-      message.warning("当前批次仍在运行，请先暂停或取消任务后再清除。");
-      return;
-    }
     setBatchPendingClear(selectedBatch);
   };
 
@@ -1175,6 +1227,7 @@ export default function TasksPage() {
                               options={[{ value: "XIAOHONGSHU", label: "小红书" }, { value: "DOUYIN", label: "抖音" }]}
                               onChange={() => {
                                 form.resetFields(["campaignId", "productId", "productStage", "urls"]);
+                                setStageSelection(null);
                                 setRequirements(null);
                               }}
                             />
@@ -1192,6 +1245,7 @@ export default function TasksPage() {
                               placeholder="请选择活动"
                               onChange={() => {
                                 form.resetFields(["productId", "productStage"]);
+                                setStageSelection(null);
                                 setRequirements(null);
                               }}
                               options={campaigns.map((item) => ({
@@ -1229,37 +1283,46 @@ export default function TasksPage() {
                               }))}
                               onChange={() => {
                                 form.resetFields(["productStage"]);
+                                setStageSelection(null);
                                 setRequirements(null);
                               }}
                             />
                           </Form.Item>
                         </Col>
                       </Row>
-                      {selectedCampaignRequiresStage ? (
+                      {selectedProduct && selectedCampaignRequiresStage ? (
                         <Form.Item
                           name="productStage"
-                          label="产品阶段话题"
+                          label="所属阶段"
                           rules={[{ required: true }]}
                           extra={
-                            selectedCampaignDefinition?.stageOptions?.some(
+                            stageSelection?.options.some(
                               (item) => item.value.includes("_"),
                             )
                               ? "请选择与具体段位对应的阶段组。"
-                              : "请选择 IFFO 或 GUM。"
+                              : stageSelection?.options.length === 1
+                                ? "当前仅支持一个阶段，已自动选择。"
+                                : "请选择 IFFO、GUM 或当前产品实际支持的阶段。"
                           }
                         >
                           <Select
-                            placeholder="选择产品阶段话题"
-                            options={
-                              selectedCampaignDefinition?.stageOptions?.length
-                                ? selectedCampaignDefinition.stageOptions
-                                : PRODUCT_STAGE_TOPIC_OPTIONS.map((item) => ({
-                                    value: item.value,
-                                    label: item.label,
-                                  }))
-                            }
+                            placeholder="请选择所属阶段"
+                            loading={stageOptionsLoading}
+                            disabled={!stageSelection?.options.length}
+                            options={stageSelection?.options || []}
                           />
                         </Form.Item>
+                      ) : null}
+                      {selectedProduct &&
+                      selectedCampaignRequiresStage &&
+                      !stageOptionsLoading &&
+                      !stageSelection?.options.length ? (
+                        <Alert
+                          showIcon
+                          type="error"
+                          className={styles.requirementsAlert}
+                          message="当前产品在此活动下未配置可用阶段规则，请先前往活动管理配置。"
+                        />
                       ) : null}
                       {requirements ? (
                         <Alert
@@ -1335,7 +1398,13 @@ export default function TasksPage() {
                         size="large"
                         htmlType="submit"
                         loading={submitting}
-                        disabled={selectedContentChannel === "XIAOHONGSHU" && browserControlBlocked}
+                        disabled={
+                          (selectedContentChannel === "XIAOHONGSHU" &&
+                            browserControlBlocked) ||
+                          stageOptionsLoading ||
+                          (selectedCampaignRequiresStage &&
+                            (!stageSelection?.options.length || !selectedStage))
+                        }
                         icon={<PlayCircleOutlined />}
                         className={styles.primaryAction}
                       >

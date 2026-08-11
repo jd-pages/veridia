@@ -22,6 +22,10 @@ import {
   markAuditResultSuperseded,
   resolveAuditResultSlot,
 } from "@/lib/audit-result-lifecycle";
+import {
+  AuditConfigurationError,
+  missingProductStageRuleMessage,
+} from "@/lib/audit-configuration";
 
 export async function getAuditContext(
   productId: string,
@@ -32,7 +36,7 @@ export async function getAuditContext(
   const [product, campaign] = await Promise.all([
     prisma.product.findFirst({
       where: { id: productId, status: "ACTIVE", deletedAt: null },
-      select: { brandName: true },
+      select: { brandName: true, name: true },
     }),
     prisma.campaign.findFirst({
       where: {
@@ -47,6 +51,7 @@ export async function getAuditContext(
     }),
   ]);
   if (!campaign) throw new Error("活动不存在、已停用或与所选产品不匹配");
+  if (!product) throw new Error("所选产品不存在或已停用");
   const brandName = product?.brandName.trim();
   if (!brandName) throw new Error("所选产品未配置品牌，无法加载话题规则");
   if (!/^\d{4}-\d{2}$/u.test(campaign.month)) {
@@ -118,13 +123,21 @@ export async function getAuditContext(
     campaignStageRequirementRules,
   );
   if (requiresProductStage && !normalizedProductStage) {
-    throw new Error("该活动要求选择产品阶段话题");
+    throw new AuditConfigurationError("该活动要求选择产品阶段话题");
   }
   const selectedStageRule = rules.find(
     (rule) =>
       rule.topicCategory === "PRODUCT_STAGE" &&
       compatibleStages.includes(rule.applicableStage || ""),
   );
+  if (normalizedProductStage && !selectedStageRule) {
+    throw new AuditConfigurationError(
+      missingProductStageRuleMessage({
+        productName: product.name,
+        productStage: productStageTopicLabel(normalizedProductStage),
+      }),
+    );
+  }
   const stageGroups = normalizedProductStage
     ? await prisma.ruleStageGroup.findMany({
         where: { key: { in: compatibleStages } },

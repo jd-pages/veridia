@@ -1,5 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import { PrismaClient } from "@prisma/client";
+import path from "node:path";
 import { E2E_ORIGIN } from "./e2e-origin";
+
+const databaseUrl =
+  process.env.E2E_DATABASE_URL?.trim() ||
+  `file:${path.resolve(process.cwd(), "prisma", "e2e.db").replaceAll("\\", "/")}`;
 
 async function waitForBatchToStop(page: Page, batchId: string) {
   await expect
@@ -55,6 +61,105 @@ async function clearVisibleE2eBatches(page: Page) {
     expect(clearResponse.ok()).toBeTruthy();
   }
 }
+
+test("旧版遗留 RUNNING/PROCESSING 无 Runner 可从页面直接清除并释放重复占用", async ({ page }) => {
+  expect((await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  })).ok()).toBeTruthy();
+  await clearVisibleE2eBatches(page);
+  const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
+  const suffix = Date.now();
+  const recreatedTaskIds: string[] = [];
+  try {
+    const product = await prisma.product.findFirstOrThrow({
+      where: { name: { contains: "澳洲白金版" }, status: "ACTIVE" },
+    });
+    const campaign = await prisma.campaign.findFirstOrThrow({
+      where: {
+        name: { contains: "爱他美2026年7月" },
+        contentChannel: "XIAOHONGSHU",
+        OR: [
+          { productId: product.id },
+          { products: { some: { productId: product.id } } },
+        ],
+      },
+    });
+    const url = `${E2E_ORIGIN}/mock/xhs?case=passed&stale=${suffix}`;
+    const batch = await prisma.auditBatch.create({
+      data: {
+        name: `遗留僵尸批次-${suffix}`,
+        productId: product.id,
+        campaignId: campaign.id,
+        productStage: "IFFO",
+        source: "EXCEL",
+        channel: "XIAOHONGSHU",
+        status: "RUNNING",
+        totalCount: 1,
+      },
+    });
+    const task = await prisma.auditTask.create({
+      data: {
+        batchId: batch.id,
+        url,
+        normalizedUrl: url,
+        productId: product.id,
+        campaignId: campaign.id,
+        productStage: "IFFO",
+        source: "EXCEL",
+        status: "PROCESSING",
+        platform: "XIAOHONGSHU",
+        channel: "XIAOHONGSHU",
+      },
+    });
+    await prisma.auditBatch.update({
+      where: { id: batch.id },
+      data: { currentTaskId: task.id },
+    });
+
+    await page.goto(`/tasks?batchId=${batch.id}`);
+    await expect(page.getByText(batch.name!, { exact: false }).first()).toBeVisible();
+    await page.getByRole("button", { name: "清除当前批次" }).click();
+    await page.getByRole("button", { name: "确认清除", exact: true }).click();
+    await expect(page.getByText("暂无审核任务", { exact: true }).first()).toBeVisible();
+
+    expect(await prisma.auditBatch.findUnique({ where: { id: batch.id } })).toMatchObject({
+      status: "CANCELLED",
+      currentTaskId: null,
+      lastErrorCode: "STALE_BATCH_RECOVERY",
+      clearedAt: expect.any(Date),
+    });
+    expect(await prisma.auditTask.findUnique({ where: { id: task.id } })).toMatchObject({
+      status: "CANCELLED",
+      failureCode: "STALE_BATCH_RECOVERY",
+    });
+
+    const reimport = await page.request.post("/api/tasks", {
+      data: {
+        urls: url,
+        productId: product.id,
+        campaignId: campaign.id,
+        productStage: "IFFO",
+      },
+    });
+    expect(reimport.ok()).toBeTruthy();
+    const reimportPayload = (await reimport.json()).data as {
+      created: Array<{ id: string }>;
+    };
+    expect(reimportPayload.created).toHaveLength(1);
+    recreatedTaskIds.push(...reimportPayload.created.map(({ id }) => id));
+
+    const repeatedClear = await page.request.post(
+      `/api/automation/batches/${batch.id}/clear`,
+    );
+    expect(repeatedClear.ok()).toBeTruthy();
+    expect((await repeatedClear.json()).data.alreadyCleared).toBe(true);
+  } finally {
+    await prisma.auditTask.deleteMany({
+      where: { id: { in: recreatedTaskIds } },
+    });
+    await prisma.$disconnect();
+  }
+});
 
 test("清除当前批次仅移出任务页并保留正式审核结果", async ({ page }) => {
   test.setTimeout(180_000);
@@ -277,8 +382,9 @@ test("清除当前批次仅移出任务页并保留正式审核结果", async ({
   );
   await page.goto(`/tasks?batchId=${runningBatchId}`);
   await page.getByRole("button", { name: "清除当前批次" }).click();
+  await page.getByRole("button", { name: "确认清除", exact: true }).click();
   await expect(
-    page.getByText("当前批次仍在运行，请先暂停或取消任务后再清除。", {
+    page.getByText("当前批次正在执行，请先取消任务后再清除。", {
       exact: true,
     }),
   ).toBeVisible();

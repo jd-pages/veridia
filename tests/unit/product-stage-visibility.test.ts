@@ -25,7 +25,8 @@ describe("产品阶段话题用户可见口径", () => {
       rulesPage,
     ].join("\n");
 
-    expect(taskPage).toContain("PRODUCT_STAGE_TOPIC_OPTIONS.map");
+    expect(taskPage).toContain("/stage-options?productId=");
+    expect(taskPage).toContain("options={stageSelection?.options || []}");
     expect(taskPage).toContain("stageTopicsForProductStage");
     expect(resultPage).toContain("productStageTopicLabel(row.task.productStage)");
     expect(detailPage).toContain("AuditDecisionSummary");

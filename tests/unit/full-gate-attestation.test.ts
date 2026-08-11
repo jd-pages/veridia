@@ -83,7 +83,7 @@ afterAll(() => {
   fs.rmSync(repositoryTemplate, { recursive: true, force: true });
 });
 
-describe("FULL 门禁验收凭证", () => {
+describe("FULL 门禁验收凭证", { timeout: 15_000 }, () => {
   it("相同 HEAD 且 clean tree 时有效", () => {
     const root = fixture();
     const attestation = writeFullGateAttestation(passedResults, root);

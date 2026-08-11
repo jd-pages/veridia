@@ -6,9 +6,34 @@ export const visibleAuditTaskWhere: Prisma.AuditTaskWhereInput = {
 
 export const duplicateRelevantAuditTaskWhere: Prisma.AuditTaskWhereInput = {
   OR: [
-    { batchId: null },
-    { batch: { clearedAt: null } },
-    { auditResults: { some: {} } },
+    { auditResults: { some: { supersededAt: null } } },
+    {
+      status: "PENDING",
+      OR: [
+        { batchId: null },
+        {
+          batch: {
+            is: {
+              clearedAt: null,
+              status: {
+                in: [
+                  "QUEUED",
+                  "RUNNING",
+                  "RESUMING",
+                  "PAUSED",
+                  "LOGIN_EXPIRED",
+                  "SECURITY_RESTRICTED",
+                ],
+              },
+            },
+          },
+        },
+      ],
+    },
+    {
+      status: "PROCESSING",
+      batch: { is: { clearedAt: null } },
+    },
   ],
 };
 

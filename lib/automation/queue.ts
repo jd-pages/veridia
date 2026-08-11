@@ -10,27 +10,17 @@ import { recordProcessingFailureResult } from "@/lib/processing-failure-result";
 import { jitteredDelay } from "./pacing";
 import { completedAuditBatchUpdate } from "./task-lifecycle";
 import { automationRuntime } from "./platform-runtime";
+import { AuditConfigurationError } from "@/lib/audit-configuration";
+import {
+  automaticAuditQueueState as queueState,
+  isAutomaticBatchRuntimeLive,
+} from "./runtime-state";
 import {
   assertPlatformRouting,
   automationPlatformLabels,
   parseAutomationPlatform,
   resolveTaskAutomationPlatform,
-  type AutomationPlatform,
 } from "./platform";
-
-type QueueState = {
-  runner?: Promise<void>;
-  recovery?: Promise<void>;
-  activeBatchId?: string;
-  activePlatform?: AutomationPlatform;
-};
-
-const globalForQueue = globalThis as typeof globalThis & {
-  automaticAuditQueueState?: QueueState;
-};
-const queueState =
-  globalForQueue.automaticAuditQueueState ??
-  (globalForQueue.automaticAuditQueueState = {});
 
 const LOCAL_MOCK_WAIT_CAP_MS = Math.max(
   1,
@@ -61,20 +51,9 @@ async function waitWhileBatchRunning(
 }
 
 async function recoverInterruptedQueue() {
-  await prisma.$transaction([
-    prisma.auditTask.updateMany({
-      where: { status: "PROCESSING" },
-      data: {
-        status: "PENDING",
-        failureCode: "NETWORK_ERROR",
-        failureMessage: "服务重启后自动恢复队列",
-      },
-    }),
-    prisma.auditBatch.updateMany({
-      where: { status: "RUNNING" },
-      data: { status: "QUEUED", currentTaskId: null },
-    }),
-  ]);
+  // Do not infer a live executor from persisted RUNNING/PROCESSING values.
+  // Interrupted batches remain visible for explicit Continue, Cancel, or Clear.
+  // New work is already QUEUED and can be started safely below.
 }
 
 async function ensureRecovered() {
@@ -372,6 +351,34 @@ async function processBatch(batchId: string) {
       if (!(await keepProcessingOnlyWhileBatchRuns(batchId, processingTask.id))) {
         return;
       }
+      if (error instanceof AuditConfigurationError) {
+        await prisma.$transaction([
+          prisma.auditTask.updateMany({
+            where: { id: processingTask.id, status: "PROCESSING" },
+            data: {
+              status: "FAILED",
+              failureCode: error.code,
+              failureMessage: error.message,
+              finishedAt: new Date(),
+            },
+          }),
+          prisma.auditBatch.updateMany({
+            where: { id: batchId, status: "RUNNING" },
+            data: {
+              lastErrorCode: error.code,
+              lastErrorMessage: error.message,
+            },
+          }),
+        ]);
+        console.warn(
+          "[自动审核] 运行时规则配置已变化，当前任务已明确失败并继续批次",
+          JSON.stringify({
+            batchId,
+            taskId: processingTask.id,
+            code: error.code,
+          }),
+        );
+      } else {
       const extractionError = toAutomaticExtractionError(error);
       const sessionIssue = [
         "LOGIN_EXPIRED",
@@ -454,6 +461,7 @@ async function processBatch(batchId: string) {
           failureCode: extractionError.code,
           failureMessage: extractionError.message,
         });
+      }
       }
     } finally {
       if (!mustPauseBatch) {
@@ -544,7 +552,7 @@ async function runQueue() {
     const batch = await prisma.auditBatch.findFirst({
       where: {
         clearedAt: null,
-        status: { in: ["QUEUED", "RUNNING"] },
+        status: "QUEUED",
       },
       orderBy: [{ queueOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     });
@@ -652,7 +660,28 @@ export async function controlAutomaticBatch(
   }
 
   if (["RUNNING", "QUEUED"].includes(batch.status) && action === "CONTINUE") {
-    return batch;
+    if (isAutomaticBatchRuntimeLive(batchId)) return batch;
+    await prisma.auditTask.updateMany({
+      where: { batchId, status: "PROCESSING" },
+      data: {
+        status: "PENDING",
+        failureCode: "INTERRUPTED_RUNTIME_RECOVERY",
+        failureMessage: "检测到执行进程已中断，等待用户继续后重新入队",
+        startedAt: null,
+        finishedAt: null,
+      },
+    });
+    const resumed = await prisma.auditBatch.update({
+      where: { id: batchId },
+      data: {
+        status: "QUEUED",
+        currentTaskId: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      },
+    });
+    kickAutomaticAuditQueue();
+    return resumed;
   }
 
   if (action === "PAUSE") {
@@ -683,10 +712,7 @@ export async function controlAutomaticBatch(
         finishedAt: new Date(),
       },
     });
-    if (queueState.activeBatchId === batchId || !queueState.activeBatchId) {
-      queueState.activeBatchId = undefined;
-      runtime.updateLock(null);
-    }
+    if (!queueState.activeBatchId) runtime.updateLock(null);
     return cancelled;
   }
   if (action === "RETRY_FAILED") {

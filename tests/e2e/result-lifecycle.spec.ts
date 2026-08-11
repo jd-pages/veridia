@@ -24,6 +24,86 @@ async function waitForBatch(page: Page, batchId: string) {
   }, { timeout: 120_000 }).toMatch(/^(?:COMPLETED|COMPLETED_WITH_ERRORS)$/u);
 }
 
+test("删除当前审核结果后同日重新导入立即释放单条重复占用", async ({ page }) => {
+  await login(page);
+  const products = (await (await page.request.get("/api/products")).json())
+    .data as Array<{ id: string; name: string }>;
+  const product = products.find((item) => item.name.includes("澳洲白金版"))!;
+  const campaigns = (await (
+    await page.request.get(
+      `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+    )
+  ).json()).data as Array<{ id: string; name: string }>;
+  const campaign = campaigns.find((item) =>
+    item.name.includes("爱他美2026年7月"),
+  )!;
+  const suffix = Date.now();
+  const url = `${E2E_ORIGIN}/mock/xhs?case=passed&delete-release=${suffix}`;
+  const createdResponse = await page.request.post("/api/tasks", {
+    data: {
+      urls: url,
+      productId: product.id,
+      campaignId: campaign.id,
+      productStage: "IFFO",
+    },
+  });
+  expect(createdResponse.ok()).toBeTruthy();
+  const task = (await createdResponse.json()).data.created[0] as { id: string };
+  const auditedResponse = await page.request.post(`/api/tasks/${task.id}/audit`, {
+    data: {
+      extraction: {
+        url,
+        finalUrl: url,
+        pageTitle: "删除后重新导入测试",
+        pageType: "NOTE_DETAIL",
+        noteId: `delete-release-${suffix}`,
+        title: "删除后重新导入测试",
+        body: "这是一段用于验证结果删除后立即释放同日重复占用的完整正文内容。".repeat(3),
+        noteType: "IMAGE_TEXT",
+        imageExtractionStatus: "SUCCESS",
+        imageCount: 2,
+        topics: [],
+        pageStatus: "NORMAL",
+        authorName: "测试作者",
+        publishedAt: null,
+        isPublic: true,
+        extractedAt: new Date().toISOString(),
+        adapterName: "e2e",
+        adapterVersion: "1.0.0",
+      },
+    },
+  });
+  expect(auditedResponse.ok()).toBeTruthy();
+  const result = (await auditedResponse.json()).data as { id: string };
+
+  const blocked = await page.request.post("/api/tasks", {
+    data: { urls: url, productId: product.id, campaignId: campaign.id, productStage: "IFFO" },
+  });
+  expect(blocked.ok()).toBeTruthy();
+  expect((await blocked.json()).data).toMatchObject({ created: [], errors: [expect.objectContaining({ url })] });
+
+  expect((await page.request.delete(`/api/results/${result.id}`)).ok()).toBeTruthy();
+  const allowed = await page.request.post("/api/tasks", {
+    data: { urls: url, productId: product.id, campaignId: campaign.id, productStage: "IFFO" },
+  });
+  expect(allowed.ok()).toBeTruthy();
+  const allowedPayload = (await allowed.json()).data as {
+    created: Array<{ id: string }>;
+  };
+  try {
+    expect(allowedPayload.created).toHaveLength(1);
+  } finally {
+    const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
+    try {
+      await prisma.auditTask.deleteMany({
+        where: { id: { in: allowedPayload.created.map(({ id }) => id) } },
+      });
+    } finally {
+      await prisma.$disconnect();
+    }
+  }
+});
+
 test("重新审核保留历史版本并在原始导入槽位原位替换", async ({ page }) => {
   test.setTimeout(300_000);
   await login(page);

@@ -399,7 +399,9 @@ export async function POST(request: Request) {
             : "阶段与段位不匹配",
         );
       }
-      const stageRulesKey = campaign?.id || "";
+      const stageRulesKey = campaign && product
+        ? `${campaign.id}\u0000${product.id}\u0000${checked.channel}`
+        : "";
       let stageRules = stageRulesCache.get(stageRulesKey) || [];
       if (
         campaign &&
@@ -410,6 +412,7 @@ export async function POST(request: Request) {
           where: {
             brandName: product.brandName,
             campaignId: campaign.id,
+            OR: [{ productId: null }, { productId: product.id }],
             topicCategory: "PRODUCT_STAGE",
             status: "ACTIVE",
             contentChannel: { in: [checked.channel, "ALL"] },
@@ -424,9 +427,9 @@ export async function POST(request: Request) {
             (rule) => compatibleStages.includes(rule.applicableStage || ""),
           )
         : null;
-      if (stageRules.length && importedStage && !stageRule) {
+      if (importedStage && !stageRule && campaign && product) {
         checked.errors.push(
-          `活动未配置 ${productStageTopicLabel(importedStage)} 的产品阶段话题规则`,
+          `第${checked.rowNumber}行：当前活动要求阶段话题，但产品‘${product.name}’的 ${checked.stageGroup || productStageTopicLabel(importedStage)} 阶段未配置可用话题规则。`,
         );
       }
       if (

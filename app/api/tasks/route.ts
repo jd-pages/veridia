@@ -6,12 +6,14 @@ import { platformFromUrl } from "@/lib/automation/platform";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import {
-  campaignUsesDetailedProductStages,
-  compatibleStageRuleValues,
   normalizeConfiguredProductStageValue,
 } from "@/lib/product-stage";
 import packageJson from "@/package.json";
-import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
+import {
+  findCampaignProductStageRule,
+  resolveCampaignProductStageConfiguration,
+} from "@/lib/campaign-product-stage";
+import { missingProductStageRuleMessage } from "@/lib/audit-configuration";
 import { backfillMissingProcessingFailureResults } from "@/lib/processing-failure-result";
 import {
   auditNoteIdentity,
@@ -124,37 +126,32 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   const contentChannel = platforms[0] || null;
   if (!contentChannel) return fail("请至少输入一条支持的小红书或抖音作品详情链接");
   if (body.contentChannel && body.contentChannel !== contentChannel) return fail("选择的内容平台与作品链接不一致");
+  const stageConfiguration = await resolveCampaignProductStageConfiguration({
+    campaignId: body.campaignId,
+    productId: body.productId,
+    contentChannel,
+  });
   const productStage = normalizeConfiguredProductStageValue(
     body.productStage,
-    campaignUsesDetailedProductStages(product.brandName, campaign.month),
+    stageConfiguration.detailed,
   );
-  const campaignRules = await prisma.topicRule.findMany({
-    where: {
-      campaignId: body.campaignId,
-      status: "ACTIVE",
-      contentChannel: { in: [contentChannel, "ALL"] },
-    },
-    select: {
-      topicCategory: true,
-      applicableStage: true,
-      topic: true,
-      milkType: true,
-    },
+  const stageRule = findCampaignProductStageRule({
+    rules: stageConfiguration.rules,
+    productId: body.productId,
+    productStage,
   });
-  const requiresProductStage = campaignRequiresProductStage(campaignRules);
-  const stageRule = requiresProductStage && productStage
-    ? campaignRules.find(
-        (rule) =>
-          rule.topicCategory === "PRODUCT_STAGE" &&
-          compatibleStageRuleValues(productStage).includes(
-            rule.applicableStage || "",
-          ),
-      )
-    : null;
-  if (requiresProductStage && (!productStage || !stageRule)) {
-    return fail("请选择活动支持的产品阶段话题");
+  if (stageConfiguration.requiresProductStage && !productStage) {
+    return fail("请选择所属阶段");
   }
-  const effectiveProductStage = requiresProductStage ? productStage : null;
+  if (stageConfiguration.requiresProductStage && !stageRule) {
+    return fail(missingProductStageRuleMessage({
+      productName: stageConfiguration.product.name,
+      productStage: body.productStage?.trim() || "未选择",
+    }));
+  }
+  const effectiveProductStage = stageConfiguration.requiresProductStage
+    ? productStage
+    : null;
 
   const created = [];
   const syncState = await prisma.ruleSyncState.findUnique({

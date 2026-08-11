@@ -204,10 +204,13 @@ function lastContentIdentity(values: string[]) {
 
 async function waitForDouyinPageEvidence(page: Page, timeoutMs: number) {
   await Promise.race([
-    page.waitForSelector("[data-e2e='note-detail'], video", {
+    page.waitForSelector(
+      "[data-e2e='note-detail'], [data-testid='douyin-note-detail'], [class*='dySwiper'], [data-testid='douyin-image-carousel'], video",
+      {
       state: "attached",
       timeout: timeoutMs,
-    }),
+      },
+    ),
     page.waitForFunction(
       () => /你要观看的(?:图文|视频|作品|内容)不存在|安全验证|扫码登录|登录后继续/u.test(
         document.body?.innerText || "",

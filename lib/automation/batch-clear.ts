@@ -8,6 +8,7 @@ import {
   canClearAutomaticBatch,
   clearableAutomaticBatchStatuses,
 } from "@/lib/automation/task-view";
+import { reconcileBatchRuntimeState } from "@/lib/automation/batch-runtime-reconcile";
 
 export class AutomaticBatchClearError extends Error {
   constructor(
@@ -25,6 +26,17 @@ export async function clearAutomaticBatchFromTaskView(input: {
   userId: string;
   role: LocalAccountRole;
 }) {
+  const runtime = await reconcileBatchRuntimeState({
+    batchId: input.batchId,
+    userId: input.userId,
+  });
+  if (runtime.classification === "LIVE") {
+    throw new AutomaticBatchClearError(
+      "当前批次正在执行，请先取消任务后再清除。",
+      "BATCH_STILL_RUNNING",
+      409,
+    );
+  }
   const clearedAt = new Date();
   const result = await prisma.$transaction(async (tx) => {
     const batch = await tx.auditBatch.findUnique({
@@ -74,7 +86,7 @@ export async function clearAutomaticBatchFromTaskView(input: {
       currentTaskId: batch.currentTaskId,
     })) {
       throw new AutomaticBatchClearError(
-        "当前批次仍在运行，请先暂停或取消任务后再清除。",
+        "当前批次正在执行，请先取消任务后再清除。",
         "BATCH_STILL_RUNNING",
         409,
       );
@@ -83,7 +95,7 @@ export async function clearAutomaticBatchFromTaskView(input: {
     await tx.auditTask.updateMany({
       where: {
         batchId: batch.id,
-        status: { in: ["PENDING", "QUEUED", "LOGIN_EXPIRED"] },
+        status: { in: ["PENDING", "QUEUED", "PROCESSING", "LOGIN_EXPIRED"] },
       },
       data: {
         status: "CANCELLED",
@@ -104,13 +116,19 @@ export async function clearAutomaticBatchFromTaskView(input: {
         clearedAt,
         clearedBy: input.userId,
         currentTaskId: null,
-        lastErrorCode: null,
-        lastErrorMessage: null,
+        lastErrorCode:
+          runtime.classification === "STALE"
+            ? "STALE_BATCH_RECOVERY"
+            : null,
+        lastErrorMessage:
+          runtime.classification === "STALE"
+            ? "检测到批次没有真实执行者，系统已安全收尾并清除"
+            : null,
       },
     });
     if (!cleared.count) {
       throw new AutomaticBatchClearError(
-        "当前批次仍在运行，请先暂停或取消任务后再清除。",
+        "当前批次正在执行，请先取消任务后再清除。",
         "BATCH_STILL_RUNNING",
         409,
       );
@@ -138,6 +156,8 @@ export async function clearAutomaticBatchFromTaskView(input: {
           clearedTaskCount,
           retainedAuditResultCount,
           retainedAuditResults: true,
+          runtimeClassification: runtime.classification,
+          staleRecoveredTaskCount: runtime.recoveredTaskCount,
         }),
       },
     });
@@ -149,6 +169,8 @@ export async function clearAutomaticBatchFromTaskView(input: {
       nextBatchId: nextBatch?.id || null,
       clearedAt: clearedAt.toISOString(),
       alreadyCleared: false,
+      runtimeClassification: runtime.classification,
+      staleRecoveredTaskCount: runtime.recoveredTaskCount,
     };
   });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   pageStatusForProcessingFailure,
   processingFailureReason,
+  processingFailureResultExcludedCodes,
   processingFailureTaskStatuses,
 } from "@/lib/processing-failure";
 import {
@@ -11,6 +12,10 @@ import {
 } from "@/lib/result-query";
 
 describe("处理失败结果口径", () => {
+  it("does not turn configuration failures into formal audit results", () => {
+    expect(processingFailureResultExcludedCodes).toContain("CONFIG_ERROR");
+  });
+
   it("将页面异常映射为明确的页面状态和人工复核原因", () => {
     expect(pageStatusForProcessingFailure("NOTE_NOT_FOUND")).toBe(
       "NOTE_NOT_FOUND",

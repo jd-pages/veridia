@@ -5,6 +5,7 @@ import { safePageLogUrl } from "@/lib/automation/page-classification";
 import {
   pageStatusForProcessingFailure,
   processingFailureReason,
+  processingFailureResultExcludedCodes,
   processingFailureTaskStatuses,
   type ProcessingFailureStatus,
 } from "@/lib/processing-failure";
@@ -269,6 +270,7 @@ async function runMissingProcessingFailureBackfill() {
     const tasks = await prisma.auditTask.findMany({
       where: {
         status: { in: [...processingFailureTaskStatuses] },
+        failureCode: { notIn: [...processingFailureResultExcludedCodes] },
         auditResults: { none: {} },
         OR: [
           { replacesResultId: null },

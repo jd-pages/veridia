@@ -43,8 +43,12 @@ describe("清除当前自动审核批次", () => {
     const taskRoute = source("app/api/tasks/route.ts");
     const taskExport = source("app/api/tasks/export/route.ts");
     const taskVisibility = source("lib/automation/task-view.ts");
+    const reconcile = source("lib/automation/batch-runtime-reconcile.ts");
 
     expect(service).toContain("prisma.$transaction");
+    expect(service).toContain("reconcileBatchRuntimeState");
+    expect(service).toContain('runtime.classification === "LIVE"');
+    expect(reconcile).toContain("STALE_BATCH_RECOVERY");
     expect(service).toContain("retainedAuditResultCount");
     expect(service).toContain("CLEAR_AUTOMATIC_BATCH_FROM_TASK_VIEW");
     expect(service).toContain('failureCode: "BATCH_CLEARED"');
@@ -68,7 +72,6 @@ describe("清除当前自动审核批次", () => {
       "清除当前批次？",
       "确认清除",
       "清除后，该批次的审核进度、执行记录和任务内容将从审核任务页面移除。此操作不可撤销。",
-      "当前批次仍在运行，请先暂停或取消任务后再清除。",
       "暂无审核任务",
       "创建审核任务后，审核进度和执行记录将在这里显示。",
     ]) {
@@ -83,5 +86,11 @@ describe("清除当前自动审核批次", () => {
     expect(page).toContain('setTaskExecutionFilter("ALL")');
     expect(page).toContain("setTaskPage(1)");
     expect(page).toContain("confirmLoading={Boolean(clearingBatchId)}");
+    expect(page).not.toContain("canClearAutomaticBatch({");
+
+    const queue = source("lib/automation/queue.ts");
+    expect(queue).toContain('status: { in: ["PENDING", "PROCESSING", "LOGIN_EXPIRED"] }');
+    expect(queue).toContain('status: "CANCELLED"');
+    expect(queue).toContain('currentTaskId: null');
   });
 });

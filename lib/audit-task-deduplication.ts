@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeUrl } from "@/lib/topic";
 import { duplicateRelevantAuditTaskWhere } from "@/lib/automation/task-view";
+import { isAutomaticBatchRuntimeLive } from "@/lib/automation/runtime-state";
 
 export type AuditTaskDuplicateReason = "TODAY_DUPLICATE";
 
@@ -161,6 +162,19 @@ function candidateWhere(url: string): Prisma.AuditTaskWhereInput[] {
   return conditions;
 }
 
+function duplicateCandidateBlocks(task: {
+  status: string;
+  batchId: string | null;
+  auditResults: unknown[];
+}) {
+  if (task.auditResults.length > 0) return true;
+  if (task.status === "PENDING") return true;
+  return (
+    task.status === "PROCESSING" &&
+    Boolean(task.batchId && isAutomaticBatchRuntimeLive(task.batchId))
+  );
+}
+
 export async function findBlockingAuditTask(input: {
   url: string;
   now?: Date;
@@ -185,10 +199,13 @@ export async function findBlockingAuditTask(input: {
     },
     select: {
       id: true,
+      status: true,
+      batchId: true,
       url: true,
       normalizedUrl: true,
       finalUrl: true,
       auditResults: {
+        where: { supersededAt: null },
         select: {
           note: {
             select: {
@@ -206,7 +223,7 @@ export async function findBlockingAuditTask(input: {
     orderBy: { createdAt: "desc" },
   });
   const inputIdentity = auditNoteIdentity(input.url);
-  const matching = candidates.find(
+  const matching = candidates.filter(duplicateCandidateBlocks).find(
     (task) =>
       auditTaskLinksMatch(input.url, task) ||
       task.auditResults.some(({ note }) => {
@@ -261,10 +278,13 @@ export async function findBlockingAuditTasks(input: {
     },
     select: {
       id: true,
+      status: true,
+      batchId: true,
       url: true,
       normalizedUrl: true,
       finalUrl: true,
       auditResults: {
+        where: { supersededAt: null },
         select: {
           note: {
             select: {
@@ -283,7 +303,7 @@ export async function findBlockingAuditTasks(input: {
   });
   for (const url of input.urls) {
     const inputIdentity = auditNoteIdentity(url);
-    const matching = candidates.find(
+    const matching = candidates.filter(duplicateCandidateBlocks).find(
       (task) =>
         auditTaskLinksMatch(url, task) ||
         task.auditResults.some(({ note }) => {

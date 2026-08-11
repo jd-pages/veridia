@@ -1,6 +1,52 @@
 import { expect, test } from "@playwright/test";
 import { E2E_ORIGIN } from "./e2e-origin";
 
+test("抖音手动审核按活动和产品显示所属阶段并保存选择", async ({ page }) => {
+  expect((await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  })).ok()).toBeTruthy();
+  await page.goto("/tasks");
+  const channelSelect = page.getByRole("combobox", { name: "内容平台" });
+  await page.locator(".ant-select").filter({ has: channelSelect }).click();
+  await page.locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: "抖音" }).click();
+
+  await page.getByRole("combobox", { name: "所属活动" }).click();
+  await page.locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: "爱他美2026年7月抖音种草审核" }).click();
+  await page.getByRole("combobox", { name: "所属产品" }).click();
+  await page.locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: "爱他美澳洲白金版" }).click();
+
+  const stage = page.getByRole("combobox", { name: "所属阶段" });
+  await expect(stage).toBeVisible();
+  await stage.click();
+  const stageOptions = page.locator(
+    ".ant-select-dropdown:visible .ant-select-item-option",
+  );
+  await expect(stageOptions).toHaveCount(2);
+  await stageOptions.filter({ hasText: /^GUM$/u }).click();
+
+  const url = `${E2E_ORIGIN}/mock/douyin?case=business-pass&manual-stage=${Date.now()}`;
+  await page.getByRole("textbox", { name: "抖音作品链接" }).fill(url);
+  const responsePromise = page.waitForResponse((response) =>
+    response.url().endsWith("/api/automation/batches") &&
+    response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "创建审核任务" }).click();
+  const response = await responsePromise;
+  expect(response.ok()).toBeTruthy();
+  const batchId = (await response.json()).data.batchId as string;
+  const batchPayload = await (
+    await page.request.get(`/api/automation/batches?batchId=${batchId}`)
+  ).json();
+  expect(batchPayload.data[0]).toMatchObject({ productStage: "GUM" });
+  expect(batchPayload.data[0].tasks[0]).toMatchObject({ productStage: "GUM" });
+  await page.request.post(`/api/automation/batches/${batchId}/control`, {
+    data: { action: "CANCEL" },
+  });
+});
+
 test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
   page,
 }) => {
@@ -15,9 +61,9 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
   ).toBeVisible();
   await expect(page.getByRole("combobox", { name: "所属产品" })).toBeDisabled();
   await expect(
-    page.getByRole("combobox", { name: "产品阶段话题" }),
+    page.getByRole("combobox", { name: "所属阶段" }),
   ).toHaveCount(0);
-  await expect(page.getByText("请选择 IFFO 或 GUM。", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("请选择 IFFO、GUM 或当前产品实际支持的阶段。", { exact: true })).toHaveCount(0);
 
   const products = (
     await (await page.request.get("/api/products")).json()
@@ -62,9 +108,8 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
     .filter({ hasText: campaign!.name })
     .click();
   await expect(
-    page.getByRole("combobox", { name: "产品阶段话题" }),
-  ).toBeVisible();
-  await expect(page.getByText("请选择 IFFO 或 GUM。", { exact: true })).toBeVisible();
+    page.getByRole("combobox", { name: "所属阶段" }),
+  ).toHaveCount(0);
 
   await page.getByRole("combobox", { name: "所属产品" }).click();
   const productOptions = page.locator(
@@ -76,8 +121,10 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
     .filter({ hasText: product.name })
     .click();
 
+  await expect(page.getByText("请选择 IFFO、GUM 或当前产品实际支持的阶段。", { exact: true })).toBeVisible();
+
   const stageSelect = page.getByRole("combobox", {
-    name: "产品阶段话题",
+    name: "所属阶段",
   });
   const stageSelectControl = page.locator(".ant-select").filter({
     has: stageSelect,
@@ -388,7 +435,7 @@ test("佳贝艾特活动过滤产品、隐藏阶段并允许无阶段创建任�
     .locator(".ant-select-dropdown:visible .ant-select-item-option")
     .filter({ hasText: danoneProduct.name })
     .click();
-  await page.getByRole("combobox", { name: "产品阶段话题" }).click();
+  await page.getByRole("combobox", { name: "所属阶段" }).click();
   await page
     .locator(".ant-select-dropdown:visible .ant-select-item-option")
     .filter({ hasText: /^IFFO$/u })
@@ -400,9 +447,9 @@ test("佳贝艾特活动过滤产品、隐藏阶段并允许无阶段创建任�
     .filter({ hasText: kabritaCampaign.name })
     .click();
   await expect(
-    page.getByRole("combobox", { name: "产品阶段话题" }),
+    page.getByRole("combobox", { name: "所属阶段" }),
   ).toHaveCount(0);
-  await expect(page.getByText("请选择 IFFO 或 GUM。", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("请选择 IFFO、GUM 或当前产品实际支持的阶段。", { exact: true })).toHaveCount(0);
 
   const productSelectControl = page.locator(".ant-select").filter({
     has: productSelect,

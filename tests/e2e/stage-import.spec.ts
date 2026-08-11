@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
+import { PrismaClient } from "@prisma/client";
 import ExcelJS from "exceljs";
+import path from "node:path";
 import { E2E_ORIGIN } from "./e2e-origin";
+
+const databaseUrl =
+  process.env.E2E_DATABASE_URL?.trim() ||
+  `file:${path.resolve(process.cwd(), "prisma", "e2e.db").replaceAll("\\", "/")}`;
 
 async function waitForBatch(page: Page, batchId: string) {
   await expect
@@ -18,6 +24,106 @@ async function waitForBatch(page: Page, batchId: string) {
     )
     .toMatch(/COMPLETED|FAILED|CANCELLED/u);
 }
+
+test("150条阶段规则预检失败时提交也不创建正式任务", async ({ page }) => {
+  expect((await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  })).ok()).toBeTruthy();
+  const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
+  const suffix = Date.now();
+  try {
+    const product = (await prisma.product.findMany({
+      where: { name: { contains: "澳洲白金版" }, status: "ACTIVE" },
+      take: 1,
+    }))[0];
+    const campaign = await prisma.campaign.findFirst({
+      where: {
+        name: { contains: "爱他美2026年7月" },
+        contentChannel: "XIAOHONGSHU",
+        OR: [
+          { productId: product.id },
+          { products: { some: { productId: product.id } } },
+        ],
+      },
+    });
+    expect(campaign).toBeTruthy();
+    const gumRules = await prisma.topicRule.findMany({
+      where: {
+        campaignId: campaign!.id,
+        brandName: product.brandName,
+        topicCategory: "PRODUCT_STAGE",
+        status: "ACTIVE",
+        contentChannel: { in: ["XIAOHONGSHU", "ALL"] },
+        OR: [{ productId: null }, { productId: product.id }],
+        milkType: "GUM",
+      },
+      select: { id: true },
+    });
+    expect(gumRules.length).toBeGreaterThan(0);
+    await prisma.topicRule.updateMany({
+      where: { id: { in: gumRules.map(({ id }) => id) } },
+      data: { status: "INACTIVE" },
+    });
+    try {
+      const urls = Array.from(
+        { length: 150 },
+        (_, index) =>
+          `${E2E_ORIGIN}/mock/xhs?case=passed&missing-stage-rule=${suffix}-${index + 1}`,
+      );
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("阶段预检");
+      sheet.addRow([
+        "笔记链接", "产品编码", "产品名称", "规格", "活动名称", "活动月份",
+        "产品阶段话题", "备注", "店铺名称", "成交平台", "内容渠道",
+      ]);
+      for (const [index, url] of urls.entries()) {
+        sheet.addRow([
+          url, product.code, product.name, "3段 800g", campaign!.name,
+          campaign!.month, "GUM", `第${index + 1}条应在正式任务创建前失败`,
+          "京东健康官方进口超市", "京东", "小红书",
+        ]);
+      }
+      const response = await page.request.post("/api/import/notes", {
+        multipart: {
+          file: {
+            name: `stage-precheck-${suffix}.xlsx`,
+            mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
+          },
+          commit: "true",
+          skipDuplicates: "true",
+        },
+      });
+      expect(response.ok()).toBeTruthy();
+      const payload = (await response.json()).data as {
+        imported: number;
+        batchId: string | null;
+        invalidCount: number;
+        rows: Array<{ rowNumber: number; errors: string[] }>;
+      };
+      expect(payload.imported).toBe(0);
+      expect(payload.batchId).toBeNull();
+      expect(payload.invalidCount).toBe(150);
+      expect(payload.rows).toHaveLength(100);
+      expect(payload.rows.every((row) => row.errors.join("；").includes(
+        `产品‘${product.name}’的 GUM 阶段未配置可用话题规则`,
+      ))).toBe(true);
+      expect(await prisma.auditTask.count({
+        where: { url: { in: urls } },
+      })).toBe(0);
+      expect(await prisma.auditBatch.count({
+        where: { name: { contains: `stage-precheck-${suffix}.xlsx` } },
+      })).toBe(0);
+    } finally {
+      await prisma.topicRule.updateMany({
+        where: { id: { in: gumRules.map(({ id }) => id) } },
+        data: { status: "ACTIVE" },
+      });
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+});
 
 test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略", async ({
   page,

@@ -3,12 +3,34 @@ import type { Page } from "playwright";
 import {
   extractDouyinStructuredTopics,
   extractDouyinStructuredPublishedAt,
+  extractDouyinStructuredImageEvidence,
   findDouyinAwemeItem,
   findDouyinAwemeItemFromSerializedPayloads,
   playwrightDouyinAdapter,
 } from "@/lib/automation/douyin-adapter";
 
 describe("抖音结构化作品证据", () => {
+  it("兼容 images_v2 与 aweme_detail.image_post_info 图片结构并按稳定身份去重", () => {
+    expect(extractDouyinStructuredImageEvidence({
+      aweme_id: "target",
+      images_v2: [
+        { image_id: "image-1" },
+        { image_id: "image-2" },
+        { image_id: "image-2" },
+      ],
+      aweme_detail: {
+        image_post_info: {
+          image_list: [
+            { uri: "image-1" },
+            { uri: "image-2" },
+          ],
+        },
+      },
+    })).toMatchObject({
+      count: 2,
+      identities: ["id:image-1", "id:image-2"],
+    });
+  });
   it("只从当前 contentId 对应作品读取结构化发布时间", () => {
     const payload = {
       aweme_list: [

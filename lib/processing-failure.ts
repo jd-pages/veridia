@@ -7,6 +7,10 @@ export const processingFailureTaskStatuses = [
 export type ProcessingFailureStatus =
   (typeof processingFailureTaskStatuses)[number];
 
+// Configuration failures are terminal task diagnostics, not page-reading
+// outcomes. They must never be backfilled into formal audit results.
+export const processingFailureResultExcludedCodes = ["CONFIG_ERROR"] as const;
+
 export function pageStatusForProcessingFailure(code: string | null) {
   if (["NOTE_NOT_FOUND", "PAGE_NOT_FOUND", "NOTE_DELETED"].includes(code || "")) {
     return "NOTE_NOT_FOUND";

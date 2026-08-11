@@ -8,8 +8,6 @@ import {
 } from "@/lib/automation/batch-service";
 import { kickAutomaticAuditQueue } from "@/lib/automation/queue";
 import {
-  campaignUsesDetailedProductStages,
-  compatibleStageRuleValues,
   normalizeConfiguredProductStageValue,
 } from "@/lib/product-stage";
 import {
@@ -17,7 +15,11 @@ import {
   auditTaskDuplicateMessages,
   findBlockingAuditTasks,
 } from "@/lib/audit-task-deduplication";
-import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
+import {
+  findCampaignProductStageRule,
+  resolveCampaignProductStageConfiguration,
+} from "@/lib/campaign-product-stage";
+import { missingProductStageRuleMessage } from "@/lib/audit-configuration";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -86,37 +88,32 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   if (![contentChannel, "ALL"].includes(campaign.contentChannel)) {
     return fail("内容渠道与活动渠道不一致，请选择对应内容平台的审核活动");
   }
+  const stageConfiguration = await resolveCampaignProductStageConfiguration({
+    campaignId: body.campaignId,
+    productId: body.productId,
+    contentChannel,
+  });
   const productStage = normalizeConfiguredProductStageValue(
     body.productStage,
-    campaignUsesDetailedProductStages(product.brandName, campaign.month),
+    stageConfiguration.detailed,
   );
-  const campaignRules = await prisma.topicRule.findMany({
-    where: {
-      campaignId: body.campaignId,
-      status: "ACTIVE",
-      contentChannel: { in: [contentChannel, "ALL"] },
-    },
-    select: {
-      topicCategory: true,
-      applicableStage: true,
-      topic: true,
-      milkType: true,
-    },
+  const stageRule = findCampaignProductStageRule({
+    rules: stageConfiguration.rules,
+    productId: body.productId,
+    productStage,
   });
-  const requiresProductStage = campaignRequiresProductStage(campaignRules);
-  const stageRule = requiresProductStage && productStage
-    ? campaignRules.find(
-        (rule) =>
-          rule.topicCategory === "PRODUCT_STAGE" &&
-          compatibleStageRuleValues(productStage).includes(
-            rule.applicableStage || "",
-          ),
-      )
-    : null;
-  if (requiresProductStage && (!productStage || !stageRule)) {
-    return fail("请选择活动支持的产品阶段话题");
+  if (stageConfiguration.requiresProductStage && !productStage) {
+    return fail("请选择所属阶段");
   }
-  const effectiveProductStage = requiresProductStage ? productStage : null;
+  if (stageConfiguration.requiresProductStage && !stageRule) {
+    return fail(missingProductStageRuleMessage({
+      productName: stageConfiguration.product.name,
+      productStage: body.productStage?.trim() || "未选择",
+    }));
+  }
+  const effectiveProductStage = stageConfiguration.requiresProductStage
+    ? productStage
+    : null;
 
   const urls = extraction.links.map((item) => item.url);
 
