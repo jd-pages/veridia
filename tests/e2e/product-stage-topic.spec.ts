@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { E2E_ORIGIN } from "./e2e-origin";
+import { getWithTransientNetworkRetry } from "./helpers/api-request";
 
 test("抖音手动审核按活动和产品显示所属阶段并保存选择", async ({ page }) => {
   expect((await page.request.post("/api/auth/login", {
@@ -38,7 +39,10 @@ test("抖音手动审核按活动和产品显示所属阶段并保存选择", as
   expect(response.ok()).toBeTruthy();
   const batchId = (await response.json()).data.batchId as string;
   const batchPayload = await (
-    await page.request.get(`/api/automation/batches?batchId=${batchId}`)
+    await getWithTransientNetworkRetry(
+      page.request,
+      `/api/automation/batches?batchId=${batchId}`,
+    )
   ).json();
   expect(batchPayload.data[0]).toMatchObject({ productStage: "GUM" });
   expect(batchPayload.data[0].tasks[0]).toMatchObject({ productStage: "GUM" });
@@ -484,7 +488,8 @@ test("佳贝艾特活动过滤产品、隐藏阶段并允许无阶段创建任�
   ).toBeTruthy();
   expect(createPayload.data.created).toBe(1);
 
-  const batchesResponse = await page.request.get(
+  const batchesResponse = await getWithTransientNetworkRetry(
+    page.request,
     `/api/automation/batches?batchId=${createPayload.data.batchId}`,
   );
   const batch = (await batchesResponse.json()).data[0] as {

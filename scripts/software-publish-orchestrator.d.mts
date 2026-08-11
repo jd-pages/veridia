@@ -32,6 +32,8 @@ export interface SoftwarePublishPlanInput {
   lockVersion: string;
   latestReleaseVersion: string;
   latestTagVersion: string;
+  sourceTagExists: boolean;
+  sourceReleaseExists: boolean;
   targetTagExists: boolean;
   targetReleaseExists: boolean;
 }
@@ -42,6 +44,7 @@ export interface SoftwarePublishPlan {
   sourceVersion: string;
   targetVersion?: string;
   versionChangeRequired?: boolean;
+  failedReservedVersion?: string;
   ahead: number;
   behind: number;
   commitsToPush: string[];

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +8,7 @@ import {
   validateFullGateAttestation,
   writeFullGateAttestation,
 } from "../../scripts/testing/full-gate-attestation.mjs";
+import { canonicalizeProjectPath } from "../../scripts/testing/project-path.mjs";
 
 const roots: string[] = [];
 let repositoryTemplate = "";
@@ -68,6 +69,20 @@ function fixture() {
   return root;
 }
 
+function rewriteAttestationProjectRoot(root: string, projectRoot: string) {
+  const file = attestationPath(root);
+  const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+  fs.writeFileSync(file, `${JSON.stringify({ ...saved, projectRoot }, null, 2)}\n`, "utf8");
+}
+
+function windowsShortPath(value: string) {
+  return execSync(`for %I in ("${value}") do @echo %~sI`, {
+    shell: process.env.ComSpec || "cmd.exe",
+    encoding: "utf8",
+    windowsHide: true,
+  }).trim();
+}
+
 beforeAll(() => {
   repositoryTemplate = fs.mkdtempSync(
     path.join(os.tmpdir(), "veridia-attestation-template-"),
@@ -87,8 +102,41 @@ describe("FULL 门禁验收凭证", { timeout: 15_000 }, () => {
   it("相同 HEAD 且 clean tree 时有效", () => {
     const root = fixture();
     const attestation = writeFullGateAttestation(passedResults, root);
-    expect(attestation.projectRoot).toBe(path.resolve(root));
+    expect(attestation.projectRoot).toBe(canonicalizeProjectPath(root));
     expect(validateFullGateAttestation(root).valid).toBe(true);
+  });
+
+  it.runIf(process.platform === "win32")("Windows path casing represents the same project root", () => {
+    const root = fixture();
+    writeFullGateAttestation(passedResults, root);
+    rewriteAttestationProjectRoot(root, path.resolve(root).toUpperCase());
+    expect(validateFullGateAttestation(root).valid).toBe(true);
+  });
+
+  it("a trailing separator represents the same project root", () => {
+    const root = fixture();
+    writeFullGateAttestation(passedResults, root);
+    rewriteAttestationProjectRoot(root, `${path.resolve(root)}${path.sep}`);
+    expect(validateFullGateAttestation(root).valid).toBe(true);
+  });
+
+  it.runIf(process.platform === "win32")("Windows 8.3 and long paths represent the same project root", () => {
+    const root = fixture();
+    writeFullGateAttestation(passedResults, root);
+    rewriteAttestationProjectRoot(root, windowsShortPath(root));
+    expect(validateFullGateAttestation(root).valid).toBe(true);
+  });
+
+  it("canonicalizes realpath aliases before comparing project roots", () => {
+    const options = {
+      platform: "win32" as const,
+      resolve: (value: string) => value,
+      realpath: (value: string) => value.includes("RUNNER~1")
+        ? "C:\\Users\\runneradmin\\repo"
+        : value,
+    };
+    expect(canonicalizeProjectPath("C:\\Users\\RUNNER~1\\repo", options))
+      .toBe(canonicalizeProjectPath("c:\\users\\runneradmin\\repo\\", options));
   });
 
   it("仓库搬到其他项目根后失效", () => {

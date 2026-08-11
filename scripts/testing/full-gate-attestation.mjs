@@ -4,8 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import {
+  canonicalizeProjectPath,
+  sameProjectPath,
+} from "./project-path.mjs";
 
-export const ATTESTATION_SCHEMA_VERSION = 3;
+export const ATTESTATION_SCHEMA_VERSION = 4;
 export const ATTESTATION_RELATIVE_PATH = ".release-work/verification/full-gate-attestation.json";
 
 function git(root, args) {
@@ -39,7 +43,9 @@ function recursiveFiles(root, relativeDirectory, predicate = () => true) {
 }
 
 export function collectAttestationState(root = process.cwd()) {
-  const projectRoot = path.resolve(git(root, ["rev-parse", "--show-toplevel"]));
+  const projectRoot = canonicalizeProjectPath(
+    git(root, ["rev-parse", "--show-toplevel"]),
+  );
   const testFiles = [
     ...recursiveFiles(root, "tests/e2e", (file) => /\.(?:spec|test)\.ts$|setup-database\.ts$/u.test(file)),
     ...recursiveFiles(root, "tests/unit", (file) => file.endsWith(".test.ts")),
@@ -168,7 +174,12 @@ export function validateFullGateAttestation(root = process.cwd()) {
   };
   const reasons = [];
   for (const [key, label] of Object.entries(labels)) {
-    if (saved[key] !== current[key]) reasons.push(`${label}已变化（凭证=${String(saved[key])}，当前=${String(current[key])}）`);
+    const unchanged = key === "projectRoot"
+      ? typeof saved[key] === "string"
+        && typeof current[key] === "string"
+        && sameProjectPath(saved[key], current[key])
+      : saved[key] === current[key];
+    if (!unchanged) reasons.push(`${label}已变化（凭证=${String(saved[key])}，当前=${String(current[key])}）`);
   }
   if (!current.workingTreeClean && !reasons.some((reason) => reason.startsWith("工作区"))) reasons.push("当前工作区存在未提交修改");
   return { valid: reasons.length === 0, reasons, attestation: saved, current };

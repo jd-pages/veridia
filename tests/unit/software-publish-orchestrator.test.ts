@@ -12,6 +12,7 @@ import {
   parseGitPorcelainPaths,
   SoftwarePublishError,
 } from "../../scripts/software-publish-orchestrator.mjs";
+import { canonicalizeProjectPath } from "../../scripts/testing/project-path.mjs";
 
 function state(overrides: Record<string, unknown> = {}) {
   return {
@@ -25,6 +26,8 @@ function state(overrides: Record<string, unknown> = {}) {
     lockVersion: "1.1.6",
     latestReleaseVersion: "1.1.6",
     latestTagVersion: "1.1.6",
+    sourceTagExists: true,
+    sourceReleaseExists: true,
     targetTagExists: false,
     targetReleaseExists: false,
     ...overrides,
@@ -64,7 +67,7 @@ describe("一键软件发布编排", () => {
         gitRoot,
         workingDirectory: gitRoot,
       }),
-    ).toBe(gitRoot);
+    ).toBe(canonicalizeProjectPath(gitRoot));
     expect(() =>
       assertProjectRootConsistency({
         scriptRoot: path.join(gitRoot, "stale-copy"),
@@ -134,11 +137,73 @@ describe("一键软件发布编排", () => {
 
   it("源码已经预先升级且尚未发布时使用源码版本", () => {
     const plan = createSoftwarePublishPlan(
-      state({ sourceVersion: "1.2.0", lockVersion: "1.2.0" }),
+      state({
+        sourceVersion: "1.2.0",
+        lockVersion: "1.2.0",
+        sourceTagExists: false,
+        sourceReleaseExists: false,
+      }),
     );
 
     expect(plan.targetVersion).toBe("1.2.0");
     expect(plan.versionChangeRequired).toBe(false);
+  });
+
+  it("源码版本尚无 Tag 时按该版本首次发布", () => {
+    const plan = createSoftwarePublishPlan(state({
+      sourceVersion: "1.1.8",
+      lockVersion: "1.1.8",
+      latestReleaseVersion: "1.1.7",
+      latestTagVersion: "1.1.7",
+      sourceTagExists: false,
+      sourceReleaseExists: false,
+    }));
+
+    expect(plan).toMatchObject({
+      targetVersion: "1.1.8",
+      versionChangeRequired: false,
+    });
+  });
+
+  it("Tag 已占用但 Release 缺失的失败版本会保留并规划下一补丁版本", () => {
+    const plan = createSoftwarePublishPlan(state({
+      sourceVersion: "1.1.8",
+      lockVersion: "1.1.8",
+      latestReleaseVersion: "1.1.7",
+      latestTagVersion: "1.1.8",
+      sourceTagExists: true,
+      sourceReleaseExists: false,
+    }));
+
+    expect(plan).toMatchObject({
+      currentVersion: "1.1.7",
+      sourceVersion: "1.1.8",
+      targetVersion: "1.1.9",
+      failedReservedVersion: "1.1.8",
+      versionChangeRequired: true,
+    });
+  });
+
+  it("不属于当前源码失败保留版本的 Tag/Release 不一致仍会阻止发布", () => {
+    expect(() => createSoftwarePublishPlan(state({
+      sourceVersion: "1.1.9",
+      lockVersion: "1.1.9",
+      latestReleaseVersion: "1.1.7",
+      latestTagVersion: "1.1.8",
+      sourceTagExists: false,
+      sourceReleaseExists: false,
+    }))).toThrow("Latest Release（1.1.7）与最新正式 Tag（1.1.8）不一致");
+  });
+
+  it("源码版本低于正式 Release 时停止", () => {
+    expect(() => createSoftwarePublishPlan(state({
+      sourceVersion: "1.1.6",
+      lockVersion: "1.1.6",
+      latestReleaseVersion: "1.1.7",
+      latestTagVersion: "1.1.7",
+      sourceTagExists: true,
+      sourceReleaseExists: false,
+    }))).toThrow("源码版本 1.1.6 低于已发布版本 1.1.7");
   });
 
   it.each([

@@ -6,6 +6,10 @@ import process from "node:process";
 import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
+import {
+  canonicalizeProjectPath,
+  sameProjectPath,
+} from "./testing/project-path.mjs";
 
 const scriptProjectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -114,13 +118,27 @@ export function createSoftwarePublishPlan(input) {
       `package.json（${input.sourceVersion}）与 package-lock.json（${input.lockVersion}）版本不一致。`,
     );
   }
-  if (input.latestTagVersion !== input.latestReleaseVersion) {
+  const sourceComparedWithRelease = compareReleaseVersions(
+    input.sourceVersion,
+    input.latestReleaseVersion,
+  );
+  const failedReservedVersion = sourceComparedWithRelease > 0
+    && input.sourceVersion === input.latestTagVersion
+    && input.sourceTagExists
+    && !input.sourceReleaseExists
+    && compareReleaseVersions(input.latestTagVersion, input.latestReleaseVersion) > 0
+    ? input.sourceVersion
+    : undefined;
+  if (
+    input.latestTagVersion !== input.latestReleaseVersion
+    && !failedReservedVersion
+  ) {
     throw new SoftwarePublishError(
       "RELEASE_TAG_MISMATCH",
       `GitHub Latest Release（${input.latestReleaseVersion}）与最新正式 Tag（${input.latestTagVersion}）不一致。`,
     );
   }
-  if (compareReleaseVersions(input.sourceVersion, input.latestReleaseVersion) < 0) {
+  if (sourceComparedWithRelease < 0) {
     throw new SoftwarePublishError(
       "SOURCE_VERSION_BEHIND",
       `源码版本 ${input.sourceVersion} 低于已发布版本 ${input.latestReleaseVersion}，发布已停止。`,
@@ -138,11 +156,13 @@ export function createSoftwarePublishPlan(input) {
     };
   }
 
-  const sourceIsPublished =
-    compareReleaseVersions(input.sourceVersion, input.latestReleaseVersion) === 0;
-  const targetVersion = sourceIsPublished
-    ? nextPatchVersion(input.latestReleaseVersion)
-    : input.sourceVersion;
+  const sourceIsPublished = sourceComparedWithRelease === 0;
+  const versionChangeRequired = sourceIsPublished || Boolean(failedReservedVersion);
+  const targetVersion = failedReservedVersion
+    ? nextPatchVersion(failedReservedVersion)
+    : sourceIsPublished
+      ? nextPatchVersion(input.latestReleaseVersion)
+      : input.sourceVersion;
   if (input.targetTagExists) {
     throw new SoftwarePublishError(
       "TARGET_TAG_EXISTS",
@@ -161,7 +181,8 @@ export function createSoftwarePublishPlan(input) {
     currentVersion: input.latestReleaseVersion,
     sourceVersion: input.sourceVersion,
     targetVersion,
-    versionChangeRequired: sourceIsPublished,
+    versionChangeRequired,
+    failedReservedVersion,
     ahead: input.ahead,
     behind: input.behind,
     commitsToPush: input.commitsToPush,
@@ -266,23 +287,18 @@ function gh(args, options) {
   return command("gh", args, options);
 }
 
-function normalizePath(value) {
-  return path.resolve(value).replaceAll("/", "\\").toLocaleLowerCase("en-US");
-}
-
 export function assertProjectRootConsistency({
   scriptRoot,
   resolvedProjectRoot,
   gitRoot,
   workingDirectory,
 }) {
-  const expected = normalizePath(gitRoot);
   const mismatches = [
     ["发布脚本目录", scriptRoot],
     ["解析后的项目根", resolvedProjectRoot],
     ["当前工作目录", workingDirectory],
-  ].filter(([, value]) => normalizePath(value) !== expected);
-  if (mismatches.length === 0) return path.resolve(gitRoot);
+  ].filter(([, value]) => !sameProjectPath(value, gitRoot));
+  if (mismatches.length === 0) return canonicalizeProjectPath(gitRoot);
 
   throw new SoftwarePublishError(
     "INVALID_PROJECT_ROOT",
@@ -428,6 +444,8 @@ function collectPublishState(repository) {
   }
   const latestTagVersion = tags[0];
   const versions = readVersions();
+  const sourceTagExists = targetTagExists(versions.sourceVersion);
+  const sourceReleaseExists = releaseExists(repository, versions.sourceVersion);
   if (versions.lockVersion !== versions.lockRootVersion) {
     throw new SoftwarePublishError(
       "LOCK_VERSION_MISMATCH",
@@ -462,6 +480,8 @@ function collectPublishState(repository) {
     lockVersion: versions.lockVersion,
     latestReleaseVersion: release.version,
     latestTagVersion,
+    sourceTagExists,
+    sourceReleaseExists,
     targetTagExists: false,
     targetReleaseExists: false,
   });
@@ -478,6 +498,8 @@ function collectPublishState(repository) {
       lockVersion: versions.lockVersion,
       latestReleaseVersion: release.version,
       latestTagVersion,
+      sourceTagExists,
+      sourceReleaseExists,
       targetTagExists: targetTagExists(preliminary.targetVersion),
       targetReleaseExists: releaseExists(repository, preliminary.targetVersion),
     }),
@@ -491,6 +513,12 @@ function printPlan(plan, logger) {
   logger.line("========================================");
   logger.line(`当前正式版本：${plan.currentVersion}`);
   logger.line(`当前源码版本：${plan.sourceVersion}`);
+  if (plan.failedReservedVersion) {
+    logger.line(
+      `检测到 v${plan.failedReservedVersion} Tag 已存在但对应正式 Release 缺失；该失败版本号已保留。`,
+    );
+    logger.line(`不会覆盖、删除或移动 v${plan.failedReservedVersion} Tag。`);
+  }
   logger.line(`目标版本：${plan.targetVersion}`);
   logger.line("");
   logger.line(`待 Push 提交：${plan.commitsToPush.length} 个`);

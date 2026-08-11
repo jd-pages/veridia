@@ -257,9 +257,24 @@ async function main() {
     stdio: ["ignore", log, log],
     windowsHide: true,
   });
+  serverProcess.on("error", (error) => {
+    writeMetadata({
+      serverErrorAt: new Date().toISOString(),
+      serverError: error instanceof Error ? error.message : String(error),
+    });
+  });
+  serverProcess.on("exit", (code, signal) => {
+    writeMetadata({
+      serverExitedAt: new Date().toISOString(),
+      serverExitCode: code,
+      serverExitSignal: signal,
+      serverExitedDuringTests: Boolean(testProcess && testProcess.exitCode === null),
+    });
+  });
   writeMetadata({ serverPid: serverProcess.pid });
   const baseURL = `http://127.0.0.1:${port}`;
   await waitForHealth(baseURL);
+  writeMetadata({ serverReadyAt: new Date().toISOString() });
   await warmup(baseURL, executablePath);
   const playwrightArgs = [
     path.join(root, "node_modules", "@playwright", "test", "cli.js"),
