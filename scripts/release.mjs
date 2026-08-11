@@ -179,6 +179,10 @@ try {
   });
   run("准备桌面资源", "npm.cmd", ["run", "desktop:prepare"]);
   run("准备并检查 Electron 运行文件", "npm.cmd", ["run", "electron:ensure"]);
+  fs.rmSync(path.join(root, "dist-installer"), {
+    recursive: true,
+    force: true,
+  });
   run(
     "构建Windows安装包",
     "node",

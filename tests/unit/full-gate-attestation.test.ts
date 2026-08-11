@@ -86,8 +86,21 @@ afterAll(() => {
 describe("FULL 门禁验收凭证", () => {
   it("相同 HEAD 且 clean tree 时有效", () => {
     const root = fixture();
-    writeFullGateAttestation(passedResults, root);
+    const attestation = writeFullGateAttestation(passedResults, root);
+    expect(attestation.projectRoot).toBe(path.resolve(root));
     expect(validateFullGateAttestation(root).valid).toBe(true);
+  });
+
+  it("仓库搬到其他项目根后失效", () => {
+    const root = fixture();
+    writeFullGateAttestation(passedResults, root);
+    const movedRoot = `${root}-moved`;
+    fs.renameSync(root, movedRoot);
+    roots.push(movedRoot);
+
+    const validation = validateFullGateAttestation(movedRoot);
+    expect(validation.valid).toBe(false);
+    expect(validation.reasons.join("\n")).toContain("项目根目录");
   });
 
   it("HEAD 变化时失效且不能跨 commit 继承", () => {

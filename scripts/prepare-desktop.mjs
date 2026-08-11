@@ -103,9 +103,11 @@ for (const alias of playwrightAliases) {
   );
 }
 
+fs.rmSync(nodeRuntimeRoot, { recursive: true, force: true });
 fs.mkdirSync(nodeRuntimeRoot, { recursive: true });
 fs.copyFileSync(process.execPath, path.join(nodeRuntimeRoot, "node.exe"));
 
+fs.rmSync(browserRoot, { recursive: true, force: true });
 fs.mkdirSync(browserRoot, { recursive: true });
 const playwrightBrowsers = JSON.parse(
   fs.readFileSync(

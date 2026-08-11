@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-export const ATTESTATION_SCHEMA_VERSION = 2;
+export const ATTESTATION_SCHEMA_VERSION = 3;
 export const ATTESTATION_RELATIVE_PATH = ".release-work/verification/full-gate-attestation.json";
 
 function git(root, args) {
@@ -39,6 +39,7 @@ function recursiveFiles(root, relativeDirectory, predicate = () => true) {
 }
 
 export function collectAttestationState(root = process.cwd()) {
+  const projectRoot = path.resolve(git(root, ["rev-parse", "--show-toplevel"]));
   const testFiles = [
     ...recursiveFiles(root, "tests/e2e", (file) => /\.(?:spec|test)\.ts$|setup-database\.ts$/u.test(file)),
     ...recursiveFiles(root, "tests/unit", (file) => file.endsWith(".test.ts")),
@@ -51,11 +52,14 @@ export function collectAttestationState(root = process.cwd()) {
     "scripts/software-publish-orchestrator.d.mts",
     "scripts/software-publish-bat-tail.mjs",
     "scripts/fixed-workflow.mjs",
+    "scripts/formal-data-root.mjs",
+    "scripts/formal-data-root.d.mts",
     "scripts/sensitive-scan.mjs",
     "发布新版.bat",
   ];
   const status = git(root, ["status", "--porcelain", "--untracked-files=normal"]);
   return {
+    projectRoot,
     gitHead: git(root, ["rev-parse", "HEAD"]),
     gitBranch: git(root, ["branch", "--show-current"]),
     workingTreeClean: status.length === 0,
@@ -145,6 +149,7 @@ export function validateFullGateAttestation(root = process.cwd()) {
   if (saved.verificationMode !== "FULL") return { valid: false, reasons: ["凭证不是 FULL 模式"] };
   const current = collectAttestationState(root);
   const labels = {
+    projectRoot: "项目根目录",
     gitHead: "Git HEAD",
     gitBranch: "当前分支",
     workingTreeClean: "工作区干净状态",

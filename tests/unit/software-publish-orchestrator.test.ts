@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  assertProjectRootConsistency,
   assertOnlyVersionFiles,
   createSoftwarePublishPlan,
   executeSoftwarePublishPlan,
@@ -53,6 +54,44 @@ function operations(overrides: Record<string, unknown> = {}) {
 }
 
 describe("一键软件发布编排", () => {
+  it("以 Git 顶层目录校验发布入口、脚本目录和当前工作目录", () => {
+    const gitRoot = path.resolve(process.cwd());
+
+    expect(
+      assertProjectRootConsistency({
+        scriptRoot: gitRoot,
+        resolvedProjectRoot: gitRoot,
+        gitRoot,
+        workingDirectory: gitRoot,
+      }),
+    ).toBe(gitRoot);
+    expect(() =>
+      assertProjectRootConsistency({
+        scriptRoot: path.join(gitRoot, "stale-copy"),
+        resolvedProjectRoot: gitRoot,
+        gitRoot,
+        workingDirectory: gitRoot,
+      }),
+    ).toThrow("Git 顶层根目录不一致");
+  });
+
+  it("发布入口不再绑定开发机绝对项目路径", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts/software-publish-orchestrator.mjs"),
+      "utf8",
+    );
+
+    const retiredProjectRoot = [
+      "C:",
+      "Users",
+      "18341",
+      "Desktop",
+      "veridia",
+    ].join("\\");
+    expect(source).not.toContain(retiredProjectRoot);
+    expect(source).toContain('git", ["rev-parse", "--show-toplevel"]');
+  });
+
   it("使用真正的语义化 Patch 递增", () => {
     expect(nextPatchVersion("1.1.6")).toBe("1.1.7");
     expect(nextPatchVersion("1.1.9")).toBe("1.1.10");

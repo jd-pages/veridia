@@ -7,6 +7,7 @@ import path from "node:path";
 import process from "node:process";
 import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { resolveFormalDataRoot } from "./formal-data-root.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const command = process.argv[2];
@@ -230,7 +231,7 @@ function windowsFileUrl(databasePath) {
 function previewLocations(mode) {
   const dataRoot =
     mode === "formal"
-      ? process.env.VERIDIA_PRODUCTION_DATA_DIR || "E:\\v"
+      ? resolveFormalDataRoot()
       : mode === "setup"
         ? path.join(
             process.env.VERIDIA_SETUP_PREVIEW_ROOT || "E:\\v-preview-setup",
@@ -380,7 +381,7 @@ async function choosePreviewMode() {
       "",
       "请选择本地预览方式：",
       "1. 安全预览（推荐）：使用 E:\\v-preview，不需要激活",
-      "2. 正式数据预览：使用 E:\\v，需要谨慎",
+      `2. 正式数据预览：使用当前桌面数据目录 ${resolveFormalDataRoot()}，需要谨慎`,
       "3. 首次启动流程测试：测试 setup / 激活流程",
       "",
     ].join("\n"),
@@ -474,7 +475,7 @@ async function preview() {
     process.stdout.write(
       [
         "",
-        "警告：当前将使用正式数据目录 E:\\v 预览。",
+        `警告：当前将使用正式数据目录 ${locations.dataRoot} 预览。`,
         "脚本不会删除、清空或重置账号，但会检查并执行当前代码需要的 Prisma 迁移。",
         "迁移前会自动备份现有数据库。",
         "",

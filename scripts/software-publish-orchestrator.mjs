@@ -7,11 +7,22 @@ import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
-const projectRoot = path.resolve(
+const scriptProjectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-const requiredProjectRoot = path.resolve("C:\\Users\\18341\\Desktop\\veridia");
+
+function discoverGitProjectRoot(candidateRoot) {
+  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: candidateRoot,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  const gitRoot = result.status === 0 ? result.stdout.trim() : "";
+  return gitRoot ? path.resolve(gitRoot) : candidateRoot;
+}
+
+const projectRoot = discoverGitProjectRoot(scriptProjectRoot);
 const releaseWorkflow = "veridia-release.yml";
 const dryRun = process.argv.includes("--dry-run");
 
@@ -259,17 +270,38 @@ function normalizePath(value) {
   return path.resolve(value).replaceAll("/", "\\").toLocaleLowerCase("en-US");
 }
 
+export function assertProjectRootConsistency({
+  scriptRoot,
+  resolvedProjectRoot,
+  gitRoot,
+  workingDirectory,
+}) {
+  const expected = normalizePath(gitRoot);
+  const mismatches = [
+    ["发布脚本目录", scriptRoot],
+    ["解析后的项目根", resolvedProjectRoot],
+    ["当前工作目录", workingDirectory],
+  ].filter(([, value]) => normalizePath(value) !== expected);
+  if (mismatches.length === 0) return path.resolve(gitRoot);
+
+  throw new SoftwarePublishError(
+    "INVALID_PROJECT_ROOT",
+    [
+      `发布入口、当前目录与 Git 顶层根目录不一致。Git 根：${path.resolve(gitRoot)}`,
+      ...mismatches.map(([label, value]) => `${label}：${path.resolve(value)}`),
+      "请从当前 Git 仓库根目录运行发布入口。",
+    ].join("\n"),
+  );
+}
+
 function assertRequiredProjectRoot() {
   const actual = git(["rev-parse", "--show-toplevel"]).stdout;
-  if (
-    normalizePath(projectRoot) !== normalizePath(requiredProjectRoot) ||
-    normalizePath(actual) !== normalizePath(requiredProjectRoot)
-  ) {
-    throw new SoftwarePublishError(
-      "INVALID_PROJECT_ROOT",
-      `发布只能在 ${requiredProjectRoot} 执行，当前目录为 ${actual || projectRoot}。`,
-    );
-  }
+  assertProjectRootConsistency({
+    scriptRoot: scriptProjectRoot,
+    resolvedProjectRoot: projectRoot,
+    gitRoot: actual,
+    workingDirectory: process.cwd(),
+  });
 }
 
 function assertCommandAvailable(name, friendlyName) {

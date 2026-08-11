@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const updateUrl =
   process.env.VERIDIA_UPDATE_URL ||
   "https://github.com/jd-pages/veridia/releases/latest/download";
+fs.rmSync(path.join(root, "dist-installer"), {
+  recursive: true,
+  force: true,
+});
 const result = spawnSync(
   process.execPath,
   [

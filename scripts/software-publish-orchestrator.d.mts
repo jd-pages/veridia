@@ -14,6 +14,12 @@ export function formatSoftwarePublishFailure(
 ): string[];
 export function parseGitPorcelainPaths(value: string): string[];
 export function assertOnlyVersionFiles(changed: string[]): void;
+export function assertProjectRootConsistency(input: {
+  scriptRoot: string;
+  resolvedProjectRoot: string;
+  gitRoot: string;
+  workingDirectory: string;
+}): string;
 
 export interface SoftwarePublishPlanInput {
   dirty: boolean;

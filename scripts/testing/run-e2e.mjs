@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { chromium } from "playwright";
 import ts from "typescript";
 import { copyE2eDatabaseForRun } from "./e2e-database-template.mjs";
+import { ensureProjectBoundDirectory } from "./project-bound-cache.mjs";
 import {
   captureFile,
   cleanupTestNextGeneratedTypes,
@@ -184,6 +185,15 @@ function countTests(environment) {
 }
 
 async function main() {
+  const nextCacheIdentity = ensureProjectBoundDirectory(
+    path.join(root, ".playwright", "next-e2e"),
+    root,
+  );
+  if (nextCacheIdentity.reset) {
+    process.stdout.write(
+      `[Next cache] RESET 项目根已变化，已重建 ${path.relative(root, nextCacheIdentity.directory)}\n`,
+    );
+  }
   invalidateMalformedNextCache();
   nextEnvSnapshot = captureFile(path.join(root, "next-env.d.ts"));
   const port = await findFreePort();
