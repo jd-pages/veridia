@@ -9,6 +9,13 @@ export interface StartupRouteReadyResult<T extends StartupRouteResponse> {
   elapsedMs: number;
 }
 
+export class StartupRouteReadinessError extends Error {
+  readonly code: "STARTUP_ROUTE_404_TIMEOUT";
+  readonly label: string;
+  readonly attempts: number;
+  readonly elapsedMs: number;
+}
+
 export function waitForStartupRoute<T extends StartupRouteResponse>(input: {
   label: string;
   request: () => Promise<T | null>;

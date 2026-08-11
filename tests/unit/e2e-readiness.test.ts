@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { waitForStartupRoute } from "../../scripts/testing/e2e-readiness.mjs";
+import {
+  StartupRouteReadinessError,
+  waitForStartupRoute,
+} from "../../scripts/testing/e2e-readiness.mjs";
 
 function response(status: number) {
   return {
@@ -54,5 +57,29 @@ describe("E2E startup route readiness", () => {
       sleep: async (milliseconds: number) => { clock += milliseconds; },
     })).rejects.toThrow("启动就绪超时: HTTP 404，已尝试 4 次");
     expect(request).toHaveBeenCalledTimes(4);
+  });
+
+  it("只将持续启动期 404 标记为可恢复的就绪错误", async () => {
+    let clock = 0;
+
+    try {
+      await waitForStartupRoute({
+        label: "login API",
+        request: async () => response(404),
+        timeoutMs: 100,
+        intervalMs: 100,
+        now: () => clock,
+        sleep: async (milliseconds: number) => { clock += milliseconds; },
+      });
+      throw new Error("预期就绪检查失败");
+    } catch (error) {
+      expect(error).toBeInstanceOf(StartupRouteReadinessError);
+      expect(error).toMatchObject({
+        code: "STARTUP_ROUTE_404_TIMEOUT",
+        label: "login API",
+        attempts: 2,
+        elapsedMs: 100,
+      });
+    }
   });
 });

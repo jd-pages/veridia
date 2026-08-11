@@ -14,7 +14,10 @@ import {
   e2eTsconfigPath,
   restoreFile,
 } from "./next-type-isolation.mjs";
-import { waitForStartupRoute } from "./e2e-readiness.mjs";
+import {
+  StartupRouteReadinessError,
+  waitForStartupRoute,
+} from "./e2e-readiness.mjs";
 
 const root = process.cwd();
 const args = process.argv.slice(2);
@@ -80,6 +83,56 @@ async function stopOwnedProcess(child) {
     new Promise((resolve) => setTimeout(resolve, 2_000)),
   ]);
   if (child.exitCode === null) killTree(child);
+}
+
+function startNextServer(port, environment, log) {
+  const child = spawn(process.execPath, [
+    path.join(root, "node_modules", "next", "dist", "bin", "next"),
+    "dev",
+    "-p",
+    String(port),
+  ], {
+    cwd: root,
+    env: environment,
+    detached: process.platform !== "win32",
+    stdio: ["ignore", log, log],
+    windowsHide: true,
+  });
+  child.on("error", (error) => {
+    writeMetadata({
+      serverErrorAt: new Date().toISOString(),
+      serverError: error instanceof Error ? error.message : String(error),
+    });
+  });
+  child.on("exit", (code, signal) => {
+    writeMetadata({
+      serverExitedAt: new Date().toISOString(),
+      serverExitCode: code,
+      serverExitSignal: signal,
+      serverExitedDuringTests: Boolean(testProcess && testProcess.exitCode === null),
+    });
+  });
+  writeMetadata({
+    serverPid: child.pid,
+    serverStartedAt: new Date().toISOString(),
+    serverExitedAt: null,
+    serverExitCode: null,
+    serverExitSignal: null,
+  });
+  return child;
+}
+
+async function resetNextCacheAfterStartup404(cacheDirectory) {
+  const expected = path.resolve(root, nextDistDir);
+  if (path.resolve(cacheDirectory) !== expected) {
+    throw new Error(`拒绝重建非 E2E Next 缓存目录：${cacheDirectory}`);
+  }
+  try { await warmupBrowser?.close(); } catch {}
+  warmupBrowser = undefined;
+  await stopOwnedProcess(serverProcess);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  fs.rmSync(expected, { recursive: true, force: true });
+  ensureProjectBoundDirectory(expected, root);
 }
 
 function invalidateMalformedNextCache() {
@@ -250,32 +303,43 @@ async function main() {
   writeMetadata({ schemaVersion: 1, runId, isolationGroup, port, databasePath: database.runDatabasePath, profilePath, douyinProfilePath, nextDistDir: environment.VERIDIA_NEXT_DIST_DIR, serverPid: null, browserPid: null, startedAt: new Date().toISOString(), templateFingerprint: database.fingerprint });
   const total = countTests(environment);
   const log = fs.openSync(path.join(runDirectory, "next-server.log"), "a");
-  serverProcess = spawn(process.execPath, [path.join(root, "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port)], {
-    cwd: root,
-    env: environment,
-    detached: process.platform !== "win32",
-    stdio: ["ignore", log, log],
-    windowsHide: true,
-  });
-  serverProcess.on("error", (error) => {
-    writeMetadata({
-      serverErrorAt: new Date().toISOString(),
-      serverError: error instanceof Error ? error.message : String(error),
-    });
-  });
-  serverProcess.on("exit", (code, signal) => {
-    writeMetadata({
-      serverExitedAt: new Date().toISOString(),
-      serverExitCode: code,
-      serverExitSignal: signal,
-      serverExitedDuringTests: Boolean(testProcess && testProcess.exitCode === null),
-    });
-  });
-  writeMetadata({ serverPid: serverProcess.pid });
   const baseURL = `http://127.0.0.1:${port}`;
-  await waitForHealth(baseURL);
-  writeMetadata({ serverReadyAt: new Date().toISOString() });
-  await warmup(baseURL, executablePath);
+  let startupRecovery;
+  for (let startupAttempt = 1; startupAttempt <= 2; startupAttempt += 1) {
+    serverProcess = startNextServer(port, environment, log);
+    await waitForHealth(baseURL);
+    writeMetadata({ serverReadyAt: new Date().toISOString(), startupAttempt });
+    try {
+      await warmup(baseURL, executablePath);
+      if (startupRecovery) {
+        startupRecovery = {
+          ...startupRecovery,
+          status: "RECOVERED",
+          recoveredAt: new Date().toISOString(),
+        };
+        writeMetadata({ startupRecovery });
+      }
+      break;
+    } catch (error) {
+      if (!(error instanceof StartupRouteReadinessError) || startupAttempt >= 2) {
+        throw error;
+      }
+      startupRecovery = {
+        status: "ATTEMPTED",
+        reason: error.code,
+        route: error.label,
+        attempts: error.attempts,
+        elapsedMs: error.elapsedMs,
+        cacheReset: true,
+        attemptedAt: new Date().toISOString(),
+      };
+      writeMetadata({ startupRecovery });
+      process.stdout.write(
+        `[Next cache] RECOVER ${error.label} 持续返回 404，正在重建安全测试缓存并重启一次\n`,
+      );
+      await resetNextCacheAfterStartup404(nextCacheIdentity.directory);
+    }
+  }
   const playwrightArgs = [
     path.join(root, "node_modules", "@playwright", "test", "cli.js"),
     "test",

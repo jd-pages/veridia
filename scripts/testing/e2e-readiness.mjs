@@ -15,6 +15,17 @@ function responseOk(response) {
 const defaultSleep = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+export class StartupRouteReadinessError extends Error {
+  constructor(label, attempts, elapsedMs) {
+    super(`${label} 启动就绪超时: HTTP 404，已尝试 ${attempts} 次`);
+    this.name = "StartupRouteReadinessError";
+    this.code = "STARTUP_ROUTE_404_TIMEOUT";
+    this.label = label;
+    this.attempts = attempts;
+    this.elapsedMs = elapsedMs;
+  }
+}
+
 export async function waitForStartupRoute(input) {
   const timeoutMs = input.timeoutMs ?? 15_000;
   const intervalMs = input.intervalMs ?? 200;
@@ -38,9 +49,7 @@ export async function waitForStartupRoute(input) {
 
     const elapsedMs = now() - startedAt;
     if (elapsedMs >= timeoutMs) {
-      throw new Error(
-        `${input.label} 启动就绪超时: HTTP 404，已尝试 ${attempts} 次`,
-      );
+      throw new StartupRouteReadinessError(input.label, attempts, elapsedMs);
     }
     await sleep(Math.min(intervalMs, timeoutMs - elapsedMs));
   }
