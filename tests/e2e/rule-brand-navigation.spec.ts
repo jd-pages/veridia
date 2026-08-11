@@ -1,4 +1,8 @@
 import { expect, test } from "@playwright/test";
+import {
+  dismissRuleUpdateNoticeIfPresent,
+  waitForRuleUpdateCheck,
+} from "./helpers/rule-page";
 
 test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   const login = await page.request.post("/api/auth/login", {
@@ -284,6 +288,7 @@ test("达能月度规则支持空月份、复制创建、独立主键和刷新�
   });
   expect(loginResponse.ok()).toBeTruthy();
 
+  const ruleUpdateCheck = waitForRuleUpdateCheck(page);
   await page.goto("/rules?brand=%E8%BE%BE%E8%83%BD&month=2026-09");
   await expect(
     page.getByRole("heading", { name: "达能话题规则" }),
@@ -293,17 +298,11 @@ test("达能月度规则支持空月份、复制创建、独立主键和刷新�
     page.getByText("当前月份暂无规则", { exact: true }),
   ).toBeVisible();
 
-  const updateNotification = page
-    .locator(".ant-notification-notice")
-    .filter({ hasText: "查看规则更新" });
-  if (await updateNotification.isVisible().catch(() => false)) {
-    await updateNotification.locator(".ant-notification-notice-close").click();
-    await expect(updateNotification).toHaveCount(0);
-  }
+  await dismissRuleUpdateNoticeIfPresent(page, await ruleUpdateCheck);
   const createMonthButton = page.getByRole("button", { name: "新增月份规则" });
-  await createMonthButton.evaluate((element) =>
-    element.scrollIntoView({ block: "center", inline: "nearest" }),
-  );
+  await createMonthButton.scrollIntoViewIfNeeded();
+  await expect(createMonthButton).toBeVisible();
+  await expect(createMonthButton).toBeEnabled();
   await createMonthButton.click();
   const monthModal = page.getByRole("dialog", { name: "新增月份规则" });
   await monthModal.getByLabel("规则月份").fill("2026-09");

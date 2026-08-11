@@ -21,6 +21,7 @@ const args = process.argv.slice(2);
 const files = args.filter((arg) => !arg.startsWith("--"));
 const workers = Number(args.find((arg) => arg.startsWith("--workers="))?.split("=")[1] || 1);
 const failFast = args.includes("--fail-fast");
+const grepArgument = args.find((arg) => arg.startsWith("--grep="));
 const isolationGroup = args.find((arg) => arg.startsWith("--group="))?.split("=")[1] || "SELECTED";
 const runId = `${new Date().toISOString().replace(/[:.]/gu, "-")}-${isolationGroup}-${randomUUID().slice(0, 8)}`;
 const runDirectory = path.join(root, ".playwright", "e2e-runs", runId);
@@ -195,7 +196,13 @@ async function warmup(baseURL, executablePath) {
 }
 
 function countTests(environment) {
-  const commandArgs = [path.join(root, "node_modules", "@playwright", "test", "cli.js"), "test", "--list", ...files];
+  const commandArgs = [
+    path.join(root, "node_modules", "@playwright", "test", "cli.js"),
+    "test",
+    "--list",
+    ...(grepArgument ? [grepArgument] : []),
+    ...files,
+  ];
   const result = spawnSync(process.execPath, commandArgs, { cwd: root, env: environment, encoding: "utf8", windowsHide: true });
   const match = `${result.stdout || ""}\n${result.stderr || ""}`.match(/Total:\s+(\d+) tests?/u);
   if (result.status !== 0 || !match) throw new Error("无法枚举所选 E2E 测试");
@@ -254,7 +261,13 @@ async function main() {
   const baseURL = `http://127.0.0.1:${port}`;
   await waitForHealth(baseURL);
   await warmup(baseURL, executablePath);
-  const playwrightArgs = [path.join(root, "node_modules", "@playwright", "test", "cli.js"), "test", ...files, `--workers=${workers}`];
+  const playwrightArgs = [
+    path.join(root, "node_modules", "@playwright", "test", "cli.js"),
+    "test",
+    ...(grepArgument ? [grepArgument] : []),
+    ...files,
+    `--workers=${workers}`,
+  ];
   if (failFast) playwrightArgs.push("--max-failures=1");
   const status = await new Promise((resolve, reject) => {
     testProcess = spawn(process.execPath, playwrightArgs, { cwd: root, env: environment, stdio: "inherit", windowsHide: true });
