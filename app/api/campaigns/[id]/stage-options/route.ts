@@ -1,5 +1,8 @@
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
-import { resolveCampaignProductStageConfiguration } from "@/lib/campaign-product-stage";
+import {
+  CampaignProductStageConfigurationError,
+  resolveCampaignProductStageConfiguration,
+} from "@/lib/campaign-product-stage";
 import { parseAutomationPlatform } from "@/lib/automation/platform";
 
 export const GET = withApiErrorBoundary(async function GET(
@@ -16,11 +19,19 @@ export const GET = withApiErrorBoundary(async function GET(
   );
   if (!productId) return fail("请选择产品");
   if (!contentChannel) return fail("请选择内容平台");
-  const configuration = await resolveCampaignProductStageConfiguration({
-    campaignId: id,
-    productId,
-    contentChannel,
-  });
+  let configuration;
+  try {
+    configuration = await resolveCampaignProductStageConfiguration({
+      campaignId: id,
+      productId,
+      contentChannel,
+    });
+  } catch (error) {
+    if (error instanceof CampaignProductStageConfigurationError) {
+      return fail(error.message, error.status, error.code);
+    }
+    throw error;
+  }
   return ok({
     requiresProductStage: configuration.requiresProductStage,
     options: configuration.stageOptions,

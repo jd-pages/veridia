@@ -2,6 +2,42 @@ import { expect, test } from "@playwright/test";
 import { E2E_ORIGIN } from "./e2e-origin";
 import { getWithTransientNetworkRetry } from "./helpers/api-request";
 
+test("阶段接口将活动渠道冲突作为可恢复业务错误返回", async ({ page }) => {
+  expect(
+    (
+      await page.request.post("/api/auth/login", {
+        data: { username: "admin", password: "Admin123!" },
+      })
+    ).ok(),
+  ).toBeTruthy();
+  const products = (
+    await (await page.request.get("/api/products")).json()
+  ).data as Array<{ id: string; name: string }>;
+  const product =
+    products.find((item) => item.name.includes("澳洲白金版")) || products[0];
+  const campaigns = (
+    await (
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`,
+      )
+    ).json()
+  ).data as Array<{ id: string; contentChannel: string }>;
+  const douyinCampaign = campaigns.find(
+    (campaign) => campaign.contentChannel === "DOUYIN",
+  );
+  expect(douyinCampaign).toBeTruthy();
+
+  const response = await page.request.get(
+    `/api/campaigns/${douyinCampaign!.id}/stage-options?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+  );
+  expect(response.status()).toBe(409);
+  expect(await response.json()).toMatchObject({
+    success: false,
+    error: "内容渠道与活动渠道不一致，请选择对应内容平台的审核活动",
+    errorDetail: { code: "CAMPAIGN_CHANNEL_MISMATCH" },
+  });
+});
+
 test("抖音手动审核按活动和产品显示所属阶段并保存选择", async ({ page }) => {
   expect((await page.request.post("/api/auth/login", {
     data: { username: "admin", password: "Admin123!" },

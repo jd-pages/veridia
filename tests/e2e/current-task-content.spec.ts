@@ -1,7 +1,12 @@
 import { expect, test } from "@playwright/test";
+import { PrismaClient } from "@prisma/client";
+import path from "node:path";
 import { E2E_ORIGIN } from "./e2e-origin";
 
 const cleanupBatchIds: string[] = [];
+const databaseUrl =
+  process.env.E2E_DATABASE_URL?.trim() ||
+  `file:${path.resolve(process.cwd(), "prisma", "e2e.db").replaceAll("\\", "/")}`;
 
 test.afterEach(async ({ page }) => {
   for (const batchId of [...new Set(cleanupBatchIds)].reverse()) {
@@ -534,4 +539,157 @@ test("300 条任务分片入队且执行记录只读取当前页", async ({ page
   await expect(
     executionCard.locator(".ant-table-tbody .ant-table-row"),
   ).toHaveCount(50);
+});
+
+test("空批次与 NOT_STARTED 正常展示，失败模块可独立重试", async ({
+  page,
+}) => {
+  expect(
+    (
+      await page.request.post("/api/auth/login", {
+        data: { username: "admin", password: "Admin123!" },
+      })
+    ).ok(),
+  ).toBeTruthy();
+
+  let batchRequestFails = true;
+  let sessionRequestFails = true;
+  const initializationRequests: string[] = [];
+  page.on("request", (request) => {
+    if (!request.url().includes("/api/")) return;
+    const requestUrl = new URL(request.url());
+    initializationRequests.push(`${requestUrl.pathname}${requestUrl.search}`);
+  });
+  await page.route("**/api/automation/batches?**", async (route) => {
+    await route.fulfill({
+      status: batchRequestFails ? 500 : 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        batchRequestFails
+          ? {
+              success: false,
+              ok: false,
+              error: "数据读取失败，请刷新或重启 VERIDIA。",
+              errorDetail: {
+                code: "INTERNAL_SERVER_ERROR",
+                message: "数据读取失败，请刷新或重启 VERIDIA。",
+              },
+            }
+          : { success: true, ok: true, data: [] },
+      ),
+    });
+  });
+  await page.route("**/api/automation/session?**", async (route) => {
+    await route.fulfill({
+      status: sessionRequestFails ? 500 : 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        sessionRequestFails
+          ? {
+              success: false,
+              ok: false,
+              error: "数据读取失败，请刷新或重启 VERIDIA。",
+              errorDetail: {
+                code: "INTERNAL_SERVER_ERROR",
+                message: "数据读取失败，请刷新或重启 VERIDIA。",
+              },
+            }
+          : {
+              success: true,
+              ok: true,
+              data: {
+                status: "LOGIN_REQUIRED",
+                controlState: "NOT_STARTED",
+                controlReady: false,
+                lastLoginAt: null,
+                lastError: null,
+              },
+            },
+      ),
+    });
+  });
+
+  await page.goto("/tasks");
+  await expect(
+    page.getByText("当前批次读取失败", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("自动审核状态读取失败", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "创建审核任务", exact: true }),
+  ).toBeVisible();
+  expect(initializationRequests).toContain("/api/products");
+  expect(initializationRequests).toContain(
+    "/api/campaigns?contentChannel=XIAOHONGSHU",
+  );
+  await expect(
+    page.getByText("数据读取失败，请刷新或重启 VERIDIA。", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+
+  sessionRequestFails = false;
+  await page
+    .getByRole("button", { name: "重新加载自动审核状态" })
+    .click();
+  await expect(
+    page.getByText("自动审核状态读取失败", { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText(/浏览器控制：NOT_STARTED/u)).toBeVisible();
+  await expect(
+    page.getByText("当前批次读取失败", { exact: true }),
+  ).toBeVisible();
+
+  batchRequestFails = false;
+  await page.getByRole("button", { name: "重新加载当前批次" }).click();
+  await expect(
+    page.getByText("当前批次读取失败", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("暂无审核任务", { exact: true }).first(),
+  ).toBeVisible();
+});
+
+test("遗留 currentTaskId 指向不存在任务时返回空引用而非 500", async ({
+  page,
+}) => {
+  expect(
+    (
+      await page.request.post("/api/auth/login", {
+        data: { username: "admin", password: "Admin123!" },
+      })
+    ).ok(),
+  ).toBeTruthy();
+  const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
+  const batch = await prisma.auditBatch.create({
+    data: {
+      name: `失效当前任务引用-${Date.now()}`,
+      source: "MANUAL",
+      status: "PAUSED",
+      totalCount: 0,
+      currentTaskId: "missing-current-task",
+    },
+  });
+  try {
+    const response = await page.request.get(
+      `/api/automation/batches?batchId=${batch.id}&includeTasks=false`,
+    );
+    expect(response.status()).toBe(200);
+    expect((await response.json()).data[0]).toMatchObject({
+      id: batch.id,
+      currentTaskId: "missing-current-task",
+      currentTask: null,
+    });
+    await page.goto(`/tasks?batchId=${batch.id}`);
+    await expect(page.getByText(batch.name!, { exact: false }).first()).toBeVisible();
+    await expect(
+      page.getByText("数据读取失败，请刷新或重启 VERIDIA。", {
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  } finally {
+    await prisma.auditBatch.delete({ where: { id: batch.id } });
+    await prisma.$disconnect();
+  }
 });

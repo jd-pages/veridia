@@ -372,6 +372,20 @@ function rememberCurrentBatches(batchIds: string[]) {
   window.history.replaceState(window.history.state, "", url);
 }
 
+const genericDataReadError = "数据读取失败，请刷新或重启 VERIDIA。";
+
+function moduleReadError(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message.trim() : "";
+  return !message || message === genericDataReadError ? fallback : message;
+}
+
+interface TaskPageLoadModules {
+  batches?: boolean;
+  session?: boolean;
+  products?: boolean;
+  campaigns?: boolean;
+}
+
 export default function TasksPage() {
   const { message } = App.useApp();
   const [products, setProducts] = useState<Product[]>([]);
@@ -383,6 +397,15 @@ export default function TasksPage() {
   const [batches, setBatches] = useState<AuditBatch[]>([]);
   const [trackedBatchIds, setTrackedBatchIds] = useState<string[]>([]);
   const [session, setSession] = useState<AutomationSession | null>(null);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [taskError, setTaskError] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [productError, setProductError] = useState<string | null>(null);
+  const [campaignError, setCampaignError] = useState<string | null>(null);
+  const [stageOptionsError, setStageOptionsError] = useState<string | null>(
+    null,
+  );
+  const [stageOptionsRetry, setStageOptionsRetry] = useState(0);
   const [sessionPlatform, setSessionPlatform] = useState<
     "XIAOHONGSHU" | "DOUYIN"
   >("XIAOHONGSHU");
@@ -443,6 +466,55 @@ export default function TasksPage() {
   );
   const canOperate = canAccessBusiness(currentRole);
 
+  const loadTasksForBatches = useCallback(
+    async (
+      taskBatchIds: string[],
+      requestedPage: number,
+      requestedPageSize: number,
+      requestedExecutionFilter: TaskExecutionFilter,
+      requestSequence?: number,
+    ) => {
+      if (!taskBatchIds.length) {
+        setTasks([]);
+        setTaskTotal(0);
+        setTaskError(null);
+        return;
+      }
+      try {
+        const query = new URLSearchParams({
+          batchIds: taskBatchIds.join(","),
+          page: String(requestedPage),
+          pageSize: String(requestedPageSize),
+          executionStatus: requestedExecutionFilter,
+        });
+        const currentTasks = await apiFetch<TaskPage>(`/api/tasks?${query}`, {
+          cache: "no-store",
+        });
+        if (requestSequence && requestSequence !== loadSequence.current) return;
+        setTasks((previous) =>
+          JSON.stringify(previous) === JSON.stringify(currentTasks.items)
+            ? previous
+            : currentTasks.items,
+        );
+        setTaskTotal(currentTasks.total);
+        setTaskPage(currentTasks.page);
+        setTaskPageSize(currentTasks.pageSize);
+        setTaskError(null);
+      } catch (error) {
+        if (requestSequence && requestSequence !== loadSequence.current) return;
+        setTasks([]);
+        setTaskTotal(0);
+        setTaskError(
+          moduleReadError(
+            error,
+            "本次审核任务内容读取失败，请重新加载。",
+          ),
+        );
+      }
+    },
+    [],
+  );
+
   const load = useCallback(
     async (
       quiet = false,
@@ -451,7 +523,12 @@ export default function TasksPage() {
       requestedPageSize = 50,
       requestedSelection = ALL_CURRENT_BATCHES,
       requestedExecutionFilter: TaskExecutionFilter = "ALL",
+      modules: TaskPageLoadModules = {},
     ) => {
+      const shouldLoadBatches = modules.batches ?? true;
+      const shouldLoadSession = modules.session ?? true;
+      const shouldLoadProducts = modules.products ?? !quiet;
+      const shouldLoadCampaigns = modules.campaigns ?? !quiet;
       const requestSequence = ++loadSequence.current;
       if (!quiet) setLoading(true);
       const batchQuery = new URLSearchParams({
@@ -462,32 +539,66 @@ export default function TasksPage() {
         batchQuery.set("batchIds", requestedBatchIds.join(","));
       }
       const [batchResult, sessionResult] = await Promise.allSettled([
-        apiFetch<AuditBatch[]>(`/api/automation/batches?${batchQuery}`, {
-          cache: "no-store",
-        }),
-        apiFetch<AutomationSession>(
-          `/api/automation/session?platform=${sessionPlatform}`,
-        ),
+        shouldLoadBatches
+          ? apiFetch<AuditBatch[]>(`/api/automation/batches?${batchQuery}`, {
+              cache: "no-store",
+            })
+          : Promise.resolve(null),
+        shouldLoadSession
+          ? apiFetch<AutomationSession>(
+              `/api/automation/session?platform=${sessionPlatform}`,
+            )
+          : Promise.resolve(null),
       ]);
       if (requestSequence !== loadSequence.current) return;
-      let dataFailure: PromiseRejectedResult | undefined;
-      if (!quiet) {
+      if (shouldLoadProducts || shouldLoadCampaigns) {
         const [productResult, campaignResult] = await Promise.allSettled([
-          apiFetch<Product[]>("/api/products"),
-          apiFetch<Campaign[]>("/api/campaigns"),
+          shouldLoadProducts
+            ? apiFetch<Product[]>("/api/products")
+            : Promise.resolve(null),
+          shouldLoadCampaigns
+            ? apiFetch<Campaign[]>(
+                `/api/campaigns?contentChannel=${selectedContentChannel}`,
+              )
+            : Promise.resolve(null),
         ]);
-        if (productResult.status === "fulfilled") {
+        if (
+          shouldLoadProducts &&
+          productResult.status === "fulfilled" &&
+          productResult.value
+        ) {
           setProducts(productResult.value);
+          setProductError(null);
+        } else if (shouldLoadProducts && productResult.status === "rejected") {
+          setProductError(
+            moduleReadError(productResult.reason, "产品列表读取失败，请重新加载。"),
+          );
         }
-        if (campaignResult.status === "fulfilled") {
+        if (
+          shouldLoadCampaigns &&
+          campaignResult.status === "fulfilled" &&
+          campaignResult.value
+        ) {
           setCampaigns(campaignResult.value);
+          setCampaignError(null);
+        } else if (
+          shouldLoadCampaigns &&
+          campaignResult.status === "rejected"
+        ) {
+          setCampaignError(
+            moduleReadError(
+              campaignResult.reason,
+              "活动列表读取失败，请重新加载。",
+            ),
+          );
         }
-        dataFailure = [productResult, campaignResult].find(
-          (result): result is PromiseRejectedResult =>
-            result.status === "rejected",
-        );
       }
-      if (batchResult.status === "fulfilled") {
+      if (
+        shouldLoadBatches &&
+        batchResult.status === "fulfilled" &&
+        batchResult.value
+      ) {
+        setBatchError(null);
         const visibleBatches = batchResult.value.filter(
           (batch) => !clearedBatchIds.current.has(batch.id),
         );
@@ -513,63 +624,48 @@ export default function TasksPage() {
           effectiveSelection === ALL_CURRENT_BATCHES
             ? resolvedBatchIds
             : [effectiveSelection];
-        if (taskBatchIds.length) {
-          try {
-            const query = new URLSearchParams({
-              batchIds: taskBatchIds.join(","),
-              page: String(requestedPage),
-              pageSize: String(requestedPageSize),
-              executionStatus: requestedExecutionFilter,
-            });
-            const currentTasks = await apiFetch<TaskPage>(`/api/tasks?${query}`, {
-              cache: "no-store",
-            });
-            if (requestSequence !== loadSequence.current) return;
-            setTasks((previous) =>
-              JSON.stringify(previous) === JSON.stringify(currentTasks.items)
-                ? previous
-                : currentTasks.items,
-            );
-            setTaskTotal(currentTasks.total);
-            setTaskPage(currentTasks.page);
-            setTaskPageSize(currentTasks.pageSize);
-          } catch (error) {
-            setTasks([]);
-            setTaskTotal(0);
-            if (!quiet) {
-              message.error(
-                error instanceof Error
-                  ? error.message
-                  : "读取本次任务内容失败，请刷新重试。",
-              );
-            }
-          }
-        } else {
-          setTasks([]);
-          setTaskTotal(0);
-        }
-      } else {
-        dataFailure = batchResult;
+        await loadTasksForBatches(
+          taskBatchIds,
+          requestedPage,
+          requestedPageSize,
+          requestedExecutionFilter,
+          requestSequence,
+        );
+      } else if (shouldLoadBatches && batchResult.status === "rejected") {
+        setBatches([]);
+        setTrackedBatchIds([]);
+        setSelectedBatchId(ALL_CURRENT_BATCHES);
+        setTasks([]);
+        setTaskTotal(0);
+        setBatchError(
+          moduleReadError(batchResult.reason, "当前批次读取失败，请重新加载。"),
+        );
       }
-      if (sessionResult.status === "fulfilled") {
+      if (
+        shouldLoadSession &&
+        sessionResult.status === "fulfilled" &&
+        sessionResult.value
+      ) {
         setSession(sessionResult.value);
-      } else {
+        setSessionError(null);
+      } else if (shouldLoadSession && sessionResult.status === "rejected") {
         setSession({
-          status: "LOGIN_REQUIRED",
+          status: "UNKNOWN",
+          controlState: "NOT_STARTED",
+          controlReady: false,
           lastLoginAt: null,
           lastError: null,
         });
-      }
-      if (!quiet && dataFailure) {
-        message.error(
-          dataFailure.reason instanceof Error
-            ? dataFailure.reason.message
-            : "数据读取失败，请刷新或重启 VERIDIA。",
+        setSessionError(
+          moduleReadError(
+            sessionResult.reason,
+            "自动审核状态读取失败，请稍后重试。",
+          ),
         );
       }
-      setLoading(false);
+      if (!quiet) setLoading(false);
     },
-    [message, sessionPlatform],
+    [loadTasksForBatches, selectedContentChannel, sessionPlatform],
   );
 
   useEffect(() => {
@@ -600,6 +696,7 @@ export default function TasksPage() {
   useEffect(() => {
     if (!selectedProduct || !selectedCampaign) {
       setStageSelection(null);
+      setStageOptionsError(null);
       setStageOptionsLoading(false);
       return;
     }
@@ -612,6 +709,7 @@ export default function TasksPage() {
       .then((selection) => {
         if (cancelled) return;
         setStageSelection(selection);
+        setStageOptionsError(null);
         const currentStage = form.getFieldValue("productStage") as
           | string
           | undefined;
@@ -629,8 +727,11 @@ export default function TasksPage() {
         if (cancelled) return;
         setStageSelection(null);
         form.resetFields(["productStage"]);
-        message.error(
-          error instanceof Error ? error.message : "加载所属阶段失败",
+        setStageOptionsError(
+          moduleReadError(
+            error,
+            "当前产品阶段读取失败，请重新选择活动或点击重新加载。",
+          ),
         );
       })
       .finally(() => {
@@ -645,6 +746,7 @@ export default function TasksPage() {
     selectedCampaign,
     selectedContentChannel,
     selectedProduct,
+    stageOptionsRetry,
   ]);
 
   useEffect(() => {
@@ -1117,6 +1219,38 @@ export default function TasksPage() {
             ]}
           />
         </div>
+        {sessionError ? (
+          <Alert
+            showIcon
+            type="error"
+            message="自动审核状态读取失败"
+            description={sessionError}
+            action={
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={() =>
+                  void load(
+                    true,
+                    trackedBatchIds,
+                    taskPage,
+                    taskPageSize,
+                    selectedBatchId,
+                    taskExecutionFilter,
+                    {
+                      batches: false,
+                      session: true,
+                      products: false,
+                      campaigns: false,
+                    },
+                  )
+                }
+              >
+                重新加载自动审核状态
+              </Button>
+            }
+          />
+        ) : null}
         <div className={styles.sessionIdentity}>
           <span className={styles.sessionIcon}>
             <SafetyCertificateOutlined />
@@ -1217,6 +1351,70 @@ export default function TasksPage() {
                   onFinish={(values) => void createBatch(values)}
                   initialValues={{ contentChannel: "XIAOHONGSHU" }}
                 >
+                      {campaignError ? (
+                        <Alert
+                          showIcon
+                          type="error"
+                          message="活动列表读取失败"
+                          description={campaignError}
+                          action={
+                            <Button
+                              size="small"
+                              icon={<ReloadOutlined />}
+                              onClick={() =>
+                                void load(
+                                  true,
+                                  trackedBatchIds,
+                                  taskPage,
+                                  taskPageSize,
+                                  selectedBatchId,
+                                  taskExecutionFilter,
+                                  {
+                                    batches: false,
+                                    session: false,
+                                    products: false,
+                                    campaigns: true,
+                                  },
+                                )
+                              }
+                            >
+                              重新加载活动
+                            </Button>
+                          }
+                        />
+                      ) : null}
+                      {productError ? (
+                        <Alert
+                          showIcon
+                          type="error"
+                          message="产品列表读取失败"
+                          description={productError}
+                          action={
+                            <Button
+                              size="small"
+                              icon={<ReloadOutlined />}
+                              onClick={() =>
+                                void load(
+                                  true,
+                                  trackedBatchIds,
+                                  taskPage,
+                                  taskPageSize,
+                                  selectedBatchId,
+                                  taskExecutionFilter,
+                                  {
+                                    batches: false,
+                                    session: false,
+                                    products: true,
+                                    campaigns: false,
+                                  },
+                                )
+                              }
+                            >
+                              重新加载产品
+                            </Button>
+                          }
+                        />
+                      ) : null}
                       <Form.Item name="name" label="批次名称">
                         <Input placeholder="例如：7月达人笔记第一批" />
                       </Form.Item>
@@ -1228,6 +1426,7 @@ export default function TasksPage() {
                               onChange={() => {
                                 form.resetFields(["campaignId", "productId", "productStage", "urls"]);
                                 setStageSelection(null);
+                                setStageOptionsError(null);
                                 setRequirements(null);
                               }}
                             />
@@ -1290,6 +1489,26 @@ export default function TasksPage() {
                           </Form.Item>
                         </Col>
                       </Row>
+                      {stageOptionsError ? (
+                        <Alert
+                          showIcon
+                          type="error"
+                          className={styles.requirementsAlert}
+                          message="当前产品阶段读取失败"
+                          description={stageOptionsError}
+                          action={
+                            <Button
+                              size="small"
+                              icon={<ReloadOutlined />}
+                              onClick={() =>
+                                setStageOptionsRetry((value) => value + 1)
+                              }
+                            >
+                              重新加载阶段规则
+                            </Button>
+                          }
+                        />
+                      ) : null}
                       {selectedProduct && selectedCampaignRequiresStage ? (
                         <Form.Item
                           name="productStage"
@@ -1851,6 +2070,38 @@ export default function TasksPage() {
             </Tag>
           ) : null}
         </div>
+        {batchError ? (
+          <Alert
+            showIcon
+            type="error"
+            message="当前批次读取失败"
+            description={batchError}
+            action={
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={() =>
+                  void load(
+                    false,
+                    trackedBatchIds,
+                    taskPage,
+                    taskPageSize,
+                    selectedBatchId,
+                    taskExecutionFilter,
+                    {
+                      batches: true,
+                      session: false,
+                      products: false,
+                      campaigns: false,
+                    },
+                  )
+                }
+              >
+                重新加载当前批次
+              </Button>
+            }
+          />
+        ) : null}
         <div className={styles.statsGrid}>
               {[
                 {
@@ -1924,6 +2175,36 @@ export default function TasksPage() {
                 </button>
               ))}
         </div>
+        {taskError ? (
+          <Alert
+            showIcon
+            type="error"
+            message="本次审核任务内容读取失败"
+            description={taskError}
+            action={
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={() => {
+                  const taskBatchIds =
+                    selectedBatchId === ALL_CURRENT_BATCHES
+                      ? trackedBatchIds
+                      : [selectedBatchId];
+                  void loadTasksForBatches(
+                    taskBatchIds.filter(
+                      (batchId) => batchId !== ALL_CURRENT_BATCHES,
+                    ),
+                    taskPage,
+                    taskPageSize,
+                    taskExecutionFilter,
+                  );
+                }}
+              >
+                重新加载任务内容
+              </Button>
+            }
+          />
+        ) : null}
         {selectedBatch ? (
           <>
             {isCombinedQueue && batches.length > 1 ? (

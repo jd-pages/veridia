@@ -24,6 +24,19 @@ export interface CampaignProductStageOption {
   label: string;
 }
 
+export class CampaignProductStageConfigurationError extends Error {
+  constructor(
+    message: string,
+    readonly code:
+      | "CAMPAIGN_PRODUCT_NOT_AVAILABLE"
+      | "CAMPAIGN_CHANNEL_MISMATCH",
+    readonly status: 404 | 409,
+  ) {
+    super(message);
+    this.name = "CampaignProductStageConfigurationError";
+  }
+}
+
 export function productScopedCampaignRules(
   rules: readonly CampaignProductStageRule[],
   productId: string,
@@ -105,10 +118,18 @@ export async function resolveCampaignProductStageConfiguration(input: {
     }),
   ]);
   if (!campaign || !product) {
-    throw new Error("活动不存在、已停用或与所选产品不匹配");
+    throw new CampaignProductStageConfigurationError(
+      "活动不存在、已停用或与所选产品不匹配",
+      "CAMPAIGN_PRODUCT_NOT_AVAILABLE",
+      404,
+    );
   }
   if (![input.contentChannel, "ALL"].includes(campaign.contentChannel)) {
-    throw new Error("内容渠道与活动渠道不一致，请选择对应内容平台的审核活动");
+    throw new CampaignProductStageConfigurationError(
+      "内容渠道与活动渠道不一致，请选择对应内容平台的审核活动",
+      "CAMPAIGN_CHANNEL_MISMATCH",
+      409,
+    );
   }
   const configuredRules = await prisma.topicRule.findMany({
     where: {
