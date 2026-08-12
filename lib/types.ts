@@ -40,6 +40,7 @@ export interface ExtractedTopic {
   styleFeature: boolean;
   domPath?: string | null;
   source?: string | null;
+  contentId?: string | null;
 }
 
 export interface ExtractedNote {
@@ -62,6 +63,12 @@ export interface ExtractedNote {
   // 仅兼容旧提取负载；服务端会在持久化前移除 URL。
   imageUrls?: string[];
   topics: ExtractedTopic[];
+  /** XHS visible-body hashtag strings. Diagnostic only; never audit evidence. */
+  textHashtagCandidates?: ExtractedTopic[];
+  /** XHS topics verified by current-note structured data or scoped clickable DOM. */
+  verifiedPlatformTopics?: ExtractedTopic[];
+  /** The XHS topic region was read successfully, even when it contains no topics. */
+  topicEvidenceCollected?: boolean;
   pageStatus: PageStatus;
   authorName?: string | null;
   publishedAt?: string | null;

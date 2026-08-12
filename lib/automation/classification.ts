@@ -19,6 +19,8 @@ export function failureCodeForPageStatus(
 export function detectContentWarnings(note: ExtractedNote) {
   const warnings: AutomaticFailureCode[] = [];
   if (!note.body?.trim()) warnings.push("BODY_NOT_RECOGNIZED");
-  if (note.topics.length === 0) warnings.push("TOPICS_NOT_RECOGNIZED");
+  if (note.topics.length === 0 && !note.topicEvidenceCollected) {
+    warnings.push("TOPICS_NOT_RECOGNIZED");
+  }
   return warnings;
 }

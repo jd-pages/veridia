@@ -330,22 +330,19 @@ describe("audit engine", () => {
 
   it("不能只根据蓝色判断可点击", () => {
     const result = evaluateAudit(createMockNote("unclickable-topic"), context);
-    expect(result.clickableCompliant).toBe(false);
-    expect(result.failureReasons.join()).toContain("要求话题不可点击 #inne多维锌");
-    expect(result.missingTopics).not.toContain("#inne多维锌");
+    expect(result.topicsCompliant).toBe(false);
+    expect(result.failureReasons.join()).toContain("缺少精确话题 #inne多维锌");
+    expect(result.missingTopics).toContain("#inne多维锌");
   });
 
   it.each([
     {
       name: "链接元素",
-      topic: { isLinkElement: true, hasHref: false, href: null },
-    },
-    {
-      name: "存在 href",
       topic: {
-        isLinkElement: false,
-        hasHref: true,
-        href: "https://www.xiaohongshu.com/unknown-path",
+        isLinkElement: true,
+        hasHref: false,
+        href: null,
+        source: "DOM_LINK",
       },
     },
     ...[
@@ -407,7 +404,7 @@ describe("audit engine", () => {
     expect(result.clickableCompliant).toBe(true);
   });
 
-  it("小红书正文标准话题缺少 href 和 DOM 证据时仍判定可点击", () => {
+  it("小红书正文标准话题缺少 href 和 DOM 证据时不能通过", () => {
     const note = createMockNote("passed");
     note.topics[0] = {
       ...note.topics[0],
@@ -419,18 +416,17 @@ describe("audit engine", () => {
       source: "BODY_VISIBLE_TEXT",
     };
     const result = evaluateAudit(note, context);
-    expect(result.autoStatus).toBe("PASSED");
-    expect(result.clickableCompliant).toBe(true);
-    expect(result.failureReasons.join("；")).not.toContain("要求话题不可点击");
+    expect(result.autoStatus).toBe("FAILED");
+    expect(result.missingTopics).toContain("#inne多维锌");
     expect(
       result.ruleResults.find((rule) => rule.ruleKey === "TOPIC_r1"),
     ).toMatchObject({
-      passed: true,
-      actualValue: "精确出现，可点击",
+      passed: false,
+      actualValue: "未精确出现",
     });
   });
 
-  it("正文和标准话题已提取时忽略已解决的话题读取告警", () => {
+  it("正文纯文本不能利用其他真实话题消除自身缺失", () => {
     const note = createMockNote("passed");
     note.topics[0] = {
       ...note.topics[0],
@@ -444,13 +440,14 @@ describe("audit engine", () => {
     note.technicalWarnings = ["TOPICS_NOT_RECOGNIZED"];
 
     const result = evaluateAudit(note, context);
-    expect(result.autoStatus).toBe("PASSED");
+    expect(result.autoStatus).toBe("FAILED");
+    expect(result.missingTopics).toContain("#inne多维锌");
     expect(result.failureReasons).not.toContain(
       "未识别到话题内容，需人工复核",
     );
   });
 
-  it("非小红书页面的无交互标准文本不会自动判定可点击", () => {
+  it("XHS 任务即使最终 URL 异常也不会把无交互文本当平台话题", () => {
     const note = createMockNote("passed");
     note.url = "https://example.com/note/1";
     note.finalUrl = note.url;
@@ -465,11 +462,11 @@ describe("audit engine", () => {
     };
 
     const result = evaluateAudit(note, context);
-    expect(result.autoStatus).toBe("NEEDS_REVIEW");
+    expect(result.autoStatus).toBe("FAILED");
     expect(
       result.ruleResults.find((rule) => rule.ruleKey === "TOPIC_r1"),
     ).toMatchObject({
-      actualValue: "精确出现，可点击状态需人工确认",
+      actualValue: "未精确出现",
     });
   });
 
@@ -776,10 +773,7 @@ describe("audit engine", () => {
     );
     const plainTextOnly = evaluateAudit(note, stageContext);
     expect(plainTextOnly.autoStatus).toBe("FAILED");
-    expect(plainTextOnly.missingTopics).not.toContain("#二段奶粉推荐");
-    expect(plainTextOnly.failureReasons).toContain(
-      "要求话题不可点击 #二段奶粉推荐",
-    );
+    expect(plainTextOnly.failureReasons.join("；")).toContain("阶段话题未命中");
   });
 
   it("正文未出现当前产品阶段允许段位时给出独立失败原因", () => {

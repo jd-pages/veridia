@@ -39,6 +39,24 @@ export function isStandardXiaohongshuTopic(
   return /^#\s*[\p{L}\p{N}_+\-·]{1,60}$/u.test(normalized);
 }
 
+export function isVerifiedXiaohongshuPlatformTopic(
+  evidence: TopicClickabilityEvidence,
+) {
+  if (evidence.source?.startsWith("STRUCTURED_PLATFORM_TOPIC")) return true;
+  if (evidence.isClickable === true) return true;
+  if (
+    hasTopicLinkSemantics(evidence.href) ||
+    hasTopicLinkSemantics(evidence.url) ||
+    hasTopicLinkSemantics(evidence.link)
+  ) {
+    return true;
+  }
+  return (
+    evidence.source === "DOM_LINK" &&
+    evidence.isLinkElement === true
+  );
+}
+
 function isXiaohongshuPage(context: TopicClickabilityContext) {
   if (context.isXiaohongshuPage !== undefined) {
     return context.isXiaohongshuPage;
@@ -71,12 +89,9 @@ export function classifyTopicClickability(
     evidence.styleFeature === false;
   if (explicitPlainDomText) return "NOT_CLICKABLE";
 
-  if (
-    isXiaohongshuPage(context) &&
-    isStandardXiaohongshuTopic(evidence.displayText)
-  ) {
-    return "CLICKABLE";
-  }
+  // A standard-looking #topic string on XHS is only text. It must not become
+  // clickable without structured platform evidence or real link semantics.
+  if (isXiaohongshuPage(context)) return "UNKNOWN";
   return "UNKNOWN";
 }
 

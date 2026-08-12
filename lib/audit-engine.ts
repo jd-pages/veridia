@@ -8,6 +8,7 @@ import type {
 import { compareTopic, normalizeTopic } from "@/lib/topic";
 import {
   classifyTopicCandidates,
+  isVerifiedXiaohongshuPlatformTopic,
   type TopicClickabilityContext,
   type TopicClickability,
 } from "@/lib/topic-clickability";
@@ -52,6 +53,25 @@ function preferredTopicCandidate(
 
 function escapeRegularExpression(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function xhsVerifiedTopics(note: ExtractedNote) {
+  const candidates = note.verifiedPlatformTopics || note.topics;
+  return candidates.filter(isVerifiedXiaohongshuPlatformTopic);
+}
+
+export function topicsForPlatformAudit(
+  note: ExtractedNote,
+  contentChannel: AuditContext["contentChannel"],
+) {
+  return contentChannel === "DOUYIN" ? note.topics : xhsVerifiedTopics(note);
+}
+
+function bodyTopicTexts(note: ExtractedNote, auditedTopics: ExtractedTopic[]) {
+  return [
+    ...(note.textHashtagCandidates || []),
+    ...auditedTopics,
+  ].map((topic) => topic.displayText);
 }
 
 export function extractEffectiveBodyText(
@@ -99,8 +119,12 @@ export function evaluateAudit(
   const clickableChecks: boolean[] = [];
   let clickabilityNeedsReview = false;
   const technicalWarnings = new Set(note.technicalWarnings || []);
+  const isDouyin = context.contentChannel === "DOUYIN";
+  const auditedTopics = topicsForPlatformAudit(note, context.contentChannel);
+  const detectedBodyTopicTexts = bodyTopicTexts(note, auditedTopics);
   const extractedBodyAvailable = Boolean(note.body?.trim());
-  const extractedTopicsAvailable = note.topics.length > 0;
+  const extractedTopicsAvailable =
+    auditedTopics.length > 0 || note.topicEvidenceCollected === true;
   const bodyReadIncomplete =
     technicalWarnings.has("BODY_NOT_RECOGNIZED") && !extractedBodyAvailable;
   const topicsReadIncomplete =
@@ -117,7 +141,6 @@ export function evaluateAudit(
   const topicClickabilityContext: TopicClickabilityContext = {
     pageUrl: note.finalUrl || note.url,
   };
-  const isDouyin = context.contentChannel === "DOUYIN";
   const publicAuditRequired = !isDouyin && context.publicRequired;
 
   if (context.rulesConfigured === false) {
@@ -132,7 +155,7 @@ export function evaluateAudit(
     return {
       pageStatus: note.pageStatus,
       bodyStatus: note.body?.trim() ? "PRESENT" : "UNKNOWN",
-      effectiveBodyLength: countEffectiveBodyCharacters(note.body, note.topics.map((topic) => topic.displayText)),
+      effectiveBodyLength: countEffectiveBodyCharacters(note.body, detectedBodyTopicTexts),
       bodyCompliant: true,
       noteType: note.noteType ?? "UNKNOWN",
       imageExtractionStatus: note.imageExtractionStatus ?? "NOT_CHECKED",
@@ -285,7 +308,7 @@ export function evaluateAudit(
   const bodyPresent = Boolean(note.body && note.body.trim().length > 0);
   const effectiveBodyLength = countEffectiveBodyCharacters(
     note.body,
-    note.topics.map((topic) => topic.displayText),
+    detectedBodyTopicTexts,
   );
   const minBodyLength = context.minBodyLength;
   const bodyPassed =
@@ -448,7 +471,7 @@ export function evaluateAudit(
       passed: true,
       evidence: {
         technicalWarning: "TOPICS_NOT_RECOGNIZED",
-        detectedTopics: note.topics.map((topic) => topic.displayText),
+        detectedTopics: auditedTopics.map((topic) => topic.displayText),
       },
     });
   }
@@ -472,7 +495,7 @@ export function evaluateAudit(
     if (rule.ruleType === "ALIAS") continue;
     const expected = normalizeTopic(rule.topic);
     const matches = findExactTopics(
-      note.topics,
+      auditedTopics,
       expected,
       rule.caseSensitive,
     );
@@ -516,7 +539,7 @@ export function evaluateAudit(
     let failureReason: string | undefined;
     if (!present) {
       const expectedBody = expected.replace(/^#/u, "");
-      const nearMatch = note.topics.find((topic) => {
+      const nearMatch = auditedTopics.find((topic) => {
         const actualBody = normalizeTopic(topic.displayText).replace(/^#/u, "");
         return (
           actualBody !== expectedBody &&
@@ -564,7 +587,7 @@ export function evaluateAudit(
       failureReason,
       evidence: {
         expected,
-        detectedTopics: note.topics.map((topic) => topic.displayText),
+        detectedTopics: auditedTopics.map((topic) => topic.displayText),
         dom: match
           ? {
               isLinkElement: match.isLinkElement,
@@ -586,7 +609,7 @@ export function evaluateAudit(
   if (productStageRules.length) {
     const candidates = productStageRules.map((rule) => {
       const topics = findExactTopics(
-        note.topics,
+        auditedTopics,
         rule.topic,
         rule.caseSensitive,
       );
@@ -626,7 +649,7 @@ export function evaluateAudit(
       if (candidate.topics.length) return [];
       const expected = normalizeTopic(candidate.rule.topic);
       const expectedBody = expected.replace(/^#/u, "");
-      const nearMatch = note.topics.find((topic) => {
+      const nearMatch = auditedTopics.find((topic) => {
         const actualBody = normalizeTopic(topic.displayText).replace(/^#/u, "");
         return (
           actualBody !== expectedBody &&
@@ -696,7 +719,7 @@ export function evaluateAudit(
   if (anyRules.length) {
     for (const rule of anyRules) {
       const topics = findExactTopics(
-        note.topics,
+        auditedTopics,
         rule.topic,
         rule.caseSensitive,
       );
@@ -712,7 +735,7 @@ export function evaluateAudit(
     const matches = anyRules
       .map((rule) => {
         const topics = findExactTopics(
-          note.topics,
+          auditedTopics,
           rule.topic,
           rule.caseSensitive,
         );
@@ -757,7 +780,7 @@ export function evaluateAudit(
     item.ruleKey.startsWith("TOPIC_"),
   );
   const storeTopicAudit = storeTopicAuditForNote(
-    note,
+    { ...note, topics: auditedTopics },
     context.storeTopicRequirement || null,
   );
   if (storeTopicAudit.status !== "NOT_REQUIRED") {

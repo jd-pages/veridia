@@ -279,18 +279,135 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
             domPath: null,
             source: "BODY_VISIBLE_TEXT",
           })),
+          textHashtagCandidates: [
+            "#爱他美新手爸妈日记",
+            "#爱他美澳洲白金版",
+            "#二段奶粉推荐",
+            "#健康官方进口超市",
+          ].map((displayText) => ({
+            displayText,
+            isLinkElement: false,
+            hasHref: false,
+            href: null,
+            styleFeature: false,
+            source: "VISIBLE_TEXT",
+          })),
+          verifiedPlatformTopics: [],
+          topicEvidenceCollected: true,
           pageStatus: "NORMAL",
           isPublic: true,
           extractedAt: new Date().toISOString(),
           adapterName: "playwright-xiaohongshu",
-          adapterVersion: "1.4.0",
+          adapterVersion: "1.6.0",
           technicalWarnings: ["TOPICS_NOT_RECOGNIZED"],
         },
       },
     },
   );
   expect(auditResponse.ok()).toBeTruthy();
-  const result = (await auditResponse.json()).data as {
+  const plainResult = (await auditResponse.json()).data as {
+    id: string;
+    autoStatus: string;
+  };
+  expect(plainResult.autoStatus).toBe("FAILED");
+  const plainDetailResponse = await page.request.get(
+    `/api/results/${plainResult.id}`,
+  );
+  expect(plainDetailResponse.ok()).toBeTruthy();
+  const plainDetail = (await plainDetailResponse.json()).data as {
+    missingTopics: string;
+    ruleResults: Array<{ ruleKey: string; passed: boolean }>;
+  };
+  expect(JSON.parse(plainDetail.missingTopics)).toEqual(
+    expect.arrayContaining([
+      "#爱他美新手爸妈日记",
+      "#爱他美澳洲白金版",
+    ]),
+  );
+  expect(
+    plainDetail.ruleResults.filter(
+      (item) => item.ruleKey.startsWith("TOPIC_") && item.passed,
+    ),
+  ).toHaveLength(0);
+  expect(
+    plainDetail.ruleResults.find((item) =>
+      item.ruleKey.startsWith("TOPIC_PRODUCT_STAGE_GROUP_"),
+    ),
+  ).toMatchObject({ passed: false });
+
+  const verifiedUrl = `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-passed&verified-stage-topic=${suffix}`;
+  const verifiedTaskResponse = await page.request.post("/api/tasks", {
+    data: {
+      urls: verifiedUrl,
+      productId: product.id,
+      campaignId: campaign!.id,
+      productStage: "IFFO",
+      skipDuplicates: true,
+    },
+  });
+  expect(verifiedTaskResponse.ok()).toBeTruthy();
+  const verifiedTask = (await verifiedTaskResponse.json()).data.created[0] as {
+    id: string;
+  };
+  const verifiedTopics = [
+    "#爱他美新手爸妈日记",
+    "#爱他美澳洲白金版",
+    "#二段奶粉推荐",
+    "#健康官方进口超市",
+  ].map((displayText) => ({
+    displayText,
+    isClickable: true,
+    isLinkElement: true,
+    hasHref: true,
+    href: `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(displayText)}`,
+    textColor: "rgb(19, 119, 255)",
+    styleFeature: true,
+    domPath: "a.topic",
+    source: "DOM_LINK",
+  }));
+  const verifiedAuditResponse = await page.request.post(
+    `/api/tasks/${verifiedTask.id}/audit`,
+    {
+      data: {
+        extraction: {
+          url: verifiedUrl,
+          finalUrl: verifiedUrl,
+          pageTitle: "爱他美澳洲白金版2段真实体验",
+          pageType: "NOTE_DETAIL",
+          noteId: `verified-stage-topic-${suffix}`,
+          title: "爱他美澳洲白金版2段真实体验",
+          body: `#爱他美新手爸妈日记#爱他美澳洲白金版#二段奶粉推荐#健康官方进口超市${ordinaryBody}`,
+          noteType: "IMAGE_TEXT",
+          imageExtractionStatus: "SUCCESS",
+          imageCount: 2,
+          topics: verifiedTopics,
+          textHashtagCandidates: [
+            "#爱他美新手爸妈日记",
+            "#爱他美澳洲白金版",
+            "#二段奶粉推荐",
+            "#健康官方进口超市",
+          ].map((displayText) => ({
+            displayText,
+            isLinkElement: false,
+            hasHref: false,
+            href: null,
+            styleFeature: false,
+            source: "VISIBLE_TEXT",
+          })),
+          verifiedPlatformTopics: verifiedTopics,
+          topicEvidenceCollected: true,
+          pageStatus: "NORMAL",
+          isPublic: true,
+          extractedAt: new Date().toISOString(),
+          adapterName: "playwright-xiaohongshu",
+          adapterVersion: "1.6.0",
+          technicalWarnings: [],
+        },
+      },
+    },
+  );
+  expect(verifiedAuditResponse.ok()).toBeTruthy();
+  const result = (await verifiedAuditResponse.json()).data as {
     id: string;
     autoStatus: string;
   };
@@ -335,6 +452,10 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
   });
 
   await page.goto("/results");
+  const plainResultRow = page.locator(
+    `.ant-table-row[data-row-key="${plainResult.id}"]`,
+  );
+  await expect(plainResultRow).toContainText("0 / 3");
   const resultRow = page.locator(
     `.ant-table-row[data-row-key="${result.id}"]`,
   );

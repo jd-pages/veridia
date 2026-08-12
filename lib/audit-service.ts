@@ -1,6 +1,9 @@
 import { prisma } from "@/lib/db";
 import packageJson from "@/package.json";
-import { evaluateAudit } from "@/lib/audit-engine";
+import {
+  evaluateAudit,
+  topicsForPlatformAudit,
+} from "@/lib/audit-engine";
 import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
@@ -255,14 +258,18 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
     ...baseContext,
     storeTopicRequirement,
   };
+  const auditedTopics = topicsForPlatformAudit(payload, contentChannel);
   // Platform publication time is collection metadata only. It is persisted
   // below for display, but is intentionally excluded from every audit rule.
-  const evaluation = evaluateAudit({ ...payload, publishedAt: null }, context);
-  const sanitizedPayload = { ...payload };
+  const evaluation = evaluateAudit(
+    { ...payload, topics: auditedTopics, publishedAt: null },
+    context,
+  );
+  const sanitizedPayload = { ...payload, topics: auditedTopics };
   delete sanitizedPayload.imageUrls;
   const ai = await evaluateSemanticRelevance({
     body: payload.body ?? "",
-    topics: payload.topics.map((topic) => normalizeTopic(topic.displayText)),
+    topics: auditedTopics.map((topic) => normalizeTopic(topic.displayText)),
     enabled: false,
   });
 
@@ -355,9 +362,9 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
       update: { isPrimary: true },
     });
     await tx.noteTopic.deleteMany({ where: { noteId: note.id } });
-    if (payload.topics.length) {
+    if (auditedTopics.length) {
       await tx.noteTopic.createMany({
-        data: payload.topics.map((topic) => ({
+        data: auditedTopics.map((topic) => ({
           noteId: note.id,
           displayText: topic.displayText,
           normalizedText: normalizeTopic(topic.displayText),

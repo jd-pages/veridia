@@ -935,14 +935,16 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     pageTitle?: string;
     noteIdCandidates?: unknown[];
     bodyCandidates?: unknown[];
-    topicCandidates?: unknown[];
+    textHashtagCandidates?: unknown[];
+    verifiedPlatformTopics?: unknown[];
     imageCandidates?: unknown[];
   };
   expect(failedEvidence.finalUrl).toContain("/mock/xhs");
   expect(failedEvidence.pageTitle).toBeTruthy();
   expect(failedEvidence.noteIdCandidates).toBeInstanceOf(Array);
   expect(failedEvidence.bodyCandidates).toBeInstanceOf(Array);
-  expect(failedEvidence.topicCandidates).toBeInstanceOf(Array);
+  expect(failedEvidence.textHashtagCandidates).toBeInstanceOf(Array);
+  expect(failedEvidence.verifiedPlatformTopics).toBeInstanceOf(Array);
   expect(failedEvidence.imageCandidates).toBeInstanceOf(Array);
 
   const unavailableSuffix = `${suffix}-page-unavailable`;

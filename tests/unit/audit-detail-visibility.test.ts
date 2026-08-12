@@ -160,8 +160,9 @@ describe("审核详情展示过滤", () => {
     expect(auditService).toContain("payload.publishedAt");
     expect(auditService).toContain("payload.publishedAtRaw");
     expect(auditService).toContain(
-      "evaluateAudit({ ...payload, publishedAt: null }, context)",
+      "const auditedTopics = topicsForPlatformAudit(payload, contentChannel)",
     );
+    expect(auditService).toContain("publishedAt: null");
     expect(auditService).not.toContain("importedPublishTimeValue");
     expect(auditService).not.toContain("importedMetadata.publishTime");
   });

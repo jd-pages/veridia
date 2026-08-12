@@ -21,6 +21,8 @@ export interface TextCandidate {
 
 export interface TopicCandidate extends ExtractedTopic {
   source: string;
+  evidenceType: "TEXT_HASHTAG_CANDIDATE" | "VERIFIED_PLATFORM_TOPIC";
+  contentId?: string | null;
 }
 
 export interface ImageCandidate {
@@ -42,7 +44,8 @@ export interface XhsPageCandidates {
   noteIdCandidates: TextCandidate[];
   titleCandidates: TextCandidate[];
   bodyCandidates: TextCandidate[];
-  topicCandidates: TopicCandidate[];
+  textHashtagCandidates: TopicCandidate[];
+  verifiedPlatformTopics: TopicCandidate[];
   imageCandidates: ImageCandidate[];
   publishedAtCandidates: PlatformPublishedAtEvidence[];
   hasVideo: boolean;
@@ -193,6 +196,7 @@ function addTopicsFromText(
   target: TopicCandidate[],
   value: unknown,
   source: string,
+  contentId: string | null = null,
 ) {
   const text = cleanText(value, 100_000);
   for (const match of text.matchAll(HASHTAG_PATTERN)) {
@@ -205,6 +209,8 @@ function addTopicsFromText(
       styleFeature: false,
       domPath: null,
       source,
+      evidenceType: "TEXT_HASHTAG_CANDIDATE",
+      contentId,
     });
   }
 }
@@ -277,6 +283,12 @@ function structuredNoteId(record: Record<string, unknown>, path: string[]) {
     : null;
 }
 
+function isExcludedTopicPath(path: string[]) {
+  return path.some((item) =>
+    /comment|comments|recommend|related|suggest|reply/iu.test(item),
+  );
+}
+
 function addStructuredPublishedAtCandidates(
   target: PlatformPublishedAtEvidence[],
   record: Record<string, unknown>,
@@ -308,7 +320,8 @@ export function createEmptyCandidates(): XhsPageCandidates {
     noteIdCandidates: [],
     titleCandidates: [],
     bodyCandidates: [],
-    topicCandidates: [],
+    textHashtagCandidates: [],
+    verifiedPlatformTopics: [],
     imageCandidates: [],
     publishedAtCandidates: [],
     hasVideo: false,
@@ -346,7 +359,12 @@ export function collectJsonCandidates(
   const visited = new Set<object>();
   let visitedNodes = 0;
 
-  const visit = (value: unknown, path: string[], parentKey = "") => {
+  const visit = (
+    value: unknown,
+    path: string[],
+    parentKey = "",
+    boundNoteId: string | null = null,
+  ) => {
     if (visitedNodes >= 20_000 || value === null || value === undefined) return;
     visitedNodes += 1;
 
@@ -365,10 +383,30 @@ export function collectJsonCandidates(
       }
       if (["desc", "description", "content", "notetext"].includes(key)) {
         addTextCandidate(result.bodyCandidates, value, source);
-        addTopicsFromText(result.topicCandidates, value, source);
+        addTopicsFromText(
+          result.textHashtagCandidates,
+          value,
+          source,
+          boundNoteId,
+        );
       }
-      if (/tag|topic|hashtag/.test(key) || value.trim().startsWith("#")) {
-        addTopicsFromText(result.topicCandidates, value, source);
+      if (/^(?:tag|tags|taglist|topic|topics|hashtag|hashtags|challenge|challenges|chalist)$/u.test(key)) {
+        const normalized = normalizeTopic(value);
+        if (boundNoteId && normalized && !isExcludedTopicPath(path)) {
+          addTopicCandidate(result.verifiedPlatformTopics, {
+            displayText: normalized,
+            isClickable: true,
+            isLinkElement: false,
+            hasHref: false,
+            href: null,
+            textColor: null,
+            styleFeature: false,
+            domPath: null,
+            source: `STRUCTURED_PLATFORM_TOPIC:${source}`,
+            evidenceType: "VERIFIED_PLATFORM_TOPIC",
+            contentId: boundNoteId,
+          });
+        }
       }
       if (/url|src/.test(key) && /^https?:\/\//iu.test(value)) {
         if (path.some((item) => /image|cover|media|pic/iu.test(item))) {
@@ -387,17 +425,24 @@ export function collectJsonCandidates(
 
     if (Array.isArray(value)) {
       value.slice(0, 200).forEach((item, index) =>
-        visit(item, [...path, String(index)], parentKey),
+        visit(item, [...path, String(index)], parentKey, boundNoteId),
       );
       return;
     }
 
     const record = value as Record<string, unknown>;
-    const recordNoteId = structuredNoteId(record, path);
+    const recordNoteId =
+      structuredNoteId(record, path) ||
+      (typeof record.id === "string" &&
+      NOTE_ID_PATTERN.test(record.id) &&
+      Boolean(record.note_card || record.noteCard)
+        ? record.id
+        : null);
+    const effectiveNoteId = recordNoteId || boundNoteId;
     addStructuredPublishedAtCandidates(
       result.publishedAtCandidates,
       record,
-      recordNoteId,
+      effectiveNoteId,
       source,
     );
     const nestedNote = (record.note_card || record.noteCard) as
@@ -427,27 +472,31 @@ export function collectJsonCandidates(
     const topicText =
       record.name || record.title || record.topic || record.tag || record.text;
     if (
-      path.some((item) => /tag|topic|hashtag/iu.test(item)) &&
+      path.some((item) => /tag|topic|hashtag|challenge|cha_list/iu.test(item)) &&
+      !isExcludedTopicPath(path) &&
       typeof topicText === "string"
     ) {
       const displayText = topicText.trim().startsWith("#")
         ? topicText.trim()
         : `#${topicText.trim()}`;
       const hrefValue = cleanText(record.href || record.url || record.link, 1_000);
-      addTopicCandidate(result.topicCandidates, {
+      if (effectiveNoteId) addTopicCandidate(result.verifiedPlatformTopics, {
         displayText,
+        isClickable: true,
         isLinkElement: Boolean(hrefValue),
         hasHref: Boolean(hrefValue),
         href: hrefValue || null,
         textColor: null,
         styleFeature: Boolean(hrefValue),
         domPath: null,
-        source,
+        source: `STRUCTURED_PLATFORM_TOPIC:${source}`,
+        evidenceType: "VERIFIED_PLATFORM_TOPIC",
+        contentId: effectiveNoteId,
       });
     }
 
     for (const [key, child] of Object.entries(record)) {
-      visit(child, [...path, key], key);
+      visit(child, [...path, key], key, effectiveNoteId);
     }
   };
 
@@ -481,8 +530,11 @@ export function mergeCandidates(...items: XhsPageCandidates[]) {
         candidate.source,
       );
     }
-    for (const candidate of item.topicCandidates) {
-      addTopicCandidate(merged.topicCandidates, candidate);
+    for (const candidate of item.textHashtagCandidates) {
+      addTopicCandidate(merged.textHashtagCandidates, candidate);
+    }
+    for (const candidate of item.verifiedPlatformTopics) {
+      addTopicCandidate(merged.verifiedPlatformTopics, candidate);
     }
     for (const candidate of item.imageCandidates) {
       addImageCandidate(merged.imageCandidates, candidate);
@@ -510,6 +562,23 @@ export function mergeCandidates(...items: XhsPageCandidates[]) {
     }
   }
   return merged;
+}
+
+export function verifiedTopicsForCurrentNote(
+  candidates: XhsPageCandidates,
+  currentNoteId: string | null,
+) {
+  if (!currentNoteId) return [];
+  return candidates.verifiedPlatformTopics
+    .filter(
+      (topic) =>
+        topic.source === "DOM_LINK" || topic.contentId === currentNoteId,
+    )
+    .map((topic) => ({
+      ...topic,
+      isClickable: true,
+      contentId: topic.contentId || currentNoteId,
+    }));
 }
 
 function responseMessage(payload: unknown) {
@@ -780,7 +849,29 @@ export async function collectDomPageSnapshot(
       }
     }
 
-    const topicElements = uniqueElements([
+    const scopedTopicElements = (selectors: string[]) => {
+      if (!mainNoteRoot) return [] as Element[];
+      const seen = new Set<Element>();
+      const elements: Element[] = [];
+      for (const selector of selectors) {
+        const matches = [
+          ...(mainNoteRoot.matches(selector) ? [mainNoteRoot] : []),
+          ...mainNoteRoot.querySelectorAll(selector),
+        ];
+        for (const element of matches) {
+          if (
+            !seen.has(element) &&
+            !element.closest(excluded) &&
+            visible(element)
+          ) {
+            seen.add(element);
+            elements.push(element);
+          }
+        }
+      }
+      return elements;
+    };
+    const topicElements = scopedTopicElements([
       "a#hash-tag",
       "a[href*='/search_result']",
       "a[href*='/search']",
@@ -791,11 +882,12 @@ export async function collectDomPageSnapshot(
       "[class*='hashtag']",
       "[class*='topic']",
     ]);
-    for (const anchor of document.querySelectorAll("a")) {
+    for (const anchor of scopedTopicElements(["a"])) {
       if (/[#＃]/u.test(anchor.textContent || "")) topicElements.push(anchor);
     }
-    const topicCandidates: Array<{
+    const verifiedPlatformTopics: Array<{
       displayText: string;
+      isClickable: boolean;
       isLinkElement: boolean;
       hasHref: boolean;
       href: string | null;
@@ -803,6 +895,8 @@ export async function collectDomPageSnapshot(
       styleFeature: boolean;
       domPath: string | null;
       source: string;
+      evidenceType: "VERIFIED_PLATFORM_TOPIC";
+      contentId: null;
     }> = topicElements
       .filter((element, index, all) => all.indexOf(element) === index)
       .flatMap((element) => {
@@ -811,27 +905,61 @@ export async function collectDomPageSnapshot(
           elementText.match(/[#＃]\s*[\p{L}\p{N}_+\-·]{1,60}/gu) || [];
         const href = element.getAttribute("href");
         const style = getComputedStyle(element);
-        return topics.map((displayText) => ({
-          displayText,
-          isLinkElement:
+        const isLinkElement =
             element.tagName.toLowerCase() === "a" ||
             element.getAttribute("role") === "link" ||
             element.hasAttribute("onclick") ||
-            (element as HTMLElement).tabIndex >= 0,
-          hasHref: Boolean(href && !href.startsWith("javascript:")),
-          href: href ? absoluteUrl(href) : null,
+            (element as HTMLElement).tabIndex >= 0;
+        const hasHref = Boolean(href && !href.startsWith("javascript:"));
+        const hrefValue = href ? absoluteUrl(href) : null;
+        const platformTopicSemantics = Boolean(
+          hrefValue &&
+            /(?:search(?:_result)?|keyword=|\/topic|hashtag|tag)/iu.test(
+              hrefValue,
+            ),
+        );
+        const platformTopicAttribute =
+          element.hasAttribute("data-topic") ||
+          element.hasAttribute("data-xhs-topic") ||
+          /hashtag|topic/iu.test(element.getAttribute("data-testid") || "");
+        if (
+          !isLinkElement ||
+          (!platformTopicSemantics && !platformTopicAttribute)
+        ) {
+          return [];
+        }
+        return topics.map((displayText) => ({
+          displayText,
+          isClickable: true,
+          isLinkElement,
+          hasHref,
+          href: hrefValue,
           textColor: style.color || null,
           styleFeature:
             style.cursor === "pointer" ||
             element.matches("[class*='topic'],[class*='hashtag']"),
           domPath: elementPath(element),
           source: "DOM_LINK",
+          evidenceType: "VERIFIED_PLATFORM_TOPIC" as const,
+          contentId: null,
         }));
       });
 
     const candidateText = bodyCandidates.map((item) => item.value).join("\n");
+    const textHashtagCandidates: Array<{
+      displayText: string;
+      isLinkElement: boolean;
+      hasHref: boolean;
+      href: null;
+      textColor: null;
+      styleFeature: boolean;
+      domPath: null;
+      source: string;
+      evidenceType: "TEXT_HASHTAG_CANDIDATE";
+      contentId: null;
+    }> = [];
     for (const displayText of candidateText.match(/[#＃]\s*[\p{L}\p{N}_+\-·]{1,60}/gu) || []) {
-      topicCandidates.push({
+      textHashtagCandidates.push({
         displayText,
         isLinkElement: false,
         hasHref: false,
@@ -840,21 +968,9 @@ export async function collectDomPageSnapshot(
         styleFeature: false,
         domPath: null,
         source: "VISIBLE_TEXT",
+        evidenceType: "TEXT_HASHTAG_CANDIDATE",
+        contentId: null,
       });
-    }
-    if (detailLikePage) {
-      for (const displayText of text.match(/[#＃]\s*[\p{L}\p{N}_+\-·]{1,60}/gu) || []) {
-        topicCandidates.push({
-          displayText,
-          isLinkElement: false,
-          hasHref: false,
-          href: null,
-          textColor: null,
-          styleFeature: false,
-          domPath: null,
-          source: "BODY_VISIBLE_TEXT",
-        });
-      }
     }
 
     const mediaRoots = uniqueElements([
@@ -1109,7 +1225,8 @@ export async function collectDomPageSnapshot(
       pageStatus,
       titleCandidates,
       bodyCandidates,
-      topicCandidates,
+      textHashtagCandidates,
+      verifiedPlatformTopics,
       imageCandidates,
       hasVideo,
       videoEvidence,
@@ -1168,7 +1285,8 @@ export async function collectDomPageSnapshot(
       noteIdCandidates: [],
       titleCandidates: snapshot.titleCandidates,
       bodyCandidates: snapshot.bodyCandidates,
-      topicCandidates: snapshot.topicCandidates,
+      textHashtagCandidates: snapshot.textHashtagCandidates,
+      verifiedPlatformTopics: snapshot.verifiedPlatformTopics,
       imageCandidates: snapshot.imageCandidates,
       publishedAtCandidates: domPublishedAtCandidates,
       hasVideo: snapshot.hasVideo,

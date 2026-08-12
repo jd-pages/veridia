@@ -8,6 +8,7 @@ import {
   noteIdCandidatesFromUrls,
   resolveXhsMediaDecision,
   safeEvidenceUrl,
+  verifiedTopicsForCurrentNote,
   type XhsPageCandidates,
 } from "./xhs-page-evidence";
 
@@ -76,7 +77,7 @@ export class PlaywrightXiaohongshuAdapter
   implements PlaywrightExtractorAdapter
 {
   name = "playwright-xiaohongshu";
-  version = "1.5.0";
+  version = "1.6.0";
 
   canHandle(url: string) {
     try {
@@ -115,8 +116,32 @@ export class PlaywrightXiaohongshuAdapter
       domSnapshot,
       context.responseCandidates || createEmptyCandidates(),
     );
-    const topics = candidates.topicCandidates.map((topic) => ({
+    const currentNoteId = candidates.noteIdCandidates[0]?.value || null;
+    const textHashtagCandidates = candidates.textHashtagCandidates.map(
+      (topic) => ({
+        ...topic,
+        contentId: topic.contentId || currentNoteId,
+      }),
+    );
+    const verifiedPlatformTopics = verifiedTopicsForCurrentNote(
+      candidates,
+      currentNoteId,
+    )
+      .map((topic) => ({
+        displayText: topic.displayText,
+        isClickable: true,
+        isLinkElement: topic.isLinkElement,
+        hasHref: topic.hasHref,
+        href: topic.href,
+        textColor: topic.textColor,
+        styleFeature: topic.styleFeature,
+        domPath: topic.domPath,
+        source: topic.source,
+        contentId: topic.contentId || currentNoteId,
+      }));
+    const topics = verifiedPlatformTopics.map((topic) => ({
       displayText: topic.displayText,
+      isClickable: true,
       isLinkElement: topic.isLinkElement,
       hasHref: topic.hasHref,
       href: topic.href,
@@ -124,6 +149,7 @@ export class PlaywrightXiaohongshuAdapter
       styleFeature: topic.styleFeature,
       domPath: topic.domPath,
       source: topic.source,
+      contentId: topic.contentId,
     }));
     const title =
       candidates.titleCandidates.find(
@@ -147,7 +173,6 @@ export class PlaywrightXiaohongshuAdapter
       imageCandidateCount: reliableImageCandidates.length,
     });
     const { noteType, imageExtractionStatus, imageCount } = mediaDecision;
-    const currentNoteId = candidates.noteIdCandidates[0]?.value || null;
     const publishedAtCandidates = candidates.publishedAtCandidates.map(
       (candidate) =>
         candidate.source.startsWith("DOM_MAIN_NOTE") && !candidate.contentId
@@ -189,6 +214,9 @@ export class PlaywrightXiaohongshuAdapter
       title,
       body,
       topics,
+      textHashtagCandidates,
+      verifiedPlatformTopics,
+      topicEvidenceCollected: true,
       pageStatus: domSnapshot.pageStatus,
       isPublic: domSnapshot.pageStatus === "NORMAL",
       authorName: null,
@@ -219,7 +247,8 @@ export class PlaywrightXiaohongshuAdapter
           ...item,
           value: item.value.slice(0, 2_000),
         })),
-        topicCandidates: candidates.topicCandidates.slice(0, 100),
+        textHashtagCandidates: textHashtagCandidates.slice(0, 100),
+        verifiedPlatformTopics: verifiedPlatformTopics.slice(0, 100),
         imageCandidates: candidates.imageCandidates.slice(0, 100),
         publishedAtCandidate: publishedAtEvidence,
         mediaEvidence: {
