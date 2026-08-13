@@ -168,7 +168,7 @@ describe("抖音结构化作品证据", () => {
     const topics = extractDouyinStructuredTopics({
       desc: "普通正文里写了 #不可据此判定的话题",
       text_extra: [
-        { type: 1, hashtag_name: "爱他美澳洲白金版", hashtag_id: "1" },
+        { type: 1, hashtag_name: "#爱他美澳洲白金版#", hashtag_id: "1" },
       ],
       cha_list: [
         { cha_name: "二段奶粉推荐", cid: "2" },
@@ -184,9 +184,65 @@ describe("抖音结构化作品证据", () => {
       "#FOLO海外旗舰店",
     ]);
     expect(topics.every((topic) => topic.isClickable && topic.hasHref)).toBe(true);
+    expect(topics[0]).toMatchObject({
+      displayText: "#爱他美澳洲白金版",
+      rawText: "#爱他美澳洲白金版#",
+      source: "STRUCTURED_RESPONSE",
+    });
     expect(extractDouyinStructuredTopics({
       desc: "只有 #普通正文话题，没有结构化话题实体",
     })).toEqual([]);
+  });
+
+  it("将当前作品可交互 DOM 话题的尾部分隔符标准化并保留原始文本", async () => {
+    const page = {
+      locator: () => ({ textContent: async () => null }),
+      evaluate: async () => ({
+        title: "抖音详情页",
+        titleSource: "DOCUMENT_TITLE",
+        description: "正文中也有 #爱他美优选海外专卖店#",
+        descriptionSource: "DOM:[data-e2e='video-desc']",
+        topics: [{
+          displayText: "#爱他美优选海外专卖店#",
+          isClickable: true,
+          isLinkElement: false,
+          hasHref: false,
+          href: null,
+          styleFeature: true,
+          domPath: "div[data-topic-id]",
+          source: "DOM",
+        }],
+        hasVideo: true,
+        imageCount: 0,
+        imageKeys: [],
+        carouselTotal: 0,
+        authorName: null,
+        publishedAt: null,
+        publishedAtSource: null,
+        structuredPayloads: [],
+        visibleText: "",
+      }),
+      title: async () => "抖音详情页",
+      url: () => "https://www.douyin.com/video/123456789",
+    } as unknown as Page;
+    const note = await playwrightDouyinAdapter.extract(
+      page,
+      "https://www.douyin.com/video/123456789",
+      { contentId: "123456789" },
+    );
+    expect(note.verifiedDouyinTopics).toEqual([
+      expect.objectContaining({
+        displayText: "#爱他美优选海外专卖店",
+        rawText: "#爱他美优选海外专卖店#",
+        source: "DOM",
+      }),
+    ]);
+    expect(note.bodyTextHashtagCandidates).toEqual([
+      expect.objectContaining({
+        displayText: "#爱他美优选海外专卖店",
+        source: "BODY_TEXT_HASHTAG_CANDIDATE",
+      }),
+    ]);
   });
 
   it("网络详情缺失时使用页面内结构化脚本恢复重点短链图文的正文和真实话题", async () => {

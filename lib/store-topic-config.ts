@@ -1,4 +1,8 @@
 import type { ExtractedNote, ExtractedTopic } from "@/lib/types";
+import {
+  douyinTopicMatchKey,
+  normalizeDouyinTopicName,
+} from "@/lib/douyin-topic";
 import { classifyTopicCandidates } from "@/lib/topic-clickability";
 import {
   parseCommercePlatform,
@@ -171,12 +175,21 @@ export function validateStoreTopic(input: {
   body?: unknown;
   pageUrl?: string | null;
 }): StoreTopicAuditResult {
+  const channel = parseContentChannel(input.channel);
+  const topicWithHashForChannel = (value: unknown) =>
+    channel === "DOUYIN"
+      ? normalizeDouyinTopicName(value)
+      : storeTopicWithHash(value);
+  const topicMatchKeyForChannel = (value: unknown) =>
+    channel === "DOUYIN"
+      ? douyinTopicMatchKey(value)
+      : normalizeStoreTopicForMatch(value);
   const normalizedTopicList = (values: unknown[]) => [
     ...new Map(
       values
-        .map(storeTopicWithHash)
+        .map(topicWithHashForChannel)
         .filter(Boolean)
-        .map((topic) => [normalizeStoreTopicForMatch(topic), topic] as const),
+        .map((topic) => [topicMatchKeyForChannel(topic), topic] as const),
     ).values(),
   ];
   const expectedTopics = normalizedTopicList([
@@ -186,7 +199,6 @@ export function validateStoreTopic(input: {
   const configuredRequiredTopics = normalizedTopicList(
     Array.isArray(input.requiredTopics) ? input.requiredTopics : [],
   );
-  const channel = parseContentChannel(input.channel);
   // Store mappings are shared across content channels. Xiaohongshu consumes
   // ACCEPTED (OR) + REQUIRED (AND), while Douyin intentionally consumes only
   // ACCEPTED (OR). Keep REQUIRED entries in storage, but do not expose them as
@@ -237,8 +249,8 @@ export function validateStoreTopic(input: {
   const matchesFor = (configuredTopic: string) =>
     input.extractedTopics.filter(
       (topic) =>
-        normalizeStoreTopicForMatch(topic.displayText) ===
-        normalizeStoreTopicForMatch(configuredTopic),
+        topicMatchKeyForChannel(topic.displayText) ===
+        topicMatchKeyForChannel(configuredTopic),
     );
   const clickableMatchesFor = (configuredTopic: string) =>
     matchesFor(configuredTopic).filter(
@@ -260,7 +272,7 @@ export function validateStoreTopic(input: {
     const exactAcceptedMatches = expectedTopics.flatMap(matchesFor);
     if (!exactAcceptedMatches.length) {
       const onlyInBody = expectedTopics.some((topic) =>
-        normalizedBody.includes(normalizeStoreTopicForMatch(topic)),
+        normalizedBody.includes(topicMatchKeyForChannel(topic).replace(/^#/u, "")),
       );
       hardFailures.push(
         onlyInBody
@@ -288,13 +300,13 @@ export function validateStoreTopic(input: {
     const clickableMatches = clickableMatchesFor(requiredTopic);
     if (clickableMatches.length) {
       matchedRequiredTopics.push(
-        storeTopicWithHash(clickableMatches[0].displayText),
+        topicWithHashForChannel(clickableMatches[0].displayText),
       );
       continue;
     }
     if (!exactMatches.length) {
       hardFailures.push(
-        normalizedBody.includes(normalizeStoreTopicForMatch(requiredTopic))
+        normalizedBody.includes(topicMatchKeyForChannel(requiredTopic).replace(/^#/u, ""))
           ? `附加必需话题仅出现在正文中，未形成可点击话题：${requiredTopic}`
           : `缺少附加必需话题：${requiredTopic}`,
       );

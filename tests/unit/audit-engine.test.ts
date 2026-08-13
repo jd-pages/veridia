@@ -60,6 +60,19 @@ const context: AuditContext = {
   ],
 };
 
+function markAsVerifiedDouyinTopics(note: ReturnType<typeof createMockNote>) {
+  note.topics = note.topics.map((topic) => ({
+    ...topic,
+    isClickable: true,
+    isLinkElement: true,
+    hasHref: true,
+    href: `https://www.douyin.com/search/${encodeURIComponent(topic.displayText)}`,
+    source: "DOM",
+  }));
+  note.verifiedDouyinTopics = note.topics;
+  return note;
+}
+
 describe("audit engine", () => {
   it.each(["passed", "failed"] as const)(
     "平台发帖时间不会改变 %s 案例的审核结论和失败原因",
@@ -108,7 +121,7 @@ describe("audit engine", () => {
     expect(result.failureReasons.join("；")).not.toContain("图片数量不足");
   });
   it("抖音正常作品不参与公开状态审核，历史活动值为 true 也不会误入复核", () => {
-    const note = createMockNote("passed");
+    const note = markAsVerifiedDouyinTopics(createMockNote("passed"));
     note.isPublic = null;
     const result = evaluateAudit(note, {
       ...context,
@@ -229,11 +242,14 @@ describe("audit engine", () => {
     note.imageCount = 3;
     note.topics = applicable("DOUYIN").map((rule) => ({
       displayText: rule.topic,
+      isClickable: true,
       isLinkElement: true,
       hasHref: true,
       href: `https://www.douyin.com/search/${encodeURIComponent(rule.topic)}`,
       styleFeature: true,
+      source: "DOM",
     }));
+    note.verifiedDouyinTopics = note.topics;
 
     const douyin = evaluateAudit(note, toContext(douyinCampaign, "DOUYIN"));
     const xhs = evaluateAudit(note, toContext(xhsCampaign, "XIAOHONGSHU"));

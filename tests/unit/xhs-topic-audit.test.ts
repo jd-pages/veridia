@@ -175,10 +175,16 @@ describe("XHS 仅使用平台已验证话题审核", () => {
     expect(verified.effectiveBodyLength).toBe(plain.effectiveBodyLength);
   });
 
-  it("Douyin 继续使用其独立 topics 结构", () => {
+  it("Douyin 继续使用其独立已验证话题结构", () => {
     const topic = "#抖音正文话题";
     const note = noteWithEvidence({ body: `抖音正文 ${topic}` });
-    note.topics = [plainTopic(topic)];
+    note.topics = [{
+      ...verifiedTopic(topic),
+      href: `https://www.douyin.com/search/${encodeURIComponent(topic)}`,
+      domPath: "a[data-douyin-topic]",
+      source: "DOM",
+    }];
+    note.verifiedDouyinTopics = note.topics;
     note.verifiedPlatformTopics = [];
     const result = evaluateAudit(note, {
       ...baseContext,

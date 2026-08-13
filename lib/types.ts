@@ -32,6 +32,8 @@ export type InteractionExtractionStatus =
 
 export interface ExtractedTopic {
   displayText: string;
+  /** Original platform/DOM text before platform-specific normalization. */
+  rawText?: string;
   isClickable?: boolean;
   isLinkElement: boolean;
   hasHref: boolean;
@@ -67,6 +69,10 @@ export interface ExtractedNote {
   textHashtagCandidates?: ExtractedTopic[];
   /** XHS topics verified by current-note structured data or scoped clickable DOM. */
   verifiedPlatformTopics?: ExtractedTopic[];
+  /** Douyin body hashtag strings. Diagnostic only; never audit evidence. */
+  bodyTextHashtagCandidates?: ExtractedTopic[];
+  /** Douyin topics verified by current-content structured data or interactive DOM. */
+  verifiedDouyinTopics?: ExtractedTopic[];
   /** The XHS topic region was read successfully, even when it contains no topics. */
   topicEvidenceCollected?: boolean;
   pageStatus: PageStatus;

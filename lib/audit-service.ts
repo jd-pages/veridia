@@ -6,6 +6,7 @@ import {
 } from "@/lib/audit-engine";
 import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
+import { normalizeDouyinTopicName } from "@/lib/douyin-topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
 import { resolveStoreTopicAuditRequirement } from "@/lib/store-topic-rule-service";
 import type { AuditContext, ExtractedNote } from "@/lib/types";
@@ -151,6 +152,10 @@ export async function getAuditContext(
     where: { id: "active" },
     select: { currentVersion: true },
   });
+  const normalizeConfiguredTopic = (value: unknown) =>
+    resolvedContentChannel === "DOUYIN"
+      ? normalizeDouyinTopicName(value)
+      : normalizeTopic(String(value ?? ""));
   const uniqueRules = rules.filter((rule, index, allRules) => {
     if (rule.topicCategory !== "PRODUCT_STAGE") return true;
     return (
@@ -158,7 +163,8 @@ export async function getAuditContext(
         (candidate) =>
           candidate.topicCategory === rule.topicCategory &&
           candidate.applicableStage === rule.applicableStage &&
-          normalizeTopic(candidate.topic) === normalizeTopic(rule.topic),
+          normalizeConfiguredTopic(candidate.topic) ===
+            normalizeConfiguredTopic(rule.topic),
       ) === index
     );
   });
@@ -269,7 +275,11 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
   delete sanitizedPayload.imageUrls;
   const ai = await evaluateSemanticRelevance({
     body: payload.body ?? "",
-    topics: auditedTopics.map((topic) => normalizeTopic(topic.displayText)),
+    topics: auditedTopics.map((topic) =>
+      contentChannel === "DOUYIN"
+        ? normalizeDouyinTopicName(topic.displayText)
+        : normalizeTopic(topic.displayText),
+    ),
     enabled: false,
   });
 
@@ -367,7 +377,10 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
         data: auditedTopics.map((topic) => ({
           noteId: note.id,
           displayText: topic.displayText,
-          normalizedText: normalizeTopic(topic.displayText),
+          normalizedText:
+            contentChannel === "DOUYIN"
+              ? normalizeDouyinTopicName(topic.displayText)
+              : normalizeTopic(topic.displayText),
           isLinkElement: topic.isLinkElement,
           hasHref: topic.hasHref,
           href: topic.href,

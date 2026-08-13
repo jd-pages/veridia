@@ -7,6 +7,10 @@ import type {
 } from "@/lib/types";
 import { compareTopic, normalizeTopic } from "@/lib/topic";
 import {
+  compareDouyinTopicNames,
+  normalizeDouyinTopicName,
+} from "@/lib/douyin-topic";
+import {
   classifyTopicCandidates,
   isVerifiedXiaohongshuPlatformTopic,
   type TopicClickabilityContext,
@@ -32,9 +36,12 @@ function findExactTopics(
   topics: ExtractedTopic[],
   expected: string,
   caseSensitive: boolean,
+  contentChannel: AuditContext["contentChannel"],
 ): ExtractedTopic[] {
   return topics.filter((topic) =>
-    compareTopic(topic.displayText, expected, caseSensitive),
+    contentChannel === "DOUYIN"
+      ? compareDouyinTopicNames(topic.displayText, expected, caseSensitive)
+      : compareTopic(topic.displayText, expected, caseSensitive),
   );
 }
 
@@ -64,7 +71,30 @@ export function topicsForPlatformAudit(
   note: ExtractedNote,
   contentChannel: AuditContext["contentChannel"],
 ) {
-  return contentChannel === "DOUYIN" ? note.topics : xhsVerifiedTopics(note);
+  if (contentChannel !== "DOUYIN") return xhsVerifiedTopics(note);
+  const candidates = note.verifiedDouyinTopics || note.topics;
+  return candidates
+    .filter((topic) => {
+      const source = topic.source || "";
+      if (
+        source === "STRUCTURED_RESPONSE" ||
+        source === "NETWORK_STRUCTURED_DATA" ||
+        source === "PAGE_STRUCTURED_DATA"
+      ) return true;
+      if (source !== "DOM" && source !== "DOM_INTERACTIVE") return false;
+      return Boolean(
+        topic.isClickable === true ||
+          topic.isLinkElement === true ||
+          topic.hasHref === true ||
+          topic.href,
+      );
+    })
+    .map((topic) => ({
+      ...topic,
+      rawText: topic.rawText || topic.displayText,
+      displayText: normalizeDouyinTopicName(topic.displayText),
+    }))
+    .filter((topic) => Boolean(topic.displayText));
 }
 
 function bodyTopicTexts(note: ExtractedNote, auditedTopics: ExtractedTopic[]) {
@@ -121,6 +151,8 @@ export function evaluateAudit(
   const technicalWarnings = new Set(note.technicalWarnings || []);
   const isDouyin = context.contentChannel === "DOUYIN";
   const auditedTopics = topicsForPlatformAudit(note, context.contentChannel);
+  const normalizeRuleTopic = (value: unknown) =>
+    isDouyin ? normalizeDouyinTopicName(value) : normalizeTopic(String(value ?? ""));
   const detectedBodyTopicTexts = bodyTopicTexts(note, auditedTopics);
   const extractedBodyAvailable = Boolean(note.body?.trim());
   const extractedTopicsAvailable =
@@ -493,11 +525,12 @@ export function evaluateAudit(
 
   for (const rule of nonAnyRules) {
     if (rule.ruleType === "ALIAS") continue;
-    const expected = normalizeTopic(rule.topic);
+    const expected = normalizeRuleTopic(rule.topic);
     const matches = findExactTopics(
       auditedTopics,
       expected,
       rule.caseSensitive,
+      context.contentChannel,
     );
     const clickability = classifyTopicCandidates(
       matches,
@@ -540,7 +573,7 @@ export function evaluateAudit(
     if (!present) {
       const expectedBody = expected.replace(/^#/u, "");
       const nearMatch = auditedTopics.find((topic) => {
-        const actualBody = normalizeTopic(topic.displayText).replace(/^#/u, "");
+        const actualBody = normalizeRuleTopic(topic.displayText).replace(/^#/u, "");
         return (
           actualBody !== expectedBody &&
           (actualBody.includes(expectedBody) ||
@@ -548,7 +581,7 @@ export function evaluateAudit(
         );
       });
       failureReason = nearMatch
-        ? `话题文字不准确：要求 ${expected}，实际 ${normalizeTopic(nearMatch.displayText)}`
+        ? `话题文字不准确：要求 ${expected}，实际 ${normalizeRuleTopic(nearMatch.displayText)}`
         : `缺少精确话题 ${expected}`;
     } else if (
       clickableRequired &&
@@ -612,6 +645,7 @@ export function evaluateAudit(
         auditedTopics,
         rule.topic,
         rule.caseSensitive,
+        context.contentChannel,
       );
       const clickability = classifyTopicCandidates(
         topics,
@@ -640,17 +674,17 @@ export function evaluateAudit(
     );
     const passed = acceptedCandidates.length > 0;
     const expectedTopics = productStageRules.map((rule) =>
-      normalizeTopic(rule.topic),
+      normalizeRuleTopic(rule.topic),
     );
     const matchedTopics = matchedCandidates.map((candidate) =>
-      normalizeTopic(candidate.rule.topic),
+      normalizeRuleTopic(candidate.rule.topic),
     );
     const nearMatches = candidates.flatMap((candidate) => {
       if (candidate.topics.length) return [];
-      const expected = normalizeTopic(candidate.rule.topic);
+      const expected = normalizeRuleTopic(candidate.rule.topic);
       const expectedBody = expected.replace(/^#/u, "");
       const nearMatch = auditedTopics.find((topic) => {
-        const actualBody = normalizeTopic(topic.displayText).replace(/^#/u, "");
+        const actualBody = normalizeRuleTopic(topic.displayText).replace(/^#/u, "");
         return (
           actualBody !== expectedBody &&
           (actualBody.includes(expectedBody) ||
@@ -661,13 +695,13 @@ export function evaluateAudit(
         ? [
             {
               expected,
-              actual: normalizeTopic(nearMatch.displayText),
+              actual: normalizeRuleTopic(nearMatch.displayText),
             },
           ]
         : [];
     });
     const acceptedTopics = acceptedCandidates.map((candidate) =>
-      normalizeTopic(candidate.rule.topic),
+      normalizeRuleTopic(candidate.rule.topic),
     );
     const stageLabel = productStageTopicLabel(context.productStage);
     const clickabilityUnknown =
@@ -705,7 +739,7 @@ export function evaluateAudit(
         matchedTopics,
         acceptedTopics,
         candidates: candidates.map((candidate) => ({
-          topic: normalizeTopic(candidate.rule.topic),
+          topic: normalizeRuleTopic(candidate.rule.topic),
           applicableStage: candidate.rule.applicableStage || null,
           present: candidate.topics.length > 0,
           clickability: candidate.clickability,
@@ -722,6 +756,7 @@ export function evaluateAudit(
         auditedTopics,
         rule.topic,
         rule.caseSensitive,
+        context.contentChannel,
       );
       const clickability = classifyTopicCandidates(
         topics,
@@ -738,6 +773,7 @@ export function evaluateAudit(
           auditedTopics,
           rule.topic,
           rule.caseSensitive,
+          context.contentChannel,
         );
         const clickability = classifyTopicCandidates(
           topics,
@@ -761,13 +797,13 @@ export function evaluateAudit(
       );
     const minCount = Math.max(...anyRules.map((rule) => rule.minCount), 1);
     const passed = matches.length >= minCount;
-    const expectedTopics = anyRules.map((rule) => normalizeTopic(rule.topic));
+    const expectedTopics = anyRules.map((rule) => normalizeRuleTopic(rule.topic));
     evaluations.push({
       ruleKey: "TOPIC_ANY_GROUP",
       ruleName: "任意包含话题",
       expectedValue: `${expectedTopics.join("、")} 中至少 ${minCount} 个`,
       actualValue: `命中 ${matches.length} 个：${matches
-        .map((entry) => normalizeTopic(entry.rule.topic))
+        .map((entry) => normalizeRuleTopic(entry.rule.topic))
         .join("、") || "无"}`,
       passed,
       failureReason: passed ? undefined : `任意话题命中不足 ${minCount} 个`,

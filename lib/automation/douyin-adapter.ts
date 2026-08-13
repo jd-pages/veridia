@@ -5,6 +5,10 @@ import {
   douyinContentIdentityFromUrl,
   safeDouyinDiagnosticUrl,
 } from "./douyin-page-classification";
+import {
+  douyinTopicMatchKey,
+  normalizeDouyinTopicName,
+} from "@/lib/douyin-topic";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -34,15 +38,27 @@ function asArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
-function normalizeTopicText(value: string) {
-  const text = value.trim();
-  return text ? (text.startsWith("#") ? text : `#${text}`) : "";
-}
-
-function normalizedTopicKey(value: string) {
-  return normalizeTopicText(value)
-    .normalize("NFKC")
-    .toLocaleLowerCase("zh-CN");
+function extractDouyinBodyTextHashtagCandidates(body: string) {
+  const candidates = new Map<string, ExtractedTopic>();
+  for (const match of body.matchAll(/[#＃]+[^\s#＃]+/gu)) {
+    const rawText = match[0];
+    const displayText = normalizeDouyinTopicName(rawText);
+    const key = douyinTopicMatchKey(displayText);
+    if (!key || candidates.has(key)) continue;
+    candidates.set(key, {
+      displayText,
+      rawText,
+      isClickable: false,
+      isLinkElement: false,
+      hasHref: false,
+      href: null,
+      textColor: null,
+      styleFeature: false,
+      domPath: null,
+      source: "BODY_TEXT_HASHTAG_CANDIDATE",
+    });
+  }
+  return [...candidates.values()];
 }
 
 export function findDouyinAwemeItem(payload: unknown, contentId: string) {
@@ -160,7 +176,8 @@ export function extractDouyinStructuredTopics(item: JsonRecord) {
         ? `https://www.douyin.com/search/${encodeURIComponent(name)}?aid=${encodeURIComponent(id)}`
         : `https://www.douyin.com/search/${encodeURIComponent(name)}`);
     topics.push({
-      displayText: normalizeTopicText(name),
+      displayText: normalizeDouyinTopicName(name),
+      rawText: name,
       isClickable: true,
       isLinkElement: false,
       hasHref: Boolean(href),
@@ -215,7 +232,7 @@ export function extractDouyinStructuredTopics(item: JsonRecord) {
 
   const unique = new Map<string, ExtractedTopic>();
   for (const topic of topics) {
-    const key = normalizedTopicKey(topic.displayText);
+    const key = douyinTopicMatchKey(topic.displayText);
     if (key && !unique.has(key)) unique.set(key, topic);
   }
   return [...unique.values()];
@@ -354,6 +371,15 @@ export async function collectDouyinEvidence(page: Page) {
       descriptionSource = `DOM:${selector}`;
       break;
     }
+    const excludedTopicSelector = [
+      "[class*='comment']",
+      "[data-e2e*='comment']",
+      "[class*='recommend']",
+      "[data-e2e*='recommend']",
+      "[class*='related']",
+      "[data-e2e*='related']",
+      "[class*='search-suggest']",
+    ].join(", ");
     const topicNodes = Array.from(scope.querySelectorAll(
       [
         "a[href*='/search/']",
@@ -361,12 +387,17 @@ export async function collectDouyinEvidence(page: Page) {
         "a[href*='/challenge/']",
         "a[href*='keyword']",
         "[data-douyin-topic]",
+        "[data-topic-id]",
+        "[data-hashtag-id]",
+        "[data-challenge-id]",
         "[data-e2e*='hashtag']",
         "[data-e2e*='topic']",
         "[role='link'][class*='hash']",
         "[role='link'][class*='topic']",
+        "[role='button'][class*='hash']",
+        "[role='button'][class*='topic']",
       ].join(", "),
-    ));
+    )).filter((node) => !node.closest(excludedTopicSelector));
     if (!description && topicNodes.length) {
       const topicTexts = topicNodes
         .map((node) => node.textContent?.trim() || "")
@@ -403,6 +434,7 @@ export async function collectDouyinEvidence(page: Page) {
     }
     const topics = topicNodes.map((node) => {
       const element = node as HTMLElement;
+      const rawText = element.textContent?.trim() || "";
       const anchor = element.closest("a") as HTMLAnchorElement | null;
       const role = element.getAttribute("role") || anchor?.getAttribute("role");
       const cursor = getComputedStyle(element).cursor;
@@ -415,7 +447,8 @@ export async function collectDouyinEvidence(page: Page) {
           cursor === "pointer",
       );
       return {
-        displayText: element.textContent?.trim() || "",
+        displayText: rawText,
+        rawText,
         isClickable: hasInteraction,
         isLinkElement: Boolean(anchor || element.tagName.toLowerCase() === "a"),
         hasHref: Boolean(anchor?.href || (element as HTMLAnchorElement).href),
@@ -631,19 +664,23 @@ export class PlaywrightDouyinAdapter {
     const structuredTopicValues = structuredItem
       ? extractDouyinStructuredTopics(structuredItem)
       : [];
-    const topicCandidates = [...structuredTopicValues, ...evidence.topics];
+    const topicCandidates = [
+      ...structuredTopicValues,
+      ...evidence.topics.filter((topic) => topic.isClickable === true),
+    ];
     const uniqueTopics = new Map<string, ExtractedTopic>();
     for (const candidate of topicCandidates) {
-      const displayText = normalizeTopicText(candidate.displayText);
+      const rawText = candidate.rawText || candidate.displayText;
+      const displayText = normalizeDouyinTopicName(candidate.displayText);
       if (!displayText) continue;
-      const key = normalizedTopicKey(displayText);
+      const key = douyinTopicMatchKey(displayText);
       const existing = uniqueTopics.get(key);
       if (
         !existing ||
         (!existing.isClickable && candidate.isClickable) ||
         (!existing.hasHref && candidate.hasHref)
       ) {
-        uniqueTopics.set(key, { ...candidate, displayText });
+        uniqueTopics.set(key, { ...candidate, rawText, displayText });
       }
     }
 
@@ -669,6 +706,9 @@ export class PlaywrightDouyinAdapter {
       ? hasStructuredCaptionField(structuredItem)
       : false;
     const body = structuredBody.body || evidence.description;
+    const bodyTextHashtagCandidates = extractDouyinBodyTextHashtagCandidates(
+      body,
+    );
     const bodySource = structuredBody.body
       ? structuredBody.source
       : evidence.description
@@ -703,6 +743,9 @@ export class PlaywrightDouyinAdapter {
         : imageCount > 0 ? "SUCCESS" : "IMAGES_READ_FAILED",
       imageCount,
       topics: [...uniqueTopics.values()],
+      bodyTextHashtagCandidates,
+      verifiedDouyinTopics: [...uniqueTopics.values()],
+      topicEvidenceCollected: true,
       pageStatus: "NORMAL",
       authorName: authorName || null,
       publishedAt: publishedAtEvidence?.value || null,
@@ -739,9 +782,18 @@ export class PlaywrightDouyinAdapter {
         structuredHashtagCount: structuredTopicValues.length,
         domHashtagCount: evidence.topics.length,
         finalTopicCount: uniqueTopics.size,
+        rawTopicEvidence: topicCandidates.map((topic) => ({
+          rawText: topic.rawText || topic.displayText,
+          normalizedText: normalizeDouyinTopicName(topic.displayText),
+          source: topic.source || null,
+          isClickable: topic.isClickable ?? null,
+          isLinkElement: topic.isLinkElement,
+          hasHref: topic.hasHref,
+        })),
         publishedAtCandidate: publishedAtEvidence,
         topicEvidence: [...uniqueTopics.values()].map((topic) => ({
           displayText: topic.displayText,
+          rawText: topic.rawText || topic.displayText,
           source: topic.source || null,
           isClickable: topic.isClickable ?? null,
           isLinkElement: topic.isLinkElement,

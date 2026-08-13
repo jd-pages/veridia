@@ -57,7 +57,7 @@ function noteFor(caseName: MockCase): ExtractedNote {
   return status ? { ...base, pageStatus: status as ExtractedNote["pageStatus"] } : base;
 }
 
-export default async function MockDouyinPage({ searchParams }: { searchParams: Promise<{ case?: string; topic?: string; clickable?: string; raw?: string; publishedText?: string; recommendedTime?: string }> }) {
+export default async function MockDouyinPage({ searchParams }: { searchParams: Promise<{ case?: string; topic?: string; clickable?: string; raw?: string; trailingHash?: string; publishedText?: string; recommendedTime?: string }> }) {
   const params = await searchParams;
   const requested = params.case || "video";
   if (requested === "short-link") {
@@ -102,7 +102,7 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
                 {note.body}
                 {note.topics.map((topic) => (
                   <a data-douyin-topic href={topic.href || "#"} key={topic.displayText}>
-                    {topic.displayText}
+                    {topic.displayText}{params.trailingHash === "true" ? "#" : ""}
                   </a>
                 ))}
               </span>
@@ -110,7 +110,7 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
             </div>
           ) : <p data-e2e="video-desc" data-testid="douyin-description">{note.body}</p>}
           {note.noteType === "VIDEO" ? <video aria-label="抖音模拟视频" /> : Array.from({ length: note.imageCount || 0 }, (_, index) => <img data-testid="douyin-image" src={`/mock-media/douyin/${index + 1}.jpg`} alt={`模拟图片${index + 1}`} key={index} />)}
-          {rawExtraction && caseName === "business-pass" ? null : <div>{note.topics.map((topic) => topic.isLinkElement ? <a data-douyin-topic href={topic.href || "#"} key={topic.displayText}>{topic.displayText}</a> : <span key={topic.displayText}>{topic.displayText}</span>)}</div>}
+          {rawExtraction && caseName === "business-pass" ? null : <div>{note.topics.map((topic) => topic.isLinkElement ? <a data-douyin-topic href={topic.href || "#"} key={topic.displayText}>{topic.displayText}{params.trailingHash === "true" ? "#" : ""}</a> : <span key={topic.displayText}>{topic.displayText}</span>)}</div>}
           {rawExtraction ? (
             <div data-e2e="video-publish-time">
               发布时间：{params.publishedText || "2026-08-04 14:40:13"}

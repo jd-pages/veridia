@@ -763,7 +763,7 @@ test("抖音图文正文、真实话题、店铺话题和公开免审共同产�
     "IFFO",
     `DOUYIN-BUSINESS-${suffix}`,
     "抖音",
-    `${E2E_ORIGIN}/mock/douyin?case=business-pass&raw=true&business=${suffix}`,
+    `${E2E_ORIGIN}/mock/douyin?case=business-pass&raw=true&trailingHash=true&business=${suffix}`,
     "2026-07-26 12:00:00",
     campaign.name,
   ]);
