@@ -12,6 +12,10 @@ import {
   stageTopicFromRuleSnapshot,
 } from "@/lib/product-stage";
 import { isUnavailableNoteResult } from "@/lib/result-display";
+import {
+  resolveResultFinalLink,
+  resolveResultOriginalLink,
+} from "@/lib/result-links";
 import { auditConclusionFailureReasons } from "@/lib/result-detail-presentation";
 import {
   commercePlatformLabel,
@@ -65,6 +69,9 @@ export interface CompactAuditResultExportSourceRow {
   imageStatus: string;
   task: {
     url: string;
+    originalInput?: string | null;
+    normalizedUrl?: string | null;
+    finalUrl?: string | null;
     failureCode: string | null;
     failureMessage: string | null;
     pageTitle: string | null;
@@ -346,7 +353,8 @@ export function auditResultToCompactExportRecord(
     productStageTopic: productStageTopicLabel(row.task.productStage),
     orderNumber: importedMetadata.orderNumber,
     contentChannel: contentChannelLabel(channel),
-    originalUrl: row.task.url,
+    noteUrl: resolveResultOriginalLink(row),
+    originalUrl: resolveResultOriginalLink(row),
     publishTime: importedMetadata.publishTime
       ? importedPublishTimeValue(importedMetadata.publishTime)
       : row.note.publishedAt,
@@ -375,7 +383,7 @@ export function auditResultToKabritaExportRecord(
     participationCount: raw.participationCount || "",
     xiaohongshuAccount: raw.xiaohongshuAccount || "",
     xiaohongshuPublishLink:
-      raw.xiaohongshuPublishLink || row.task.url,
+      raw.xiaohongshuPublishLink || resolveResultOriginalLink(row),
     purchaseProductLine:
       raw.purchaseProductLine ||
       row.task.product.seriesName ||
@@ -403,6 +411,8 @@ export function auditResultToExportRecord(row: {
   publicStatus: string;
   task: {
     url: string;
+    originalInput?: string | null;
+    normalizedUrl?: string | null;
     finalUrl: string | null;
     status: string;
     source: string;
@@ -498,9 +508,9 @@ export function auditResultToExportRecord(row: {
         ? "正文为空"
         : "未提取到正文 / 待人工确认";
   return {
-    noteUrl: row.note.finalUrl || row.note.url,
-    originalUrl: row.task.url,
-    finalUrl: row.task.finalUrl || row.note.finalUrl || row.note.url,
+    noteUrl: resolveResultOriginalLink(row),
+    originalUrl: resolveResultOriginalLink(row),
+    finalUrl: resolveResultFinalLink(row),
     noteId: row.note.platformNoteId,
     commercePlatform: commercePlatformLabel(commercePlatform),
     shopName: importedMetadata.shopName,

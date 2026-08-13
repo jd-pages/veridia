@@ -55,6 +55,59 @@ describe("小红书当前作品 DOM 话题证据", () => {
     ]);
   });
 
+  it("非 A 标签的 XHS hash-tag 容器进入 DOM_INTERACTIVE", async () => {
+    await page.setContent(`
+      <article data-testid="note-detail">
+        <div id="detail-desc">
+          正文
+          <span id="hash-tag" style="cursor:pointer"><span>#</span><span>爱他美澳洲白金版</span></span>
+        </div>
+      </article>
+    `);
+    const note = await adapter.extract(page, noteUrl);
+    expect(note.verifiedPlatformTopics).toEqual([
+      expect.objectContaining({
+        displayText: "#爱他美澳洲白金版",
+        isClickable: true,
+        source: "DOM_INTERACTIVE",
+        domPath: "#hash-tag",
+      }),
+    ]);
+  });
+
+  it("data-topic-id 与 topic role 容器可证明平台话题身份", async () => {
+    await page.setContent(`
+      <article data-testid="note-detail">
+        <div id="detail-desc">
+          <span data-topic-id="topic-a"><span>#</span><span>A</span></span>
+          <span class="topic-entry" role="button">#B</span>
+        </div>
+      </article>
+    `);
+    const note = await adapter.extract(page, noteUrl);
+    expect(note.verifiedPlatformTopics?.map((topic) => topic.displayText)).toEqual([
+      "#A",
+      "#B",
+    ]);
+    expect(note.verifiedPlatformTopics?.every((topic) => topic.source === "DOM_INTERACTIVE")).toBe(true);
+  });
+
+  it("仅蓝色或 topic 样式但没有平台交互语义仍只是正文候选", async () => {
+    await page.setContent(`
+      <article data-testid="note-detail">
+        <div id="detail-desc">
+          <span style="color:rgb(19,56,108)">#A</span>
+          <span class="topic-copy">#B</span>
+        </div>
+      </article>
+    `);
+    const note = await adapter.extract(page, noteUrl);
+    expect(note.textHashtagCandidates?.map((topic) => topic.displayText)).toEqual(
+      expect.arrayContaining(["#A", "#B"]),
+    );
+    expect(note.verifiedPlatformTopics).toEqual([]);
+  });
+
   it("纯文本 A 与可点击 B 保持隔离", async () => {
     await page.setContent(`
       <article data-testid="note-detail">

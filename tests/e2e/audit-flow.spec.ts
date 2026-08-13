@@ -1029,6 +1029,21 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(unavailableCells.nth(6)).toContainText(
     "未审核",
   );
+  const unavailableExportResponse = await page.request.get(
+    `/api/results/export?ids=${unavailableResult.id}`,
+  );
+  expect(unavailableExportResponse.ok()).toBeTruthy();
+  const unavailableExportWorkbook = new ExcelJS.Workbook();
+  await unavailableExportWorkbook.xlsx.load(
+    (await unavailableExportResponse.body()) as unknown as ExcelJS.Buffer,
+  );
+  const unavailableExportSheet = unavailableExportWorkbook.worksheets[0];
+  const unavailableExportHeaders = worksheetHeaders(unavailableExportSheet);
+  const unavailableLinkColumn = unavailableExportHeaders.indexOf("链接") + 1;
+  expect(unavailableLinkColumn).toBeGreaterThan(0);
+  expect(unavailableExportSheet.getCell(2, unavailableLinkColumn).text).toBe(
+    unavailableResult.task.url,
+  );
   await expect(unavailableCells.nth(7)).toContainText("笔记不存在");
   await expect(unavailableCells.nth(7)).toContainText(
     "小红书页面提示",

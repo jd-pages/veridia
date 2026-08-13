@@ -572,7 +572,7 @@ export function verifiedTopicsForCurrentNote(
   return candidates.verifiedPlatformTopics
     .filter(
       (topic) =>
-        topic.source === "DOM_LINK" || topic.contentId === currentNoteId,
+        topic.source.startsWith("DOM_") || topic.contentId === currentNoteId,
     )
     .map((topic) => ({
       ...topic,
@@ -872,13 +872,17 @@ export async function collectDomPageSnapshot(
       return elements;
     };
     const topicElements = scopedTopicElements([
-      "a#hash-tag",
+      "#hash-tag",
       "a[href*='/search_result']",
       "a[href*='/search']",
       "a[href*='keyword=']",
       "a[href*='/topic']",
       "a[href*='hashtag']",
       "[data-testid*='hashtag']",
+      "[data-topic-id]",
+      "[data-topic-name]",
+      "[data-topic]",
+      "[data-xhs-topic]",
       "[class*='hashtag']",
       "[class*='topic']",
     ]);
@@ -900,16 +904,34 @@ export async function collectDomPageSnapshot(
     }> = topicElements
       .filter((element, index, all) => all.indexOf(element) === index)
       .flatMap((element) => {
-        const elementText = (element.textContent || "").trim();
+        const interactiveSelector = [
+          "a[href]",
+          "button",
+          "[role='link']",
+          "[role='button']",
+          "[tabindex]",
+          "[onclick]",
+          "#hash-tag",
+          "[data-topic-id]",
+          "[data-topic-name]",
+          "[data-topic]",
+          "[data-xhs-topic]",
+        ].join(",");
+        const interactive = element.closest(interactiveSelector) || element;
+        if (!mainNoteRoot?.contains(interactive)) return [];
+        const elementText = (interactive.textContent || element.textContent || "")
+          .replace(/\s+/gu, "")
+          .trim();
         const topics =
           elementText.match(/[#＃]\s*[\p{L}\p{N}_+\-·]{1,60}/gu) || [];
-        const href = element.getAttribute("href");
-        const style = getComputedStyle(element);
+        const href = interactive.getAttribute("href");
+        const style = getComputedStyle(interactive);
         const isLinkElement =
-            element.tagName.toLowerCase() === "a" ||
-            element.getAttribute("role") === "link" ||
-            element.hasAttribute("onclick") ||
-            (element as HTMLElement).tabIndex >= 0;
+            interactive.tagName.toLowerCase() === "a" ||
+            interactive.tagName.toLowerCase() === "button" ||
+            ["link", "button"].includes(interactive.getAttribute("role") || "") ||
+            interactive.hasAttribute("onclick") ||
+            (interactive as HTMLElement).tabIndex >= 0;
         const hasHref = Boolean(href && !href.startsWith("javascript:"));
         const hrefValue = href ? absoluteUrl(href) : null;
         const platformTopicSemantics = Boolean(
@@ -919,27 +941,37 @@ export async function collectDomPageSnapshot(
             ),
         );
         const platformTopicAttribute =
-          element.hasAttribute("data-topic") ||
-          element.hasAttribute("data-xhs-topic") ||
-          /hashtag|topic/iu.test(element.getAttribute("data-testid") || "");
+          interactive.id === "hash-tag" ||
+          interactive.hasAttribute("data-topic-id") ||
+          interactive.hasAttribute("data-topic-name") ||
+          interactive.hasAttribute("data-topic") ||
+          interactive.hasAttribute("data-xhs-topic") ||
+          /hashtag|topic/iu.test(interactive.getAttribute("data-testid") || "");
+        const platformTopicClass = /(?:^|[\s_-])(?:hash-?tag|topic)(?:[\s_-]|$)/iu.test(
+          interactive.getAttribute("class") || "",
+        );
+        const delegatedPlatformInteraction =
+          platformTopicAttribute ||
+          (platformTopicClass &&
+            (isLinkElement || style.cursor === "pointer"));
         if (
-          !isLinkElement ||
-          (!platformTopicSemantics && !platformTopicAttribute)
+          !platformTopicSemantics &&
+          !delegatedPlatformInteraction
         ) {
           return [];
         }
         return topics.map((displayText) => ({
           displayText,
           isClickable: true,
-          isLinkElement,
+          isLinkElement: isLinkElement || delegatedPlatformInteraction,
           hasHref,
           href: hrefValue,
           textColor: style.color || null,
           styleFeature:
             style.cursor === "pointer" ||
-            element.matches("[class*='topic'],[class*='hashtag']"),
-          domPath: elementPath(element),
-          source: "DOM_LINK",
+            interactive.matches("[class*='topic'],[class*='hashtag'],#hash-tag"),
+          domPath: elementPath(interactive),
+          source: hasHref ? "DOM_LINK" : "DOM_INTERACTIVE",
           evidenceType: "VERIFIED_PLATFORM_TOPIC" as const,
           contentId: null,
         }));

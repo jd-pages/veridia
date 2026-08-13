@@ -1107,6 +1107,53 @@ describe("模板驱动导出", () => {
         }),
       },
     });
+
+    const unavailableShortLink = "http://xhslink.cn/o/6MAIn8n6j07";
+    const unavailableCompact = auditResultToCompactExportRecord({
+      ...compactSource,
+      autoStatus: "NOTE_NOT_FOUND",
+      pageStatus: "NOTE_NOT_FOUND",
+      task: {
+        ...compactSource.task,
+        url: unavailableShortLink,
+        finalUrl: null,
+      },
+      note: {
+        ...compactSource.note,
+        url: "https://www.xiaohongshu.com/explore/canonical",
+        finalUrl: null,
+      },
+    });
+    expect(unavailableCompact.originalUrl).toBe(unavailableShortLink);
+    expect(unavailableCompact.noteUrl).toBe(unavailableShortLink);
+
+    const sameOrderDifferentLinks = Array.from({ length: 6 }, (_, index) =>
+      auditResultToCompactExportRecord({
+        ...compactSource,
+        autoStatus: "NOTE_NOT_FOUND",
+        pageStatus: "NOTE_NOT_FOUND",
+        task: {
+          ...compactSource.task,
+          url: `https://xhslink.cn/dead-${index + 1}`,
+          finalUrl: null,
+          notes: buildImportedTaskNotes({
+            orderNumber: "JD202608030001",
+            contentChannel: "小红书",
+          }),
+        },
+        note: {
+          ...compactSource.note,
+          url: "",
+          finalUrl: null,
+        },
+      }),
+    );
+    expect(sameOrderDifferentLinks).toHaveLength(6);
+    expect(new Set(sameOrderDifferentLinks.map((record) => record.originalUrl)).size).toBe(6);
+    expect(new Set(sameOrderDifferentLinks.map((record) => record.noteUrl)).size).toBe(6);
+    expect(new Set(sameOrderDifferentLinks.map((record) => record.orderNumber))).toEqual(
+      new Set(["JD202608030001"]),
+    );
     expect(compactWithoutOrder.orderNumber).toBe("");
 
     const legacyChannelOnly = auditResultToCompactExportRecord({

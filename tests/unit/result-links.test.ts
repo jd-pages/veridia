@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { resultDetailLinks } from "@/lib/result-links";
+import {
+  resolveResultOriginalLink,
+  resultDetailLinks,
+} from "@/lib/result-links";
 
 function source(relativePath: string) {
   return fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -56,6 +59,35 @@ describe("审核详情链接展示", () => {
         note: { url, finalUrl: url },
       }),
     ).toEqual({ originalUrl: url, finalUrl: url });
+  });
+
+  it("历史结果缺少任务原链时按笔记、规范化和最终证据回退", () => {
+    expect(
+      resolveResultOriginalLink({
+        task: { url: "", normalizedUrl: "https://xhslink.cn/canonical" },
+        note: { url: "https://xhslink.cn/from-note", finalUrl: null },
+      }),
+    ).toBe("https://xhslink.cn/from-note");
+    expect(
+      resolveResultOriginalLink({
+        task: { url: "", normalizedUrl: "https://xhslink.cn/canonical" },
+        note: { url: "", finalUrl: null },
+      }),
+    ).toBe("https://xhslink.cn/canonical");
+  });
+
+  it("NOTE_NOT_FOUND 仍优先保留用户导入的原始短链", () => {
+    const shortUrl = "http://xhslink.cn/o/6MAIn8n6j07";
+    expect(
+      resolveResultOriginalLink({
+        task: {
+          url: shortUrl,
+          normalizedUrl: "https://www.xiaohongshu.com/explore/canonical",
+          finalUrl: null,
+        },
+        note: { url: "https://www.xiaohongshu.com/explore/canonical", finalUrl: null },
+      }),
+    ).toBe(shortUrl);
   });
 
   it("列表、完整详情和抽屉共用链接映射，复制操作使用未截断的完整值", () => {
