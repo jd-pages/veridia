@@ -132,7 +132,12 @@ for (const group of groups) {
   if (!result.passed && mode === "fast") break;
 }
 
-if (mode !== "fast") record(npm("Production build", ["run", "build"]));
+if (mode !== "fast") {
+  const productionBuild = record(npm("Production build", ["run", "build"]));
+  if (productionBuild.passed) {
+    record(npm("Standalone runtime", ["run", "test:standalone-runtime", "--", "--skip-build"]));
+  }
+}
 if (mode === "full") {
   record(command("Database compatibility", process.execPath, [path.join(root, "scripts", "testing", "verify-databases.mjs")]));
   record(npm("Desktop health", ["run", "test:desktop-health"]));
@@ -150,6 +155,13 @@ const summary = {
   e2ePassed,
   unitTests: { passed: failures.includes(unitCommandName) ? 0 : unitTotal, total: unitTotal },
   productionBuild: mode === "fast" ? "NOT_REQUIRED" : failures.includes("Production build") ? "FAILED" : "PASSED",
+  standaloneRuntime: mode === "fast"
+    ? "NOT_REQUIRED"
+    : failures.includes("Production build")
+      ? "NOT_RUN"
+      : failures.includes("Standalone runtime")
+        ? "FAILED"
+        : "PASSED",
   sqliteFreshMigration: mode === "full" && !failures.includes("Database compatibility") ? "PASSED" : mode === "full" ? "FAILED" : "NOT_REQUIRED",
   sqliteLegacyUpgrade: mode === "full" && !failures.includes("Database compatibility") ? "PASSED" : mode === "full" ? "FAILED" : "NOT_REQUIRED",
   postgresValidate: mode === "full" && !failures.includes("Database compatibility") ? "PASSED" : mode === "full" ? "FAILED" : "NOT_REQUIRED",

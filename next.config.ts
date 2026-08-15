@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
     "/*": [
       "node_modules/@prisma/client/**/*",
       "node_modules/.prisma/client/**/*",
+      "node_modules/next/dist/server/dev/browser-logs/file-logger.js",
     ],
   },
   outputFileTracingExcludes: {
