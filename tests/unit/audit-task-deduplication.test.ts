@@ -12,6 +12,7 @@ import {
   auditNoteIdentity,
   auditTaskDuplicateMessages,
   auditTaskLinksMatch,
+  findAuditTaskDuplicateHistories,
   findBlockingAuditTask,
   localNaturalDayRange,
 } from "@/lib/audit-task-deduplication";
@@ -56,6 +57,113 @@ beforeEach(() => {
   mocks.findMany.mockResolvedValue([]);
   automaticAuditQueueState.runner = undefined;
   automaticAuditQueueState.activeBatchId = undefined;
+});
+
+describe("历史重复检测稳定性", () => {
+  const historyTask = {
+    id: "history-task",
+    status: "COMPLETED",
+    batchId: "history-batch",
+    url: "https://www.xiaohongshu.com/explore/66abc?source=old",
+    normalizedUrl: "https://www.xiaohongshu.com/explore/66abc?source=old",
+    finalUrl: null,
+    notes: null,
+    storeName: "示例店铺",
+    productStage: "IFFO_2",
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+    product: { name: "示例产品", brandName: "示例品牌" },
+    campaign: { name: "历史活动" },
+    batch: { name: "历史批次" },
+    auditResults: [
+      {
+        id: "result-old",
+        auditedAt: new Date("2026-08-01T01:00:00.000Z"),
+        autoStatus: "PASSED",
+        note: {
+          contentChannel: "XIAOHONGSHU",
+          platformNoteId: "66abc",
+          url: "https://www.xiaohongshu.com/explore/66abc",
+          finalUrl: null,
+        },
+        manualReviews: [],
+      },
+      {
+        id: "result-new",
+        auditedAt: new Date("2026-08-02T01:00:00.000Z"),
+        autoStatus: "FAILED",
+        note: {
+          contentChannel: "XIAOHONGSHU",
+          platformNoteId: "66abc",
+          url: "https://www.xiaohongshu.com/explore/66abc",
+          finalUrl: null,
+        },
+        manualReviews: [
+          { result: "PASSED", createdAt: new Date("2026-08-02T02:00:00.000Z") },
+        ],
+      },
+    ],
+  };
+
+  it("同一输入规范化 100 次 identity 完全一致", () => {
+    const input =
+      "https://www.xiaohongshu.com/discovery/item/66ABC?xsec_token=a&source=share";
+    expect(new Set(Array.from({ length: 100 }, () => auditNoteIdentity(input))))
+      .toEqual(new Set(["xhs-note:66abc"]));
+  });
+
+  it("完成任务和全部历史结果始终进入历史重复集合", async () => {
+    mocks.findMany.mockResolvedValueOnce([historyTask]);
+    const input = "https://www.xiaohongshu.com/explore/66abc?source=new";
+    const histories = await findAuditTaskDuplicateHistories({ urls: [input] });
+    expect(histories.get(input)).toMatchObject({
+      identity: "xhs-note:66abc",
+      historicalCount: 2,
+      sourceTaskIds: ["history-task"],
+      latest: {
+        autoStatus: "FAILED",
+        manualResult: "PASSED",
+      },
+    });
+    expect(histories.get(input)?.histories).toHaveLength(2);
+    const where = JSON.stringify(mocks.findMany.mock.calls[0][0].where);
+    expect(where).not.toContain("createdAt");
+    expect(where).not.toContain("supersededAt");
+    expect(where).not.toContain('"status":"PENDING"');
+  });
+
+  it("连续查询十次均返回同一重复身份且每次仅执行一次批量查询", async () => {
+    mocks.findMany.mockResolvedValue(historyTask ? [historyTask] : []);
+    const input = "https://www.xiaohongshu.com/explore/66abc";
+    const results = [];
+    for (let index = 0; index < 10; index += 1) {
+      results.push(await findAuditTaskDuplicateHistories({ urls: [input] }));
+    }
+    expect(
+      results.map((result) => ({
+        identity: result.get(input)?.identity,
+        count: result.get(input)?.historicalCount,
+        latest: result.get(input)?.latest.autoStatus,
+      })),
+    ).toEqual(
+      Array.from({ length: 10 }, () => ({
+        identity: "xhs-note:66abc",
+        count: 2,
+        latest: "FAILED",
+      })),
+    );
+    expect(mocks.findMany).toHaveBeenCalledTimes(10);
+  });
+
+  it("一千行只发起一次批量历史查询且不存在逐行 await", async () => {
+    mocks.findMany.mockResolvedValueOnce([]);
+    await findAuditTaskDuplicateHistories({
+      urls: Array.from(
+        { length: 1000 },
+        (_, index) => `https://www.xiaohongshu.com/explore/perf-${index}`,
+      ),
+    });
+    expect(mocks.findMany).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("审核任务按本地自然日去重", () => {

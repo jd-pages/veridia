@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
+import { duplicateReauditMetadataFromNotes } from "@/lib/import-task-metadata";
 
 export async function POST(
   request: Request,
@@ -16,6 +17,7 @@ export async function POST(
     campaignId?: string;
   };
   if (!body.result) return fail("请选择人工审核结果");
+  const manualResult = body.result;
   const auditResult = await prisma.auditResult.findFirst({
     where: { id, supersededAt: null },
     include: { task: true },
@@ -39,24 +41,43 @@ export async function POST(
       data: { productId, campaignId },
     });
   }
-  const review = await prisma.manualReview.create({
-    data: {
-      auditResultId: id,
-      reviewerId: user.id,
-      result: body.result,
-      comment: body.comment?.trim() || null,
-    },
-    include: { reviewer: { select: { displayName: true } } },
-  });
-  await prisma.operationLog.create({
-    data: {
-      userId: user.id,
-      action: "MANUAL_REVIEW",
-      entityType: "AUDIT_RESULT",
-      entityId: id,
-      summary: `人工审核：${body.result}`,
-      metadata: JSON.stringify({ comment: body.comment || "" }),
-    },
+  const duplicateReaudit = duplicateReauditMetadataFromNotes(
+    auditResult.task.notes,
+  );
+  const review = await prisma.$transaction(async (tx) => {
+    const created = await tx.manualReview.create({
+      data: {
+        auditResultId: id,
+        reviewerId: user.id,
+        result: manualResult,
+        comment: body.comment?.trim() || null,
+      },
+      include: { reviewer: { select: { displayName: true } } },
+    });
+    await tx.operationLog.create({
+      data: {
+        userId: user.id,
+        action: "MANUAL_REVIEW",
+        entityType: "AUDIT_RESULT",
+        entityId: id,
+        summary: duplicateReaudit
+          ? `重复重审最终人工确认：${manualResult}`
+          : `人工审核：${manualResult}`,
+        metadata: JSON.stringify({
+          comment: body.comment || "",
+          ...(duplicateReaudit
+            ? {
+                duplicateReaudit: true,
+                automaticResult: duplicateReaudit.automaticResult || null,
+                historicalCount: duplicateReaudit.historicalCount,
+                sourceTaskIds: duplicateReaudit.sourceTaskIds,
+                currentTaskId: auditResult.task.id,
+              }
+            : {}),
+        }),
+      },
+    });
+    return created;
   });
   return ok(review, { status: 201 });
 }

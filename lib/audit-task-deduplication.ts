@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { normalizeUrl } from "@/lib/topic";
 import { duplicateRelevantAuditTaskWhere } from "@/lib/automation/task-view";
 import { isAutomaticBatchRuntimeLive } from "@/lib/automation/runtime-state";
+import { duplicateReauditMetadataFromNotes } from "@/lib/import-task-metadata";
 
 export type AuditTaskDuplicateReason = "TODAY_DUPLICATE";
 
@@ -15,6 +16,32 @@ export const auditTaskDuplicateMessages: Record<
 
 export const importedAuditTaskDuplicateMessage =
   "今日已存在相同笔记链接，已跳过。";
+
+export interface AuditDuplicateHistoryEntry {
+  taskId: string;
+  batchId: string | null;
+  batchName: string;
+  taskStatus: string;
+  createdAt: string;
+  auditedAt: string | null;
+  autoStatus: string | null;
+  manualResult: string | null;
+  manualReviewedAt: string | null;
+  productName: string;
+  brandName: string;
+  storeName: string;
+  campaignName: string;
+  productStage: string;
+  url: string;
+}
+
+export interface AuditDuplicateHistorySummary {
+  identity: string;
+  historicalCount: number;
+  sourceTaskIds: string[];
+  latest: AuditDuplicateHistoryEntry;
+  histories: AuditDuplicateHistoryEntry[];
+}
 
 export function localNaturalDayRange(now = new Date()) {
   const start = new Date(
@@ -173,6 +200,182 @@ function duplicateCandidateBlocks(task: {
     task.status === "PROCESSING" &&
     Boolean(task.batchId && isAutomaticBatchRuntimeLive(task.batchId))
   );
+}
+
+function duplicateLookupWhere(urls: string[]): Prisma.AuditTaskWhereInput {
+  const urlValues = [
+    ...new Set(
+      urls.flatMap((url) => [url.trim(), safeNormalizedUrl(url)]).filter(Boolean),
+    ),
+  ];
+  const platformNoteIds = [
+    ...new Set(
+      urls
+        .map(auditNoteIdentity)
+        .filter((identity) =>
+          /^(?:xhs-note|douyin-content):/u.test(identity),
+        )
+        .map((identity) => identity.slice(identity.indexOf(":") + 1)),
+    ),
+  ];
+  return {
+    OR: [
+      { url: { in: urlValues } },
+      { normalizedUrl: { in: urlValues } },
+      { finalUrl: { in: urlValues } },
+      ...(platformNoteIds.length
+        ? [
+            {
+              auditResults: {
+                some: {
+                  note: { platformNoteId: { in: platformNoteIds } },
+                },
+              },
+            } satisfies Prisma.AuditTaskWhereInput,
+          ]
+        : []),
+    ],
+  };
+}
+
+export async function findAuditTaskDuplicateHistories(input: {
+  urls: string[];
+}) {
+  const matches = new Map<string, AuditDuplicateHistorySummary>();
+  const urls = [...new Set(input.urls.filter((url) => url.trim()))];
+  if (!urls.length) return matches;
+  const candidates = await prisma.auditTask.findMany({
+    where: duplicateLookupWhere(urls),
+    select: {
+      id: true,
+      status: true,
+      batchId: true,
+      url: true,
+      normalizedUrl: true,
+      finalUrl: true,
+      notes: true,
+      storeName: true,
+      productStage: true,
+      createdAt: true,
+      product: { select: { name: true, brandName: true } },
+      campaign: { select: { name: true } },
+      batch: { select: { name: true } },
+      auditResults: {
+        select: {
+          id: true,
+          auditedAt: true,
+          autoStatus: true,
+          note: {
+            select: {
+              contentChannel: true,
+              platformNoteId: true,
+              url: true,
+              finalUrl: true,
+            },
+          },
+          manualReviews: {
+            select: { result: true, createdAt: true },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+        },
+        orderBy: { auditedAt: "desc" },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  const candidatesByIdentity = new Map<string, typeof candidates>();
+  for (const task of candidates) {
+    const identities = new Set(
+      [task.url, task.normalizedUrl, task.finalUrl]
+        .filter((value): value is string => Boolean(value))
+        .map(auditNoteIdentity)
+        .filter(Boolean),
+    );
+    for (const { note } of task.auditResults) {
+      if (note.platformNoteId) {
+        identities.add(
+          `${note.contentChannel === "DOUYIN" ? "douyin-content" : "xhs-note"}:${note.platformNoteId.toLocaleLowerCase()}`,
+        );
+      }
+      for (const value of [note.url, note.finalUrl]) {
+        if (value) identities.add(auditNoteIdentity(value));
+      }
+    }
+    for (const identity of identities) {
+      const indexed = candidatesByIdentity.get(identity) || [];
+      indexed.push(task);
+      candidatesByIdentity.set(identity, indexed);
+    }
+  }
+  for (const url of urls) {
+    const inputIdentity = auditNoteIdentity(url);
+    const histories = (candidatesByIdentity.get(inputIdentity) || [])
+      .filter(
+        (task) =>
+          auditTaskLinksMatch(url, task) ||
+          task.auditResults.some(({ note }) => {
+            const platformIdentity = note.platformNoteId
+              ? `${note.contentChannel === "DOUYIN" ? "douyin-content" : "xhs-note"}:${note.platformNoteId.toLocaleLowerCase()}`
+              : "";
+            return (
+              inputIdentity === platformIdentity ||
+              auditTaskLinksMatch(url, {
+                url: note.url,
+                normalizedUrl: note.url,
+                finalUrl: note.finalUrl,
+              })
+            );
+          }),
+      )
+      .flatMap<AuditDuplicateHistoryEntry>((task) => {
+        const duplicateReaudit = duplicateReauditMetadataFromNotes(task.notes);
+        const results = task.auditResults.length ? task.auditResults : [null];
+        return results.map((result) => {
+          const manual = result?.manualReviews[0];
+          return {
+            taskId: task.id,
+            batchId: task.batchId,
+            batchName: task.batch?.name || "",
+            taskStatus: task.status,
+            createdAt: task.createdAt.toISOString(),
+            auditedAt: result?.auditedAt.toISOString() || null,
+            autoStatus:
+              duplicateReaudit?.automaticResult || result?.autoStatus || null,
+            manualResult: manual?.result || null,
+            manualReviewedAt: manual?.createdAt.toISOString() || null,
+            productName: task.product.name,
+            brandName: task.product.brandName,
+            storeName: task.storeName || "",
+            campaignName: task.campaign.name,
+            productStage: task.productStage || "",
+            url: task.url,
+          };
+        });
+      })
+      .sort((left, right) =>
+        String(right.auditedAt || right.createdAt).localeCompare(
+          String(left.auditedAt || left.createdAt),
+        ),
+      );
+    if (!histories.length) continue;
+    matches.set(url, {
+      identity: inputIdentity,
+      historicalCount: histories.filter((history) => history.auditedAt).length,
+      sourceTaskIds: [...new Set(histories.map((history) => history.taskId))],
+      latest: histories[0],
+      histories,
+    });
+  }
+  return matches;
+}
+
+export async function listAuditTaskDuplicateHistory(input: { url: string }) {
+  const url = input.url.trim();
+  if (!url) return [];
+  const histories = await findAuditTaskDuplicateHistories({ urls: [url] });
+  const summary = histories.get(url);
+  return summary?.histories || [];
 }
 
 export async function findBlockingAuditTask(input: {

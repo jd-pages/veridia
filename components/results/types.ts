@@ -84,6 +84,7 @@ export interface ResultRow {
   };
   task: {
     importRecordId: string | null;
+    notes: string | null;
     productStage: string | null;
     url: string;
     finalUrl: string | null;

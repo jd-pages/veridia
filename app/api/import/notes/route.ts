@@ -36,8 +36,8 @@ import {
 } from "@/lib/import-export-templates/kabrita";
 import {
   auditNoteIdentity,
-  findBlockingAuditTasks,
-  importedAuditTaskDuplicateMessage,
+  findAuditTaskDuplicateHistories,
+  type AuditDuplicateHistoryEntry,
 } from "@/lib/audit-task-deduplication";
 import {
   normalizeProductMatchKey,
@@ -45,7 +45,11 @@ import {
   resolveProductReference,
   type ProductResolution,
 } from "@/lib/product-matching";
-import { buildImportedTaskNotes } from "@/lib/import-task-metadata";
+import {
+  buildImportedTaskNotes,
+  duplicateReauditMetadataFromNotes,
+  withDuplicateReauditMetadata,
+} from "@/lib/import-task-metadata";
 import {
   resolveImportedActivity,
   type ImportActivityMatchStatus,
@@ -101,6 +105,16 @@ interface CheckedRow {
   campaignId?: string;
   milkType?: string;
   errors: string[];
+  duplicateWarning?: {
+    status: "DUPLICATE_WARNING";
+    identity: string;
+    batchDuplicateOfRow: number | null;
+    historicalCount: number;
+    sourceTaskIds: string[];
+    latestHistory: AuditDuplicateHistoryEntry | null;
+    confirmed: boolean;
+  };
+  hasPreviewAttention?: boolean;
 }
 
 const IMPORT_PREVIEW_ROW_LIMIT = 100;
@@ -227,6 +241,23 @@ export async function POST(request: Request) {
   const file = form.get("file");
   const commit = form.get("commit") === "true";
   const skipDuplicates = form.get("skipDuplicates") !== "false";
+  const duplicateOverrideKeys = new Set<string>();
+  try {
+    const raw = String(form.get("duplicateOverrides") || "[]");
+    const parsed = JSON.parse(raw) as Array<{
+      rowNumber?: unknown;
+      identity?: unknown;
+    }>;
+    for (const item of Array.isArray(parsed) ? parsed : []) {
+      const rowNumber = Number(item.rowNumber);
+      const identity = String(item.identity || "").trim();
+      if (Number.isInteger(rowNumber) && rowNumber > 0 && identity) {
+        duplicateOverrideKeys.add(`${rowNumber}\u0000${identity}`);
+      }
+    }
+  } catch {
+    return fail("重复重审确认信息格式不正确");
+  }
   const declaredTencentExport =
     form.get("tencentExport") === "true" ||
     (file instanceof File && /腾讯|tencent/iu.test(file.name));
@@ -291,7 +322,7 @@ export async function POST(request: Request) {
     }
     measuredRowCount = tabular.rows.length;
     const rows: CheckedRow[] = [];
-    const seen = new Set<string>();
+    const seen = new Map<string, number>();
     const isKabritaTemplate = tabular.templateBrand === KABRITA_BRAND_NAME;
     const isDanoneAgencyTemplate = tabular.templateType === "DANONE_AGENCY";
     const campaignCandidates = rawCampaigns.map((campaign) => ({
@@ -493,8 +524,20 @@ export async function POST(request: Request) {
       }
       if (checked.url && checked.recognitionStatus === "RECOGNIZED") {
         const identity = auditNoteIdentity(checked.url);
-        if (seen.has(identity)) checked.errors.push("文件内存在重复链接");
-        seen.add(identity);
+        const firstRow = seen.get(identity);
+        if (firstRow) {
+          checked.duplicateWarning = {
+            status: "DUPLICATE_WARNING",
+            identity,
+            batchDuplicateOfRow: firstRow,
+            historicalCount: 0,
+            sourceTaskIds: [],
+            latestHistory: null,
+            confirmed: false,
+          };
+        } else {
+          seen.set(identity, checked.rowNumber);
+        }
       }
       const productMatchStarted = performance.now();
       const productInputName =
@@ -684,24 +727,49 @@ export async function POST(request: Request) {
     const duplicateCandidates = [
       ...new Set(
         rows
-          .filter((row) => row.url && row.campaignId)
+          .filter((row) => row.url)
           .map((row) => row.url),
       ),
     ];
-    const blockingTasks = duplicateCandidates.length
+    const duplicateHistories = duplicateCandidates.length
       ? await measureDatabase("duplicateTasks", () =>
-          findBlockingAuditTasks({ urls: duplicateCandidates }),
+          findAuditTaskDuplicateHistories({ urls: duplicateCandidates }),
         )
       : new Map<string, never>();
     for (const row of rows) {
-      if (blockingTasks.has(row.url)) {
-        row.errors = [
-          ...new Set([...row.errors, importedAuditTaskDuplicateMessage]),
-        ];
+      const history = duplicateHistories.get(row.url);
+      if (history || row.duplicateWarning) {
+        const identity = history?.identity || row.duplicateWarning!.identity;
+        const confirmed = duplicateOverrideKeys.has(
+          `${row.rowNumber}\u0000${identity}`,
+        );
+        row.duplicateWarning = {
+          status: "DUPLICATE_WARNING",
+          identity,
+          batchDuplicateOfRow:
+            row.duplicateWarning?.batchDuplicateOfRow || null,
+          historicalCount: history?.historicalCount || 0,
+          sourceTaskIds: history?.sourceTaskIds || [],
+          latestHistory: history?.latest || null,
+          confirmed,
+        };
+        row.hasPreviewAttention = !confirmed;
       }
     }
 
-    const validRows = rows.filter((row) => row.errors.length === 0);
+    const failedRows = rows.filter((row) => row.errors.length > 0);
+    const duplicateRows = rows.filter((row) => row.duplicateWarning);
+    const pendingDuplicateRows = duplicateRows.filter(
+      (row) => !row.duplicateWarning?.confirmed,
+    );
+    const confirmedDuplicateRows = duplicateRows.filter(
+      (row) => row.duplicateWarning?.confirmed && row.errors.length === 0,
+    );
+    const validRows = rows.filter(
+      (row) =>
+        row.errors.length === 0 &&
+        (!row.duplicateWarning || row.duplicateWarning.confirmed),
+    );
     let imported = 0;
     let batchId: string | null = null;
     let batchIds: string[] = [];
@@ -720,21 +788,14 @@ export async function POST(request: Request) {
       });
       const committed = await prisma.$transaction(
         async (tx) => {
-          const skippedCount = skipDuplicates
-            ? rows.filter((row) =>
-                row.errors.includes(importedAuditTaskDuplicateMessage),
-              ).length
-            : 0;
+          const skippedCount = pendingDuplicateRows.length;
           const importRecord = await tx.importRecord.create({
             data: {
               fileName: file.name,
               importType: "AUDIT_TASK",
               totalCount: rows.length,
               validCount: validRows.length,
-              invalidCount: Math.max(
-                0,
-                rows.length - validRows.length - skippedCount,
-              ),
+              invalidCount: failedRows.length,
               skippedCount,
               status: "COMPLETED",
               channelDistribution: JSON.stringify(channelDistribution),
@@ -773,7 +834,16 @@ export async function POST(request: Request) {
             productStage: row.productStage,
             milkType: row.milkType,
             source: "EXCEL",
-            notes: row.notes,
+            notes: row.duplicateWarning
+              ? withDuplicateReauditMetadata(row.notes, {
+                  identity: row.duplicateWarning.identity,
+                  historicalCount: row.duplicateWarning.historicalCount,
+                  confirmedAt: new Date().toISOString(),
+                  confirmedByUserId: user.id,
+                  confirmedByDisplayName: user.displayName,
+                  sourceTaskIds: row.duplicateWarning.sourceTaskIds,
+                })
+              : row.notes,
             platform: row.platform,
             channel: row.channel,
             commercePlatform: row.commercePlatform,
@@ -829,6 +899,30 @@ export async function POST(request: Request) {
               ),
             );
           }
+          const duplicateReauditTasks = await tx.auditTask.findMany({
+            where: { importRecordId: importRecord.id },
+            select: { id: true, notes: true },
+          });
+          const duplicateLogs = duplicateReauditTasks.flatMap((task) => {
+            const metadata = duplicateReauditMetadataFromNotes(task.notes);
+            return metadata
+              ? [{
+                  userId: user.id,
+                  action: "ALLOW_DUPLICATE_REAUDIT",
+                  entityType: "AUDIT_TASK",
+                  entityId: task.id,
+                  summary: `允许重复笔记重新审核，历史 ${metadata.historicalCount} 次`,
+                  metadata: JSON.stringify({
+                    identity: metadata.identity,
+                    historicalCount: metadata.historicalCount,
+                    sourceTaskIds: metadata.sourceTaskIds,
+                  }),
+                }]
+              : [];
+          });
+          if (duplicateLogs.length) {
+            await tx.operationLog.createMany({ data: duplicateLogs });
+          }
           return { batches, importRecord };
         },
         { timeout: 60_000 },
@@ -856,7 +950,11 @@ export async function POST(request: Request) {
         (field) => templates.fieldDefinitions[field].displayName,
       ),
       validCount: validRows.length,
-      invalidCount: rows.length - validRows.length,
+      invalidCount: failedRows.length,
+      duplicateWarningCount: duplicateRows.length,
+      pendingDuplicateCount: pendingDuplicateRows.length,
+      confirmedDuplicateCount: confirmedDuplicateRows.length,
+      importableCount: validRows.length,
       imported,
       batchId,
       batchIds,

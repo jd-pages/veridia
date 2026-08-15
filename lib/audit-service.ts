@@ -30,6 +30,9 @@ import {
   AuditConfigurationError,
   missingProductStageRuleMessage,
 } from "@/lib/audit-configuration";
+import {
+  resolveDuplicateReauditAutomaticOutcome,
+} from "@/lib/import-task-metadata";
 
 export async function getAuditContext(
   productId: string,
@@ -271,6 +274,11 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
     { ...payload, topics: auditedTopics, publishedAt: null },
     context,
   );
+  const duplicateReauditOutcome = resolveDuplicateReauditAutomaticOutcome(
+    task.notes,
+    evaluation.autoStatus,
+  );
+  const persistedAutoStatus = duplicateReauditOutcome.persistedAutoStatus;
   const sanitizedPayload = { ...payload, topics: auditedTopics };
   delete sanitizedPayload.imageUrls;
   const ai = await evaluateSemanticRelevance({
@@ -439,7 +447,7 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
       storeTopicFailureReason: evaluation.storeTopicFailureReason,
       missingTopics: JSON.stringify(evaluation.missingTopics),
       forbiddenTopics: JSON.stringify(evaluation.forbiddenTopics),
-      autoStatus: evaluation.autoStatus,
+      autoStatus: persistedAutoStatus,
       publicStatus: evaluation.publicStatus,
       retentionStatus: evaluation.retentionStatus,
       retentionDueAt: evaluation.retentionDueAt
@@ -482,8 +490,13 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
 
     await tx.auditTask.update({
       where: { id: task.id },
-      data:
-        evaluation.autoStatus === "READ_FAILED"
+      data: duplicateReauditOutcome.isDuplicateReaudit
+        ? {
+            status: "NEEDS_REVIEW",
+            finishedAt: new Date(),
+            notes: duplicateReauditOutcome.notes,
+          }
+        : evaluation.autoStatus === "READ_FAILED"
           ? { status: "READ_FAILED", finishedAt: new Date() }
           : evaluation.autoStatus === "NEEDS_REVIEW"
             ? { status: "NEEDS_REVIEW", finishedAt: new Date() }

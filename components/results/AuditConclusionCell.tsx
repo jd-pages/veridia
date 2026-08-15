@@ -1,12 +1,13 @@
 "use client";
 
-import { Tooltip } from "antd";
+import { Tag, Tooltip } from "antd";
 import { auditResultLabels } from "@/lib/zh-CN";
 import {
   auditDetailStatusLabel,
 } from "@/lib/audit-detail-visibility";
 import { auditConclusionFailureReasons } from "@/lib/result-detail-presentation";
 import { auditResultListDisplay } from "@/lib/result-display";
+import { duplicateReauditMetadataFromNotes } from "@/lib/import-task-metadata";
 import AuditStatusTag from "./AuditStatusTag";
 import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
@@ -30,11 +31,19 @@ export default function AuditConclusionCell({
   row: ResultRow;
   detailView?: boolean;
 }) {
+  const duplicateReaudit = duplicateReauditMetadataFromNotes(row.task.notes);
   const unavailableDisplay = auditResultListDisplay(row);
   if (unavailableDisplay) {
     const reasons = auditConclusionFailureReasons(row);
     return (
       <div className={styles.stack}>
+        {duplicateReaudit ? (
+          <div>
+            <Tag color="orange">
+              重复重审 · 历史 {duplicateReaudit.historicalCount} 次
+            </Tag>
+          </div>
+        ) : null}
         <div className={styles.conclusionLine}>
           <span
             className={`${styles.conclusionDot} ${styles.dotInfo}`}
@@ -55,11 +64,12 @@ export default function AuditConclusionCell({
 
   const reasons = auditConclusionFailureReasons(row);
   const manual = row.manualReviews[0];
-  const autoMeta = resultMeta[row.autoStatus] || {
+  const automaticResult = duplicateReaudit?.automaticResult || row.autoStatus;
+  const autoMeta = resultMeta[automaticResult] || {
     className: styles.dotInfo,
     label: detailView
-      ? auditDetailStatusLabel(row.autoStatus, "audit")
-      : auditResultLabels[row.autoStatus] || "暂无结论",
+      ? auditDetailStatusLabel(automaticResult, "audit")
+      : auditResultLabels[automaticResult] || "暂无结论",
   };
   const mainValue = manual?.result || row.autoStatus;
   const processingFailed = [
@@ -77,6 +87,13 @@ export default function AuditConclusionCell({
 
   return (
     <div className={styles.stack}>
+      {duplicateReaudit ? (
+        <div>
+          <Tag color="orange">
+            重复重审 · 历史 {duplicateReaudit.historicalCount} 次
+          </Tag>
+        </div>
+      ) : null}
       {processingFailed ? (
         <div>
           <AuditStatusTag value={row.task.status} domain="process" />
@@ -92,6 +109,10 @@ export default function AuditConclusionCell({
       {manual ? (
         <div className={styles.cellSecondary}>
           自动结果：{autoMeta.label}
+        </div>
+      ) : duplicateReaudit ? (
+        <div className={styles.cellSecondary}>
+          自动结果：{autoMeta.label} · 待人工确认
         </div>
       ) : reasons.length ? (
         <Tooltip title={reasons.join("；")}>

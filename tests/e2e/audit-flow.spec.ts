@@ -47,6 +47,22 @@ async function waitForBatch(
     });
 }
 
+async function openExcelImport(page: Page) {
+  const tab = page.getByRole("tab", { name: "Excel 自动审核" });
+  const input = page.locator('input[type="file"]');
+  await expect(tab).toBeVisible();
+  await expect
+    .poll(
+      async () => {
+        if ((await input.count()) === 1) return true;
+        await tab.click();
+        return (await input.count()) === 1;
+      },
+      { timeout: 10_000, intervals: [100, 250, 500] },
+    )
+    .toBe(true);
+}
+
 test("本地账号登录、创建任务、审核、详情、Excel 与插件提交链路", async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto("/login");
@@ -320,7 +336,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(taskExportResponse.ok()).toBeTruthy();
 
   await page.goto("/tasks");
-  await page.getByRole("tab", { name: "Excel 自动审核" }).click();
+  await openExcelImport(page);
   const pageCountBeforeTemplateDownloads = page.context().pages().length;
   const templateMenuButton = page.getByRole("button", { name: "下载导入模板" });
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1575,5 +1591,451 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   );
   expect(linkBatch?.tasks.every((task) => task.originalInput?.includes("ABC123"))).toBe(
     true,
+  );
+});
+
+test("历史重复预检查保持幂等并只在本次确认后创建重复重审任务", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(240_000);
+  const login = async (target: Page) => {
+    await target.goto("/login");
+    await target.getByLabel("用户名").fill("admin");
+    await target.getByLabel("密码").fill("Admin123!");
+    await target.locator('button[type="submit"]').click();
+    await expect(target).toHaveURL(/\/dashboard/u);
+  };
+  await login(page);
+
+  const products = (
+    await (await page.request.get("/api/products")).json()
+  ).data as Array<{ id: string; name: string }>;
+  const product =
+    products.find((item) => item.name.includes("澳洲白金版")) || products[0];
+  const campaigns = (
+    await (
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+      )
+    ).json()
+  ).data as Array<{ id: string; name: string; month: string }>;
+  const campaign =
+    campaigns.find((item) => item.month === "2026-07") || campaigns[0];
+  const currentCampaign =
+    campaigns.find((item) => item.id !== campaign.id) || campaign;
+  expect(currentCampaign.id).not.toBe(campaign.id);
+  const templateResponse = await page.request.get("/api/import/template");
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(
+    (await templateResponse.body()) as unknown as ExcelJS.Buffer,
+  );
+  const suffix = Date.now();
+  const duplicateUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&duplicate-reaudit=${suffix}`;
+  workbook.worksheets[0].getRow(2).values = [
+    "京东",
+    "京东健康官方进口超市",
+    "重复重审客户",
+    product.name,
+    "2段",
+    "IFFO",
+    `DUPLICATE-${suffix}`,
+    "小红书",
+    duplicateUrl,
+    "2026-08-15 12:00:00",
+    campaign.name,
+  ];
+  const initialExcel = Buffer.from(await workbook.xlsx.writeBuffer());
+  workbook.worksheets[0].getRow(2).getCell(11).value = currentCampaign.name;
+  const excel = Buffer.from(await workbook.xlsx.writeBuffer());
+  const multipart = (
+    commit: boolean,
+    duplicateOverrides = "[]",
+    buffer = excel,
+  ) => ({
+    file: {
+      name: `duplicate-reaudit-${suffix}.xlsx`,
+      mimeType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer,
+    },
+    commit: String(commit),
+    skipDuplicates: "true",
+    duplicateOverrides,
+  });
+
+  const initialImport = await page.request.post("/api/import/notes", {
+    multipart: multipart(true, "[]", initialExcel),
+  });
+  expect(initialImport.ok()).toBeTruthy();
+  const initial = (await initialImport.json()).data as {
+    imported: number;
+    batchId: string;
+  };
+  expect(initial.imported).toBe(1);
+  await waitForBatch(page, initial.batchId, ["COMPLETED"]);
+
+  const databaseFingerprint = async () => {
+    const [tasksResponse, batchesResponse, resultsResponse, importsResponse] =
+      await Promise.all([
+        page.request.get("/api/tasks"),
+        page.request.get("/api/automation/batches"),
+        page.request.get("/api/results?page=1&pageSize=1"),
+        page.request.get("/api/results/import-batches"),
+      ]);
+    const tasks = (await tasksResponse.json()).data as Array<{ id: string }>;
+    const batches = (await batchesResponse.json()).data as Array<{ id: string }>;
+    const results = (await resultsResponse.json()).data as { total: number };
+    const imports = (await importsResponse.json()).data as Array<{ id: string }>;
+    return {
+      taskIds: tasks.map((item) => item.id).sort(),
+      batchIds: batches.map((item) => item.id).sort(),
+      resultCount: results.total,
+      importIds: imports.map((item) => item.id).sort(),
+    };
+  };
+
+  const beforePrecheck = await databaseFingerprint();
+  const prechecks = [];
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const response = await page.request.post("/api/import/notes", {
+      multipart: multipart(false),
+    });
+    expect(response.ok()).toBeTruthy();
+    const payload = (await response.json()).data as {
+      validCount: number;
+      invalidCount: number;
+      duplicateWarningCount: number;
+      pendingDuplicateCount: number;
+      rows: Array<{
+        rowNumber: number;
+        duplicateWarning: {
+          status: string;
+          identity: string;
+          historicalCount: number;
+          sourceTaskIds: string[];
+        };
+      }>;
+    };
+    prechecks.push(payload);
+  }
+  const duplicateStates = prechecks.map((payload) => ({
+    validCount: payload.validCount,
+    invalidCount: payload.invalidCount,
+    duplicateWarningCount: payload.duplicateWarningCount,
+    pendingDuplicateCount: payload.pendingDuplicateCount,
+    identity: payload.rows[0].duplicateWarning.identity,
+    historicalCount: payload.rows[0].duplicateWarning.historicalCount,
+    sourceTaskIds: payload.rows[0].duplicateWarning.sourceTaskIds,
+  }));
+  expect(new Set(duplicateStates.map((item) => JSON.stringify(item))).size).toBe(1);
+  expect(duplicateStates[0]).toMatchObject({
+    validCount: 0,
+    invalidCount: 0,
+    duplicateWarningCount: 1,
+    pendingDuplicateCount: 1,
+    historicalCount: 1,
+  });
+  const identity = duplicateStates[0].identity;
+  expect(await databaseFingerprint()).toEqual(beforePrecheck);
+
+  const repeatedWorkbook = new ExcelJS.Workbook();
+  await repeatedWorkbook.xlsx.load(excel as unknown as ExcelJS.Buffer);
+  repeatedWorkbook.worksheets[0].getRow(3).values = [
+    "京东",
+    "京东健康官方进口超市",
+    "重复重审客户",
+    product.name,
+    "2段",
+    "IFFO",
+    `DUPLICATE-IN-FILE-${suffix}`,
+    "小红书",
+    duplicateUrl,
+    "2026-08-15 12:00:00",
+    currentCampaign.name,
+  ];
+  const repeatedResponse = await page.request.post("/api/import/notes", {
+    multipart: multipart(
+      false,
+      "[]",
+      Buffer.from(await repeatedWorkbook.xlsx.writeBuffer()),
+    ),
+  });
+  const repeated = (await repeatedResponse.json()).data as {
+    duplicateWarningCount: number;
+    rows: Array<{
+      duplicateWarning: {
+        batchDuplicateOfRow: number | null;
+        historicalCount: number;
+      };
+    }>;
+  };
+  expect(repeated.duplicateWarningCount).toBe(2);
+  expect(repeated.rows[0].duplicateWarning).toMatchObject({
+    batchDuplicateOfRow: null,
+    historicalCount: 1,
+  });
+  expect(repeated.rows[1].duplicateWarning).toMatchObject({
+    batchDuplicateOfRow: 2,
+    historicalCount: 1,
+  });
+
+  const invalidWorkbook = new ExcelJS.Workbook();
+  await invalidWorkbook.xlsx.load(excel as unknown as ExcelJS.Buffer);
+  invalidWorkbook.worksheets[0].getRow(2).getCell(11).value = "";
+  const invalidExcel = Buffer.from(await invalidWorkbook.xlsx.writeBuffer());
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const invalidResponse = await page.request.post("/api/import/notes", {
+      multipart: multipart(false, "[]", invalidExcel),
+    });
+    const invalid = (await invalidResponse.json()).data as {
+      invalidCount: number;
+      duplicateWarningCount: number;
+      rows: Array<{ errors: string[]; duplicateWarning: { identity: string } }>;
+    };
+    expect(invalid.invalidCount).toBe(1);
+    expect(invalid.duplicateWarningCount).toBe(1);
+    expect(invalid.rows[0].errors).toContain("活动名称不能为空");
+    expect(invalid.rows[0].duplicateWarning.identity).toBe(identity);
+  }
+
+  const tasksBeforeUnconfirmedCommit = (
+    (await (await page.request.get("/api/tasks")).json()).data as Array<{
+      id: string;
+    }>
+  ).map((item) => item.id);
+  const unconfirmedCommit = await page.request.post("/api/import/notes", {
+    multipart: multipart(true),
+  });
+  expect(unconfirmedCommit.ok()).toBeTruthy();
+  expect((await unconfirmedCommit.json()).data.imported).toBe(0);
+  const tasksAfterUnconfirmedCommit = (
+    (await (await page.request.get("/api/tasks")).json()).data as Array<{
+      id: string;
+    }>
+  ).map((item) => item.id);
+  expect(tasksAfterUnconfirmedCommit).toEqual(tasksBeforeUnconfirmedCommit);
+
+  await page.goto("/tasks");
+  await openExcelImport(page);
+  await page.locator('input[type="file"]').setInputFiles({
+    name: `duplicate-reaudit-${suffix}.xlsx`,
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: excel,
+  });
+  await page.getByRole("button", { name: "开始预检查" }).click();
+  await expect(page.getByText("历史重复 · 已审核 1 次")).toBeVisible();
+  await page.reload();
+  await openExcelImport(page);
+  await page.locator('input[type="file"]').setInputFiles({
+    name: `duplicate-reaudit-${suffix}.xlsx`,
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: excel,
+  });
+  await page.getByRole("button", { name: "开始预检查" }).click();
+  await expect(page.getByText("历史重复 · 已审核 1 次")).toBeVisible();
+
+  const secondContext = await browser.newContext();
+  const secondPage = await secondContext.newPage();
+  await login(secondPage);
+  await secondPage.goto("/tasks");
+  await openExcelImport(secondPage);
+  await secondPage.locator('input[type="file"]').setInputFiles({
+    name: `duplicate-reaudit-${suffix}.xlsx`,
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: excel,
+  });
+  await secondPage.getByRole("button", { name: "开始预检查" }).click();
+  await expect(secondPage.getByText("历史重复 · 已审核 1 次")).toBeVisible();
+  await secondContext.close();
+
+  const committedResponse = await page.request.post("/api/import/notes", {
+    multipart: multipart(
+      true,
+      JSON.stringify([{ rowNumber: 2, identity }]),
+    ),
+  });
+  expect(committedResponse.ok()).toBeTruthy();
+  const committed = (await committedResponse.json()).data as {
+    imported: number;
+    batchId: string;
+  };
+  expect(committed.imported).toBe(1);
+  const duplicateBatch = await waitForBatch(page, committed.batchId, [
+    "COMPLETED",
+  ]);
+  const duplicateTask = duplicateBatch.tasks[0] as {
+    id: string;
+    status: string;
+    notes: string;
+    auditResults: Array<{ id: string; autoStatus: string }>;
+  };
+  expect(duplicateTask.status).toBe("NEEDS_REVIEW");
+  expect(duplicateTask.notes).toContain("VERIDIA_DUPLICATE_REAUDIT_JSON");
+  expect(duplicateTask.notes).toContain('"automaticResult"');
+  expect(duplicateTask.auditResults[0].autoStatus).toBe("NEEDS_REVIEW");
+  const duplicateTaskDetail = (await (
+    await page.request.get(`/api/tasks?batchId=${committed.batchId}`)
+  ).json()).data as Array<{ campaign: { id: string } }>;
+  expect(duplicateTaskDetail[0].campaign.id).toBe(currentCampaign.id);
+
+  const resultId = duplicateTask.auditResults[0].id;
+  for (const result of ["PASSED", "FAILED"] as const) {
+    const review = await page.request.post(`/api/results/${resultId}/review`, {
+      data: { result, comment: `重复重审人工${result}` },
+    });
+    expect(review.ok()).toBeTruthy();
+  }
+  const detail = (await (
+    await page.request.get(`/api/results/${resultId}`)
+  ).json()).data as {
+    manualReviews: Array<{ result: string }>;
+    operationLogs: Array<{ summary: string }>;
+  };
+  expect(detail.manualReviews.map((item) => item.result)).toEqual([
+    "FAILED",
+    "PASSED",
+  ]);
+  expect(
+    detail.operationLogs.filter((item) =>
+      item.summary.startsWith("重复重审最终人工确认"),
+    ),
+  ).toHaveLength(2);
+  expect(
+    detail.operationLogs.some((item) =>
+      item.summary.startsWith("允许重复笔记重新审核"),
+    ),
+  ).toBe(true);
+
+  const futurePrecheck = await page.request.post("/api/import/notes", {
+    multipart: multipart(false),
+  });
+  const future = (await futurePrecheck.json()).data as {
+    duplicateWarningCount: number;
+    pendingDuplicateCount: number;
+    rows: Array<{ duplicateWarning: { historicalCount: number } }>;
+  };
+  expect(future.duplicateWarningCount).toBe(1);
+  expect(future.pendingDuplicateCount).toBe(1);
+  expect(future.rows[0].duplicateWarning.historicalCount).toBe(2);
+});
+
+test("重复历史批量查询在 10 到 1000 行保持固定查询形态", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.goto("/login");
+  await page.getByLabel("用户名").fill("admin");
+  await page.getByLabel("密码").fill("Admin123!");
+  await page.locator('button[type="submit"]').click();
+  await expect(page).toHaveURL(/\/dashboard/u);
+
+  const products = (
+    await (await page.request.get("/api/products")).json()
+  ).data as Array<{ id: string; name: string }>;
+  const product =
+    products.find((item) => item.name.includes("澳洲白金版")) || products[0];
+  const campaigns = (
+    await (
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+      )
+    ).json()
+  ).data as Array<{ id: string; name: string; month: string }>;
+  const campaign =
+    campaigns.find((item) => item.month === "2026-07") || campaigns[0];
+  const suffix = Date.now();
+  const historicalUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&dedup-perf-history=${suffix}`;
+  const historicalTaskResponse = await page.request.post("/api/tasks", {
+    data: {
+      urls: historicalUrl,
+      productId: product.id,
+      campaignId: campaign.id,
+      productStage: "IFFO_2",
+      contentChannel: "XIAOHONGSHU",
+      notes: "duplicate performance history",
+    },
+  });
+  expect(historicalTaskResponse.ok()).toBeTruthy();
+  const historicalTask = (await historicalTaskResponse.json()).data
+    .created[0] as { id: string };
+  const historicalAudit = await page.request.post(
+    `/api/tasks/${historicalTask.id}/audit`,
+    { data: { mockCase: "passed" } },
+  );
+  expect(historicalAudit.ok()).toBeTruthy();
+
+  const template = await page.request.get("/api/import/template");
+  const templateBytes = await template.body();
+  const buildWorkbook = async (rowCount: number, historicalRows: number) => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(templateBytes as unknown as ExcelJS.Buffer);
+    const sheet = workbook.worksheets[0];
+    for (let index = 0; index < rowCount; index += 1) {
+      sheet.getRow(index + 2).values = [
+        "京东",
+        "京东健康官方进口超市",
+        "性能测试客户",
+        product.name,
+        "2段",
+        "IFFO",
+        `PERF-${suffix}-${rowCount}-${index}`,
+        "小红书",
+        index < historicalRows
+          ? historicalUrl
+          : `${E2E_ORIGIN}/mock/xhs?case=passed&dedup-perf=${suffix}-${rowCount}-${index}`,
+        "2026-08-15 12:00:00",
+        campaign.name,
+      ];
+    }
+    return Buffer.from(await workbook.xlsx.writeBuffer());
+  };
+  const benchmark = async (rowCount: number, historicalRows = 0) => {
+    const buffer = await buildWorkbook(rowCount, historicalRows);
+    const startedAt = performance.now();
+    const response = await page.request.post("/api/import/notes", {
+      multipart: {
+        file: {
+          name: `dedup-perf-${rowCount}-${historicalRows}.xlsx`,
+          mimeType:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          buffer,
+        },
+        commit: "false",
+      },
+    });
+    const elapsedMs = Math.round((performance.now() - startedAt) * 100) / 100;
+    expect(response.ok()).toBeTruthy();
+    const payload = (await response.json()).data as {
+      total: number;
+      duplicateWarningCount: number;
+    };
+    expect(payload.total).toBe(rowCount);
+    expect(payload.duplicateWarningCount).toBe(historicalRows);
+    console.log(
+      `[DUPLICATE_PRECHECK_PERF] rows=${rowCount} historicalRows=${historicalRows} requestMs=${elapsedMs}`,
+    );
+    return { buffer, elapsedMs };
+  };
+
+  for (const rowCount of [10, 100, 500, 1000]) {
+    await benchmark(rowCount);
+  }
+  const highDuplicate = await benchmark(1000, 500);
+
+  await page.goto("/tasks");
+  await openExcelImport(page);
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "dedup-perf-page-1000-500.xlsx",
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: highDuplicate.buffer,
+  });
+  const pageStartedAt = performance.now();
+  await page.getByRole("button", { name: "开始预检查" }).click();
+  await expect(page.getByText(/重复待确认 500 条/u)).toBeVisible();
+  console.log(
+    `[DUPLICATE_PRECHECK_PAGE_PERF] rows=1000 historicalRows=500 waitMs=${Math.round((performance.now() - pageStartedAt) * 100) / 100}`,
   );
 });

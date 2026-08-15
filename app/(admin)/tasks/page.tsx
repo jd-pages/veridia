@@ -72,6 +72,7 @@ import {
   taskExecutionFilterLabels,
   type TaskExecutionFilter,
 } from "@/lib/automation/task-execution-filter";
+import { duplicateReauditMetadataFromNotes } from "@/lib/import-task-metadata";
 
 interface Product {
   id: string;
@@ -210,6 +211,10 @@ interface ImportPreview {
   validCount: number;
   invalidCount: number;
   imported: number;
+  duplicateWarningCount: number;
+  pendingDuplicateCount: number;
+  confirmedDuplicateCount: number;
+  importableCount: number;
   batchId?: string | null;
   batchIds?: string[];
   auditBatchId?: string | null;
@@ -258,8 +263,41 @@ interface ImportPreview {
     productStage: string;
     stageGroup: string;
     errors: string[];
+    duplicateWarning?: {
+      status: "DUPLICATE_WARNING";
+      identity: string;
+      batchDuplicateOfRow: number | null;
+      historicalCount: number;
+      sourceTaskIds: string[];
+      latestHistory: DuplicateHistoryEntry | null;
+      confirmed: boolean;
+    };
   }>;
   errorRows: Array<ImportPreview["rows"][number]>;
+}
+
+interface DuplicateHistoryEntry {
+  taskId: string;
+  batchId: string | null;
+  batchName: string;
+  taskStatus: string;
+  createdAt: string;
+  auditedAt: string | null;
+  autoStatus: string | null;
+  manualResult: string | null;
+  manualReviewedAt: string | null;
+  productName: string;
+  brandName: string;
+  storeName: string;
+  campaignName: string;
+  productStage: string;
+  url: string;
+}
+
+function duplicateOverrideKey(row: ImportPreview["rows"][number]) {
+  return row.duplicateWarning
+    ? `${row.rowNumber}\u0000${row.duplicateWarning.identity}`
+    : "";
 }
 
 const activeBatchStatuses = new Set([
@@ -387,7 +425,7 @@ interface TaskPageLoadModules {
 }
 
 export default function TasksPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [products, setProducts] = useState<Product[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -459,12 +497,36 @@ export default function TasksPage() {
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [previewView, setPreviewView] = useState<"ERRORS" | "ALL">("ERRORS");
   const [previewPage, setPreviewPage] = useState(1);
+  const [duplicateOverrides, setDuplicateOverrides] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [duplicateHistory, setDuplicateHistory] = useState<{
+    open: boolean;
+    loading: boolean;
+    rows: DuplicateHistoryEntry[];
+  }>({ open: false, loading: false, rows: [] });
   const [importing, setImporting] = useState(false);
   const [templateDownloading, setTemplateDownloading] = useState(false);
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
   );
   const canOperate = canAccessBusiness(currentRole);
+  const locallyConfirmedDuplicateCount = useMemo(
+    () =>
+      (preview?.rows || []).filter(
+        (row) =>
+          row.errors.length === 0 &&
+          row.duplicateWarning &&
+          duplicateOverrides.has(duplicateOverrideKey(row)),
+      ).length,
+    [duplicateOverrides, preview],
+  );
+  const previewImportableCount =
+    (preview?.validCount || 0) + locallyConfirmedDuplicateCount;
+  const previewPendingDuplicateCount = Math.max(
+    0,
+    (preview?.pendingDuplicateCount || 0) - locallyConfirmedDuplicateCount,
+  );
 
   const loadTasksForBatches = useCallback(
     async (
@@ -972,11 +1034,23 @@ export default function TasksPage() {
       data.append("file", file);
       data.append("commit", String(commit));
       data.append("skipDuplicates", "true");
+      data.append(
+        "duplicateOverrides",
+        JSON.stringify(
+          (preview?.rows || [])
+            .filter((row) => duplicateOverrides.has(duplicateOverrideKey(row)))
+            .map((row) => ({
+              rowNumber: row.rowNumber,
+              identity: row.duplicateWarning!.identity,
+            })),
+        ),
+      );
       const result = await apiFetch<ImportPreview>("/api/import/notes", {
         method: "POST",
         body: data,
       });
       setPreview(result);
+      setDuplicateOverrides(new Set());
       setPreviewView("ERRORS");
       setPreviewPage(1);
       if (commit) {
@@ -1040,6 +1114,52 @@ export default function TasksPage() {
     } catch (error) {
       message.error(error instanceof Error ? error.message : "队列操作失败");
     }
+  };
+
+  const openDuplicateHistory = async (
+    url: string,
+    latestHistory?: DuplicateHistoryEntry | null,
+  ) => {
+    setDuplicateHistory({
+      open: true,
+      loading: true,
+      rows: latestHistory ? [latestHistory] : [],
+    });
+    try {
+      const history = await apiFetch<DuplicateHistoryEntry[]>(
+        `/api/tasks/duplicate-history?url=${encodeURIComponent(url)}`,
+        { cache: "no-store" },
+      );
+      setDuplicateHistory({ open: true, loading: false, rows: history });
+    } catch (error) {
+      setDuplicateHistory((current) => ({ ...current, loading: false }));
+      message.error(
+        error instanceof Error ? error.message : "历史审核读取失败",
+      );
+    }
+  };
+
+  const confirmDuplicateReaudit = (
+    row: ImportPreview["rows"][number],
+  ) => {
+    if (!row.duplicateWarning) return;
+    modal.confirm({
+      title: "确认仍然新增并重新审核？",
+      content: row.duplicateWarning.historicalCount
+        ? `该作品此前已审核 ${row.duplicateWarning.historicalCount} 次。本次确认只对当前导入有效，以后再次上传仍会提示重复。`
+        : row.duplicateWarning.sourceTaskIds.length
+          ? "该作品此前已进入过 VERIDIA，但尚无正式审核结果。本次确认只对当前导入有效，以后再次上传仍会提示重复。"
+          : `该作品与本文件第 ${row.duplicateWarning.batchDuplicateOfRow} 行相同。本次确认只对当前导入有效。`,
+      okText: "确认重新审核",
+      cancelText: "取消",
+      onOk: () => {
+        setDuplicateOverrides((current) => {
+          const next = new Set(current);
+          next.add(duplicateOverrideKey(row));
+          return next;
+        });
+      },
+    });
   };
 
   const requestClearSelectedBatch = () => {
@@ -1697,6 +1817,7 @@ export default function TasksPage() {
                     onChange={({ fileList: next }) => {
                       setFileList(next.slice(-1));
                       setPreview(null);
+                      setDuplicateOverrides(new Set());
                       setPreviewView("ERRORS");
                       setPreviewPage(1);
                     }}
@@ -1723,19 +1844,27 @@ export default function TasksPage() {
                       loading={importing}
                       disabled={
                         !preview ||
-                        preview.validCount === 0
+                        previewImportableCount === 0
                       }
                       onClick={() => void submitExcel(true)}
                     >
-                      导入并自动审核 {preview?.validCount || 0} 条
+                      导入并自动审核 {previewImportableCount} 条
                     </Button>
                   </Space>
                   {preview ? (
                     <>
                       <Alert
-                        type={preview.invalidCount ? "warning" : "success"}
+                        type={
+                          preview.invalidCount || previewPendingDuplicateCount
+                            ? "warning"
+                            : "success"
+                        }
                         showIcon
-                        message={`可导入 ${preview.validCount} 条，异常 ${preview.invalidCount} 条`}
+                        message={
+                          preview.duplicateWarningCount
+                            ? `可导入 ${previewImportableCount} 条，重复待确认 ${previewPendingDuplicateCount} 条，异常 ${preview.invalidCount} 条`
+                            : `可导入 ${previewImportableCount} 条，异常 ${preview.invalidCount} 条`
+                        }
                         description="预览阶段不会写入数据库；确认导入后使用事务创建任务。"
                       />
                       <Descriptions
@@ -1776,6 +1905,9 @@ export default function TasksPage() {
                         <Descriptions.Item label="数据行">
                           {preview.total} 条
                         </Descriptions.Item>
+                        <Descriptions.Item label="重复提醒">
+                          {preview.duplicateWarningCount || 0} 条
+                        </Descriptions.Item>
                         <Descriptions.Item label="小红书">
                           {preview.channelDistribution?.XIAOHONGSHU || 0} 条
                         </Descriptions.Item>
@@ -1805,16 +1937,24 @@ export default function TasksPage() {
                       ) : null}
                       <Space wrap>
                         <Alert
-                          type={preview.invalidCount ? "warning" : "success"}
+                          type={
+                            preview.invalidCount || preview.duplicateWarningCount
+                              ? "warning"
+                              : "success"
+                          }
                           showIcon
                           message={
-                            preview.invalidCount
+                            preview.duplicateWarningCount
                               ? previewView === "ERRORS"
-                                ? `当前仅显示异常记录，共 ${preview.invalidCount} 条。`
+                                ? `当前显示需处理记录：重复提醒 ${preview.duplicateWarningCount} 条，异常 ${preview.invalidCount} 条。`
                                 : `当前显示全部预检记录，共 ${preview.total} 条。`
-                              : previewView === "ERRORS"
-                                ? "预检查通过，无异常记录"
-                                : `当前显示全部预检记录，共 ${preview.total} 条。`
+                              : preview.invalidCount
+                                ? previewView === "ERRORS"
+                                  ? `当前仅显示异常记录，共 ${preview.invalidCount} 条。`
+                                  : `当前显示全部预检记录，共 ${preview.total} 条。`
+                                : previewView === "ERRORS"
+                                  ? "预检查通过，无异常记录"
+                                  : `当前显示全部预检记录，共 ${preview.total} 条。`
                           }
                         />
                         <Button
@@ -1991,7 +2131,7 @@ export default function TasksPage() {
                             title: "预检结果",
                             dataIndex: "errors",
                             width: 220,
-                            render: (errors: string[]) =>
+                            render: (errors: string[], row) =>
                               errors.length ? (
                                 <span
                                   className={`${styles.errorText} ${styles.previewResult}`}
@@ -1999,6 +2139,45 @@ export default function TasksPage() {
                                 >
                                   {errors.join("；")}
                                 </span>
+                              ) : row.duplicateWarning ? (
+                                <Space direction="vertical" size={6}>
+                                  {row.duplicateWarning.historicalCount ? (
+                                    <Tag color="orange">
+                                      历史重复 · 已审核 {row.duplicateWarning.historicalCount} 次
+                                    </Tag>
+                                  ) : row.duplicateWarning.sourceTaskIds.length ? (
+                                    <Tag color="orange">历史任务重复 · 尚未完成审核</Tag>
+                                  ) : null}
+                                  {row.duplicateWarning.batchDuplicateOfRow ? (
+                                    <Tag color="orange">
+                                      本批次重复 · 与第 {row.duplicateWarning.batchDuplicateOfRow} 行相同
+                                    </Tag>
+                                  ) : null}
+                                  {row.duplicateWarning.sourceTaskIds.length ? (
+                                    <Button
+                                      type="link"
+                                      size="small"
+                                      onClick={() =>
+                                        void openDuplicateHistory(
+                                          row.url,
+                                          row.duplicateWarning?.latestHistory,
+                                        )
+                                      }
+                                    >
+                                      查看历史审核
+                                    </Button>
+                                  ) : null}
+                                  {duplicateOverrides.has(duplicateOverrideKey(row)) ? (
+                                    <Tag color="blue">已确认重新审核</Tag>
+                                  ) : (
+                                    <Button
+                                      size="small"
+                                      onClick={() => confirmDuplicateReaudit(row)}
+                                    >
+                                      仍然新增并重新审核
+                                    </Button>
+                                  )}
+                                </Space>
                               ) : (
                                 <GovernanceStatus value="PASSED" domain="audit" />
                               ),
@@ -2655,16 +2834,28 @@ export default function TasksPage() {
               dataIndex: "url",
               width: 360,
               ellipsis: true,
-              render: (value: string, row: Task) => (
-                <div className={styles.noteCell}>
-                  <a href={value} target="_blank" rel="noreferrer">
-                    {value}
-                  </a>
-                  {row.finalUrl && row.finalUrl !== value ? (
-                    <span>{pageLinkLabels.FINAL} · {row.finalUrl}</span>
-                  ) : null}
-                </div>
-              ),
+              render: (value: string, row: Task) => {
+                const duplicate = duplicateReauditMetadataFromNotes(row.notes);
+                return (
+                  <div className={styles.noteCell}>
+                    <a href={value} target="_blank" rel="noreferrer">
+                      {value}
+                    </a>
+                    {row.finalUrl && row.finalUrl !== value ? (
+                      <span>{pageLinkLabels.FINAL} · {row.finalUrl}</span>
+                    ) : null}
+                    {duplicate ? (
+                      <Button
+                        type="link"
+                        size="small"
+                        onClick={() => void openDuplicateHistory(row.url)}
+                      >
+                        重复重审 · 历史 {duplicate.historicalCount} 次
+                      </Button>
+                    ) : null}
+                  </div>
+                );
+              },
             },
             {
               title: "产品",
@@ -2738,6 +2929,49 @@ export default function TasksPage() {
           />
         )}
       </Card>
+      <Modal
+        title={`历史审核 ${duplicateHistory.rows.length} 次`}
+        open={duplicateHistory.open}
+        footer={null}
+        width={960}
+        destroyOnHidden
+        onCancel={() =>
+          setDuplicateHistory({ open: false, loading: false, rows: [] })
+        }
+      >
+        <Table<DuplicateHistoryEntry>
+          rowKey="taskId"
+          loading={duplicateHistory.loading}
+          size="small"
+          pagination={false}
+          scroll={{ x: 1200 }}
+          dataSource={duplicateHistory.rows}
+          columns={[
+            { title: "审核时间", dataIndex: "auditedAt", width: 170, render: formatDateTime },
+            {
+              title: "审核结果",
+              width: 140,
+              render: (_value, row) => row.manualResult || row.autoStatus || row.taskStatus,
+            },
+            { title: "产品", dataIndex: "productName", width: 140 },
+            { title: "品牌", dataIndex: "brandName", width: 120 },
+            { title: "店铺", dataIndex: "storeName", width: 150 },
+            { title: "活动", dataIndex: "campaignName", width: 220 },
+            { title: "阶段", dataIndex: "productStage", width: 120 },
+            { title: "批次", dataIndex: "batchName", width: 170 },
+            { title: "任务 ID", dataIndex: "taskId", width: 220 },
+            {
+              title: "作品链接",
+              dataIndex: "url",
+              width: 120,
+              fixed: "right",
+              render: (value: string) => (
+                <a href={value} target="_blank" rel="noreferrer">查看作品</a>
+              ),
+            },
+          ]}
+        />
+      </Modal>
       <Modal
         title="清除当前批次？"
         open={Boolean(batchPendingClear)}

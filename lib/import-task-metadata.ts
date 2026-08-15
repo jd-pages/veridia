@@ -23,7 +23,19 @@ export interface ImportedTemplateMetadata {
   rawValues: KabritaRawValues | Partial<Record<StandardField, string>>;
 }
 
+export interface DuplicateReauditMetadata {
+  identity: string;
+  historicalCount: number;
+  confirmedAt: string;
+  confirmedByUserId: string;
+  confirmedByDisplayName: string;
+  sourceTaskIds: string[];
+  automaticResult?: string;
+}
+
 const STRUCTURED_METADATA_PREFIX = "VERIDIA_IMPORT_METADATA_JSON：";
+const DUPLICATE_REAUDIT_METADATA_PREFIX =
+  "VERIDIA_DUPLICATE_REAUDIT_JSON：";
 
 const LABELS: Record<keyof ImportedTaskMetadata, string> = {
   platform: "平台：",
@@ -97,6 +109,83 @@ export function importedTemplateMetadataFromNotes(
   } catch {
     return null;
   }
+}
+
+export function duplicateReauditMetadataFromNotes(
+  notes: unknown,
+): DuplicateReauditMetadata | null {
+  const line = String(notes ?? "")
+    .split(/\r?\n/gu)
+    .find((candidate) =>
+      candidate.trim().startsWith(DUPLICATE_REAUDIT_METADATA_PREFIX),
+    );
+  if (!line) return null;
+  try {
+    const parsed = JSON.parse(
+      line.trim().slice(DUPLICATE_REAUDIT_METADATA_PREFIX.length),
+    ) as Partial<DuplicateReauditMetadata>;
+    if (
+      !parsed.identity?.trim() ||
+      !Number.isInteger(parsed.historicalCount) ||
+      Number(parsed.historicalCount) < 0 ||
+      !parsed.confirmedAt ||
+      !parsed.confirmedByUserId ||
+      !Array.isArray(parsed.sourceTaskIds)
+    ) {
+      return null;
+    }
+    return {
+      identity: parsed.identity.trim(),
+      historicalCount: Number(parsed.historicalCount),
+      confirmedAt: String(parsed.confirmedAt),
+      confirmedByUserId: String(parsed.confirmedByUserId),
+      confirmedByDisplayName: String(parsed.confirmedByDisplayName || ""),
+      sourceTaskIds: parsed.sourceTaskIds.map(String),
+      ...(parsed.automaticResult
+        ? { automaticResult: String(parsed.automaticResult) }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function withDuplicateReauditMetadata(
+  notes: unknown,
+  metadata: DuplicateReauditMetadata,
+) {
+  const retained = String(notes ?? "")
+    .split(/\r?\n/gu)
+    .filter(
+      (line) =>
+        !line.trim().startsWith(DUPLICATE_REAUDIT_METADATA_PREFIX),
+    )
+    .join("\n")
+    .trim();
+  const structured = `${DUPLICATE_REAUDIT_METADATA_PREFIX}${JSON.stringify(metadata)}`;
+  return [retained, structured].filter(Boolean).join("\n");
+}
+
+export function resolveDuplicateReauditAutomaticOutcome(
+  notes: unknown,
+  automaticResult: string,
+) {
+  const metadata = duplicateReauditMetadataFromNotes(notes);
+  if (!metadata) {
+    return {
+      isDuplicateReaudit: false,
+      persistedAutoStatus: automaticResult,
+      notes: String(notes ?? "") || null,
+    };
+  }
+  return {
+    isDuplicateReaudit: true,
+    persistedAutoStatus: "NEEDS_REVIEW",
+    notes: withDuplicateReauditMetadata(notes, {
+      ...metadata,
+      automaticResult,
+    }),
+  };
 }
 
 export function importedPublishTimeValue(value: unknown): Date | string {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Tooltip, Typography } from "antd";
+import { Tag, Tooltip, Typography } from "antd";
 import { productStageTopicLabel } from "@/lib/product-stage";
 import {
   auditConclusionCardLabel,
@@ -12,6 +12,7 @@ import { isUnavailableNoteResult } from "@/lib/result-display";
 import { resultDetailLinks } from "@/lib/result-links";
 import { parseStoredStringArray } from "@/lib/stored-json";
 import { formatPlatformPublishedAt } from "@/lib/platform-published-at";
+import { duplicateReauditMetadataFromNotes } from "@/lib/import-task-metadata";
 import {
   commercePlatformLabel,
   contentChannelLabel,
@@ -102,6 +103,7 @@ export default function AuditDecisionSummary({
     row.ruleSnapshot,
   );
   const reviews = detail?.manualReviews || row.manualReviews;
+  const duplicateReaudit = duplicateReauditMetadataFromNotes(row.task.notes);
   const basicRewardRule = detail?.ruleResults.find(
     (item) => item.ruleKey === "KABRITA_BASIC_REWARD",
   );
@@ -147,7 +149,20 @@ export default function AuditDecisionSummary({
           </span>
           <span className={styles.decisionEyebrow}>审核结论</span>
           <strong className={styles.decisionTitle}>{conclusion}</strong>
+          {duplicateReaudit ? (
+            <Tag color="orange">
+              重复重审 · 历史 {duplicateReaudit.historicalCount} 次
+            </Tag>
+          ) : null}
         </div>
+        {duplicateReaudit ? (
+          <div className={styles.cellSecondary}>
+            自动结果：{auditStatusText(duplicateReaudit.automaticResult)}；
+            {reviews[0]
+              ? `人工最终结果：${reviews[0].result === "PASSED" ? "通过" : reviews[0].result === "FAILED" ? "不通过" : "待确认"}`
+              : "等待人工最终确认"}
+          </div>
+        ) : null}
         <div className={styles.decisionOwnership}>
           <div>
             <span>产品</span>
