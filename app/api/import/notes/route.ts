@@ -23,6 +23,7 @@ import { getActiveImportExportTemplates } from "@/lib/import-export-templates/co
 import {
   detectLocalSourceType,
   parseTabularPreview,
+  type TabularParsePerformance,
 } from "@/lib/import-export-templates/tabular";
 import { selectImportPreviewRows } from "@/lib/import-preview";
 import {
@@ -39,8 +40,10 @@ import {
   importedAuditTaskDuplicateMessage,
 } from "@/lib/audit-task-deduplication";
 import {
+  normalizeProductMatchKey,
   productResolutionError,
   resolveProductReference,
+  type ProductResolution,
 } from "@/lib/product-matching";
 import { buildImportedTaskNotes } from "@/lib/import-task-metadata";
 import {
@@ -52,6 +55,7 @@ import {
   contentChannelLabel,
 } from "@/lib/result-source";
 import {
+  normalizeStoreNameForMatch,
   resolveStoreTopicConfig,
   type StoreMappingStatus,
 } from "@/lib/store-topic-config";
@@ -101,14 +105,125 @@ interface CheckedRow {
 
 const IMPORT_PREVIEW_ROW_LIMIT = 100;
 
+interface SlowPrecheckRow {
+  rowNumber: number;
+  totalMs: number;
+  slowestStage: string;
+  slowestStageMs: number;
+}
+
+interface PrecheckPerformance {
+  startedAt: number;
+  formDataMs: number;
+  fileReadMs: number;
+  excelParseMs: number;
+  worksheetParseMs: number;
+  headerRecognitionMs: number;
+  rowConversionMs: number;
+  productMatchMs: number;
+  activityMatchMs: number;
+  ruleMatchMs: number;
+  urlMs: number;
+  databaseMs: number;
+  dbQueryCount: number;
+  browserMs: number;
+  networkMs: number;
+  rowValidationMs: number;
+  worksheetRowCount: number;
+  effectiveWorksheetRowCount: number;
+  effectiveWorksheetColumnCount: number;
+  slowestRows: SlowPrecheckRow[];
+  dbBreakdown: Record<string, number>;
+}
+
+function roundedMs(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function logPrecheckPerformance(
+  metrics: PrecheckPerformance,
+  rowCount: number,
+  outcome: "PASSED" | "FAILED",
+) {
+  const totalMs = performance.now() - metrics.startedAt;
+  console.info(
+    [
+      "[PRECHECK_PERF]",
+      `outcome=${outcome}`,
+      `formDataMs=${roundedMs(metrics.formDataMs)}`,
+      `fileReadMs=${roundedMs(metrics.fileReadMs)}`,
+      `excelParseMs=${roundedMs(metrics.excelParseMs)}`,
+      `worksheetParseMs=${roundedMs(metrics.worksheetParseMs)}`,
+      `headerRecognitionMs=${roundedMs(metrics.headerRecognitionMs)}`,
+      `rowConversionMs=${roundedMs(metrics.rowConversionMs)}`,
+      `rowCount=${rowCount}`,
+      `dbQueryCount=${metrics.dbQueryCount}`,
+      `dbMs=${roundedMs(metrics.databaseMs)}`,
+      `ruleMatchMs=${roundedMs(metrics.ruleMatchMs)}`,
+      `productMatchMs=${roundedMs(metrics.productMatchMs)}`,
+      `activityMatchMs=${roundedMs(metrics.activityMatchMs)}`,
+      `urlMs=${roundedMs(metrics.urlMs)}`,
+      `browserMs=${metrics.browserMs}`,
+      `networkMs=${metrics.networkMs}`,
+      `rowValidationMs=${roundedMs(metrics.rowValidationMs)}`,
+      `worksheetRows=${metrics.worksheetRowCount}`,
+      `effectiveWorksheetRows=${metrics.effectiveWorksheetRowCount}`,
+      `effectiveWorksheetColumns=${metrics.effectiveWorksheetColumnCount}`,
+      `totalMs=${roundedMs(totalMs)}`,
+      `dbBreakdown=${JSON.stringify(metrics.dbBreakdown)}`,
+      `slowestRows=${JSON.stringify(metrics.slowestRows)}`,
+    ].join(" "),
+  );
+}
+
 function dateLabel(value: Date) {
   return value.toISOString().slice(0, 10);
 }
 
 export async function POST(request: Request) {
+  const perf: PrecheckPerformance = {
+    startedAt: performance.now(),
+    formDataMs: 0,
+    fileReadMs: 0,
+    excelParseMs: 0,
+    worksheetParseMs: 0,
+    headerRecognitionMs: 0,
+    rowConversionMs: 0,
+    productMatchMs: 0,
+    activityMatchMs: 0,
+    ruleMatchMs: 0,
+    urlMs: 0,
+    databaseMs: 0,
+    dbQueryCount: 0,
+    browserMs: 0,
+    networkMs: 0,
+    rowValidationMs: 0,
+    worksheetRowCount: 0,
+    effectiveWorksheetRowCount: 0,
+    effectiveWorksheetColumnCount: 0,
+    slowestRows: [],
+    dbBreakdown: {},
+  };
+  let measuredRowCount = 0;
+  let performanceLogged = false;
+  const measureDatabase = async <T>(label: string, operation: () => Promise<T>) => {
+    const started = performance.now();
+    perf.dbQueryCount += 1;
+    try {
+      return await operation();
+    } finally {
+      const elapsed = performance.now() - started;
+      perf.databaseMs += elapsed;
+      perf.dbBreakdown[label] = roundedMs(
+        (perf.dbBreakdown[label] || 0) + elapsed,
+      );
+    }
+  };
   const user = await requireApiUser(BUSINESS_ROLES);
   if (user instanceof Response) return user;
+  const formDataStarted = performance.now();
   const form = await request.formData();
+  perf.formDataMs = performance.now() - formDataStarted;
   const file = form.get("file");
   const commit = form.get("commit") === "true";
   const skipDuplicates = form.get("skipDuplicates") !== "false";
@@ -123,29 +238,63 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { templates } = await getActiveImportExportTemplates();
+    const fileReadStarted = performance.now();
+    const [templateState, fileBuffer] = await Promise.all([
+      measureDatabase("templateConfig", () => getActiveImportExportTemplates()),
+      file.arrayBuffer().finally(() => {
+        perf.fileReadMs = performance.now() - fileReadStarted;
+      }),
+    ]);
+    const { templates } = templateState;
     const sourceType = detectLocalSourceType(file.name, declaredTencentExport);
-    const tabular = await parseTabularPreview({
-      bytes: new Uint8Array(await file.arrayBuffer()),
-      fileName: file.name,
-      sourceType,
-      templates,
-    });
+    let tabularPerformance: TabularParsePerformance | undefined;
+    const [tabular, activeProducts, activeStoreTopicRules, rawCampaigns] =
+      await Promise.all([
+        parseTabularPreview({
+          bytes: new Uint8Array(fileBuffer),
+          fileName: file.name,
+          sourceType,
+          templates,
+          onPerformance: (measurement) => {
+            tabularPerformance = measurement;
+          },
+        }),
+        measureDatabase("products", () =>
+          prisma.product.findMany({
+            where: { status: "ACTIVE", deletedAt: null },
+            include: { aliases: { select: { alias: true } } },
+          }),
+        ),
+        measureDatabase("storeTopicRules", () => loadActiveStoreTopicRules()),
+        measureDatabase("campaigns", () =>
+          prisma.campaign.findMany({
+            include: {
+              products: { select: { productId: true } },
+              topicRules: {
+                where: { status: "ACTIVE" },
+                select: { contentChannel: true },
+              },
+            },
+          }),
+        ),
+      ]);
+    if (tabularPerformance) {
+      perf.excelParseMs = tabularPerformance.excelParseMs;
+      perf.worksheetParseMs = tabularPerformance.worksheetParseMs;
+      perf.headerRecognitionMs = tabularPerformance.headerRecognitionMs;
+      perf.rowConversionMs = tabularPerformance.rowConversionMs;
+      perf.worksheetRowCount = tabularPerformance.worksheetRowCount;
+      perf.effectiveWorksheetRowCount =
+        tabularPerformance.effectiveWorksheetRowCount;
+      perf.effectiveWorksheetColumnCount =
+        tabularPerformance.effectiveWorksheetColumnCount;
+    }
+    measuredRowCount = tabular.rows.length;
     const rows: CheckedRow[] = [];
     const seen = new Set<string>();
     const isKabritaTemplate = tabular.templateBrand === KABRITA_BRAND_NAME;
     const isDanoneAgencyTemplate = tabular.templateType === "DANONE_AGENCY";
-    const activeProducts = await prisma.product.findMany({
-      where: { status: "ACTIVE", deletedAt: null },
-      include: { aliases: { select: { alias: true } } },
-    });
-    const activeStoreTopicRules = await loadActiveStoreTopicRules();
-    const campaignCandidates = (await prisma.campaign.findMany({
-      include: {
-        products: { select: { productId: true } },
-        topicRules: { where: { status: "ACTIVE" }, select: { contentChannel: true } },
-      },
-    })).map((campaign) => ({
+    const campaignCandidates = rawCampaigns.map((campaign) => ({
       id: campaign.id,
       name: campaign.name,
       month: campaign.month,
@@ -156,14 +305,54 @@ export async function POST(request: Request) {
       productId: campaign.productId,
       productIds: campaign.products.map((item) => item.productId),
       contentChannel: campaign.contentChannel,
-      ruleChannels: campaign.topicRules.map((rule) => rule.contentChannel),
+      ruleCount: campaign.topicRules.filter((rule) =>
+        [campaign.contentChannel, "ALL"].includes(rule.contentChannel),
+      ).length,
     }));
+    const allStageRules = campaignCandidates.length
+      ? await measureDatabase("stageRules", () =>
+          prisma.topicRule.findMany({
+            where: {
+              campaignId: { in: campaignCandidates.map((campaign) => campaign.id) },
+              topicCategory: "PRODUCT_STAGE",
+              status: "ACTIVE",
+            },
+            select: {
+              brandName: true,
+              campaignId: true,
+              productId: true,
+              contentChannel: true,
+              applicableStage: true,
+              milkType: true,
+            },
+          }),
+        )
+      : [];
     const stageRulesCache = new Map<
       string,
       Array<{ applicableStage: string | null; milkType: string | null }>
     >();
+    const matchingProducts = isKabritaTemplate
+      ? activeProducts.filter(
+          (product) => product.brandName.trim() === KABRITA_BRAND_NAME,
+        )
+      : activeProducts;
+    const productResolutionCache = new Map<
+      string,
+      ProductResolution<(typeof activeProducts)[number]>
+    >();
+    const storeResolutionCache = new Map<
+      string,
+      ReturnType<typeof resolveStoreTopicConfig>
+    >();
+    const campaignResolutionCache = new Map<
+      string,
+      ReturnType<typeof resolveImportedActivity>
+    >();
 
     for (const parsed of tabular.rows) {
+      const rowStarted = performance.now();
+      const rowStages: Record<string, number> = {};
       const values = parsed.values;
       const originalLinkContent =
         (isKabritaTemplate
@@ -184,24 +373,35 @@ export async function POST(request: Request) {
           ? values.channel
           : values.commercePlatform || values.platform) || "",
       ).trim();
-      const storeResolution = resolveStoreTopicConfig(
-        activeStoreTopicRules,
-        {
+      const storeMatchStarted = performance.now();
+      const storeResolutionKey = [
+        importedCommercePlatform,
+        normalizeStoreNameForMatch(importedStoreName),
+      ].join("\u0000");
+      let storeResolution = storeResolutionCache.get(storeResolutionKey);
+      if (!storeResolution) {
+        storeResolution = resolveStoreTopicConfig(activeStoreTopicRules, {
           storeName: importedStoreName,
           commercePlatform: importedCommercePlatform,
-        },
-      );
+        });
+        storeResolutionCache.set(storeResolutionKey, storeResolution);
+      }
+      rowStages.storeMatchMs = performance.now() - storeMatchStarted;
+      perf.ruleMatchMs += rowStages.storeMatchMs;
       const purchaseProductLine = isKabritaTemplate
         ? values.purchaseProductLine || ""
         : "";
       const agencyProductStage = isDanoneAgencyTemplate
         ? inferDanoneAgencyProductStage(values.productName)
         : null;
+      const urlStarted = performance.now();
       const linkResolution = resolveImportedNoteLink({
         rawContent: originalLinkContent,
         hyperlinkTarget,
         declaredChannel,
       });
+      rowStages.urlMs = performance.now() - urlStarted;
+      perf.urlMs += rowStages.urlMs;
       const checked: CheckedRow = {
         rowNumber: parsed.rowNumber,
         url: linkResolution.url,
@@ -296,16 +496,23 @@ export async function POST(request: Request) {
         if (seen.has(identity)) checked.errors.push("文件内存在重复链接");
         seen.add(identity);
       }
-      const matchingProducts = isKabritaTemplate
-        ? activeProducts.filter(
-            (product) => product.brandName.trim() === KABRITA_BRAND_NAME,
-          )
-        : activeProducts;
-      const productResolution = resolveProductReference(matchingProducts, {
-        code: checked.productCode,
-        name:
-          agencyProductStage?.normalizedProductName || checked.productName,
-      });
+      const productMatchStarted = performance.now();
+      const productInputName =
+        agencyProductStage?.normalizedProductName || checked.productName;
+      const productResolutionKey = [
+        normalizeProductMatchKey(checked.productCode),
+        normalizeProductMatchKey(productInputName),
+      ].join("\u0000");
+      let productResolution = productResolutionCache.get(productResolutionKey);
+      if (!productResolution) {
+        productResolution = resolveProductReference(matchingProducts, {
+          code: checked.productCode,
+          name: productInputName,
+        });
+        productResolutionCache.set(productResolutionKey, productResolution);
+      }
+      rowStages.productMatchMs = performance.now() - productMatchStarted;
+      perf.productMatchMs += rowStages.productMatchMs;
       const product =
         productResolution.status === "MATCHED"
           ? productResolution.product
@@ -321,17 +528,32 @@ export async function POST(request: Request) {
         }
       }
 
-      const campaignResolution = resolveImportedActivity({
-        activityName: checked.importedCampaignName,
-        productId: product?.id,
-        contentChannel: checked.channel === "DOUYIN" ? "DOUYIN" : "XIAOHONGSHU",
-        candidates: campaignCandidates.map((candidate) => ({
-          ...candidate,
-          ruleCount: candidate.ruleChannels.filter((channel) =>
-            [candidate.contentChannel, "ALL"].includes(channel),
-          ).length,
-        })),
-      });
+      const activityMatchStarted = performance.now();
+      const activityChannel = checked.channel === "DOUYIN"
+        ? "DOUYIN"
+        : "XIAOHONGSHU";
+      const campaignResolutionKey = [
+        checked.importedCampaignName,
+        product?.id || "",
+        activityChannel,
+      ].join("\u0000");
+      let campaignResolution = campaignResolutionCache.get(
+        campaignResolutionKey,
+      );
+      if (!campaignResolution) {
+        campaignResolution = resolveImportedActivity({
+          activityName: checked.importedCampaignName,
+          productId: product?.id,
+          contentChannel: activityChannel,
+          candidates: campaignCandidates,
+        });
+        campaignResolutionCache.set(
+          campaignResolutionKey,
+          campaignResolution,
+        );
+      }
+      rowStages.activityMatchMs = performance.now() - activityMatchStarted;
+      perf.activityMatchMs += rowStages.activityMatchMs;
       checked.campaignMatchStatus = campaignResolution.status;
       const campaign = campaignResolution.campaign;
       if (campaignResolution.error) {
@@ -347,6 +569,7 @@ export async function POST(request: Request) {
         checked.campaignId = campaign.id;
       }
 
+      const ruleMatchStarted = performance.now();
       const usesDetailedProductStages = Boolean(
         !isKabritaTemplate &&
         (isDanoneAgencyTemplate
@@ -402,28 +625,24 @@ export async function POST(request: Request) {
       const stageRulesKey = campaign && product
         ? `${campaign.id}\u0000${product.id}\u0000${checked.channel}`
         : "";
-      let stageRules = stageRulesCache.get(stageRulesKey) || [];
+      let matchingStageRules = stageRulesCache.get(stageRulesKey) || [];
       if (
         campaign &&
         product?.brandName.trim() &&
         !stageRulesCache.has(stageRulesKey)
       ) {
-        stageRules = await prisma.topicRule.findMany({
-          where: {
-            brandName: product.brandName,
-            campaignId: campaign.id,
-            OR: [{ productId: null }, { productId: product.id }],
-            topicCategory: "PRODUCT_STAGE",
-            status: "ACTIVE",
-            contentChannel: { in: [checked.channel, "ALL"] },
-          },
-          select: { applicableStage: true, milkType: true },
-        });
-        stageRulesCache.set(stageRulesKey, stageRules);
+        matchingStageRules = allStageRules.filter(
+          (rule) =>
+            rule.brandName === product.brandName &&
+            rule.campaignId === campaign.id &&
+            (rule.productId === null || rule.productId === product.id) &&
+            [checked.channel, "ALL"].includes(rule.contentChannel),
+        );
+        stageRulesCache.set(stageRulesKey, matchingStageRules);
       }
       const compatibleStages = compatibleStageRuleValues(importedStage);
       const stageRule = importedStage
-        ? stageRules.find(
+        ? matchingStageRules.find(
             (rule) => compatibleStages.includes(rule.applicableStage || ""),
           )
         : null;
@@ -442,16 +661,38 @@ export async function POST(request: Request) {
         );
       }
       checked.milkType = stageRule?.milkType || undefined;
+      rowStages.stageRuleMatchMs = performance.now() - ruleMatchStarted;
+      perf.ruleMatchMs += rowStages.stageRuleMatchMs;
       checked.errors = [...new Set(checked.errors)];
       rows.push(checked);
+      const rowTotalMs = performance.now() - rowStarted;
+      perf.rowValidationMs += rowTotalMs;
+      const [slowestStage, slowestStageMs] = Object.entries(rowStages).reduce(
+        (slowest, current) => current[1] > slowest[1] ? current : slowest,
+        ["rowSetupMs", 0] as [string, number],
+      );
+      perf.slowestRows.push({
+        rowNumber: parsed.rowNumber,
+        totalMs: roundedMs(rowTotalMs),
+        slowestStage,
+        slowestStageMs: roundedMs(slowestStageMs),
+      });
+      perf.slowestRows.sort((left, right) => right.totalMs - left.totalMs);
+      if (perf.slowestRows.length > 10) perf.slowestRows.length = 10;
     }
 
-    const duplicateCandidates = rows
-      .filter((row) => row.url && row.campaignId)
-      .map((row) => row.url);
-    const blockingTasks = await findBlockingAuditTasks({
-      urls: duplicateCandidates,
-    });
+    const duplicateCandidates = [
+      ...new Set(
+        rows
+          .filter((row) => row.url && row.campaignId)
+          .map((row) => row.url),
+      ),
+    ];
+    const blockingTasks = duplicateCandidates.length
+      ? await measureDatabase("duplicateTasks", () =>
+          findBlockingAuditTasks({ urls: duplicateCandidates }),
+        )
+      : new Map<string, never>();
     for (const row of rows) {
       if (blockingTasks.has(row.url)) {
         row.errors = [
@@ -605,6 +846,10 @@ export async function POST(request: Request) {
       IMPORT_PREVIEW_ROW_LIMIT,
     );
 
+    if (!commit) {
+      logPrecheckPerformance(perf, rows.length, "PASSED");
+      performanceLogged = true;
+    }
     return ok({
       ...tabular,
       missingRequiredFields: tabular.missingRequiredFields.map(
@@ -631,6 +876,9 @@ export async function POST(request: Request) {
       ...previewSelection,
     });
   } catch (error) {
+    if (!commit && !performanceLogged) {
+      logPrecheckPerformance(perf, measuredRowCount, "FAILED");
+    }
     return fail(
       error instanceof Error ? error.message : "无法读取表格",
     );

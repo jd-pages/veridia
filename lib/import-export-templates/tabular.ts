@@ -29,10 +29,30 @@ type ParsedMatrix = {
   matrix: Matrix;
   hyperlinks: Map<string, string>;
   templateType?: ImportTemplateType;
+  performance: {
+    excelParseMs: number;
+    worksheetParseMs: number;
+    worksheetRowCount: number;
+    effectiveWorksheetRowCount: number;
+    effectiveWorksheetColumnCount: number;
+  };
 };
+
+export interface TabularParsePerformance {
+  excelParseMs: number;
+  worksheetParseMs: number;
+  headerRecognitionMs: number;
+  rowConversionMs: number;
+  worksheetRowCount: number;
+  effectiveWorksheetRowCount: number;
+  effectiveWorksheetColumnCount: number;
+}
 
 const cellKey = (rowIndex: number, columnIndex: number) =>
   `${rowIndex}:${columnIndex}`;
+
+const widestRow = (matrix: Matrix) =>
+  matrix.reduce((maximum, row) => Math.max(maximum, row.length), 0);
 
 function csvMatrix(bytes: Uint8Array): Matrix {
   const source = Buffer.from(bytes).toString("utf8").replace(/^\uFEFF/u, "");
@@ -89,21 +109,44 @@ function excelCellText(cell: ExcelJS.Cell, preferHyperlink = false) {
   return cell.text.trim();
 }
 
-async function xlsxMatrix(bytes: Uint8Array): Promise<ParsedMatrix> {
+async function xlsxMatrix(
+  bytes: Uint8Array,
+  maximumRelevantRows: number,
+): Promise<ParsedMatrix> {
   const workbook = new ExcelJS.Workbook();
+  const excelParseStarted = performance.now();
   await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  const excelParseMs = performance.now() - excelParseStarted;
   const sheet = workbook.worksheets[0];
   if (!sheet) throw new Error("无法读取表格：工作簿中没有工作表");
+  const worksheetParseStarted = performance.now();
   const rows: Matrix = [];
   const hyperlinks = new Map<string, string>();
-  for (let rowNumber = 1; rowNumber <= sheet.rowCount; rowNumber += 1) {
+  let lastMeaningfulRow = 0;
+  sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    if (row.hasValues) lastMeaningfulRow = Math.max(lastMeaningfulRow, rowNumber);
+  });
+  const effectiveWorksheetRowCount = Math.min(
+    lastMeaningfulRow,
+    maximumRelevantRows,
+  );
+  let effectiveWorksheetColumnCount = 0;
+  for (
+    let rowNumber = 1;
+    rowNumber <= effectiveWorksheetRowCount;
+    rowNumber += 1
+  ) {
     const row = sheet.getRow(rowNumber);
     const values: string[] = [];
-    for (
-      let columnNumber = 1;
-      columnNumber <= Math.max(sheet.columnCount, row.cellCount);
-      columnNumber += 1
-    ) {
+    let lastMeaningfulColumn = 0;
+    row.eachCell({ includeEmpty: false }, (_cell, columnNumber) => {
+      lastMeaningfulColumn = Math.max(lastMeaningfulColumn, columnNumber);
+    });
+    effectiveWorksheetColumnCount = Math.max(
+      effectiveWorksheetColumnCount,
+      lastMeaningfulColumn,
+    );
+    for (let columnNumber = 1; columnNumber <= lastMeaningfulColumn; columnNumber += 1) {
       const cell = row.getCell(columnNumber);
       values.push(excelCellText(cell));
       if (
@@ -126,10 +169,18 @@ async function xlsxMatrix(bytes: Uint8Array): Promise<ParsedMatrix> {
     matrix: rows,
     hyperlinks,
     templateType: isImportTemplateType(metadataType) ? metadataType : undefined,
+    performance: {
+      excelParseMs,
+      worksheetParseMs: performance.now() - worksheetParseStarted,
+      worksheetRowCount: sheet.rowCount,
+      effectiveWorksheetRowCount,
+      effectiveWorksheetColumnCount,
+    },
   };
 }
 
 function legacyExcelMatrix(bytes: Uint8Array): ParsedMatrix {
+  const excelParseStarted = performance.now();
   const workbook = XLSX.read(bytes, { type: "array", cellDates: true });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   if (!sheet) throw new Error("无法读取表格：工作簿中没有工作表");
@@ -150,7 +201,17 @@ function legacyExcelMatrix(bytes: Uint8Array): ParsedMatrix {
       }
     }
   }
-  return { matrix, hyperlinks };
+  return {
+    matrix,
+    hyperlinks,
+    performance: {
+      excelParseMs: performance.now() - excelParseStarted,
+      worksheetParseMs: 0,
+      worksheetRowCount: matrix.length,
+      effectiveWorksheetRowCount: matrix.length,
+      effectiveWorksheetColumnCount: widestRow(matrix),
+    },
+  };
 }
 
 function aliasIndex(templates: ImportExportTemplates) {
@@ -252,6 +313,7 @@ export async function parseTabularPreview(input: {
   fileName: string;
   sourceType: LocalTabularSourceType;
   templates: ImportExportTemplates;
+  onPerformance?: (performance: TabularParsePerformance) => void;
 }): Promise<TabularPreview> {
   const { bytes, sourceType, templates } = input;
   if (!bytes.byteLength) throw new Error("文件为空");
@@ -265,10 +327,28 @@ export async function parseTabularPreview(input: {
     parsedMatrix =
       sourceType === "CSV" ||
       sourceType === "TENCENT_DOCS_EXPORTED_CSV"
-        ? { matrix: csvMatrix(bytes), hyperlinks: new Map() }
+        ? (() => {
+            const started = performance.now();
+            const matrix = csvMatrix(bytes);
+            return {
+              matrix,
+              hyperlinks: new Map<string, string>(),
+              performance: {
+                excelParseMs: performance.now() - started,
+                worksheetParseMs: 0,
+                worksheetRowCount: matrix.length,
+                effectiveWorksheetRowCount: matrix.length,
+                effectiveWorksheetColumnCount: widestRow(matrix),
+              },
+            };
+          })()
         : sourceType === "EXCEL_XLS"
           ? legacyExcelMatrix(bytes)
-          : await xlsxMatrix(bytes);
+          : await xlsxMatrix(
+              bytes,
+              templates.importTemplates.default.headerRowSearchLimit +
+                templates.dataValidation.maxRows,
+            );
   } catch (error) {
     if (error instanceof Error && /文件为空|编码|工作表/u.test(error.message)) {
       throw error;
@@ -278,6 +358,7 @@ export async function parseTabularPreview(input: {
     );
   }
   const { matrix, hyperlinks: cellHyperlinks } = parsedMatrix;
+  const headerRecognitionStarted = performance.now();
   const { rowIndex, aliases } = locateHeader(matrix, templates);
   const header = matrix[rowIndex];
   const templateType = detectTemplateType(header, parsedMatrix.templateType);
@@ -351,6 +432,8 @@ export async function parseTabularPreview(input: {
     ),
     ...duplicateHeaders.map((field) => `表头重复：${field}`),
   ];
+  const headerRecognitionMs = performance.now() - headerRecognitionStarted;
+  const rowConversionStarted = performance.now();
   const rows: TabularPreviewRow[] = [];
   const maxRow = Math.min(
     matrix.length,
@@ -399,7 +482,13 @@ export async function parseTabularPreview(input: {
     });
   }
   if (!rows.length) throw new Error("未识别到有效数据行");
+  const rowConversionMs = performance.now() - rowConversionStarted;
   const validCount = rows.filter((row) => row.errors.length === 0).length;
+  input.onPerformance?.({
+    ...parsedMatrix.performance,
+    headerRecognitionMs,
+    rowConversionMs,
+  });
   return {
     templateVersion: templates.templateVersion,
     templateBrand: kabritaTemplate

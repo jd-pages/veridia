@@ -301,9 +301,10 @@ export async function findBlockingAuditTasks(input: {
     },
     orderBy: { createdAt: "desc" },
   });
+  const blockingCandidates = candidates.filter(duplicateCandidateBlocks);
   for (const url of input.urls) {
     const inputIdentity = auditNoteIdentity(url);
-    const matching = candidates.filter(duplicateCandidateBlocks).find(
+    const matching = blockingCandidates.find(
       (task) =>
         auditTaskLinksMatch(url, task) ||
         task.auditResults.some(({ note }) => {

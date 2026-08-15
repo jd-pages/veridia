@@ -15,6 +15,7 @@ import {
 import {
   detectLocalSourceType,
   parseTabularPreview,
+  type TabularParsePerformance,
 } from "@/lib/import-export-templates/tabular";
 import { validateImportExportTemplates } from "@/lib/import-export-templates/validation";
 import {
@@ -371,9 +372,33 @@ describe("佳贝艾特专属导入导出模板", () => {
         .slice(1),
     ).toEqual(kabritaExportHeaders);
   });
+
 });
 
 describe("Excel、CSV与腾讯文档导出文件预览", () => {
+  it("解析正式模板时跳过预设到第10000行的空白样式区域", async () => {
+    const bytes = new Uint8Array(
+      await readFile("templates/笔记导入模板.xlsx"),
+    );
+    let measurement: TabularParsePerformance | undefined;
+    const preview = await parseTabularPreview({
+      bytes,
+      fileName: "笔记导入模板.xlsx",
+      sourceType: "EXCEL_XLSX",
+      templates,
+      onPerformance: (performance) => {
+        measurement = performance;
+      },
+    });
+
+    expect(preview.total).toBe(1);
+    expect(measurement).toMatchObject({
+      worksheetRowCount: 10_000,
+      effectiveWorksheetRowCount: 2,
+      effectiveWorksheetColumnCount: 11,
+    });
+  });
+
   it("CSV支持BOM、别名、乱序、多余列和空行", async () => {
     const csv = [
       "\uFEFF活动名称,额外列,小红书链接,商品名称,产品阶段话题",
