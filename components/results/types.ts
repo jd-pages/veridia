@@ -127,6 +127,7 @@ export interface ResultPageData {
   page: number;
   pageSize: number;
   items: ResultRow[];
+  summary: ResultSummary;
 }
 
 export interface ResultFilters {
@@ -161,6 +162,7 @@ export interface ResultSummary {
   failed: number;
   notFound: number;
   review: number;
+  statusCounts: Record<string, number>;
 }
 
 export interface ResultDetail extends ResultRow {

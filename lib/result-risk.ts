@@ -14,7 +14,7 @@ export const resultRiskLabels: Record<ResultRiskType, string> = {
   IMAGE_INSUFFICIENT: "图片不足",
 };
 
-const unavailableStates = [
+export const resultUnavailableStates = [
   "NOTE_NOT_FOUND",
   "PAGE_NOT_FOUND",
   "NOTE_DELETED",
@@ -25,7 +25,7 @@ const unavailableStates = [
   "DELETED",
 ];
 
-const unavailablePhrases = [
+export const resultUnavailablePhrases = [
   "你访问的页面不见了",
   "页面不存在",
   "笔记不存在",
@@ -36,13 +36,13 @@ const unavailablePhrases = [
   "错误页",
 ];
 
-const topicMissingCodes = [
+export const resultTopicMissingCodes = [
   "MISSING_TOPIC",
   "TOPIC_MISSING",
   "TOPICS_NOT_RECOGNIZED",
 ];
 
-const topicMissingPhrases = [
+export const resultTopicMissingPhrases = [
   "缺少精准话题",
   "缺少精确话题",
   "未识别到话题",
@@ -54,13 +54,13 @@ const topicMissingPhrases = [
   "TOPIC_MISSING",
 ];
 
-const imageRiskCodes = [
+export const resultImageRiskCodes = [
   "IMAGES_READ_FAILED",
   "IMAGE_COUNT_INSUFFICIENT",
   "IMAGE_COUNT_INVALID",
 ];
 
-const imageRiskPhrases = [
+export const resultImageRiskPhrases = [
   "图片数量不足",
   "图片不足",
   "图片数量不合规",
@@ -80,10 +80,10 @@ export function parseResultRiskType(
 export function noteUnavailableWhere(): Prisma.AuditResultWhereInput {
   return {
     OR: [
-      { pageStatus: { in: unavailableStates } },
-      { task: { failureCode: { in: unavailableStates } } },
-      { task: { status: { in: unavailableStates } } },
-      ...unavailablePhrases.flatMap((phrase) => [
+      { pageStatus: { in: resultUnavailableStates } },
+      { task: { failureCode: { in: resultUnavailableStates } } },
+      { task: { status: { in: resultUnavailableStates } } },
+      ...resultUnavailablePhrases.flatMap((phrase) => [
         { failureReasons: { contains: phrase } },
         { task: { failureMessage: { contains: phrase } } },
         { task: { failureEvidence: { contains: phrase } } },
@@ -102,8 +102,8 @@ function topicMissingWhere(): Prisma.AuditResultWhereInput {
       {
         OR: [
           { missingTopics: { notIn: ["", "[]"] } },
-          { task: { failureCode: { in: topicMissingCodes } } },
-          ...topicMissingPhrases.map((phrase) => ({
+          { task: { failureCode: { in: resultTopicMissingCodes } } },
+          ...resultTopicMissingPhrases.map((phrase) => ({
             failureReasons: { contains: phrase },
           })),
         ],
@@ -121,8 +121,8 @@ function imageInsufficientWhere(): Prisma.AuditResultWhereInput {
           { imageStatus: { in: ["NON_COMPLIANT", "IMAGES_READ_FAILED"] } },
           { imageExtractionStatus: "IMAGES_READ_FAILED" },
           { imageCompliant: false },
-          { task: { failureCode: { in: imageRiskCodes } } },
-          ...imageRiskPhrases.map((phrase) => ({
+          { task: { failureCode: { in: resultImageRiskCodes } } },
+          ...resultImageRiskPhrases.map((phrase) => ({
             failureReasons: { contains: phrase },
           })),
         ],

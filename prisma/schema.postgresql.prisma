@@ -552,6 +552,8 @@ model AuditResult {
   @@index([originTaskId])
   @@index([supersededByResultId])
   @@index([supersededAt, resultSlotCreatedAt, resultSlotOrder])
+  @@index([supersededAt, autoStatus, pageStatus, auditedAt])
+  @@index([supersededAt, autoStatus, topicsCompliant, clickableCompliant, auditedAt])
   @@map("audit_results")
 }
 

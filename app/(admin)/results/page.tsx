@@ -180,6 +180,14 @@ export default function ResultsPage() {
     page: 1,
     pageSize: 20,
     items: [],
+    summary: {
+      total: 0,
+      passed: 0,
+      failed: 0,
+      notFound: 0,
+      review: 0,
+      statusCounts: {},
+    },
   });
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
@@ -187,6 +195,7 @@ export default function ResultsPage() {
   const [importBatches, setImportBatches] = useState<ImportBatchOption[]>([]);
   const [importBatchesLoading, setImportBatchesLoading] = useState(false);
   const campaignRequestRef = useRef(0);
+  const loadRequestRef = useRef(0);
   const [filters, setFilters] = useState<ResultFilters>(defaultFilters);
   const [appliedFilters, setAppliedFilters] =
     useState<ResultFilters>(defaultFilters);
@@ -201,6 +210,7 @@ export default function ResultsPage() {
     failed: 0,
     notFound: 0,
     review: 0,
+    statusCounts: {},
   });
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<React.Key[]>([]);
@@ -219,37 +229,6 @@ export default function ResultsPage() {
   const canDeleteSingle = canOperate;
   const canDeleteBatch = canOperate;
 
-  const loadSummary = useCallback(async (
-    targetFilters: ResultFilters,
-    targetAdvancedFilters: AdvancedResultFilters,
-  ) => {
-    const summaryBase = { ...targetFilters, status: "" };
-    const [all, passed, failed, notFound, review] = await Promise.all([
-      apiFetch<ResultPageData>(
-        `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "")}`,
-      ),
-      apiFetch<ResultPageData>(
-        `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "PASSED")}`,
-      ),
-      apiFetch<ResultPageData>(
-        `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "FAILED")}`,
-      ),
-      apiFetch<ResultPageData>(
-        `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "NOTE_NOT_FOUND")}`,
-      ),
-      apiFetch<ResultPageData>(
-        `/api/results?${buildQuery(summaryBase, targetAdvancedFilters, 1, 1, "NEEDS_REVIEW")}`,
-      ),
-    ]);
-    setSummary({
-      total: all.total,
-      passed: passed.total,
-      failed: failed.total,
-      notFound: notFound.total,
-      review: review.total,
-    });
-  }, []);
-
   const load = useCallback(
     async (
       page = 1,
@@ -258,24 +237,27 @@ export default function ResultsPage() {
       targetAdvancedFilters: AdvancedResultFilters =
         appliedAdvancedFilters,
     ) => {
+      const requestId = ++loadRequestRef.current;
       setLoading(true);
       try {
         const resultData = await apiFetch<ResultPageData>(
           `/api/results?${buildQuery(targetFilters, targetAdvancedFilters, page, pageSize)}`,
         );
+        if (requestId !== loadRequestRef.current) return;
         setData(resultData);
+        setSummary(resultData.summary);
         setSelected([]);
         setUpdatedAt(new Date());
-        await loadSummary(targetFilters, targetAdvancedFilters);
       } catch (error) {
+        if (requestId !== loadRequestRef.current) return;
         message.error(
           error instanceof Error ? error.message : "加载审核结果失败",
         );
       } finally {
-        setLoading(false);
+        if (requestId === loadRequestRef.current) setLoading(false);
       }
     },
-    [appliedAdvancedFilters, appliedFilters, loadSummary, message],
+    [appliedAdvancedFilters, appliedFilters, message],
   );
 
   useEffect(() => {
