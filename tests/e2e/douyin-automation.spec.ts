@@ -191,8 +191,12 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
     page.getByText(augustXhsCampaign!.name, { exact: true }),
   ).toHaveCount(0);
 
-  const templateResponse = await page.request.get(
+  const removedAgencyTemplateResponse = await page.request.get(
     "/api/import/template?brand=danone-agency",
+  );
+  expect(removedAgencyTemplateResponse.status()).toBe(404);
+  const templateResponse = await page.request.get(
+    "/api/import/template?brand=danone-customer",
   );
   expect(templateResponse.ok()).toBeTruthy();
   const workbook = new ExcelJS.Workbook();
@@ -209,9 +213,14 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
       .filter((row) => row.getCell(1).text.includes("抖音"))
       .every((row) => row.getCell(2).text === "抖音"),
   ).toBe(true);
+  const importSheet = workbook.getWorksheet("达能客户导入")!;
+  expect(importSheet.rowCount).toBe(2);
   expect(
-    workbook.getWorksheet("达能代发导入")?.getCell("G10000").dataValidation,
+    (importSheet as unknown as {
+      dataValidations: { find(address: string): ExcelJS.DataValidation | undefined };
+    }).dataValidations.find("H10000"),
   ).toMatchObject({ type: "list", formulae: ['"小红书,抖音"'] });
+  expect(importSheet.rowCount).toBe(2);
 });
 
 test("混合 Excel 只创建一个导入记录并拆分为两个串行平台批次", async ({ page }) => {

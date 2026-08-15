@@ -1,7 +1,7 @@
 "use client";
 
 export type ImportTemplateFormat = "xlsx";
-export type ImportTemplateBrand = "danone-customer" | "danone-agency" | "kabrita";
+export type ImportTemplateBrand = "danone-customer" | "kabrita";
 
 export interface ImportTemplateDownloadOutcome {
   saved: boolean;

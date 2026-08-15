@@ -36,6 +36,14 @@ import {
 
 const templates = BUILTIN_IMPORT_EXPORT_TEMPLATES;
 
+function dataValidationAt(sheet: ExcelJS.Worksheet, address: string) {
+  return (sheet as unknown as {
+    dataValidations: {
+      find(cellAddress: string): ExcelJS.DataValidation | undefined;
+    };
+  }).dataValidations.find(address);
+}
+
 const kabritaImportHeaders = [
   "登记时间",
   "渠道",
@@ -376,7 +384,7 @@ describe("佳贝艾特专属导入导出模板", () => {
 });
 
 describe("Excel、CSV与腾讯文档导出文件预览", () => {
-  it("解析正式模板时跳过预设到第10000行的空白样式区域", async () => {
+  it("正式模板只保留表头和示例行", async () => {
     const bytes = new Uint8Array(
       await readFile("templates/笔记导入模板.xlsx"),
     );
@@ -393,7 +401,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
 
     expect(preview.total).toBe(1);
     expect(measurement).toMatchObject({
-      worksheetRowCount: 10_000,
+      worksheetRowCount: 2,
       effectiveWorksheetRowCount: 2,
       effectiveWorksheetColumnCount: 11,
     });
@@ -739,12 +747,17 @@ describe("模板驱动导出", () => {
     );
     expect(workbook.getWorksheet("达能客户导入")?.getCell("H2").dataValidation)
       .toMatchObject({ type: "list", formulae: ['"小红书,抖音"'] });
-    expect(workbook.getWorksheet("达能客户导入")?.getCell("H10000").dataValidation)
-      .toMatchObject({ type: "list" });
+    const importSheet = workbook.getWorksheet("达能客户导入")!;
+    expect(importSheet.rowCount).toBe(2);
+    expect(dataValidationAt(importSheet, "H10000")).toMatchObject({
+      type: "list",
+    });
     expect(workbook.getWorksheet("达能客户导入")?.getCell("K2").dataValidation)
       .toMatchObject({ type: "list", formulae: ["VERIDIA_ACTIVITY_NAMES"] });
-    expect(workbook.getWorksheet("达能客户导入")?.getCell("K10000").dataValidation)
-      .toMatchObject({ type: "list" });
+    expect(dataValidationAt(importSheet, "K10000")).toMatchObject({
+      type: "list",
+    });
+    expect(importSheet.rowCount).toBe(2);
     expect(workbook.getWorksheet("活动列表")?.state).toBe("veryHidden");
     expect(workbook.getWorksheet("活动列表")?.getCell("A2").text).toBe(
       "达能2026年8月小红书种草审核",
@@ -1291,4 +1304,67 @@ describe("模板驱动导出", () => {
       1_024,
     );
   });
+
+  it.each([0, 1, 10, 100, 1_000])(
+    "导出 %i 条数据时只写入表头和真实数据行",
+    async (recordCount) => {
+      const records = Array.from({ length: recordCount }, (_, index) => ({
+        commercePlatform: "京东",
+        shopName: `店铺-${index + 1}`,
+        customerName: `客户-${index + 1}`,
+        productName: `产品-${index + 1}`,
+        productStageTopic: "IFFO",
+        orderNumber: `ORDER-${index + 1}`,
+        contentChannel: "小红书",
+        originalUrl: `https://www.xiaohongshu.com/explore/${index + 1}`,
+        publishTime: new Date(Date.UTC(2026, 7, 3, 12, 0, index % 60)),
+        activityName: "达能2026年8月小红书种草审核",
+        selfReview: "Y",
+      }));
+      const bytes = await buildConfiguredWorkbook({
+        templates,
+        kind: "auditResults",
+        records,
+      });
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(bytes);
+      const sheet = workbook.worksheets[0];
+      let rowsWithValues = 0;
+      sheet.eachRow(() => {
+        rowsWithValues += 1;
+      });
+
+      expect(sheet.rowCount).toBe(recordCount + 1);
+      expect(sheet.actualRowCount).toBe(recordCount + 1);
+      expect(rowsWithValues).toBe(recordCount + 1);
+      expect((sheet.getRow(1).values as unknown[]).slice(1)).toEqual([
+        "平台",
+        "店铺名称",
+        "客户名",
+        "产品系列",
+        "阶段",
+        "订单编号",
+        "内容渠道",
+        "链接",
+        "发帖时间",
+        "活动名称",
+        "自审",
+      ]);
+      expect(sheet.getColumn(9).numFmt).toBe("yyyy-mm-dd hh:mm:ss");
+      if (recordCount === 0) {
+        expect(sheet.findRow(2)).toBeUndefined();
+        expect(dataValidationAt(sheet, "K2")).toBeUndefined();
+      } else {
+        expect(sheet.getCell("A2").text).toBe("京东");
+        expect(sheet.getCell(recordCount + 1, 6).text).toBe(
+          `ORDER-${recordCount}`,
+        );
+        expect(dataValidationAt(sheet, "K2")).toMatchObject({ type: "list" });
+        expect(dataValidationAt(sheet, `K${recordCount + 1}`)).toMatchObject({
+          type: "list",
+        });
+      }
+      expect(sheet.rowCount).toBe(recordCount + 1);
+    },
+  );
 });

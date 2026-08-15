@@ -334,6 +334,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       name: "下载达能客户 Excel 模板",
     });
     await expect(templateMenuItem).toBeVisible();
+    await expect(
+      page.getByRole("menuitem", { name: "下载达能代发 Excel 模板" }),
+    ).toHaveCount(0);
     await templateMenuItem.scrollIntoViewIfNeeded();
     await expect(templateMenuItem).toBeInViewport();
     await templateMenuItem.click();
@@ -431,8 +434,14 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await page.getByRole("button", { name: "查看全部记录" }).click();
   await expect(errorPreviewTable.locator('tbody tr[data-row-key]')).toHaveCount(9);
 
-  downloadedTemplateSheet.spliceRows(2, 9);
-  downloadedTemplateSheet.getRow(2).values = [
+  const minimalTemplateResponse = await page.request.get("/api/import/template");
+  expect(minimalTemplateResponse.ok()).toBeTruthy();
+  const minimalTemplateWorkbook = new ExcelJS.Workbook();
+  await minimalTemplateWorkbook.xlsx.load(
+    (await minimalTemplateResponse.body()) as unknown as ExcelJS.Buffer,
+  );
+  const minimalTemplateSheet = minimalTemplateWorkbook.worksheets[0];
+  minimalTemplateSheet.getRow(2).values = [
     "京东",
     "京东健康官方进口超市",
     "E2E 客户",
@@ -451,7 +460,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
         name: "minimal-template.xlsx",
         mimeType:
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        buffer: Buffer.from(await noteTemplateWorkbook.xlsx.writeBuffer()),
+        buffer: Buffer.from(await minimalTemplateWorkbook.xlsx.writeBuffer()),
       },
       commit: "true",
       skipDuplicates: "true",

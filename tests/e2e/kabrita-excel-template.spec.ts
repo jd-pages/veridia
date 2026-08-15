@@ -36,6 +36,7 @@ test("佳贝艾特13列导入模板下载、识别和六种购买产品线预检
   await templateWorkbook.xlsx.load(
     (await templateResponse.body()) as unknown as ExcelJS.Buffer,
   );
+  expect(templateWorkbook.worksheets[0].rowCount).toBe(2);
   expect(
     (templateWorkbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
   ).toEqual(importHeaders);

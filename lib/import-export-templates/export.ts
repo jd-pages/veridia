@@ -46,7 +46,6 @@ import {
 } from "./kabrita";
 import {
   DANONE_AGENCY_EXPORT_FIELDS,
-  DANONE_AGENCY_IMPORT_FIELDS,
   DANONE_CUSTOMER_EXPORT_FIELDS,
   DANONE_CUSTOMER_IMPORT_FIELDS,
   IMPORT_TEMPLATE_TYPE_LABELS,
@@ -55,6 +54,32 @@ import {
 } from "@/lib/import-template-type";
 
 export type ExportValueRecord = Partial<Record<StandardField, unknown>>;
+
+type DownloadableImportTemplateType = Exclude<
+  ImportTemplateType,
+  "DANONE_AGENCY"
+>;
+
+type WorksheetWithDataValidations = ExcelJS.Worksheet & {
+  dataValidations: {
+    add(address: string, validation: ExcelJS.DataValidation): void;
+  };
+};
+
+function addDataValidationRange(
+  sheet: ExcelJS.Worksheet,
+  columnIndex: number,
+  firstRow: number,
+  lastRow: number,
+  validation: ExcelJS.DataValidation,
+) {
+  if (columnIndex < 1 || firstRow > lastRow) return;
+  const columnLetter = sheet.getColumn(columnIndex).letter;
+  (sheet as WorksheetWithDataValidations).dataValidations.add(
+    `${columnLetter}${firstRow}:${columnLetter}${lastRow}`,
+    validation,
+  );
+}
 
 export interface CompactAuditResultExportSourceRow {
   autoStatus: string;
@@ -711,9 +736,8 @@ export async function buildConfiguredWorkbook(input: {
   const resultField = "selfReview";
   const selfReviewColumn =
     selected.findIndex((column) => column.field === resultField) + 1;
-  if (selfReviewColumn > 0) {
-    for (let row = 2; row <= Math.max(sheet.rowCount, 2); row += 1) {
-      sheet.getCell(row, selfReviewColumn).dataValidation = {
+  if (selfReviewColumn > 0 && sheet.rowCount >= 2) {
+    addDataValidationRange(sheet, selfReviewColumn, 2, sheet.rowCount, {
         type: "list",
         allowBlank: true,
         formulae: [
@@ -723,8 +747,7 @@ export async function buildConfiguredWorkbook(input: {
         errorTitle: "自审值无效",
         error:
           "请选择 Y 或一个预设的 N 类原因，也可以留空。",
-      };
-    }
+    });
   }
   sheet.views = [{ state: "frozen", ySplit: 1 }];
   sheet.autoFilter = {
@@ -765,7 +788,7 @@ export async function buildImportTemplateWorkbook(
   templates: ImportExportTemplates,
   options?: {
     templateBrand?: ImportTemplateBrand;
-    templateType?: ImportTemplateType;
+    templateType?: DownloadableImportTemplateType;
     activityNames?: readonly string[];
     activities?: ReadonlyArray<{
       name: string;
@@ -783,16 +806,12 @@ export async function buildImportTemplateWorkbook(
   const sheet = workbook.addWorksheet(
     templateType === "KABRITA"
       ? "佳贝艾特导入"
-      : templateType === "DANONE_AGENCY"
-        ? "达能代发导入"
-        : "达能客户导入",
+      : "达能客户导入",
   );
   const fields: readonly StandardField[] =
     templateType === "KABRITA"
       ? KABRITA_IMPORT_FIELDS
-      : templateType === "DANONE_AGENCY"
-        ? DANONE_AGENCY_IMPORT_FIELDS
-        : DANONE_CUSTOMER_IMPORT_FIELDS;
+      : DANONE_CUSTOMER_IMPORT_FIELDS;
   const widths: Partial<Record<StandardField, number>> = {
     commercePlatform: 16,
     shopName: 24,
@@ -875,20 +894,20 @@ export async function buildImportTemplateWorkbook(
   }
   const productStageColumn = fields.indexOf("productStage") + 1;
   if (productStageColumn > 0) {
-    for (
-      let rowNumber = 2;
-      rowNumber <= templates.dataValidation.maxRows + 1;
-      rowNumber += 1
-    ) {
-      sheet.getCell(rowNumber, productStageColumn).dataValidation = {
+    addDataValidationRange(
+      sheet,
+      productStageColumn,
+      2,
+      templates.dataValidation.maxRows + 1,
+      {
         type: "list",
         allowBlank: false,
         formulae: ['"IFFO,GUM"'],
         showErrorMessage: true,
         errorTitle: "段位无效",
         error: "段位仅支持 IFFO 或 GUM",
-      };
-    }
+      },
+    );
   }
   const contentChannelColumn = fields.indexOf("contentChannel") + 1;
   if (contentChannelColumn > 0) {
@@ -896,33 +915,31 @@ export async function buildImportTemplateWorkbook(
       sheet.getCell(2, contentChannelColumn).value =
         exampleActivity.contentChannel === "DOUYIN" ? "抖音" : "小红书";
     }
-    for (let rowNumber = 2; rowNumber <= 10_000; rowNumber += 1) {
-      sheet.getCell(rowNumber, contentChannelColumn).dataValidation = {
+    addDataValidationRange(sheet, contentChannelColumn, 2, 10_000, {
         type: "list",
         allowBlank: false,
         formulae: ['"小红书,抖音"'],
         showErrorMessage: true,
         errorTitle: "内容渠道无效",
         error: "内容渠道仅支持小红书或抖音，并且必须与活动及链接一致。",
-      };
-    }
+    });
   }
   const productStageDetailColumn = fields.indexOf("productStageDetail") + 1;
   if (productStageDetailColumn > 0) {
-    for (
-      let rowNumber = 2;
-      rowNumber <= templates.dataValidation.maxRows + 1;
-      rowNumber += 1
-    ) {
-      sheet.getCell(rowNumber, productStageDetailColumn).dataValidation = {
+    addDataValidationRange(
+      sheet,
+      productStageDetailColumn,
+      2,
+      templates.dataValidation.maxRows + 1,
+      {
         type: "list",
         allowBlank: false,
         formulae: ['"P段,1段,2段,3段,4段,1+段,2+段"'],
         showErrorMessage: true,
         errorTitle: "阶段无效",
         error: "阶段请填写 P段、1段、2段、3段、4段、1+或2+。",
-      };
-    }
+      },
+    );
   }
   if (activityNameColumn > 0 && activityNames.length) {
     const activitySheet = workbook.addWorksheet("活动列表", {
@@ -942,16 +959,14 @@ export async function buildImportTemplateWorkbook(
       `'活动列表'!$A$2:$A$${activityNames.length + 1}`,
       "VERIDIA_ACTIVITY_NAMES",
     );
-    for (let rowNumber = 2; rowNumber <= 10_000; rowNumber += 1) {
-      sheet.getCell(rowNumber, activityNameColumn).dataValidation = {
+    addDataValidationRange(sheet, activityNameColumn, 2, 10_000, {
         type: "list",
         allowBlank: false,
         formulae: ["VERIDIA_ACTIVITY_NAMES"],
         showErrorMessage: true,
         errorTitle: "活动名称无效",
         error: "请选择活动管理中当前启用的完整活动名称。",
-      };
-    }
+    });
   }
   const header = sheet.getRow(1);
   header.font = { bold: true, color: { argb: "FF000000" } };
@@ -1018,11 +1033,9 @@ export async function buildImportTemplateWorkbook(
     displayName: IMPORT_TEMPLATE_TYPE_LABELS[templateType],
     required: "",
     description:
-      templateType === "DANONE_AGENCY"
-        ? "适用于达能代发旧格式：没有阶段列，段位只填写 IFFO 或 GUM；产品名称如“澳白2”末尾2代表2段，2段笔记必须包含蓝色可点击话题 #二段奶粉推荐。"
-        : templateType === "DANONE_CUSTOMER"
-          ? "适用于达能客户新格式：阶段填写具体段数，段位填写 IFFO 或 GUM，两列均为必填。"
-          : "适用于佳贝艾特业务模板。",
+      templateType === "DANONE_CUSTOMER"
+        ? "适用于达能客户新格式：阶段填写具体段数，段位填写 IFFO 或 GUM，两列均为必填。"
+        : "适用于佳贝艾特业务模板。",
     aliases: "活动名称填写活动管理中的完整名称",
   });
   for (const field of fields) {

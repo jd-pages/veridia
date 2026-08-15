@@ -1,4 +1,4 @@
-import { requireApiUser } from "@/lib/api";
+import { fail, requireApiUser } from "@/lib/api";
 import { getActiveImportExportTemplates } from "@/lib/import-export-templates/config";
 import { buildImportTemplateWorkbook } from "@/lib/import-export-templates/export";
 import { KABRITA_BRAND_NAME } from "@/lib/import-export-templates/kabrita";
@@ -14,14 +14,19 @@ export async function GET(request: Request) {
     return new Response("仅支持 Excel（.xlsx）模板", { status: 400 });
   }
   const requestedBrand = searchParams.get("brand");
+  if (
+    requestedBrand &&
+    requestedBrand !== "danone-customer" &&
+    requestedBrand !== "kabrita"
+  ) {
+    return fail("导入模板不存在", 404);
+  }
   const templateBrand = requestedBrand === "kabrita"
     ? KABRITA_BRAND_NAME
     : undefined;
   const templateType: ImportTemplateType = requestedBrand === "kabrita"
     ? "KABRITA"
-    : requestedBrand === "danone-agency"
-      ? "DANONE_AGENCY"
-      : "DANONE_CUSTOMER";
+    : "DANONE_CUSTOMER";
   const { templates } = await getActiveImportExportTemplates();
   const activities = await prisma.campaign.findMany({
     where: { status: "ACTIVE", deletedAt: null },
@@ -39,9 +44,7 @@ export async function GET(request: Request) {
         : "XIAOHONGSHU" as const,
     })),
   });
-  const templateLabel = templateType === "DANONE_AGENCY"
-    ? "达能代发"
-    : templateType === "DANONE_CUSTOMER"
+  const templateLabel = templateType === "DANONE_CUSTOMER"
       ? "达能客户"
       : "佳贝艾特";
   return new Response(new Uint8Array(buffer as ArrayBuffer), {

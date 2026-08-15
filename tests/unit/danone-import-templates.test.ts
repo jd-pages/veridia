@@ -31,7 +31,8 @@ const agencyHeaders = customerHeaders.filter((header) => header !== "阶段（�
 
 const templateBytes = new Map<string, Promise<ExcelJS.Buffer>>();
 
-async function workbookFor(type: "DANONE_CUSTOMER" | "DANONE_AGENCY") {
+async function customerDownloadWorkbook() {
+  const type = "DANONE_CUSTOMER";
   if (!templateBytes.has(type)) {
     templateBytes.set(
       type,
@@ -48,22 +49,15 @@ async function workbookFor(type: "DANONE_CUSTOMER" | "DANONE_AGENCY") {
 }
 
 describe("达能客户与代发 Excel 模板", () => {
-  it("生成独立表头、模板元数据并把活动名称放在最后", async () => {
-    const customer = await workbookFor("DANONE_CUSTOMER");
-    const agency = await workbookFor("DANONE_AGENCY");
+  it("下载生成器只生成达能客户表头、模板元数据并把活动名称放在最后", async () => {
+    const customer = await customerDownloadWorkbook();
 
     expect((customer.workbook.worksheets[0].getRow(1).values as unknown[]).slice(1)).toEqual(
       customerHeaders,
     );
-    expect((agency.workbook.worksheets[0].getRow(1).values as unknown[]).slice(1)).toEqual(
-      agencyHeaders,
-    );
     expect(agencyHeaders).not.toContain("阶段（必填）");
     expect(customer.workbook.getWorksheet("VERIDIA模板信息")?.getCell("B1").text).toBe(
       "DANONE_CUSTOMER",
-    );
-    expect(agency.workbook.getWorksheet("VERIDIA模板信息")?.getCell("B1").text).toBe(
-      "DANONE_AGENCY",
     );
     expect(DANONE_CUSTOMER_IMPORT_FIELDS.at(-1)).toBe("activityName");
     expect(DANONE_AGENCY_IMPORT_FIELDS.at(-1)).toBe("activityName");

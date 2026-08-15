@@ -1656,11 +1656,6 @@ export default function TasksPage() {
                           label: "下载达能客户 Excel 模板",
                           onClick: () => void downloadTemplate("xlsx", "danone-customer"),
                         },
-                        {
-                          key: "danone-agency-xlsx",
-                          label: "下载达能代发 Excel 模板",
-                          onClick: () => void downloadTemplate("xlsx", "danone-agency"),
-                        },
                         { type: "divider" },
                         {
                           key: "kabrita-xlsx",
