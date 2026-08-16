@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createElectronDownloadOptions,
   fetchTextWithRetry,
   runReleasePreflight,
   validateWarmupResult,
@@ -191,6 +192,17 @@ describe("Release Preflight", () => {
 });
 
 describe("Release prerequisite warmup", () => {
+  it("reuses the official SHASUM for the Electron downloader without weakening ZIP validation", () => {
+    const zipName = "electron-v43.2.0-win32-x64.zip";
+    const checksum = "a".repeat(64);
+
+    expect(createElectronDownloadOptions(zipName, checksum)).toEqual({
+      force: false,
+      checksums: { [zipName]: checksum },
+      downloadOptions: { timeout: { request: 15_000 } },
+    });
+  });
+
   it("complete cache validates quickly without weakening integrity", () => {
     expect(validateWarmupResult(warmupResult()).prerequisites).toHaveLength(5);
   });
@@ -214,6 +226,21 @@ describe("Release prerequisite warmup", () => {
     const result = warmupResult();
     result.prerequisites[0] = { ...result.prerequisites[0], ...override };
     expect(() => validateWarmupResult(result)).toThrow(message);
+  });
+
+  it("checksum mismatch remains a deterministic hard block", () => {
+    const result = warmupResult();
+    result.prerequisites[0] = {
+      ...result.prerequisites[0],
+      integrity: "MISMATCH",
+    };
+
+    expect(() => validateWarmupResult(result)).toThrowError(
+      expect.objectContaining({
+        stage: "PREREQUISITE_WARMUP",
+        classification: "DETERMINISTIC",
+      }),
+    );
   });
 
   it("network timeout remains a blocking warmup failure", async () => {
@@ -240,6 +267,7 @@ describe("Release prerequisite warmup", () => {
 
   it("network timeout uses two bounded attempts and preserves the first failure", async () => {
     let attempts = 0;
+    const attemptResults: Array<Record<string, unknown>> = [];
     const startedAt = performance.now();
     const neverRespond = vi.fn(
       async (_url: string, options: { signal: AbortSignal }) => {
@@ -260,9 +288,14 @@ describe("Release prerequisite warmup", () => {
         attempts: 2,
         fetchImpl: neverRespond,
         sleep: async () => undefined,
+        onAttempt: (result) => attemptResults.push(result),
       }),
     ).rejects.toThrow("request timeout");
     expect(attempts).toBe(2);
+    expect(attemptResults).toMatchObject([
+      { attempt: 1, maxAttempts: 2, success: false, classification: "TRANSIENT_NETWORK" },
+      { attempt: 2, maxAttempts: 2, success: false, classification: "TRANSIENT_NETWORK" },
+    ]);
     expect(performance.now() - startedAt).toBeLessThan(500);
   });
 });

@@ -61,6 +61,7 @@ describe("Release stage error propagation", () => {
   it.each([
     ["TypeScript compile failed", "DETERMINISTIC"],
     ["read ECONNRESET", "TRANSIENT_NETWORK"],
+    ["Timeout awaiting 'request' for 10000ms", "TRANSIENT_NETWORK"],
     ["Test timed out in 5000ms", "TEST_TIMEOUT"],
     ["ENOSPC: disk full", "ENVIRONMENT"],
     ["checksum mismatch", "DETERMINISTIC"],

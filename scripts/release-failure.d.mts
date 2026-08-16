@@ -13,6 +13,10 @@ export interface ReleaseFailureInput {
   detailLog?: string;
   target?: string;
   failedItem?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  elapsedMs?: number;
+  cacheStatus?: string;
   code?: string;
 }
 
@@ -40,6 +44,10 @@ export declare class ReleaseStageError extends Error {
   detailLog?: string;
   target?: string;
   failedItem?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  elapsedMs?: number;
+  cacheStatus?: string;
   code: string;
 }
 export declare function releaseFailureResult(

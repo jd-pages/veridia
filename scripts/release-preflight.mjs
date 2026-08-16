@@ -22,7 +22,7 @@ const MINIMUM_FREE_BYTES = 8 * 1024 * 1024 * 1024;
 const ELECTRON_PLATFORM = "win32";
 const ELECTRON_ARCH = "x64";
 const NETWORK_ATTEMPTS = 2;
-const NETWORK_TIMEOUT_MS = 10_000;
+const NETWORK_TIMEOUT_MS = 15_000;
 const WARMUP_TIMEOUT_MS = 75_000;
 
 function plainCommand(command, args) {
@@ -508,6 +508,7 @@ export async function fetchTextWithRetry(url, options = {}) {
   const sleepImpl = options.sleep || sleep;
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const attemptStartedAt = performance.now();
     try {
       const response = await fetchImpl(url, {
         signal: AbortSignal.timeout(timeoutMs),
@@ -518,10 +519,28 @@ export async function fetchTextWithRetry(url, options = {}) {
         if (response.status >= 500) error.code = "ECONNRESET";
         throw error;
       }
-      return response.text();
+      const text = await response.text();
+      options.onAttempt?.({
+        url,
+        attempt,
+        maxAttempts: attempts,
+        elapsedMs: Math.round(performance.now() - attemptStartedAt),
+        success: true,
+      });
+      return text;
     } catch (error) {
       lastError = error;
-      if (classifyReleaseFailure(error) !== "TRANSIENT_NETWORK" || attempt >= attempts) {
+      const classification = classifyReleaseFailure(error);
+      options.onAttempt?.({
+        url,
+        attempt,
+        maxAttempts: attempts,
+        elapsedMs: Math.round(performance.now() - attemptStartedAt),
+        success: false,
+        classification,
+        summary: error instanceof Error ? error.message : String(error),
+      });
+      if (classification !== "TRANSIENT_NETWORK" || attempt >= attempts) {
         throw error;
       }
       await sleepImpl(400 * attempt);
@@ -530,13 +549,47 @@ export async function fetchTextWithRetry(url, options = {}) {
   throw lastError || new Error(`Unable to fetch ${url}`);
 }
 
-async function fetchText(url) {
-  return fetchTextWithRetry(url, {
-    timeoutMs: NETWORK_TIMEOUT_MS,
-    attempts: NETWORK_ATTEMPTS,
-    fetchImpl: fetch,
-    sleep,
-  });
+async function fetchWarmupText(url, failedItem) {
+  const startedAt = performance.now();
+  const networkAttempts = [];
+  try {
+    const text = await fetchTextWithRetry(url, {
+      timeoutMs: NETWORK_TIMEOUT_MS,
+      attempts: NETWORK_ATTEMPTS,
+      fetchImpl: fetch,
+      sleep,
+      onAttempt: (attempt) => networkAttempts.push(attempt),
+    });
+    return {
+      text,
+      attempts: networkAttempts,
+      elapsedMs: Math.round(performance.now() - startedAt),
+    };
+  } catch (error) {
+    const lastAttempt = networkAttempts.at(-1);
+    throw new ReleaseStageError(
+      {
+        stage: "PREREQUISITE_WARMUP",
+        classification: classifyReleaseFailure(error),
+        summary: error instanceof Error ? error.message : String(error),
+        target: url,
+        failedItem,
+        attempt: lastAttempt?.attempt,
+        maxAttempts: NETWORK_ATTEMPTS,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        cacheStatus: "NOT_APPLICABLE",
+      },
+      { cause: error },
+    );
+  }
+}
+
+export function createElectronDownloadOptions(zipName, expectedChecksum) {
+  return {
+    force: false,
+    checksums: { [zipName]: expectedChecksum },
+    downloadOptions: { timeout: { request: NETWORK_TIMEOUT_MS } },
+  };
 }
 
 function prerequisite(name, targetPath) {
@@ -553,7 +606,8 @@ async function executeWarmupWorker(root, electronVersion) {
   const startedAt = Date.now();
   const zipName = `electron-v${electronVersion}-${ELECTRON_PLATFORM}-${ELECTRON_ARCH}.zip`;
   const checksumUrl = `https://github.com/electron/electron/releases/download/v${electronVersion}/SHASUMS256.txt`;
-  const checksumText = await fetchText(checksumUrl);
+  const checksumFetch = await fetchWarmupText(checksumUrl, "Electron SHASUMS");
+  const checksumText = checksumFetch.text;
   const checksumPattern = new RegExp(`^([a-f0-9]{64})\\s+[* ]?${zipName.replaceAll(".", "\\.")}$`, "imu");
   const expectedChecksum = checksumText.match(checksumPattern)?.[1]?.toLowerCase();
   requireCondition(Boolean(expectedChecksum), {
@@ -566,16 +620,40 @@ async function executeWarmupWorker(root, electronVersion) {
   const electronGet = require("app-builder-lib/out/util/electronGet.js");
   const windowsTools = require("app-builder-lib/out/toolsets/windows.js");
   const sevenZip = require("app-builder-lib/out/toolsets/7zip.js");
-  const electronZip = await electronGet.downloadElectronArtifactZip({
-    electronDownload: {
-      force: false,
-      downloadOptions: { timeout: { request: NETWORK_TIMEOUT_MS } },
-    },
-    artifactName: "electron",
-    platformName: ELECTRON_PLATFORM,
-    arch: ELECTRON_ARCH,
-    version: electronVersion,
-  });
+  const electronUrl = `https://github.com/electron/electron/releases/download/v${electronVersion}/${zipName}`;
+  const electronCacheRoot = process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, "electron", "Cache")
+    : null;
+  const cachedElectronZip = electronCacheRoot
+    ? findFile(electronCacheRoot, zipName)
+    : null;
+  const electronCacheStatus = cachedElectronZip ? "HIT" : "MISS";
+  const electronStartedAt = performance.now();
+  let electronZip;
+  try {
+    electronZip = await electronGet.downloadElectronArtifactZip({
+      electronDownload: createElectronDownloadOptions(zipName, expectedChecksum),
+      artifactName: "electron",
+      platformName: ELECTRON_PLATFORM,
+      arch: ELECTRON_ARCH,
+      version: electronVersion,
+    });
+  } catch (error) {
+    throw new ReleaseStageError(
+      {
+        stage: "PREREQUISITE_WARMUP",
+        classification: classifyReleaseFailure(error),
+        summary: `Electron ZIP official downloader failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        target: electronUrl,
+        failedItem: "Electron ZIP",
+        elapsedMs: Math.round(performance.now() - electronStartedAt),
+        cacheStatus: electronCacheStatus,
+      },
+      { cause: error },
+    );
+  }
   verifyFileSha256(electronZip, expectedChecksum);
   const nsis = await windowsTools.getMakeNsisPath(null);
   const nsisResources = await windowsTools.getNsisPluginsPath(null);
@@ -586,8 +664,16 @@ async function executeWarmupWorker(root, electronVersion) {
     checksumUrl,
     zipName,
     elapsedMs: Date.now() - startedAt,
+    networkAttempts: checksumFetch.attempts,
+    checksumElapsedMs: checksumFetch.elapsedMs,
     prerequisites: [
-      { ...prerequisite("Electron ZIP", electronZip), sha256: expectedChecksum },
+      {
+        ...prerequisite("Electron ZIP", electronZip),
+        sha256: expectedChecksum,
+        url: electronUrl,
+        cacheStatus: electronCacheStatus,
+        elapsedMs: Math.round(performance.now() - electronStartedAt),
+      },
       prerequisite("NSIS", nsis.path),
       prerequisite("nsis-resources", nsisResources),
       prerequisite("winCodeSign", winCodeSign.path),

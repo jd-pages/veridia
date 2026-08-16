@@ -58,7 +58,7 @@ export function classifyReleaseFailure(value, fallback = "DETERMINISTIC") {
     return "TEST_TIMEOUT";
   }
   if (
-    /\b(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EPIPE|UND_ERR_CONNECT_TIMEOUT|TimeoutError|AbortError)\b|DNS|TLS handshake|socket hang up|network.*timeout|request.*timeout/iu.test(
+    /\b(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EPIPE|UND_ERR_CONNECT_TIMEOUT|TimeoutError|AbortError)\b|Timeout awaiting ['"](?:request|connect|secureConnect|response)['"] for \d+ms|DNS|TLS handshake|socket hang up|network.*timeout|request.*timeout/iu.test(
       text,
     )
   ) {
@@ -91,6 +91,10 @@ export class ReleaseStageError extends Error {
     this.detailLog = input.detailLog;
     this.target = input.target;
     this.failedItem = input.failedItem;
+    this.attempt = input.attempt;
+    this.maxAttempts = input.maxAttempts;
+    this.elapsedMs = input.elapsedMs;
+    this.cacheStatus = input.cacheStatus;
     this.code = input.code || "RELEASE_STAGE_FAILED";
   }
 }
@@ -115,6 +119,12 @@ export function releaseFailureResult(error, fallback = {}) {
     target: redactReleaseText(source?.target || fallback.target || "").trim() || undefined,
     failedItem:
       redactReleaseText(source?.failedItem || fallback.failedItem || "").trim() || undefined,
+    attempt: source?.attempt || fallback.attempt,
+    maxAttempts: source?.maxAttempts || fallback.maxAttempts,
+    elapsedMs: source?.elapsedMs ?? fallback.elapsedMs,
+    cacheStatus:
+      redactReleaseText(source?.cacheStatus || fallback.cacheStatus || "").trim() ||
+      undefined,
   };
 }
 

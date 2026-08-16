@@ -5,6 +5,9 @@ export interface ReleasePrerequisite {
   integrity: string;
   sha256?: string;
   cacheAction?: string;
+  cacheStatus?: string;
+  elapsedMs?: number;
+  url?: string;
 }
 
 export interface WarmupResult {
@@ -12,6 +15,16 @@ export interface WarmupResult {
   checksumUrl: string;
   zipName?: string;
   elapsedMs: number;
+  checksumElapsedMs?: number;
+  networkAttempts?: Array<{
+    url: string;
+    attempt: number;
+    maxAttempts: number;
+    elapsedMs: number;
+    success: boolean;
+    classification?: string;
+    summary?: string;
+  }>;
   prerequisites: ReleasePrerequisite[];
 }
 
@@ -45,8 +58,25 @@ export declare function fetchTextWithRetry(
       options: { signal: AbortSignal; headers?: Record<string, string> },
     ) => Promise<Response>;
     sleep?: (milliseconds: number) => Promise<void>;
+    onAttempt?: (result: {
+      url: string;
+      attempt: number;
+      maxAttempts: number;
+      elapsedMs: number;
+      success: boolean;
+      classification?: string;
+      summary?: string;
+    }) => void;
   },
 ): Promise<string>;
+export declare function createElectronDownloadOptions(
+  zipName: string,
+  expectedChecksum: string,
+): {
+  force: false;
+  checksums: Record<string, string>;
+  downloadOptions: { timeout: { request: number } };
+};
 export declare function runReleasePreflight(
   input: { root?: string; targetVersion: string },
   dependencyOverrides?: Record<string, unknown>,

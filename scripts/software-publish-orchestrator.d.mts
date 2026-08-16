@@ -6,6 +6,10 @@ export interface SoftwarePublishErrorOptions {
   detailLog?: string;
   target?: string;
   failedItem?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  elapsedMs?: number;
+  cacheStatus?: string;
 }
 
 export declare class SoftwarePublishError extends Error {
@@ -17,6 +21,10 @@ export declare class SoftwarePublishError extends Error {
   detailLog?: string;
   target?: string;
   failedItem?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  elapsedMs?: number;
+  cacheStatus?: string;
 }
 
 export declare function compareReleaseVersions(left: string, right: string): number;

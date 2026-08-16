@@ -46,7 +46,11 @@ export class SoftwarePublishError extends Error {
    *   command?: string,
    *   detailLog?: string,
    *   target?: string,
-   *   failedItem?: string
+   *   failedItem?: string,
+   *   attempt?: number,
+   *   maxAttempts?: number,
+   *   elapsedMs?: number,
+   *   cacheStatus?: string
    * }} [options]
    */
   constructor(code, message, options = {}) {
@@ -59,6 +63,10 @@ export class SoftwarePublishError extends Error {
     this.detailLog = options.detailLog;
     this.target = options.target;
     this.failedItem = options.failedItem;
+    this.attempt = options.attempt;
+    this.maxAttempts = options.maxAttempts;
+    this.elapsedMs = options.elapsedMs;
+    this.cacheStatus = options.cacheStatus;
   }
 }
 
@@ -84,6 +92,15 @@ export function formatSoftwarePublishFailure(error, logPath) {
       : []),
     ...(error instanceof SoftwarePublishError && error.target
       ? [`目标：${error.target}`]
+      : []),
+    ...(error instanceof SoftwarePublishError && error.attempt
+      ? [`请求次数：${error.attempt}/${error.maxAttempts || error.attempt}`]
+      : []),
+    ...(error instanceof SoftwarePublishError && Number.isFinite(error.elapsedMs)
+      ? [`耗时：${error.elapsedMs}ms`]
+      : []),
+    ...(error instanceof SoftwarePublishError && error.cacheStatus
+      ? [`缓存状态：${error.cacheStatus}`]
       : []),
     `错误摘要：${message}`,
     `详细日志：${
@@ -771,6 +788,10 @@ function structuredSoftwareError(result, fallback) {
       detailLog: result?.detailLog || fallback.detailLog,
       target: redactReleaseText(result?.target || "") || undefined,
       failedItem: redactReleaseText(result?.failedItem || "") || undefined,
+      attempt: result?.attempt,
+      maxAttempts: result?.maxAttempts,
+      elapsedMs: result?.elapsedMs,
+      cacheStatus: redactReleaseText(result?.cacheStatus || "") || undefined,
     },
   );
 }

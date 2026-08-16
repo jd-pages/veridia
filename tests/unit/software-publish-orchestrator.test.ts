@@ -273,12 +273,19 @@ describe("一键软件发布编排", () => {
       stage: "UNIT_TEST",
       classification: "TEST_TIMEOUT",
       failedItem: "playwright-chromium-runtime.test.ts / Case C",
+      attempt: 2,
+      maxAttempts: 2,
+      elapsedMs: 30_400,
+      cacheStatus: "NOT_APPLICABLE",
     });
     const output = formatSoftwarePublishFailure(error, "C:\\logs\\release.log").join("\n");
     expect(output).toContain("VERIDIA 正式发布未完成");
     expect(output).toContain("失败阶段：UNIT_TEST");
     expect(output).toContain("错误类型：TEST_TIMEOUT");
     expect(output).toContain("失败项目：playwright-chromium-runtime.test.ts / Case C");
+    expect(output).toContain("请求次数：2/2");
+    expect(output).toContain("耗时：30400ms");
+    expect(output).toContain("缓存状态：NOT_APPLICABLE");
     expect(output).toContain("错误摘要：退出码 1");
     expect(output).toContain("- Push main");
     expect(output).toContain("- 创建 / Push Tag");
