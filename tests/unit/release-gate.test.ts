@@ -86,6 +86,51 @@ describe("本地打包发布门禁", () => {
     expect(workflow).not.toMatch(/"[^"\r\n]*[“”][^"\r\n]*"/u);
   });
 
+  it("Main CI 与 Release Workflow 在 FULL 前使用同一 Desktop Node prepare 入口", () => {
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"),
+    ) as { scripts: Record<string, string> };
+    const prepareScript = packageJson.scripts["desktop:node:prepare"];
+    expect(prepareScript).toBe("node scripts/desktop-node-runtime.mjs");
+
+    for (const workflowPath of [
+      ".github/workflows/veridia-ci.yml",
+      ".github/workflows/veridia-release.yml",
+    ]) {
+      const workflow = fs.readFileSync(path.resolve(workflowPath), "utf8");
+      const install = workflow.indexOf("npm ci");
+      const prepare = workflow.indexOf("npm run desktop:node:prepare");
+      const full = workflow.indexOf("npm run verify:full");
+      expect(install).toBeGreaterThanOrEqual(0);
+      expect(prepare).toBeGreaterThan(install);
+      expect(full).toBeGreaterThan(prepare);
+      expect(workflow.match(/npm run desktop:node:prepare/gu)).toHaveLength(1);
+    }
+  });
+
+  it("Standalone smoke 只验证 bundled Node，缺失时失败且不负责下载", () => {
+    const smoke = fs.readFileSync(
+      path.resolve(
+        process.cwd(),
+        "scripts",
+        "testing",
+        "standalone-runtime-smoke.mjs",
+      ),
+      "utf8",
+    );
+    const prepareDesktop = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts", "prepare-desktop.mjs"),
+      "utf8",
+    );
+
+    expect(smoke).toContain("VERIDIA Desktop bundled Node is missing");
+    expect(smoke).not.toContain("prepareDesktopNodeRuntime");
+    expect(prepareDesktop).toContain("assertDesktopNodeRuntime");
+    expect(prepareDesktop).not.toContain(
+      "fs.copyFileSync(process.execPath",
+    );
+  });
+
   it("软件和规则 BAT 保持独立，软件发布通过 Tag 触发 Actions", () => {
     const softwareBatBytes = fs.readFileSync(
       path.resolve(process.cwd(), "发布新版.bat"),

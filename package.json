@@ -14,7 +14,8 @@
   "scripts": {
     "dev": "next dev -p 3100",
     "build": "prisma generate && node scripts/assert-prisma-generated.mjs && node scripts/testing/prepare-formal-next.mjs && next build --webpack",
-    "desktop:prepare": "prisma generate && node scripts/assert-prisma-generated.mjs && node scripts/prepare-desktop.mjs",
+    "desktop:node:prepare": "node scripts/desktop-node-runtime.mjs",
+    "desktop:prepare": "prisma generate && node scripts/assert-prisma-generated.mjs && npm run desktop:node:prepare && node scripts/prepare-desktop.mjs",
     "desktop:build": "npm run build && npm run desktop:prepare && node scripts/build-desktop.mjs",
     "desktop:dir": "npm run build && npm run desktop:prepare && node scripts/build-desktop.mjs --dir",
     "desktop:dev": "npm run build && npm run desktop:prepare && electron .",

@@ -8,6 +8,7 @@ import {
   assertGeneratedPrismaClient,
   copyGeneratedPrismaClient,
 } from "./prisma-runtime.mjs";
+import { assertDesktopNodeRuntime } from "./desktop-node-runtime.mjs";
 import { preparePlaywrightChromiumRuntime } from "./playwright-chromium-runtime.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,6 +16,10 @@ const standaloneRoot = path.join(projectRoot, ".next", "standalone");
 const runtimeRoot = path.join(projectRoot, "desktop-runtime");
 const browserRoot = path.join(runtimeRoot, "ms-playwright");
 const nodeRuntimeRoot = path.join(runtimeRoot, "node");
+
+const desktopNodeRuntime = assertDesktopNodeRuntime({
+  destinationRoot: nodeRuntimeRoot,
+});
 
 function copyDirectory(source, destination) {
   if (!fs.existsSync(source)) {
@@ -103,10 +108,6 @@ for (const alias of playwrightAliases) {
     path.join(standaloneRoot, "node_modules", alias),
   );
 }
-
-fs.rmSync(nodeRuntimeRoot, { recursive: true, force: true });
-fs.mkdirSync(nodeRuntimeRoot, { recursive: true });
-fs.copyFileSync(process.execPath, path.join(nodeRuntimeRoot, "node.exe"));
 
 preparePlaywrightChromiumRuntime({
   projectRoot,
@@ -225,5 +226,5 @@ if (forbiddenArtifacts.length) {
   );
 }
 process.stdout.write(
-  `桌面资源准备完成：VERIDIA ${buildInfo.version}，数据库 ${databaseVersion}\n`,
+  `桌面资源准备完成：VERIDIA ${buildInfo.version}，数据库 ${databaseVersion}，Desktop Node ${desktopNodeRuntime.version}\n`,
 );

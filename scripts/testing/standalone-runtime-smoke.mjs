@@ -6,6 +6,8 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { DESKTOP_NODE_RUNTIME } from "../desktop-node-runtime.mjs";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const distRoot = path.resolve(root, process.env.VERIDIA_NEXT_DIST_DIR || ".next");
 const standaloneRoot = path.join(distRoot, "standalone");
@@ -57,6 +59,11 @@ function assertBundledNodeIdentity() {
     label: "VERIDIA Desktop bundled Node is not executable",
   }).stdout.trim();
   if (!version) fail("VERIDIA Desktop bundled Node did not report a version");
+  if (version !== DESKTOP_NODE_RUNTIME.versionTag) {
+    fail(
+      `VERIDIA Desktop bundled Node version mismatch: expected ${DESKTOP_NODE_RUNTIME.versionTag}, received ${version}`,
+    );
+  }
   return version;
 }
 

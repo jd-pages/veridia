@@ -13,6 +13,7 @@ import {
   ReleaseStageError,
   releaseResultLine,
 } from "./release-failure.mjs";
+import { DESKTOP_NODE_RUNTIME } from "./desktop-node-runtime.mjs";
 
 const require = createRequire(import.meta.url);
 const scriptRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -311,12 +312,15 @@ async function inspectDesktop(root) {
     target: bundledNode,
   });
   const version = commandResult(bundledNode, ["--version"], { cwd: root, timeoutMs: 5_000 });
-  requireCondition(version.status === 0 && /^v\d+\.\d+\.\d+$/u.test(version.stdout.trim()), {
+  requireCondition(
+    version.status === 0 && version.stdout.trim() === DESKTOP_NODE_RUNTIME.versionTag,
+    {
     stage: "PREFLIGHT",
     classification: "ENVIRONMENT",
-    summary: "Desktop bundled Node is not executable or returned an invalid version",
+    summary: `Desktop bundled Node must be ${DESKTOP_NODE_RUNTIME.versionTag}`,
     target: bundledNode,
-  });
+    },
+  );
   requireCondition(fs.existsSync(prismaAlias), {
     stage: "PREFLIGHT",
     classification: "DETERMINISTIC",

@@ -63,6 +63,9 @@ jobs:
           npm ci --include=dev
           npm run electron:ensure
 
+      - name: 准备并校验 Desktop bundled Node
+        run: npm run desktop:node:prepare
+
       - name: 复用不可变测试基础设施缓存
         uses: actions/cache@v4
         with:
