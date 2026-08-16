@@ -4,6 +4,10 @@ import path from "node:path";
 import process from "node:process";
 import { groupE2eFiles, selectTestScope, validateManifest } from "./test-matrix.mjs";
 import { invalidateFullGateAttestation, writeFullGateAttestation } from "./full-gate-attestation.mjs";
+import {
+  classifyReleaseFailure,
+  redactReleaseText,
+} from "../release-failure.mjs";
 
 const root = process.cwd();
 const requestedMode = process.argv[2] || "fast";
@@ -63,10 +67,30 @@ function passedTestCount(output) {
 }
 
 const failures = [];
+const failureDetails = [];
 const timings = [];
+function verificationFailureDetail(result) {
+  const plain = redactReleaseText(result.output);
+  const failedItem =
+    plain.match(/(?:FAIL|\u00d7)\s+([^\r\n]+)/iu)?.[1]?.trim() || result.name;
+  const summary =
+    plain.match(/(Test timed out in \d+ms|Timeout \d+ms exceeded)/iu)?.[1] ||
+    plain.match(/(?:Error|AssertionError):\s*([^\r\n]+)/iu)?.[1]?.trim() ||
+    `${result.name} failed`;
+  return {
+    name: result.name,
+    classification: classifyReleaseFailure(summary),
+    failedItem,
+    summary,
+    status: result.status,
+  };
+}
 const record = (result) => {
   timings.push({ name: result.name, seconds: result.durationSeconds, passed: result.passed });
-  if (!result.passed) failures.push(result.name);
+  if (!result.passed) {
+    failures.push(result.name);
+    failureDetails.push(verificationFailureDetail(result));
+  }
   return result;
 };
 
@@ -151,6 +175,8 @@ const summary = {
   requestedMode: requestedMode.toUpperCase(),
   passed: failures.length === 0,
   failures,
+  firstFailure: failureDetails[0] || null,
+  failureDetails,
   e2eTotal,
   e2ePassed,
   unitTests: { passed: failures.includes(unitCommandName) ? 0 : unitTotal, total: unitTotal },

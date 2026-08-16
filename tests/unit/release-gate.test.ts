@@ -10,9 +10,9 @@ describe("本地打包发布门禁", () => {
       "utf8",
     );
     const steps = [
-      'run("升级版本号"',
-      'run("正式FULL门禁"',
-      'run("准备并检查 Electron 运行文件"',
+      'run("VERSION_UPDATE", "升级版本号"',
+      'run("FULL", "正式FULL门禁"',
+      'run("PREREQUISITE_WARMUP", "准备并检查 Electron 运行文件"',
       '"构建Windows安装包"',
     ];
     const positions = steps.map((step) => source.indexOf(step));
@@ -32,16 +32,30 @@ describe("本地打包发布门禁", () => {
     expect(source).not.toContain("action-gh-release");
   });
 
-  it("本地打包验收只在严格凭证有效时跳过重复 FULL", () => {
+  it("方案 A 始终执行本地正式 FULL，不复用 Attestation", () => {
     const source = fs.readFileSync(
       path.resolve(process.cwd(), "scripts", "release.mjs"),
       "utf8",
     );
 
-    expect(source).toContain("validateFullGateAttestation(root)");
-    expect(source).toContain("FULL验收凭证失效，重新执行完整门禁");
-    expect(source).toContain('run("正式FULL门禁"');
+    expect(source).not.toContain("validateFullGateAttestation(root)");
+    expect(source).not.toContain("VERIDIA_ALLOW_FULL_ATTESTATION_REUSE");
+    expect(source).toContain('run("FULL", "正式FULL门禁"');
     expect(source).toContain('VERIDIA_DISABLE_ATTESTATION_WRITE: "true"');
+  });
+
+  it("Preflight 位于用户确认后、版本修改和 FULL 之前", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts/software-publish-orchestrator.mjs"),
+      "utf8",
+    );
+    const confirm = source.indexOf("confirmPublish()");
+    const preflight = source.indexOf("preflight: async () => runReleasePreflight");
+    const update = source.indexOf("updateVersion: async () => updateVersionFiles");
+
+    expect(confirm).toBeGreaterThanOrEqual(0);
+    expect(preflight).toBeGreaterThan(confirm);
+    expect(update).toBeGreaterThan(preflight);
   });
 
   it("云端发布安装完整开发依赖并在打包前检查 Electron 运行文件", () => {

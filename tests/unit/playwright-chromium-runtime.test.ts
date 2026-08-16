@@ -132,6 +132,9 @@ describe("Playwright Chromium runtime cache", () => {
     expect(fs.existsSync(result.executablePath)).toBe(true);
   });
 
+  // This remains a real filesystem integration case. On a saturated Windows
+  // unit run, synchronous copy/inspection/cleanup has been observed at 12.7s.
+  // Keep a bounded case-only ceiling without weakening the cache assertions.
   it("C: 只有旧 revision 时拒绝复用并下载精确版本", () => {
     const cacheRoot = temporaryRoot("official-cache");
     const destinationRoot = temporaryRoot("desktop-runtime");
@@ -149,7 +152,7 @@ describe("Playwright Chromium runtime cache", () => {
     expect(
       fs.existsSync(path.join(destinationRoot, "chromium-1220")),
     ).toBe(false);
-  });
+  }, 20_000);
 
   it("D: 精确目录缺少 chrome.exe 时视为损坏并重新下载", () => {
     const cacheRoot = temporaryRoot("broken-cache");

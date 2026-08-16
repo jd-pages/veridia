@@ -36,6 +36,7 @@ function state(overrides: Record<string, unknown> = {}) {
 
 function operations(overrides: Record<string, unknown> = {}) {
   return {
+    preflight: vi.fn(),
     updateVersion: vi.fn(),
     validate: vi.fn(),
     commitVersion: vi.fn(),
@@ -267,18 +268,67 @@ describe("一键软件发布编排", () => {
     expect(source).not.toContain('"rules:publish"');
   });
 
-  it("失败收尾输出稳定中文阶段且声明没有执行外部发布动作", () => {
+  it("失败收尾输出结构化阶段、类型与安全边界", () => {
     const error = new SoftwarePublishError("FULL_GATE_FAILED", "退出码 1", {
-      stage: "正式FULL门禁",
+      stage: "UNIT_TEST",
+      classification: "TEST_TIMEOUT",
+      failedItem: "playwright-chromium-runtime.test.ts / Case C",
     });
     const output = formatSoftwarePublishFailure(error, "C:\\logs\\release.log").join("\n");
     expect(output).toContain("VERIDIA 正式发布未完成");
-    expect(output).toContain("失败阶段：正式FULL门禁");
+    expect(output).toContain("失败阶段：UNIT_TEST");
+    expect(output).toContain("错误类型：TEST_TIMEOUT");
+    expect(output).toContain("失败项目：playwright-chromium-runtime.test.ts / Case C");
     expect(output).toContain("错误摘要：退出码 1");
-    expect(output).toContain("- Push发布版本");
-    expect(output).toContain("- 创建Tag");
-    expect(output).toContain("- 创建Release");
+    expect(output).toContain("- Push main");
+    expect(output).toContain("- 创建 / Push Tag");
+    expect(output).toContain("- GitHub Release");
     expect(output).toContain("- 执行rules:publish");
+  });
+
+  it.each([
+    ["FULL", "Unit failed", "UNIT_TEST"],
+    ["FULL", "Build failed", "PRODUCTION_BUILD"],
+    ["FULL", "Electron request ETIMEDOUT", "PREREQUISITE_WARMUP"],
+    ["FULL", "Package failed", "PACKAGE"],
+    ["PUSH_MAIN", "push failed", "PUSH_MAIN"],
+    ["TAG", "tag failed", "TAG"],
+  ])("子阶段 %s 失败保留真实 stage %s", async (_wrapper, message, stage) => {
+    const plan = createSoftwarePublishPlan(state());
+    const stageOperation = {
+      UNIT_TEST: "validate",
+      PRODUCTION_BUILD: "validate",
+      PREREQUISITE_WARMUP: "preflight",
+      PACKAGE: "validate",
+      PUSH_MAIN: "pushMain",
+      TAG: "createTag",
+    }[stage] as string;
+    const calls = operations({
+      [stageOperation]: vi.fn().mockRejectedValue(
+        new SoftwarePublishError("SIMULATED", message, {
+          stage,
+          classification: message.includes("ETIMEDOUT")
+            ? "TRANSIENT_NETWORK"
+            : "DETERMINISTIC",
+        }),
+      ),
+    });
+
+    await expect(
+      executeSoftwarePublishPlan(plan, { dryRun: false, operations: calls }),
+    ).rejects.toMatchObject({ stage });
+    if (["UNIT_TEST", "PRODUCTION_BUILD", "PREREQUISITE_WARMUP", "PACKAGE"].includes(stage)) {
+      expect(calls.commitVersion).not.toHaveBeenCalled();
+      expect(calls.pushMain).not.toHaveBeenCalled();
+      expect(calls.createTag).not.toHaveBeenCalled();
+    }
+    if (stage === "PREREQUISITE_WARMUP") {
+      expect(calls.updateVersion).not.toHaveBeenCalled();
+      expect(calls.validate).not.toHaveBeenCalled();
+      expect(calls.restoreVersion).not.toHaveBeenCalled();
+    }
+    if (stage === "PUSH_MAIN") expect(calls.createTag).not.toHaveBeenCalled();
+    if (stage === "TAG") expect(calls.pushTag).not.toHaveBeenCalled();
   });
 
   it("完整保留 Git porcelain 路径且兼容状态、空格、rename、CRLF 与 NUL", () => {

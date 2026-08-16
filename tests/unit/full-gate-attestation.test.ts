@@ -182,7 +182,7 @@ describe("FULL 门禁验收凭证", { timeout: 15_000 }, () => {
     expect(fs.existsSync(attestationPath(root))).toBe(false);
   });
 
-  it("本地 package 可复用有效凭证，失效时自动 FULL；正式发布不盲信本地凭证", () => {
+  it("日常本地 package 可复用凭证，但方案 A 正式发布始终执行 FULL", () => {
     const localWorkflow = fs.readFileSync(path.resolve("scripts/fixed-workflow.mjs"), "utf8");
     const release = fs.readFileSync(path.resolve("scripts/release.mjs"), "utf8");
     const softwareBat = fs.readFileSync(path.resolve("发布新版.bat"), "utf8");
@@ -191,7 +191,8 @@ describe("FULL 门禁验收凭证", { timeout: 15_000 }, () => {
     expect(localWorkflow).toContain('VERIDIA_ALLOW_FULL_ATTESTATION_REUSE: "true"');
     expect(localWorkflow).toContain("originalVersionFiles");
     expect(localWorkflow).toContain('git(["status", "--porcelain"])');
-    expect(release).toContain("validateFullGateAttestation");
+    expect(release).not.toContain("validateFullGateAttestation");
+    expect(release).not.toContain("VERIDIA_ALLOW_FULL_ATTESTATION_REUSE");
     expect(release).toContain('"verify:full"');
     expect(release).toContain("sensitive-scan.mjs");
     expect(softwareBat).not.toContain("VERIDIA_ALLOW_FULL_ATTESTATION_REUSE");

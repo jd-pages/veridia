@@ -4,9 +4,12 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
-  printValidation as printFullGateAttestationValidation,
-  validateFullGateAttestation,
-} from "./testing/full-gate-attestation.mjs";
+  classifyReleaseFailure,
+  inferVerifyFailure,
+  ReleaseStageError,
+  releaseFailureResult,
+  releaseResultLine,
+} from "./release-failure.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bump = process.argv[2];
@@ -25,7 +28,9 @@ const originals = new Map(
 );
 const workRoot = path.join(root, ".release-work");
 const logsRoot = path.join(workRoot, "logs");
+const resultFile = path.join(workRoot, "release-result.json");
 fs.mkdirSync(logsRoot, { recursive: true });
+fs.rmSync(resultFile, { force: true });
 
 function quoteWindowsCommandArgument(value) {
   const text = String(value);
@@ -35,7 +40,23 @@ function quoteWindowsCommandArgument(value) {
     : text;
 }
 
-function run(label, command, args, extraEnv = {}) {
+function importantSummary(output, fallback) {
+  const plain = String(output || "").replace(/\u001b\[[0-9;]*m/gu, "");
+  const lines = plain
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const important = [...lines]
+    .reverse()
+    .find((line) =>
+      /Test timed out|Timeout|ETIMEDOUT|ECONNRESET|ENOTFOUND|checksum|integrity|Error:|FAILED|failed/iu.test(
+        line,
+      ),
+    );
+  return (important || fallback).slice(0, 800);
+}
+
+function run(stage, label, command, args, extraEnv = {}) {
   process.stdout.write(`\n[VERIDIA 发布] ${label}\n`);
   const usesWindowsCommandProcessor =
     process.platform === "win32" && /\.(?:cmd|bat)$/iu.test(command);
@@ -65,24 +86,38 @@ function run(label, command, args, extraEnv = {}) {
       }\n`
     : "";
   const output = `${result.stdout || ""}${result.stderr || ""}${launchError}`;
-  fs.writeFileSync(
-    path.join(logsRoot, `${label.replace(/[^\p{L}\p{N}-]+/gu, "-")}.log`),
-    output,
-    "utf8",
+  const detailLog = path.join(
+    logsRoot,
+    `${label.replace(/[^\p{L}\p{N}-]+/gu, "-")}.log`,
   );
+  fs.writeFileSync(detailLog, output, "utf8");
   process.stdout.write(output);
   if (result.error) {
-    throw new Error(
-      `${label}无法启动：${result.error.code || result.error.message}`,
+    throw new ReleaseStageError(
+      {
+        stage,
+        classification: classifyReleaseFailure(result.error, "ENVIRONMENT"),
+        command: [command, ...args].join(" "),
+        summary: `${label}无法启动：${result.error.code || result.error.message}`,
+        detailLog,
+      },
+      { cause: result.error },
     );
   }
   if (result.status !== 0) {
-    throw new Error(
-      `${label}失败，退出码 ${
-        result.status === null ? "不可用" : result.status
-      }${result.signal ? `，信号 ${result.signal}` : ""}`,
-    );
+    if (stage === "FULL") throw inferVerifyFailure(output, detailLog);
+    const fallback = `${label}失败，退出码 ${
+      result.status === null ? "不可用" : result.status
+    }${result.signal ? `，信号 ${result.signal}` : ""}`;
+    throw new ReleaseStageError({
+      stage,
+      classification: classifyReleaseFailure(output),
+      command: [command, ...args].join(" "),
+      summary: importantSummary(output, fallback),
+      detailLog,
+    });
   }
+  return { output, detailLog };
 }
 
 function restoreVersionFiles() {
@@ -131,31 +166,8 @@ function repositoryUpdateUrl() {
 }
 
 try {
-  const allowLocalAttestationReuse =
-    process.env.VERIDIA_ALLOW_FULL_ATTESTATION_REUSE === "true";
-  let reuseFullGate = false;
-  if (allowLocalAttestationReuse) {
-    let validation = validateFullGateAttestation(root);
-    printFullGateAttestationValidation(validation);
-    if (!validation.valid) {
-      run("FULL验收凭证失效，重新执行完整门禁", "npm.cmd", [
-        "run",
-        "verify:full",
-      ]);
-      validation = validateFullGateAttestation(root);
-      if (!validation.valid) {
-        throw new Error(
-          `FULL 门禁执行后仍未生成有效凭证：${validation.reasons.join("；")}`,
-        );
-      }
-    }
-    reuseFullGate = true;
-    process.stdout.write(
-      "本次本地安装包验收复用当前 HEAD 的有效 FULL 门禁结果，跳过重复完整 E2E。\n",
-    );
-  }
   if (bump !== "current") {
-    run("升级版本号", "npm.cmd", [
+    run("VERSION_UPDATE", "升级版本号", "npm.cmd", [
       "version",
       bump,
       "--no-git-tag-version",
@@ -164,26 +176,25 @@ try {
   const version = JSON.parse(fs.readFileSync(packagePath, "utf8")).version;
   if (bump !== "current") updateChangelog(version);
 
-  if (!reuseFullGate) {
-    run("正式FULL门禁", "npm.cmd", ["run", "verify:full"], {
-      VERIDIA_DISABLE_ATTESTATION_WRITE: "true",
-    });
-  }
-  run("敏感信息扫描", "node", [
+  run("FULL", "正式FULL门禁", "npm.cmd", ["run", "verify:full"], {
+    VERIDIA_DISABLE_ATTESTATION_WRITE: "true",
+  });
+  run("SENSITIVE_SCAN", "敏感信息扫描", "node", [
     path.join(root, "scripts", "sensitive-scan.mjs"),
   ]);
 
-  run("正式Next构建", "npm.cmd", ["run", "build"], {
+  run("PRODUCTION_BUILD", "正式Next构建", "npm.cmd", ["run", "build"], {
     VERIDIA_APP_VERSION: version,
     VERIDIA_BUILD_DATE: new Date().toISOString(),
   });
-  run("准备桌面资源", "npm.cmd", ["run", "desktop:prepare"]);
-  run("准备并检查 Electron 运行文件", "npm.cmd", ["run", "electron:ensure"]);
+  run("DESKTOP_PREPARE", "准备桌面资源", "npm.cmd", ["run", "desktop:prepare"]);
+  run("PREREQUISITE_WARMUP", "准备并检查 Electron 运行文件", "npm.cmd", ["run", "electron:ensure"]);
   fs.rmSync(path.join(root, "dist-installer"), {
     recursive: true,
     force: true,
   });
   run(
+    "PACKAGE",
     "构建Windows安装包",
     "node",
     [
@@ -208,7 +219,12 @@ try {
   ]) {
     const source = path.join(root, "dist-installer", name);
     if (!fs.existsSync(source)) {
-      throw new Error(`Windows 安装产物缺失：${source}`);
+      throw new ReleaseStageError({
+        stage: "INSTALLER_VERIFY",
+        classification: "DETERMINISTIC",
+        summary: `Windows 安装产物缺失：${source}`,
+        target: source,
+      });
     }
     fs.copyFileSync(source, path.join(destination, name));
   }
@@ -220,10 +236,14 @@ try {
   );
 } catch (error) {
   restoreVersionFiles();
+  const result = releaseFailureResult(error, {
+    stage: "FULL",
+    detailLog: logsRoot,
+  });
+  fs.mkdirSync(workRoot, { recursive: true });
+  fs.writeFileSync(resultFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
   process.stderr.write(
-    `\n发布已停止，正式版本号未保留：${
-      error instanceof Error ? error.message : String(error)
-    }\n错误日志：${logsRoot}\n`,
+    `\n发布已停止，正式版本号未保留：${result.summary}\n错误日志：${logsRoot}\n${releaseResultLine(error, result)}\n`,
   );
   process.exitCode = 1;
 }

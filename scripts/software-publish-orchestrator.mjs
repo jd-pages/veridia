@@ -10,6 +10,11 @@ import {
   canonicalizeProjectPath,
   sameProjectPath,
 } from "./testing/project-path.mjs";
+import {
+  classifyReleaseFailure,
+  parseReleaseResult,
+  redactReleaseText,
+} from "./release-failure.mjs";
 
 const scriptProjectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -31,35 +36,92 @@ const releaseWorkflow = "veridia-release.yml";
 const dryRun = process.argv.includes("--dry-run");
 
 export class SoftwarePublishError extends Error {
+  /**
+   * @param {string} code
+   * @param {string} message
+   * @param {{
+   *   cause?: unknown,
+   *   stage?: string,
+   *   classification?: string,
+   *   command?: string,
+   *   detailLog?: string,
+   *   target?: string,
+   *   failedItem?: string
+   * }} [options]
+   */
   constructor(code, message, options = {}) {
     super(message, options.cause ? { cause: options.cause } : undefined);
     this.name = "SoftwarePublishError";
     this.code = code;
     this.stage = options.stage;
+    this.classification = options.classification;
+    this.command = options.command;
+    this.detailLog = options.detailLog;
+    this.target = options.target;
+    this.failedItem = options.failedItem;
   }
 }
 
 export function formatSoftwarePublishFailure(error, logPath) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = redactReleaseText(
+    error instanceof Error ? error.message : String(error),
+  ).slice(0, 1_200);
   const stage = error instanceof SoftwarePublishError && error.stage
     ? error.stage
-    : "正式发布编排";
+    : "RELEASE_ORCHESTRATION";
+  const classification =
+    error instanceof SoftwarePublishError && error.classification
+      ? error.classification
+      : classifyReleaseFailure(message);
   const lines = [
     "========================================",
     "VERIDIA 正式发布未完成",
     "========================================",
     `失败阶段：${stage}`,
+    `错误类型：${classification}`,
+    ...(error instanceof SoftwarePublishError && error.failedItem
+      ? [`失败项目：${error.failedItem}`]
+      : []),
+    ...(error instanceof SoftwarePublishError && error.target
+      ? [`目标：${error.target}`]
+      : []),
     `错误摘要：${message}`,
-    `日志：${logPath}`,
+    `详细日志：${
+      error instanceof SoftwarePublishError && error.detailLog
+        ? error.detailLog
+        : logPath
+    }`,
   ];
-  if (error instanceof SoftwarePublishError && error.code === "FULL_GATE_FAILED") {
+  const noRemoteMutationStages = new Set([
+    "PREFLIGHT",
+    "PREREQUISITE_WARMUP",
+    "FULL",
+    "LINT",
+    "TYPECHECK",
+    "UNIT_TEST",
+    "E2E",
+    "PRODUCTION_BUILD",
+    "STANDALONE",
+    "DATABASE",
+    "SENSITIVE_SCAN",
+    "DESKTOP_PREPARE",
+    "PACKAGE",
+    "INSTALLER_VERIFY",
+    "VERSION_UPDATE",
+    "RELEASE_COMMIT",
+  ]);
+  if (noRemoteMutationStages.has(stage)) {
     lines.push(
-      "本次未：",
-      "- Push发布版本",
-      "- 创建Tag",
-      "- 创建Release",
+      "本次未执行：",
+      "- Push main",
+      "- 创建 / Push Tag",
+      "- GitHub Release",
       "- 执行rules:publish",
     );
+  } else if (stage === "PUSH_MAIN") {
+    lines.push("本次未执行：", "- 创建 / Push Tag", "- GitHub Release");
+  } else if (stage === "TAG" || stage === "PUSH_TAG") {
+    lines.push("本次未宣告 GitHub Release 成功。");
   } else {
     lines.push("远端状态请以上方执行阶段和日志为准；脚本不会自动覆盖或回滚远端状态。");
   }
@@ -194,28 +256,54 @@ export async function executeSoftwarePublishPlan(plan, options) {
   if (options.dryRun || plan.kind === "none") {
     return { dryRun: options.dryRun, released: false };
   }
+  let versionTouched = false;
   let versionCommitted = false;
+  const executeStage = async (stage, operation) => {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof SoftwarePublishError && error.stage) throw error;
+      throw new SoftwarePublishError(
+        "RELEASE_STAGE_FAILED",
+        error instanceof Error ? error.message : String(error),
+        {
+          cause: error,
+          stage,
+          classification: classifyReleaseFailure(error),
+        },
+      );
+    }
+  };
   try {
-    await options.operations.updateVersion(plan);
-    await options.operations.validate(plan);
-    await options.operations.commitVersion(plan);
+    if (options.operations.preflight) {
+      await executeStage("PREFLIGHT", () => options.operations.preflight(plan));
+    }
+    versionTouched = true;
+    await executeStage("VERSION_UPDATE", () => options.operations.updateVersion(plan));
+    await executeStage("FULL", () => options.operations.validate(plan));
+    await executeStage("RELEASE_COMMIT", () => options.operations.commitVersion(plan));
     versionCommitted = true;
-    await options.operations.pushMain(plan);
-    await options.operations.assertMainSynchronized(plan);
-    await options.operations.assertTargetAvailable(plan);
-    await options.operations.createTag(plan);
-    await options.operations.pushTag(plan);
-    const actions = await options.operations.waitForActions(plan);
+    await executeStage("PUSH_MAIN", () => options.operations.pushMain(plan));
+    await executeStage("PUSH_MAIN", () => options.operations.assertMainSynchronized(plan));
+    await executeStage("TAG", () => options.operations.assertTargetAvailable(plan));
+    await executeStage("TAG", () => options.operations.createTag(plan));
+    await executeStage("PUSH_TAG", () => options.operations.pushTag(plan));
+    const actions = await executeStage("GITHUB_ACTIONS", () =>
+      options.operations.waitForActions(plan),
+    );
     if (!actions.success) {
       throw new SoftwarePublishError(
         "ACTIONS_FAILED",
         `GitHub Actions 发布失败：${actions.url || "未提供运行地址"}`,
+        { stage: "GITHUB_ACTIONS", classification: "DETERMINISTIC" },
       );
     }
-    const release = await options.operations.verifyRelease(plan, actions);
+    const release = await executeStage("REMOTE_RELEASE_VERIFY", () =>
+      options.operations.verifyRelease(plan, actions),
+    );
     return { dryRun: false, released: true, actions, release };
   } catch (error) {
-    if (!versionCommitted) await options.operations.restoreVersion(plan);
+    if (versionTouched && !versionCommitted) await options.operations.restoreVersion(plan);
     throw error;
   }
 }
@@ -231,12 +319,15 @@ function createLogger() {
     logDirectory,
     `software-release-${timestamp()}.log`,
   );
-  function line(value = "") {
+  function write(value = "") {
     const text = String(value);
-    process.stdout.write(`${text}\n`);
-    fs.appendFileSync(logPath, `${text}\n`, "utf8");
+    process.stdout.write(text);
+    fs.appendFileSync(logPath, text, "utf8");
   }
-  return { line, logPath };
+  function line(value = "") {
+    write(`${String(value)}\n`);
+  }
+  return { line, write, logPath };
 }
 
 function windowsCommand(executable, args) {
@@ -262,6 +353,7 @@ function command(executable, args, options = {}) {
     encoding: "utf8",
     windowsHide: true,
     maxBuffer: 100 * 1024 * 1024,
+    timeout: options.timeoutMs,
     env: { ...process.env, ...options.env },
     stdio: options.inherit ? "inherit" : "pipe",
   });
@@ -666,28 +758,104 @@ function restoreVersionFiles(state) {
   });
 }
 
+function structuredSoftwareError(result, fallback) {
+  return new SoftwarePublishError(
+    "RELEASE_STAGE_FAILED",
+    redactReleaseText(result?.summary || fallback.message).slice(0, 1_200),
+    {
+      stage: result?.stage || fallback.stage,
+      classification:
+        result?.classification ||
+        classifyReleaseFailure(fallback.message, fallback.classification),
+      command: redactReleaseText(result?.command || fallback.command || "") || undefined,
+      detailLog: result?.detailLog || fallback.detailLog,
+      target: redactReleaseText(result?.target || "") || undefined,
+      failedItem: redactReleaseText(result?.failedItem || "") || undefined,
+    },
+  );
+}
+
+function readStructuredResult(file, combinedOutput = "") {
+  if (fs.existsSync(file)) {
+    try {
+      return JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch {
+      // Fall back to the child process marker.
+    }
+  }
+  return parseReleaseResult(combinedOutput);
+}
+
+function runReleasePreflight(plan, logger) {
+  logger.line("开始 Release Preflight 与发布依赖预热（正式 FULL 之前）。");
+  const result = command(
+    "node",
+    [
+      path.join(projectRoot, "scripts", "release-preflight.mjs"),
+      `--target-version=${plan.targetVersion}`,
+    ],
+    { allowFailure: true, timeoutMs: 120_000 },
+  );
+  logger.write(result.stdoutRaw);
+  logger.write(result.stderrRaw);
+  if (result.status !== 0) {
+    const structured = parseReleaseResult(`${result.stdoutRaw}\n${result.stderrRaw}`);
+    throw structuredSoftwareError(structured, {
+      stage: "PREFLIGHT",
+      classification: "ENVIRONMENT",
+      command: `node scripts/release-preflight.mjs --target-version=${plan.targetVersion}`,
+      message: `Release Preflight 失败，退出码 ${result.status ?? "未知"}`,
+      detailLog: logger.logPath,
+    });
+  }
+  logger.line("Release Preflight 与依赖预热通过，即将进入正式 FULL。");
+}
+
 function runFullValidation(plan, logger) {
   logger.line("开始完整正式发布门禁和本地安装包构建。");
   assertNoGoogleFontBuildDependency();
   git(["diff", "--check"]);
   try {
+    fs.rmSync(path.join(projectRoot, ".release-work", "release-result.json"), {
+      force: true,
+    });
     command("node", [path.join(projectRoot, "scripts", "release.mjs"), "current"], {
       inherit: true,
       env: { VERIDIA_APP_VERSION: plan.targetVersion },
     });
   } catch (error) {
-    throw new SoftwarePublishError(
-      "FULL_GATE_FAILED",
-      error instanceof Error ? error.message : String(error),
-      { cause: error, stage: "正式FULL门禁" },
+    const resultFile = path.join(
+      projectRoot,
+      ".release-work",
+      "release-result.json",
     );
+    const structured = readStructuredResult(resultFile);
+    throw structuredSoftwareError(structured, {
+      stage: "FULL",
+      classification: "DETERMINISTIC",
+      command: "node scripts/release.mjs current",
+      message: error instanceof Error ? error.message : String(error),
+      detailLog: path.join(projectRoot, ".release-work", "logs"),
+    });
   }
   assertOnlyVersionFilesChanged();
   assertNoGoogleFontBuildDependency();
   git(["diff", "--check"]);
-  command("node", [path.join(projectRoot, "scripts", "validate-software-release.mjs")], {
-    inherit: true,
-  });
+  try {
+    command("node", [path.join(projectRoot, "scripts", "validate-software-release.mjs")], {
+      inherit: true,
+    });
+  } catch (error) {
+    throw new SoftwarePublishError(
+      "INSTALLER_VERIFY_FAILED",
+      error instanceof Error ? error.message : String(error),
+      {
+        cause: error,
+        stage: "INSTALLER_VERIFY",
+        classification: classifyReleaseFailure(error),
+      },
+    );
+  }
   logger.line("完整门禁、Google Fonts 检查和本地三件套校验通过。");
 }
 
@@ -1038,6 +1206,7 @@ async function main() {
     const result = await executeSoftwarePublishPlan(plan, {
       dryRun: false,
       operations: {
+        preflight: async () => runReleasePreflight(plan, logger),
         updateVersion: async () => updateVersionFiles(plan, state),
         validate: async () => runFullValidation(plan, logger),
         commitVersion: async () => commitVersion(plan),

@@ -1,25 +1,27 @@
-export class SoftwarePublishError extends Error {
-  constructor(
-    code: string,
-    message: string,
-    options?: { cause?: unknown; stage?: string },
-  );
-  code: string;
+export interface SoftwarePublishErrorOptions {
+  cause?: unknown;
   stage?: string;
+  classification?: string;
+  command?: string;
+  detailLog?: string;
+  target?: string;
+  failedItem?: string;
 }
 
-export function formatSoftwarePublishFailure(
-  error: unknown,
-  logPath: string,
-): string[];
-export function parseGitPorcelainPaths(value: string): string[];
-export function assertOnlyVersionFiles(changed: string[]): void;
-export function assertProjectRootConsistency(input: {
-  scriptRoot: string;
-  resolvedProjectRoot: string;
-  gitRoot: string;
-  workingDirectory: string;
-}): string;
+export declare class SoftwarePublishError extends Error {
+  constructor(code: string, message: string, options?: SoftwarePublishErrorOptions);
+  code: string;
+  stage?: string;
+  classification?: string;
+  command?: string;
+  detailLog?: string;
+  target?: string;
+  failedItem?: string;
+}
+
+export declare function compareReleaseVersions(left: string, right: string): number;
+export declare function parseReleaseVersion(value: string): [number, number, number];
+export declare function nextPatchVersion(value: string): string;
 
 export interface SoftwarePublishPlanInput {
   dirty: boolean;
@@ -34,8 +36,8 @@ export interface SoftwarePublishPlanInput {
   latestTagVersion: string;
   sourceTagExists: boolean;
   sourceReleaseExists: boolean;
-  targetTagExists: boolean;
-  targetReleaseExists: boolean;
+  targetTagExists?: boolean;
+  targetReleaseExists?: boolean;
 }
 
 export interface SoftwarePublishPlan {
@@ -51,28 +53,55 @@ export interface SoftwarePublishPlan {
   commitsSinceRelease: string[];
 }
 
-export function parseReleaseVersion(value: string): number[];
-export function compareReleaseVersions(left: string, right: string): number;
-export function nextPatchVersion(value: string): string;
-export function createSoftwarePublishPlan(
+export interface SoftwarePublishActionsResult {
+  success: boolean;
+  url?: string;
+}
+
+export interface SoftwarePublishOperations {
+  preflight?: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  updateVersion: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  validate: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  commitVersion: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  restoreVersion: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  pushMain: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  assertMainSynchronized: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  assertTargetAvailable: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  createTag: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  pushTag: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  waitForActions: (
+    plan: SoftwarePublishPlan,
+  ) => SoftwarePublishActionsResult | Promise<SoftwarePublishActionsResult>;
+  verifyRelease: (
+    plan: SoftwarePublishPlan,
+    actions: SoftwarePublishActionsResult,
+  ) => unknown | Promise<unknown>;
+}
+
+export declare function createSoftwarePublishPlan(
   input: SoftwarePublishPlanInput,
 ): SoftwarePublishPlan;
-export function executeSoftwarePublishPlan(
+export declare function executeSoftwarePublishPlan(
   plan: SoftwarePublishPlan,
-  options: {
-    dryRun: boolean;
-    operations: {
-      updateVersion(plan: SoftwarePublishPlan): unknown;
-      validate(plan: SoftwarePublishPlan): unknown;
-      commitVersion(plan: SoftwarePublishPlan): unknown;
-      restoreVersion(plan: SoftwarePublishPlan): unknown;
-      pushMain(plan: SoftwarePublishPlan): unknown;
-      assertMainSynchronized(plan: SoftwarePublishPlan): unknown;
-      assertTargetAvailable(plan: SoftwarePublishPlan): unknown;
-      createTag(plan: SoftwarePublishPlan): unknown;
-      pushTag(plan: SoftwarePublishPlan): unknown;
-      waitForActions(plan: SoftwarePublishPlan): unknown;
-      verifyRelease(plan: SoftwarePublishPlan, actions: unknown): unknown;
-    };
-  },
-): Promise<Record<string, unknown>>;
+  options: { dryRun: boolean; operations: SoftwarePublishOperations },
+): Promise<{
+  dryRun: boolean;
+  released: boolean;
+  actions?: SoftwarePublishActionsResult;
+  release?: unknown;
+}>;
+export declare function formatSoftwarePublishFailure(
+  error: unknown,
+  logPath: string,
+): string[];
+export declare function parseGitPorcelainPaths(value: string | Buffer): string[];
+export declare function assertOnlyVersionFiles(
+  files: string[],
+  allowedFiles?: string[],
+): void;
+export declare function assertProjectRootConsistency(input: {
+  scriptRoot: string;
+  resolvedProjectRoot: string;
+  gitRoot: string;
+  workingDirectory: string;
+}): string;
