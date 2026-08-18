@@ -31,6 +31,48 @@ export declare function compareReleaseVersions(left: string, right: string): num
 export declare function parseReleaseVersion(value: string): [number, number, number];
 export declare function nextPatchVersion(value: string): string;
 
+export interface ReleaseWorkflowRun {
+  databaseId: number;
+  headSha: string;
+  headBranch: string;
+  status: string;
+  conclusion: string;
+  event: string;
+  url?: string;
+}
+
+export interface PublishedReleaseState {
+  version: string;
+  releaseExists: boolean;
+  tagExists: boolean;
+  tagCommit?: string | null;
+  remoteTagCommit?: string | null;
+  releaseCommit?: string | null;
+}
+
+export interface HistoricalReleaseTagState {
+  version: string;
+  tagCommit?: string | null;
+  remoteTagCommit?: string | null;
+  releaseExists: boolean;
+  isMainAncestor: boolean;
+  workflowRuns: ReleaseWorkflowRun[];
+}
+
+export interface FailedReleaseTag {
+  version: string;
+  tagCommit: string;
+  workflowRunId: number;
+  workflowConclusion: string;
+  workflowUrl?: string;
+}
+
+export interface ReleaseHistoryClassification {
+  latestPublishedReleaseVersion: string;
+  latestHistoricalTagVersion: string;
+  failedReleaseTags: FailedReleaseTag[];
+}
+
 export interface SoftwarePublishPlanInput {
   dirty: boolean;
   branch: string;
@@ -41,9 +83,8 @@ export interface SoftwarePublishPlanInput {
   sourceVersion: string;
   lockVersion: string;
   latestReleaseVersion: string;
-  latestTagVersion: string;
-  sourceTagExists: boolean;
-  sourceReleaseExists: boolean;
+  latestPublishedRelease: PublishedReleaseState;
+  historicalTags: HistoricalReleaseTagState[];
   targetTagExists?: boolean;
   targetReleaseExists?: boolean;
 }
@@ -54,7 +95,9 @@ export interface SoftwarePublishPlan {
   sourceVersion: string;
   targetVersion?: string;
   versionChangeRequired?: boolean;
-  failedReservedVersion?: string;
+  latestPublishedReleaseVersion: string;
+  latestHistoricalTagVersion: string;
+  failedReleaseTags: FailedReleaseTag[];
   ahead: number;
   behind: number;
   commitsToPush: string[];
@@ -89,6 +132,11 @@ export interface SoftwarePublishOperations {
 export declare function createSoftwarePublishPlan(
   input: SoftwarePublishPlanInput,
 ): SoftwarePublishPlan;
+export declare function classifyReleaseHistory(input: {
+  latestPublishedRelease: PublishedReleaseState;
+  historicalTags: HistoricalReleaseTagState[];
+  targetVersion: string;
+}): ReleaseHistoryClassification;
 export declare function executeSoftwarePublishPlan(
   plan: SoftwarePublishPlan,
   options: { dryRun: boolean; operations: SoftwarePublishOperations },

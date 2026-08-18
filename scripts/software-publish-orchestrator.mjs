@@ -172,6 +172,131 @@ export function nextPatchVersion(value) {
   return `${major}.${minor}.${patch + 1}`;
 }
 
+const failedReleaseConclusions = new Set([
+  "action_required",
+  "cancelled",
+  "failure",
+  "stale",
+  "startup_failure",
+  "timed_out",
+]);
+
+function assertCommitIdentity(label, values) {
+  const commits = values.filter(Boolean);
+  if (commits.length !== values.length || new Set(commits).size !== 1) {
+    throw new SoftwarePublishError(
+      "RELEASE_COMMIT_MISMATCH",
+      `${label} 对应的 Tag、远程引用、Release/Workflow 提交不一致，发布已停止。`,
+    );
+  }
+  return commits[0];
+}
+
+export function classifyReleaseHistory(input) {
+  const published = input.latestPublishedRelease;
+  if (!published?.releaseExists) {
+    throw new SoftwarePublishError(
+      "MISSING_PUBLISHED_RELEASE",
+      `Latest Published Release v${published?.version || "未知"} 不存在。`,
+    );
+  }
+  if (!published.tagExists) {
+    throw new SoftwarePublishError(
+      "PUBLISHED_RELEASE_TAG_MISSING",
+      `GitHub Release v${published.version} 存在，但对应 Tag 缺失，发布已停止。`,
+    );
+  }
+  assertCommitIdentity(`正式版本 v${published.version}`, [
+    published.tagCommit,
+    published.remoteTagCommit,
+    published.releaseCommit,
+  ]);
+
+  const failedReleaseTags = [];
+  const sortedTags = [...(input.historicalTags || [])].sort((left, right) =>
+    compareReleaseVersions(left.version, right.version),
+  );
+  for (const tag of sortedTags) {
+    if (compareReleaseVersions(tag.version, published.version) <= 0) {
+      throw new SoftwarePublishError(
+        "INVALID_HISTORICAL_TAG",
+        `待分类 Tag v${tag.version} 不高于 Latest Published Release v${published.version}。`,
+      );
+    }
+    if (compareReleaseVersions(tag.version, input.targetVersion) >= 0) {
+      throw new SoftwarePublishError(
+        "FAILED_TAG_NOT_BELOW_TARGET",
+        `失败历史 Tag v${tag.version} 必须严格低于目标版本 v${input.targetVersion}。`,
+      );
+    }
+    if (tag.releaseExists) {
+      throw new SoftwarePublishError(
+        "UNEXPECTED_PUBLISHED_RELEASE",
+        `v${tag.version} 已存在 GitHub Release，不能分类为 FAILED_RELEASE_TAG。`,
+      );
+    }
+    const tagCommit = assertCommitIdentity(`失败历史版本 v${tag.version}`, [
+      tag.tagCommit,
+      tag.remoteTagCommit,
+    ]);
+    if (!tag.isMainAncestor) {
+      throw new SoftwarePublishError(
+        "FAILED_TAG_NOT_MAIN_ANCESTOR",
+        `失败历史 Tag v${tag.version} 的提交不是当前 main 的祖先，发布已停止。`,
+      );
+    }
+
+    const runs = tag.workflowRuns || [];
+    const activeRun = runs.find((run) =>
+      run.headBranch === `v${tag.version}`
+      && ["in_progress", "queued", "requested", "waiting"].includes(run.status),
+    );
+    if (activeRun) {
+      throw new SoftwarePublishError(
+        "FAILED_TAG_WORKFLOW_ACTIVE",
+        `v${tag.version} 的正式发布 Workflow 仍处于 ${activeRun.status}，发布已停止。`,
+      );
+    }
+
+    const matchingRuns = runs.filter((run) =>
+      run.event === "push"
+      && run.headBranch === `v${tag.version}`
+      && run.headSha === tagCommit,
+    );
+    const failedRun = matchingRuns.find((run) =>
+      run.status === "completed"
+      && failedReleaseConclusions.has(run.conclusion),
+    );
+    if (!failedRun) {
+      const hasDifferentCommit = runs.some((run) =>
+        run.headBranch === `v${tag.version}` && run.headSha !== tagCommit,
+      );
+      throw new SoftwarePublishError(
+        hasDifferentCommit
+          ? "FAILED_TAG_WORKFLOW_COMMIT_MISMATCH"
+          : "FAILED_TAG_EVIDENCE_MISSING",
+        hasDifferentCommit
+          ? `v${tag.version} 的 Tag 提交与正式发布 Workflow 提交不一致，疑似 Tag 已移动或伪造。`
+          : `v${tag.version} 缺少同提交、终态失败的正式发布 Workflow 证据。`,
+      );
+    }
+    failedReleaseTags.push({
+      version: tag.version,
+      tagCommit,
+      workflowRunId: failedRun.databaseId,
+      workflowConclusion: failedRun.conclusion,
+      workflowUrl: failedRun.url,
+    });
+  }
+
+  return {
+    latestPublishedReleaseVersion: published.version,
+    latestHistoricalTagVersion:
+      failedReleaseTags.at(-1)?.version || published.version,
+    failedReleaseTags,
+  };
+}
+
 export function createSoftwarePublishPlan(input) {
   if (input.dirty) {
     throw new SoftwarePublishError(
@@ -197,51 +322,27 @@ export function createSoftwarePublishPlan(input) {
       `package.json（${input.sourceVersion}）与 package-lock.json（${input.lockVersion}）版本不一致。`,
     );
   }
+  if (input.latestPublishedRelease?.version !== input.latestReleaseVersion) {
+    throw new SoftwarePublishError(
+      "LATEST_RELEASE_STATE_MISMATCH",
+      "Latest Release 查询结果与 PUBLISHED_RELEASE 状态版本不一致，发布已停止。",
+    );
+  }
   const sourceComparedWithRelease = compareReleaseVersions(
     input.sourceVersion,
     input.latestReleaseVersion,
   );
-  const failedReservedVersion = sourceComparedWithRelease > 0
-    && input.sourceVersion === input.latestTagVersion
-    && input.sourceTagExists
-    && !input.sourceReleaseExists
-    && compareReleaseVersions(input.latestTagVersion, input.latestReleaseVersion) > 0
-    ? input.sourceVersion
-    : undefined;
-  if (
-    input.latestTagVersion !== input.latestReleaseVersion
-    && !failedReservedVersion
-  ) {
-    throw new SoftwarePublishError(
-      "RELEASE_TAG_MISMATCH",
-      `GitHub Latest Release（${input.latestReleaseVersion}）与最新正式 Tag（${input.latestTagVersion}）不一致。`,
-    );
-  }
   if (sourceComparedWithRelease < 0) {
     throw new SoftwarePublishError(
       "SOURCE_VERSION_BEHIND",
       `源码版本 ${input.sourceVersion} 低于已发布版本 ${input.latestReleaseVersion}，发布已停止。`,
     );
   }
-  if (input.commitsSinceRelease.length === 0) {
-    return {
-      kind: "none",
-      currentVersion: input.latestReleaseVersion,
-      sourceVersion: input.sourceVersion,
-      ahead: input.ahead,
-      behind: input.behind,
-      commitsToPush: input.commitsToPush,
-      commitsSinceRelease: input.commitsSinceRelease,
-    };
-  }
-
   const sourceIsPublished = sourceComparedWithRelease === 0;
-  const versionChangeRequired = sourceIsPublished || Boolean(failedReservedVersion);
-  const targetVersion = failedReservedVersion
-    ? nextPatchVersion(failedReservedVersion)
-    : sourceIsPublished
-      ? nextPatchVersion(input.latestReleaseVersion)
-      : input.sourceVersion;
+  const versionChangeRequired = sourceIsPublished;
+  const targetVersion = sourceIsPublished
+    ? nextPatchVersion(input.latestReleaseVersion)
+    : input.sourceVersion;
   if (input.targetTagExists) {
     throw new SoftwarePublishError(
       "TARGET_TAG_EXISTS",
@@ -254,6 +355,24 @@ export function createSoftwarePublishPlan(input) {
       `GitHub Release v${targetVersion} 已存在，拒绝重复发布。`,
     );
   }
+  const history = classifyReleaseHistory({
+    latestPublishedRelease: input.latestPublishedRelease,
+    historicalTags: input.historicalTags,
+    targetVersion,
+  });
+
+  if (input.commitsSinceRelease.length === 0) {
+    return {
+      kind: "none",
+      currentVersion: input.latestReleaseVersion,
+      sourceVersion: input.sourceVersion,
+      ...history,
+      ahead: input.ahead,
+      behind: input.behind,
+      commitsToPush: input.commitsToPush,
+      commitsSinceRelease: input.commitsSinceRelease,
+    };
+  }
 
   return {
     kind: "release",
@@ -261,7 +380,7 @@ export function createSoftwarePublishPlan(input) {
     sourceVersion: input.sourceVersion,
     targetVersion,
     versionChangeRequired,
-    failedReservedVersion,
+    ...history,
     ahead: input.ahead,
     behind: input.behind,
     commitsToPush: input.commitsToPush,
@@ -516,6 +635,48 @@ function lines(value) {
     .filter(Boolean);
 }
 
+function localTagCommit(version) {
+  const result = git(["rev-parse", `v${version}^{commit}`], {
+    allowFailure: true,
+  });
+  return result.status === 0 ? result.stdout : null;
+}
+
+function remoteTagCommit(version) {
+  const result = git([
+    "ls-remote",
+    "--tags",
+    "origin",
+    `refs/tags/v${version}`,
+    `refs/tags/v${version}^{}`,
+  ]);
+  const references = lines(result.stdout).map((line) => line.split(/\s+/u));
+  return references.find(([, reference]) => reference.endsWith("^{}"))?.[0]
+    || references[0]?.[0]
+    || null;
+}
+
+function releaseWorkflowRuns(repository, version) {
+  return JSON.parse(
+    gh([
+      "run",
+      "list",
+      "--repo",
+      repository,
+      "--workflow",
+      releaseWorkflow,
+      "--branch",
+      `v${version}`,
+      "--event",
+      "push",
+      "--limit",
+      "20",
+      "--json",
+      "databaseId,headSha,headBranch,status,conclusion,event,createdAt,url,displayTitle",
+    ]).stdout || "[]",
+  );
+}
+
 function targetTagExists(version) {
   if (git(["tag", "-l", `v${version}`]).stdout) return true;
   const result = git(
@@ -551,10 +712,7 @@ function collectPublishState(repository) {
   if (tags.length === 0) {
     throw new SoftwarePublishError("MISSING_TAG", "未找到任何正式 v* Git Tag。");
   }
-  const latestTagVersion = tags[0];
   const versions = readVersions();
-  const sourceTagExists = targetTagExists(versions.sourceVersion);
-  const sourceReleaseExists = releaseExists(repository, versions.sourceVersion);
   if (versions.lockVersion !== versions.lockRootVersion) {
     throw new SoftwarePublishError(
       "LOCK_VERSION_MISMATCH",
@@ -578,23 +736,42 @@ function collectPublishState(repository) {
   const commitsToPush = lines(
     git(["log", "origin/main..HEAD", "--format=%h %s"]).stdout,
   );
-  const preliminary = createSoftwarePublishPlan({
-    dirty,
-    branch,
-    ahead,
-    behind,
-    commitsToPush,
-    commitsSinceRelease,
-    sourceVersion: versions.sourceVersion,
-    lockVersion: versions.lockVersion,
-    latestReleaseVersion: release.version,
-    latestTagVersion,
-    sourceTagExists,
-    sourceReleaseExists,
-    targetTagExists: false,
-    targetReleaseExists: false,
-  });
-  if (preliminary.kind === "none") return { ...preliminary, release };
+  const targetVersion = compareReleaseVersions(
+    versions.sourceVersion,
+    release.version,
+  ) === 0
+    ? nextPatchVersion(release.version)
+    : versions.sourceVersion;
+  const publishedTagCommit = localTagCommit(release.version);
+  const publishedRemoteTagCommit = remoteTagCommit(release.version);
+  const publishedRun = releaseWorkflowRuns(repository, release.version).find((run) =>
+    run.status === "completed"
+    && run.conclusion === "success"
+    && run.event === "push"
+    && run.headBranch === releaseTag
+    && run.headSha === publishedTagCommit,
+  );
+  const historicalTags = tags
+    .filter((version) =>
+      compareReleaseVersions(version, release.version) > 0
+      && version !== targetVersion,
+    )
+    .map((version) => {
+      const tagCommit = localTagCommit(version);
+      const ancestor = tagCommit
+        ? git(["merge-base", "--is-ancestor", tagCommit, "main"], {
+            allowFailure: true,
+          })
+        : { status: 1 };
+      return {
+        version,
+        tagCommit,
+        remoteTagCommit: remoteTagCommit(version),
+        releaseExists: releaseExists(repository, version),
+        isMainAncestor: ancestor.status === 0,
+        workflowRuns: releaseWorkflowRuns(repository, version),
+      };
+    });
   return {
     ...createSoftwarePublishPlan({
       dirty,
@@ -606,11 +783,17 @@ function collectPublishState(repository) {
       sourceVersion: versions.sourceVersion,
       lockVersion: versions.lockVersion,
       latestReleaseVersion: release.version,
-      latestTagVersion,
-      sourceTagExists,
-      sourceReleaseExists,
-      targetTagExists: targetTagExists(preliminary.targetVersion),
-      targetReleaseExists: releaseExists(repository, preliminary.targetVersion),
+      latestPublishedRelease: {
+        version: release.version,
+        releaseExists: true,
+        tagExists: Boolean(publishedTagCommit && publishedRemoteTagCommit),
+        tagCommit: publishedTagCommit,
+        remoteTagCommit: publishedRemoteTagCommit,
+        releaseCommit: publishedRun?.headSha,
+      },
+      historicalTags,
+      targetTagExists: targetTagExists(targetVersion),
+      targetReleaseExists: releaseExists(repository, targetVersion),
     }),
     release,
   };
@@ -620,15 +803,18 @@ function printPlan(plan, logger) {
   logger.line("========================================");
   logger.line("VERIDIA 发布计划");
   logger.line("========================================");
-  logger.line(`当前正式版本：${plan.currentVersion}`);
-  logger.line(`当前源码版本：${plan.sourceVersion}`);
-  if (plan.failedReservedVersion) {
+  logger.line(`Latest Published Release：v${plan.latestPublishedReleaseVersion}`);
+  logger.line(`Latest Historical Tag：v${plan.latestHistoricalTagVersion}`);
+  logger.line("Failed Release Tags：");
+  if (plan.failedReleaseTags.length === 0) logger.line("- 无");
+  for (const tag of plan.failedReleaseTags) {
     logger.line(
-      `检测到 v${plan.failedReservedVersion} Tag 已存在但对应正式 Release 缺失；该失败版本号已保留。`,
+      `- v${tag.version}（Historical Failed Attempt；Run ${tag.workflowRunId}，${tag.workflowConclusion}）`,
     );
-    logger.line(`不会覆盖、删除或移动 v${plan.failedReservedVersion} Tag。`);
   }
-  logger.line(`目标版本：${plan.targetVersion}`);
+  logger.line(`当前源码版本：${plan.sourceVersion}`);
+  logger.line(`Target Version：v${plan.targetVersion}`);
+  logger.line("Release Preflight：PASS");
   logger.line("");
   logger.line(`待 Push 提交：${plan.commitsToPush.length} 个`);
   for (const commit of plan.commitsToPush) logger.line(`- ${commit}`);

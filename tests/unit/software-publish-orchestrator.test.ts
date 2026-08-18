@@ -25,11 +25,38 @@ function state(overrides: Record<string, unknown> = {}) {
     sourceVersion: "1.1.6",
     lockVersion: "1.1.6",
     latestReleaseVersion: "1.1.6",
-    latestTagVersion: "1.1.6",
-    sourceTagExists: true,
-    sourceReleaseExists: true,
+    latestPublishedRelease: {
+      version: "1.1.6",
+      releaseExists: true,
+      tagExists: true,
+      tagCommit: "published-commit",
+      remoteTagCommit: "published-commit",
+      releaseCommit: "published-commit",
+    },
+    historicalTags: [],
     targetTagExists: false,
     targetReleaseExists: false,
+    ...overrides,
+  };
+}
+
+function failedTag(version: string, overrides: Record<string, unknown> = {}) {
+  const tagCommit = `failed-${version}`;
+  return {
+    version,
+    tagCommit,
+    remoteTagCommit: tagCommit,
+    releaseExists: false,
+    isMainAncestor: true,
+    workflowRuns: [{
+      databaseId: Number(version.replaceAll(".", "")),
+      headSha: tagCommit,
+      headBranch: `v${version}`,
+      status: "completed",
+      conclusion: "failure",
+      event: "push",
+      url: `https://github.example/actions/${version}`,
+    }],
     ...overrides,
   };
 }
@@ -141,8 +168,6 @@ describe("一键软件发布编排", () => {
       state({
         sourceVersion: "1.2.0",
         lockVersion: "1.2.0",
-        sourceTagExists: false,
-        sourceReleaseExists: false,
       }),
     );
 
@@ -150,60 +175,216 @@ describe("一键软件发布编排", () => {
     expect(plan.versionChangeRequired).toBe(false);
   });
 
-  it("源码版本尚无 Tag 时按该版本首次发布", () => {
+  it("Case A：无失败历史时按预先准备的源码版本首次发布", () => {
     const plan = createSoftwarePublishPlan(state({
-      sourceVersion: "1.1.8",
-      lockVersion: "1.1.8",
-      latestReleaseVersion: "1.1.7",
-      latestTagVersion: "1.1.7",
-      sourceTagExists: false,
-      sourceReleaseExists: false,
+      sourceVersion: "1.1.14",
+      lockVersion: "1.1.14",
+      latestReleaseVersion: "1.1.13",
+      latestPublishedRelease: {
+        version: "1.1.13",
+        releaseExists: true,
+        tagExists: true,
+        tagCommit: "release-113",
+        remoteTagCommit: "release-113",
+        releaseCommit: "release-113",
+      },
     }));
 
     expect(plan).toMatchObject({
-      targetVersion: "1.1.8",
+      targetVersion: "1.1.14",
+      versionChangeRequired: false,
+      latestPublishedReleaseVersion: "1.1.13",
+      latestHistoricalTagVersion: "1.1.13",
+      failedReleaseTags: [],
+    });
+  });
+
+  it("Case B / J：单个失败历史 Tag 合法时目标仍严格等于源码版本", () => {
+    const plan = createSoftwarePublishPlan(state({
+      sourceVersion: "1.1.15",
+      lockVersion: "1.1.15",
+      latestReleaseVersion: "1.1.13",
+      latestPublishedRelease: {
+        version: "1.1.13",
+        releaseExists: true,
+        tagExists: true,
+        tagCommit: "release-113",
+        remoteTagCommit: "release-113",
+        releaseCommit: "release-113",
+      },
+      historicalTags: [failedTag("1.1.14")],
+    }));
+
+    expect(plan).toMatchObject({
+      currentVersion: "1.1.13",
+      sourceVersion: "1.1.15",
+      targetVersion: "1.1.15",
+      latestHistoricalTagVersion: "1.1.14",
       versionChangeRequired: false,
     });
+    expect(plan.failedReleaseTags).toEqual([
+      expect.objectContaining({
+        version: "1.1.14",
+        workflowConclusion: "failure",
+      }),
+    ]);
   });
 
-  it("Tag 已占用但 Release 缺失的失败版本会保留并规划下一补丁版本", () => {
+  it("Case C：多个连续失败历史 Tag 都有有效证据时允许更高目标版本", () => {
     const plan = createSoftwarePublishPlan(state({
-      sourceVersion: "1.1.8",
-      lockVersion: "1.1.8",
-      latestReleaseVersion: "1.1.7",
-      latestTagVersion: "1.1.8",
-      sourceTagExists: true,
-      sourceReleaseExists: false,
+      sourceVersion: "1.1.16",
+      lockVersion: "1.1.16",
+      latestReleaseVersion: "1.1.13",
+      latestPublishedRelease: {
+        version: "1.1.13",
+        releaseExists: true,
+        tagExists: true,
+        tagCommit: "release-113",
+        remoteTagCommit: "release-113",
+        releaseCommit: "release-113",
+      },
+      historicalTags: [failedTag("1.1.14"), failedTag("1.1.15", {
+        workflowRuns: [{
+          databaseId: 115,
+          headSha: "failed-1.1.15",
+          headBranch: "v1.1.15",
+          status: "completed",
+          conclusion: "cancelled",
+          event: "push",
+        }],
+      })],
     }));
 
-    expect(plan).toMatchObject({
-      currentVersion: "1.1.7",
-      sourceVersion: "1.1.8",
-      targetVersion: "1.1.9",
-      failedReservedVersion: "1.1.8",
-      versionChangeRequired: true,
-    });
+    expect(plan.targetVersion).toBe("1.1.16");
+    expect(plan.failedReleaseTags.map((tag) => tag.version)).toEqual([
+      "1.1.14",
+      "1.1.15",
+    ]);
   });
 
-  it("不属于当前源码失败保留版本的 Tag/Release 不一致仍会阻止发布", () => {
+  it.each(["queued", "in_progress"])(
+    "Case D：失败历史 Tag 的 Workflow 仍为 %s 时阻止",
+    (status) => {
     expect(() => createSoftwarePublishPlan(state({
-      sourceVersion: "1.1.9",
-      lockVersion: "1.1.9",
-      latestReleaseVersion: "1.1.7",
-      latestTagVersion: "1.1.8",
-      sourceTagExists: false,
-      sourceReleaseExists: false,
-    }))).toThrow("Latest Release（1.1.7）与最新正式 Tag（1.1.8）不一致");
+      sourceVersion: "1.1.15",
+      lockVersion: "1.1.15",
+      historicalTags: [failedTag("1.1.14", {
+        workflowRuns: [{
+          databaseId: 114,
+          headSha: "failed-1.1.14",
+          headBranch: "v1.1.14",
+          status,
+          conclusion: "",
+          event: "push",
+        }],
+      })],
+    }))).toThrow(`仍处于 ${status}`);
+    },
+  );
+
+  it("Case E：无终态失败证据的孤立 Tag 阻止", () => {
+    expect(() => createSoftwarePublishPlan(state({
+      sourceVersion: "1.1.15",
+      lockVersion: "1.1.15",
+      historicalTags: [failedTag("1.1.14", { workflowRuns: [] })],
+    }))).toThrow("缺少同提交、终态失败");
   });
 
-  it("源码版本低于正式 Release 时停止", () => {
+  it.each([
+    ["Case F：目标 Tag 已存在", { targetTagExists: true }, "目标 Tag v1.1.15 已存在"],
+    ["Case G：目标 Release 已存在", { targetReleaseExists: true }, "GitHub Release v1.1.15 已存在"],
+  ])("%s 时阻止", (_label, override, message) => {
+    expect(() => createSoftwarePublishPlan(state({
+      sourceVersion: "1.1.15",
+      lockVersion: "1.1.15",
+      historicalTags: [failedTag("1.1.14")],
+      ...override,
+    }))).toThrow(message);
+  });
+
+  it("Case H：失败历史 Tag Commit 不是 main 祖先时阻止", () => {
+    expect(() => createSoftwarePublishPlan(state({
+      sourceVersion: "1.1.15",
+      lockVersion: "1.1.15",
+      historicalTags: [failedTag("1.1.14", { isMainAncestor: false })],
+    }))).toThrow("不是当前 main 的祖先");
+  });
+
+  it("失败历史 Tag 必须严格低于 target", () => {
+    expect(() => createSoftwarePublishPlan(state({
+      sourceVersion: "1.1.15",
+      lockVersion: "1.1.15",
+      historicalTags: [failedTag("1.1.15")],
+    }))).toThrow("必须严格低于目标版本 v1.1.15");
+  });
+
+  it("Release 存在但对应 Tag 缺失时阻止", () => {
+    expect(() => createSoftwarePublishPlan(state({
+      latestPublishedRelease: {
+        version: "1.1.6",
+        releaseExists: true,
+        tagExists: false,
+      },
+    }))).toThrow("GitHub Release v1.1.6 存在，但对应 Tag 缺失");
+  });
+
+  it("Latest Release 查询结果与正式发布状态版本不一致时阻止", () => {
+    expect(() => createSoftwarePublishPlan(state({
+      latestPublishedRelease: {
+        version: "1.1.5",
+        releaseExists: true,
+        tagExists: true,
+        tagCommit: "release-115",
+        remoteTagCommit: "release-115",
+        releaseCommit: "release-115",
+      },
+    }))).toThrow("Latest Release 查询结果与 PUBLISHED_RELEASE 状态版本不一致");
+  });
+
+  it("同版本 Tag / Release 指向不同 Commit 时阻止", () => {
+    expect(() => createSoftwarePublishPlan(state({
+      latestPublishedRelease: {
+        version: "1.1.6",
+        releaseExists: true,
+        tagExists: true,
+        tagCommit: "tag-commit",
+        remoteTagCommit: "tag-commit",
+        releaseCommit: "release-commit",
+      },
+    }))).toThrow("Tag、远程引用、Release/Workflow 提交不一致");
+  });
+
+  it("失败历史 Tag 被移动或覆盖时阻止", () => {
+    expect(() => createSoftwarePublishPlan(state({
+      sourceVersion: "1.1.15",
+      lockVersion: "1.1.15",
+      historicalTags: [failedTag("1.1.14", {
+        remoteTagCommit: "moved-commit",
+      })],
+    }))).toThrow("Tag、远程引用、Release/Workflow 提交不一致");
+  });
+
+  it("中间版本已有 Release 时不能分类为失败历史 Tag", () => {
+    expect(() => createSoftwarePublishPlan(state({
+      sourceVersion: "1.1.15",
+      lockVersion: "1.1.15",
+      historicalTags: [failedTag("1.1.14", { releaseExists: true })],
+    }))).toThrow("不能分类为 FAILED_RELEASE_TAG");
+  });
+
+  it("Case I：源码版本低于正式 Release 时停止", () => {
     expect(() => createSoftwarePublishPlan(state({
       sourceVersion: "1.1.6",
       lockVersion: "1.1.6",
       latestReleaseVersion: "1.1.7",
-      latestTagVersion: "1.1.7",
-      sourceTagExists: true,
-      sourceReleaseExists: false,
+      latestPublishedRelease: {
+        version: "1.1.7",
+        releaseExists: true,
+        tagExists: true,
+        tagCommit: "release-117",
+        remoteTagCommit: "release-117",
+        releaseCommit: "release-117",
+      },
     }))).toThrow("源码版本 1.1.6 低于已发布版本 1.1.7");
   });
 
