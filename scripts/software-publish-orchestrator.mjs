@@ -1591,10 +1591,11 @@ function commitVersion(plan) {
   git(["add", "package.json", "package-lock.json"]);
   git(["diff", "--cached", "--check"]);
   const staged = git(["diff", "--cached", "--quiet"], { allowFailure: true });
-  const args = ["commit"];
-  if (staged.status === 0) args.push("--allow-empty");
-  args.push("-m", `chore: release ${plan.targetVersion}`);
-  git(args);
+  if (staged.status === 0) {
+    return { created: false, commit: git(["rev-parse", "HEAD"]).stdout };
+  }
+  git(["commit", "-m", `chore: release ${plan.targetVersion}`]);
+  return { created: true, commit: git(["rev-parse", "HEAD"]).stdout };
 }
 
 function assertMainSynchronized() {
@@ -2069,8 +2070,13 @@ async function main() {
           ),
         restoreVersion: async () => restoreVersionFiles(state),
         pushMain: async () => {
-          logger.line("正在一次性 Push 开发提交和版本提交到 origin/main...");
-          git(["push", "origin", "main"]);
+          const pending = Number(git(["rev-list", "--count", "origin/main..HEAD"]).stdout);
+          if (pending > 0) {
+            logger.line("正在一次性 Push 开发提交和版本提交到 origin/main...");
+            git(["push", "origin", "main"]);
+          } else {
+            logger.line("Release Prepare Commit 已在 origin/main；不创建空提交、不重复 Push。");
+          }
         },
         assertMainSynchronized: async () => assertMainSynchronized(),
         waitForMainCi: async () => waitForMainCi(repository, current, logger),

@@ -73,6 +73,8 @@ describe("本地打包发布门禁", () => {
     expect(orchestrator).toContain('git(["push", "origin", `v${current.targetVersion}`])');
     expect(orchestrator).not.toMatch(/git\(\["push"[^\n]+readOnlyNetwork/gu);
     expect(orchestrator).not.toMatch(/gh\(\["release", "create"[^\n]+readOnlyNetwork/gu);
+    expect(orchestrator).not.toContain("--allow-empty");
+    expect(orchestrator).toContain("Release Prepare Commit 已在 origin/main");
   });
 
   it("Preflight 位于用户确认后、版本修改和 FULL 之前", () => {
