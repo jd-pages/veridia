@@ -83,6 +83,11 @@ describe("分层测试门禁", () => {
     for (const field of ["runId", "port", "databasePath", "profilePath", "serverPid", "browserPid"]) expect(runner).toContain(field);
     expect(runner).toContain("taskkill");
     expect(runner).toContain("runDirectory");
+    expect(runner).toContain("XHS_PROFILE_PATH: profilePath");
+    expect(runner).toContain("DOUYIN_PROFILE_PATH: douyinProfilePath");
+    expect(runner).toContain('path.join(root, "playwright-report", isolationGroup)');
+    expect(runner).toContain('path.join(root, "test-results", isolationGroup)');
+    expect(runner).toContain("E2E 隔离 Profile 清理失败");
     expect(runner).toContain("cleanupTestNextGeneratedTypes");
     expect(runner).toContain("restoreFile");
     expect(runner).toContain('await cleanup("outer-timeout")');

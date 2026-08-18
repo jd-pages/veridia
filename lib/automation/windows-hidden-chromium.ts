@@ -6,7 +6,11 @@ import path from "node:path";
 import type { Browser, BrowserContext, BrowserType } from "playwright";
 
 const DEVTOOLS_ACTIVE_PORT = "DevToolsActivePort";
-const CONNECT_TIMEOUT_MS = 30_000;
+const CONNECT_TIMEOUT_MS = 12_000;
+const CLOSE_STEP_TIMEOUT_MS = 1_000;
+const PROCESS_EXIT_TIMEOUT_MS = 3_000;
+const PROFILE_RELEASE_ATTEMPTS = 5;
+const PROFILE_RELEASE_INTERVAL_MS = 100;
 
 type HiddenChromiumConnection = {
   browser: Browser;
@@ -103,7 +107,10 @@ async function connectExisting(
     const endpoint = await readDevToolsEndpoint(profilePath);
     const browser = await chromium.connectOverCDP(endpoint, { timeout });
     if (!browser.isConnected() || !browser.contexts()[0]) {
-      await browser.close().catch(() => undefined);
+      await settleWithin(
+        browser.close().catch(() => undefined),
+        CLOSE_STEP_TIMEOUT_MS,
+      );
       return null;
     }
     await browser.version();
@@ -133,22 +140,114 @@ async function waitForConnection(
   throw new Error(`Chromium 启动超时：${stderr() || "未生成 DevToolsActivePort"}`);
 }
 
+async function settleWithin<T>(promise: Promise<T>, timeoutMs: number) {
+  let cancelTimeout: () => void = () => undefined;
+  const timeoutPromise = new Promise<undefined>((resolve) => {
+    const timeout = setTimeout(resolve, timeoutMs);
+    cancelTimeout = () => clearTimeout(timeout);
+  });
+  try {
+    return await Promise.race<T | undefined>([promise, timeoutPromise]);
+  } finally {
+    cancelTimeout();
+  }
+}
+
+function childProcessRunning(child: ChildProcess) {
+  return child.exitCode === null && child.signalCode === null;
+}
+
+async function waitForChildProcessExit(child: ChildProcess) {
+  if (!childProcessRunning(child)) return true;
+  return new Promise<boolean>((resolve) => {
+    const finish = () => {
+      child.off("exit", finish);
+      clearTimeout(timeout);
+      resolve(!childProcessRunning(child));
+    };
+    child.once("exit", finish);
+    const timeout = setTimeout(finish, PROCESS_EXIT_TIMEOUT_MS);
+  });
+}
+
+async function terminateOwnedProcess(child: ChildProcess) {
+  if (childProcessRunning(child)) {
+    if (process.platform === "win32" && child.pid) {
+      spawnSync(
+        "taskkill",
+        ["/pid", String(child.pid), "/t", "/f"],
+        { windowsHide: true, stdio: "ignore", timeout: PROCESS_EXIT_TIMEOUT_MS },
+      );
+    } else {
+      child.kill();
+    }
+  }
+  if (!(await waitForChildProcessExit(child))) {
+    throw new Error("Chromium 进程树强制终止后仍未在限定时间内退出");
+  }
+}
+
+async function ensureOwnedProcessStopped(child: ChildProcess) {
+  if (await waitForChildProcessExit(child)) return;
+  await terminateOwnedProcess(child);
+}
+
+async function waitForBrowserDisconnected(browser: Browser) {
+  const deadline = Date.now() + PROCESS_EXIT_TIMEOUT_MS;
+  while (browser.isConnected() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, PROFILE_RELEASE_INTERVAL_MS));
+  }
+  if (browser.isConnected()) {
+    throw new Error("Chromium 关闭后连接仍未在限定时间内断开");
+  }
+}
+
+async function waitForProfileRelease(profilePath: string) {
+  const activePortPath = path.join(profilePath, DEVTOOLS_ACTIVE_PORT);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= PROFILE_RELEASE_ATTEMPTS; attempt += 1) {
+    try {
+      await rm(activePortPath, { force: true });
+      await new Promise((resolve) => setTimeout(resolve, PROFILE_RELEASE_INTERVAL_MS));
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < PROFILE_RELEASE_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, PROFILE_RELEASE_INTERVAL_MS));
+      }
+    }
+  }
+  throw new Error(
+    `Chromium Profile 锁未在限定次数内释放：${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
+}
+
 async function closeBrowser(
   browser: Browser,
   ownedProcess: ChildProcess | null,
+  profilePath: string,
 ) {
-  const session = await browser.newBrowserCDPSession().catch(() => null);
+  const session = await settleWithin(
+    browser.newBrowserCDPSession().catch(() => null),
+    CLOSE_STEP_TIMEOUT_MS,
+  );
   if (session) {
-    await session.send("Browser.close").catch(() => undefined);
-    await session.detach().catch(() => undefined);
+    await settleWithin(
+      session.send("Browser.close").catch(() => undefined),
+      CLOSE_STEP_TIMEOUT_MS,
+    );
+    await settleWithin(
+      session.detach().catch(() => undefined),
+      CLOSE_STEP_TIMEOUT_MS,
+    );
   }
-  await Promise.race([
+  await settleWithin(
     browser.close().catch(() => undefined),
-    new Promise((resolve) => setTimeout(resolve, 2_000)),
-  ]);
-  if (ownedProcess && ownedProcess.exitCode === null) {
-    ownedProcess.kill();
-  }
+    CLOSE_STEP_TIMEOUT_MS,
+  );
+  if (ownedProcess) await ensureOwnedProcessStopped(ownedProcess);
+  else await waitForBrowserDisconnected(browser);
+  await waitForProfileRelease(profilePath);
 }
 
 export async function launchWindowsHiddenChromium(
@@ -174,7 +273,7 @@ export async function launchWindowsHiddenChromium(
       browserVersion: existing.version(),
       remoteDebuggingMode: "port",
       remoteDebuggingPolicy: policy,
-      close: () => closeBrowser(existing, null),
+      close: () => closeBrowser(existing, null, profilePath),
     };
   }
 
@@ -209,9 +308,8 @@ export async function launchWindowsHiddenChromium(
     child,
     () => stderr.trim(),
   ).catch(async (directLaunchError) => {
-    if (child.exitCode === null) child.kill();
-    await rm(path.join(profilePath, DEVTOOLS_ACTIVE_PORT), { force: true })
-      .catch(() => undefined);
+    await terminateOwnedProcess(child);
+    await waitForProfileRelease(profilePath);
     try {
       const context = await chromium.launchPersistentContext(profilePath, {
         headless: false,
@@ -220,10 +318,14 @@ export async function launchWindowsHiddenChromium(
         locale: "zh-CN",
         timezoneId: "Asia/Shanghai",
         viewport: { width: 1440, height: 960 },
+        timeout: CONNECT_TIMEOUT_MS,
       });
       const fallbackBrowser = context.browser();
       if (!fallbackBrowser) {
-        await context.close().catch(() => undefined);
+        await settleWithin(
+          context.close().catch(() => undefined),
+          CLOSE_STEP_TIMEOUT_MS,
+        );
         throw new Error("Playwright Persistent Context 未返回 Browser");
       }
       return {
@@ -254,21 +356,21 @@ export async function launchWindowsHiddenChromium(
       browserVersion: browser.browser.version(),
       remoteDebuggingMode: "playwright",
       remoteDebuggingPolicy: policy,
-      close: () => browser.context.close(),
+      close: () => closeBrowser(browser.browser, null, profilePath),
     };
   }
   const context = browser.contexts()[0];
   if (!context) {
-    await closeBrowser(browser, child);
+    await closeBrowser(browser, child, profilePath);
     throw new Error("专用 Chromium 未返回默认 Persistent Context");
   }
-  const terminateOwnedProcess = () => {
-    if (child.exitCode === null) child.kill();
+  const terminateOwnedProcessOnExit = () => {
+    if (childProcessRunning(child)) child.kill();
   };
-  process.once("exit", terminateOwnedProcess);
+  process.once("exit", terminateOwnedProcessOnExit);
   const close = async () => {
-    process.off("exit", terminateOwnedProcess);
-    await closeBrowser(browser, child);
+    process.off("exit", terminateOwnedProcessOnExit);
+    await closeBrowser(browser, child, profilePath);
   };
   return {
     browser,

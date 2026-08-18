@@ -162,7 +162,13 @@ async function cleanup(reason) {
   await stopOwnedProcess(testProcess);
   await stopOwnedProcess(serverProcess);
   await new Promise((resolve) => setTimeout(resolve, 300));
-  for (const name of ["xhs-profile", "douyin-profile"]) fs.rmSync(path.join(runDirectory, name), { recursive: true, force: true });
+  for (const name of ["xhs-profile", "douyin-profile"]) {
+    const profileDirectory = path.join(runDirectory, name);
+    fs.rmSync(profileDirectory, { recursive: true, force: true });
+    if (fs.existsSync(profileDirectory)) {
+      throw new Error(`E2E 隔离 Profile 清理失败：${profileDirectory}`);
+    }
+  }
   const runDatabase = path.join(runDirectory, "veridia-e2e.db");
   try { fs.chmodSync(runDatabase, 0o600); } catch {}
   try { fs.rmSync(runDatabase, { force: true }); } catch (error) {
@@ -290,6 +296,10 @@ async function main() {
     E2E_WORKERS: String(workers),
     E2E_XHS_PROFILE_PATH: profilePath,
     E2E_DOUYIN_PROFILE_PATH: douyinProfilePath,
+    XHS_PROFILE_PATH: profilePath,
+    DOUYIN_PROFILE_PATH: douyinProfilePath,
+    E2E_HTML_REPORT_DIR: path.join(root, "playwright-report", isolationGroup),
+    E2E_TEST_RESULTS_DIR: path.join(root, "test-results", isolationGroup),
     VERIDIA_ACCOUNT_SIGNING_PUBLIC_KEY_PATH: publicKeyPath,
     VERIDIA_ACCOUNT_SIGNING_PRIVATE_KEY_PATH: privateKeyPath,
     VERIDIA_NEXT_DIST_DIR: nextDistDir,

@@ -48,6 +48,12 @@ const e2eDouyinProfilePath =
 const e2eNextDistDir =
   process.env.E2E_NEXT_DIST_DIR?.trim() ||
   path.join(".playwright", "next-e2e");
+const e2eHtmlReportDir =
+  process.env.E2E_HTML_REPORT_DIR?.trim() ||
+  path.join(process.cwd(), "playwright-report");
+const e2eTestResultsDir =
+  process.env.E2E_TEST_RESULTS_DIR?.trim() ||
+  path.join(process.cwd(), "test-results");
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -59,7 +65,11 @@ export default defineConfig({
   workers: Number(process.env.E2E_WORKERS || 1),
   timeout: 45_000,
   expect: { timeout: 10_000 },
-  reporter: [["list"], ["html", { open: "never" }]],
+  reporter: [
+    ["list"],
+    ["html", { open: "never", outputFolder: e2eHtmlReportDir }],
+  ],
+  outputDir: e2eTestResultsDir,
   use: {
     baseURL,
     trace: "retain-on-failure",

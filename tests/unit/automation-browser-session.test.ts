@@ -32,6 +32,14 @@ describe("小红书持久会话与访问节奏", () => {
     expect(hiddenChromium).toContain("return context.newPage()");
     expect(hiddenChromium).toContain('"--remote-debugging-port=0"');
     expect(hiddenChromium).toContain('page.url() !== "about:blank"');
+    expect(hiddenChromium).toContain("PROCESS_EXIT_TIMEOUT_MS");
+    expect(hiddenChromium).toContain("terminateOwnedProcess");
+    expect(hiddenChromium).toContain("await waitForChildProcessExit(child)");
+    expect(hiddenChromium).toContain("ensureOwnedProcessStopped");
+    expect(hiddenChromium).toContain("waitForProfileRelease");
+    expect(hiddenChromium).toContain("PROFILE_RELEASE_ATTEMPTS");
+    expect(hiddenChromium).toContain("强制终止后仍未在限定时间内退出");
+    expect(hiddenChromium).toContain("timeout: CONNECT_TIMEOUT_MS");
     expect(browser).not.toContain("PW_CHROMIUM_ATTACH_TO_OTHER");
     expect(source("playwright.config.ts")).not.toContain(
       "PW_CHROMIUM_ATTACH_TO_OTHER",
@@ -146,6 +154,14 @@ describe("抖音独立持久会话与后台审核页", () => {
     );
     expect(browser).toContain("auditPage?: Page");
     expect(browser).toContain("auditPagePromise?: Promise<Page>");
+    expect(browser).toContain("restartPromise?: Promise<void>");
+    expect(browser).toContain("await state.restartPromise");
+    expect(browser).toContain("lifecyclePromise?: Promise<void>");
+    expect(browser).toContain("serializeBrowserLifecycle");
+    expect(browser).toContain("boundedOperation");
+    expect(browser).toContain("state.restartPromise = undefined");
+    expect(browser).toContain("timeout: BROWSER_OPERATION_TIMEOUT_MS");
+    expect(browser).toContain('boundedOperation("关闭抖音审核页面", page.close())');
     expect(browser).toContain("createAuditPage(context)");
     expect(extract).toContain("getDouyinAuditPage({ taskId: task.id, url: task.url })");
     expect(extract).not.toContain("context.newPage()");

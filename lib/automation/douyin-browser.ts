@@ -12,6 +12,8 @@ import {
 import { AutomaticExtractionError } from "./failure";
 
 const SESSION_ID = "douyin";
+const BROWSER_OPERATION_TIMEOUT_MS = 12_000;
+const CDP_OPERATION_TIMEOUT_MS = 3_000;
 const PROFILE_DIRECTORY = path.resolve(
   process.env.DOUYIN_PROFILE_PATH ||
     path.join(process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir(), "VERIDIA", "sessions", "douyin-profile"),
@@ -31,6 +33,8 @@ type State = {
   auditPagePromise?: Promise<Page>;
   interactivePage?: Page;
   launchPromise?: Promise<BrowserContext>;
+  restartPromise?: Promise<void>;
+  lifecyclePromise?: Promise<void>;
   sessionState: DouyinSessionState;
   auditLock?: AuditLock;
   launchCount: number;
@@ -55,14 +59,62 @@ function chromium() {
 }
 function living(page?: Page) { return page && !page.isClosed() ? page : undefined; }
 
+async function boundedOperation<T>(
+  label: string,
+  operation: Promise<T>,
+  timeoutMs = BROWSER_OPERATION_TIMEOUT_MS,
+) {
+  let cancelTimeout: () => void = () => undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} 超过 ${timeoutMs}ms 确定性上限`)),
+      timeoutMs,
+    );
+    cancelTimeout = () => clearTimeout(timer);
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    cancelTimeout();
+  }
+}
+
+function serializeBrowserLifecycle<T>(operation: () => Promise<T>) {
+  const previous = state.lifecyclePromise?.catch(() => undefined) ?? Promise.resolve();
+  const result = previous.then(operation);
+  const barrier = result.then(() => undefined, () => undefined);
+  state.lifecyclePromise = barrier;
+  return result.finally(() => {
+    if (state.lifecyclePromise === barrier) state.lifecyclePromise = undefined;
+  });
+}
+
 async function setWindowState(page: Page, windowState: "minimized" | "normal") {
   try {
-    const session = await page.context().newCDPSession(page);
+    const session = await boundedOperation(
+      "创建抖音页面 CDP Session",
+      page.context().newCDPSession(page),
+      CDP_OPERATION_TIMEOUT_MS,
+    );
     try {
-      const { windowId } = await session.send("Browser.getWindowForTarget");
-      await session.send("Browser.setWindowBounds", { windowId, bounds: { windowState } });
+      const { windowId } = await boundedOperation(
+        "读取抖音浏览器窗口",
+        session.send("Browser.getWindowForTarget"),
+        CDP_OPERATION_TIMEOUT_MS,
+      );
+      await boundedOperation(
+        "设置抖音浏览器窗口",
+        session.send("Browser.setWindowBounds", { windowId, bounds: { windowState } }),
+        CDP_OPERATION_TIMEOUT_MS,
+      );
       return true;
-    } finally { await session.detach().catch(() => undefined); }
+    } finally {
+      await boundedOperation(
+        "释放抖音页面 CDP Session",
+        session.detach().catch(() => undefined),
+        CDP_OPERATION_TIMEOUT_MS,
+      ).catch(() => undefined);
+    }
   } catch { return false; }
 }
 
@@ -84,43 +136,73 @@ export async function getDouyinAutomationSession() {
   });
 }
 
-async function ensureContext() {
+async function launchContextNow() {
   if (state.context && state.browser?.isConnected()) return state.context;
-  if (state.launchPromise) return state.launchPromise;
   await getDouyinAutomationSession();
-  state.launchPromise = (async () => {
-    const browserType = await chromium();
-    if (process.platform === "win32") {
-      const connection = await launchWindowsHiddenChromium(browserType, PROFILE_DIRECTORY);
-      state.browser = connection.browser;
-      state.closeBrowser = connection.close;
-      return connection.context;
-    }
-    const context = await browserType.launchPersistentContext(PROFILE_DIRECTORY, {
+  const browserType = await chromium();
+  let context: BrowserContext;
+  if (process.platform === "win32") {
+    const connection = await launchWindowsHiddenChromium(browserType, PROFILE_DIRECTORY);
+    state.browser = connection.browser;
+    state.closeBrowser = connection.close;
+    context = connection.context;
+  } else {
+    context = await browserType.launchPersistentContext(PROFILE_DIRECTORY, {
       headless: false,
       locale: "zh-CN",
       timezoneId: "Asia/Shanghai",
       viewport: { width: 1440, height: 960 },
+      timeout: BROWSER_OPERATION_TIMEOUT_MS,
       ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH?.trim() ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH.trim() } : {}),
     });
     state.browser = context.browser() || undefined;
-    state.closeBrowser = () => context.close();
-    return context;
-  })().then((context) => {
-    state.context = context;
-    state.launchCount += 1;
-    state.controlError = undefined;
-    context.once("close", () => {
+    state.closeBrowser = () => boundedOperation("关闭抖音 Persistent Context", context.close());
+  }
+  state.context = context;
+  state.launchCount += 1;
+  state.controlError = undefined;
+  context.once("close", () => {
+    if (state.context === context) {
       state.context = undefined;
       state.browser = undefined;
       state.auditPage = undefined;
       state.interactivePage = undefined;
       if (!state.closing) state.controlError = "抖音专用浏览器已关闭";
-    });
-    console.info("[抖音浏览器] Persistent Context 已就绪", JSON.stringify({ profilePath: path.basename(PROFILE_DIRECTORY), launchCount: state.launchCount, pageCount: context.pages().length }));
-    return context;
-  }).finally(() => { state.launchPromise = undefined; });
-  return state.launchPromise;
+    }
+  });
+  console.info("[抖音浏览器] Persistent Context 已就绪", JSON.stringify({ profilePath: path.basename(PROFILE_DIRECTORY), launchCount: state.launchCount, pageCount: context.pages().length }));
+  return context;
+}
+
+async function ensureContext() {
+  if (state.restartPromise) await state.restartPromise;
+  if (state.context && state.browser?.isConnected()) return state.context;
+  if (state.launchPromise) return state.launchPromise;
+  const launch = serializeBrowserLifecycle(launchContextNow);
+  const tracked = launch.finally(() => {
+    if (state.launchPromise === tracked) state.launchPromise = undefined;
+  });
+  state.launchPromise = tracked;
+  return tracked;
+}
+
+async function closeContextNow() {
+  state.closing = true;
+  const close = state.closeBrowser;
+  const context = state.context;
+  state.context = undefined;
+  state.browser = undefined;
+  state.auditPage = undefined;
+  state.interactivePage = undefined;
+  state.closeBrowser = undefined;
+  try {
+    if (close) await close();
+    else if (context) {
+      await boundedOperation("关闭抖音 Persistent Context", context.close());
+    }
+  } finally {
+    state.closing = false;
+  }
 }
 
 export async function getDouyinAuditPage(input?: { taskId?: string; url?: string }) {
@@ -196,32 +278,50 @@ export async function completeDouyinLogin() {
   }
   return getDouyinSessionDiagnostics();
 }
-export async function restartDouyinBrowser() { await closeDouyinBrowserContext(); await ensureContext(); return getDouyinSessionDiagnostics(); }
-export async function logoutDouyinSession() {
-  const context = state.context;
-  if (context) {
-    await context.clearCookies();
-    for (const page of context.pages()) {
-      await page
-        .evaluate(() => {
-          window.localStorage.clear();
-          window.sessionStorage.clear();
-        })
-        .catch(() => undefined);
-    }
+export async function restartDouyinBrowser() {
+  if (!state.restartPromise) {
+    const restart = serializeBrowserLifecycle(async () => {
+      await closeContextNow();
+      await launchContextNow();
+    });
+    const tracked = restart.finally(() => {
+      if (state.restartPromise === tracked) state.restartPromise = undefined;
+    });
+    state.restartPromise = tracked;
   }
-  await closeDouyinBrowserContext();
-  await saveSession("LOGGED_OUT", "用户已退出抖音专用浏览器");
+  await state.restartPromise;
+  return getDouyinSessionDiagnostics();
+}
+export async function logoutDouyinSession() {
+  await serializeBrowserLifecycle(async () => {
+    const context = state.context;
+    if (context) {
+      await boundedOperation("清除抖音 Cookie", context.clearCookies());
+      for (const page of context.pages()) {
+        await boundedOperation(
+          "清除抖音页面存储",
+          page.evaluate(() => {
+            window.localStorage.clear();
+            window.sessionStorage.clear();
+          }).catch(() => undefined),
+        );
+      }
+    }
+    await closeContextNow();
+    await saveSession("LOGGED_OUT", "用户已退出抖音专用浏览器");
+  });
   return getDouyinSessionDiagnostics();
 }
 export async function closeDouyinBrowserContext() {
-  state.closing = true;
-  const close = state.closeBrowser;
-  const context = state.context;
-  state.context = undefined; state.browser = undefined; state.auditPage = undefined; state.interactivePage = undefined; state.closeBrowser = undefined;
-  try { if (close) await close().catch(() => undefined); else await context?.close().catch(() => undefined); } finally { state.closing = false; }
+  await serializeBrowserLifecycle(closeContextNow);
 }
-export async function closeDouyinAuditPageForTesting() { await living(state.auditPage)?.close(); return getDouyinSessionDiagnostics(); }
+export async function closeDouyinAuditPageForTesting() {
+  await serializeBrowserLifecycle(async () => {
+    const page = living(state.auditPage);
+    if (page) await boundedOperation("关闭抖音审核页面", page.close());
+  });
+  return getDouyinSessionDiagnostics();
+}
 export async function ensureDouyinBrowserControlReady() { try { await ensureContext(); } catch (error) { throw new AutomaticExtractionError("BROWSER_CONTROL_ERROR", "抖音专用浏览器连接异常", { technicalMessage: error instanceof Error ? error.message : String(error) }); } }
 export async function markDouyinSessionIssue(status: "LOGIN_EXPIRED" | "SECURITY_RESTRICTED", message: string) { return saveSession(status === "LOGIN_EXPIRED" ? "LOGGED_OUT" : "SECURITY_RESTRICTED", message); }
 export function updateDouyinAuditLock(input: Omit<AuditLock, "platform" | "heartbeatAt" | "profilePath"> | null) { state.auditLock = input ? { ...input, platform: "DOUYIN", heartbeatAt: new Date().toISOString(), profilePath: PROFILE_DIRECTORY } : undefined; }
