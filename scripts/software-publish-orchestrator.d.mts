@@ -10,6 +10,11 @@ export interface SoftwarePublishErrorOptions {
   maxAttempts?: number;
   elapsedMs?: number;
   cacheStatus?: string;
+  checkpoint?: string;
+  recoveryPoint?: string;
+  sideEffects?: boolean;
+  versionConsumed?: boolean;
+  recovery?: string;
 }
 
 export declare class SoftwarePublishError extends Error {
@@ -25,6 +30,11 @@ export declare class SoftwarePublishError extends Error {
   maxAttempts?: number;
   elapsedMs?: number;
   cacheStatus?: string;
+  checkpoint?: string;
+  recoveryPoint?: string;
+  sideEffects?: boolean;
+  versionConsumed?: boolean;
+  recovery?: string;
 }
 
 export declare function compareReleaseVersions(left: string, right: string): number;
@@ -86,7 +96,13 @@ export interface SoftwarePublishPlanInput {
   latestPublishedRelease: PublishedReleaseState;
   historicalTags: HistoricalReleaseTagState[];
   targetTagExists?: boolean;
+  targetLocalTagExists?: boolean;
+  targetRemoteTagExists?: boolean;
+  targetTagCommit?: string | null;
   targetReleaseExists?: boolean;
+  targetVersionOverride?: string;
+  resume?: boolean;
+  checkpoint?: string;
 }
 
 export interface SoftwarePublishPlan {
@@ -102,6 +118,9 @@ export interface SoftwarePublishPlan {
   behind: number;
   commitsToPush: string[];
   commitsSinceRelease: string[];
+  checkpoint?: string;
+  buildTimestamp?: string;
+  releaseState?: Record<string, unknown>;
 }
 
 export interface SoftwarePublishActionsResult {
@@ -113,10 +132,15 @@ export interface SoftwarePublishOperations {
   preflight?: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
   updateVersion: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
   validate: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  package?: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  verifyLocalArtifact?: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
   commitVersion: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  releaseCommit?: (plan: SoftwarePublishPlan) => string | Promise<string>;
+  bindArtifact?: (plan: SoftwarePublishPlan, commit?: string) => unknown | Promise<unknown>;
   restoreVersion: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
   pushMain: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
   assertMainSynchronized: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
+  waitForMainCi?: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
   assertTargetAvailable: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
   createTag: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
   pushTag: (plan: SoftwarePublishPlan) => unknown | Promise<unknown>;
@@ -139,7 +163,12 @@ export declare function classifyReleaseHistory(input: {
 }): ReleaseHistoryClassification;
 export declare function executeSoftwarePublishPlan(
   plan: SoftwarePublishPlan,
-  options: { dryRun: boolean; operations: SoftwarePublishOperations },
+  options: {
+    dryRun: boolean;
+    operations: SoftwarePublishOperations;
+    session?: Record<string, unknown>;
+    onCheckpoint?: (session: Record<string, unknown>) => unknown | Promise<unknown>;
+  },
 ): Promise<{
   dryRun: boolean;
   released: boolean;
@@ -161,3 +190,21 @@ export declare function assertProjectRootConsistency(input: {
   gitRoot: string;
   workingDirectory: string;
 }): string;
+export declare function softwareReleaseSessionPath(root: string, version: string): string;
+export declare function readSoftwareReleaseSession(
+  root: string,
+  version: string,
+): Record<string, unknown> | null;
+export declare function findActiveSoftwareReleaseSession(
+  root: string,
+): Record<string, unknown> | null;
+export declare function writeSoftwareReleaseSession(
+  root: string,
+  version: string,
+  session: Record<string, unknown>,
+): Record<string, unknown>;
+export declare function resolveSoftwareReleaseSession(
+  root: string,
+  plan: SoftwarePublishPlan,
+  observed?: Record<string, unknown>,
+): Record<string, unknown>;

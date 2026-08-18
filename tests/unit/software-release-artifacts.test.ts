@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +8,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   softwareReleaseArtifactNames,
+  validateReleaseArtifactManifest,
   validateSoftwareReleaseArtifacts,
+  writeReleaseArtifactManifest,
 } from "../../scripts/software-release-artifacts.mjs";
 
 const temporaryDirectories: string[] = [];
@@ -97,5 +100,36 @@ describe("软件发布三件套", () => {
     expect(() => validateSoftwareReleaseArtifacts(value)).toThrow(
       "latest.yml 与 VERIDIA-Setup-1.1.0.exe",
     );
+  });
+
+  it("产物 Manifest 绑定 Commit 和源码指纹，HEAD 内容变化后标记 STALE", () => {
+    const value = fixture();
+    fs.writeFileSync(path.join(value.projectRoot, "source.txt"), "source-v1");
+    execFileSync("git", ["init"], { cwd: value.projectRoot });
+    execFileSync("git", ["config", "user.email", "release-test@example.invalid"], {
+      cwd: value.projectRoot,
+    });
+    execFileSync("git", ["config", "user.name", "VERIDIA Release Test"], {
+      cwd: value.projectRoot,
+    });
+    execFileSync("git", ["add", "package.json", "source.txt"], { cwd: value.projectRoot });
+    execFileSync("git", ["commit", "-m", "fixture"], { cwd: value.projectRoot });
+
+    const manifest = writeReleaseArtifactManifest(value);
+    expect(manifest).toMatchObject({
+      version: value.version,
+      releaseCommit: null,
+    });
+    expect(validateReleaseArtifactManifest(value)).toMatchObject({
+      status: "VERIFIED",
+      valid: true,
+    });
+
+    fs.writeFileSync(path.join(value.projectRoot, "source.txt"), "source-v2");
+    expect(validateReleaseArtifactManifest(value)).toMatchObject({
+      status: "STALE",
+      valid: false,
+      reasons: expect.arrayContaining(["SOURCE_FINGERPRINT_CHANGED"]),
+    });
   });
 });

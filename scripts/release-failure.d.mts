@@ -1,9 +1,13 @@
 export type ReleaseClassification =
   | "DETERMINISTIC"
+  | "DETERMINISTIC_INTEGRITY"
   | "TRANSIENT_NETWORK"
+  | "AUTHENTICATION"
   | "TEST_TIMEOUT"
   | "FLAKY_CANDIDATE"
-  | "ENVIRONMENT";
+  | "ENVIRONMENT"
+  | "STATE_CONFLICT"
+  | "UNKNOWN";
 
 export interface ReleaseFailureInput {
   stage?: string;
@@ -18,6 +22,11 @@ export interface ReleaseFailureInput {
   elapsedMs?: number;
   cacheStatus?: string;
   code?: string;
+  checkpoint?: string;
+  recoveryPoint?: string;
+  sideEffects?: boolean;
+  versionConsumed?: boolean;
+  recovery?: string;
 }
 
 export interface ReleaseFailureResult extends ReleaseFailureInput {
@@ -48,6 +57,11 @@ export declare class ReleaseStageError extends Error {
   maxAttempts?: number;
   elapsedMs?: number;
   cacheStatus?: string;
+  checkpoint?: string;
+  recoveryPoint?: string;
+  sideEffects?: boolean;
+  versionConsumed?: boolean;
+  recovery?: string;
   code: string;
 }
 export declare function releaseFailureResult(

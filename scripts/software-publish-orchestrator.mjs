@@ -15,6 +15,23 @@ import {
   parseReleaseResult,
   redactReleaseText,
 } from "./release-failure.mjs";
+import {
+  retryReadOnlyNetworkOperation,
+  retryReadOnlyNetworkOperationSync,
+} from "./release-network.mjs";
+import {
+  advanceReleaseCheckpoint,
+  checkpointLabel,
+  classifyReleaseTagHistory,
+  isCheckpointAtLeast,
+  validateResumeSession,
+} from "./release-state.mjs";
+import {
+  bindArtifactManifestToReleaseCommit,
+  collectReleaseSourceFingerprint,
+  validateReleaseArtifactManifest,
+  writeReleaseArtifactManifest,
+} from "./software-release-artifacts.mjs";
 
 const scriptProjectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -50,7 +67,12 @@ export class SoftwarePublishError extends Error {
    *   attempt?: number,
    *   maxAttempts?: number,
    *   elapsedMs?: number,
-   *   cacheStatus?: string
+   *   cacheStatus?: string,
+   *   checkpoint?: string,
+   *   recoveryPoint?: string,
+   *   sideEffects?: boolean,
+   *   versionConsumed?: boolean,
+   *   recovery?: string
    * }} [options]
    */
   constructor(code, message, options = {}) {
@@ -67,6 +89,11 @@ export class SoftwarePublishError extends Error {
     this.maxAttempts = options.maxAttempts;
     this.elapsedMs = options.elapsedMs;
     this.cacheStatus = options.cacheStatus;
+    this.checkpoint = options.checkpoint;
+    this.recoveryPoint = options.recoveryPoint;
+    this.sideEffects = options.sideEffects;
+    this.versionConsumed = options.versionConsumed;
+    this.recovery = options.recovery;
   }
 }
 
@@ -101,6 +128,21 @@ export function formatSoftwarePublishFailure(error, logPath) {
       : []),
     ...(error instanceof SoftwarePublishError && error.cacheStatus
       ? [`缓存状态：${error.cacheStatus}`]
+      : []),
+    ...(error instanceof SoftwarePublishError && error.checkpoint
+      ? [`当前 Checkpoint：${checkpointLabel(error.checkpoint)}`]
+      : []),
+    ...(error instanceof SoftwarePublishError && error.recoveryPoint
+      ? [`恢复点：${error.recoveryPoint}`]
+      : []),
+    ...(error instanceof SoftwarePublishError && typeof error.sideEffects === "boolean"
+      ? [`是否产生发布副作用：${error.sideEffects ? "是" : "否"}`]
+      : []),
+    ...(error instanceof SoftwarePublishError && typeof error.versionConsumed === "boolean"
+      ? [`当前 Version：${error.versionConsumed ? "已消费" : "尚未消费"}`]
+      : []),
+    ...(error instanceof SoftwarePublishError && error.recovery
+      ? [`恢复建议：${error.recovery}`]
       : []),
     `错误摘要：${message}`,
     `详细日志：${
@@ -172,129 +214,49 @@ export function nextPatchVersion(value) {
   return `${major}.${minor}.${patch + 1}`;
 }
 
-const failedReleaseConclusions = new Set([
-  "action_required",
-  "cancelled",
-  "failure",
-  "stale",
-  "startup_failure",
-  "timed_out",
-]);
-
-function assertCommitIdentity(label, values) {
-  const commits = values.filter(Boolean);
-  if (commits.length !== values.length || new Set(commits).size !== 1) {
-    throw new SoftwarePublishError(
-      "RELEASE_COMMIT_MISMATCH",
-      `${label} 对应的 Tag、远程引用、Release/Workflow 提交不一致，发布已停止。`,
-    );
-  }
-  return commits[0];
-}
-
 export function classifyReleaseHistory(input) {
-  const published = input.latestPublishedRelease;
-  if (!published?.releaseExists) {
-    throw new SoftwarePublishError(
-      "MISSING_PUBLISHED_RELEASE",
-      `Latest Published Release v${published?.version || "未知"} 不存在。`,
-    );
-  }
-  if (!published.tagExists) {
-    throw new SoftwarePublishError(
-      "PUBLISHED_RELEASE_TAG_MISSING",
-      `GitHub Release v${published.version} 存在，但对应 Tag 缺失，发布已停止。`,
-    );
-  }
-  assertCommitIdentity(`正式版本 v${published.version}`, [
-    published.tagCommit,
-    published.remoteTagCommit,
-    published.releaseCommit,
-  ]);
-
-  const failedReleaseTags = [];
-  const sortedTags = [...(input.historicalTags || [])].sort((left, right) =>
-    compareReleaseVersions(left.version, right.version),
-  );
-  for (const tag of sortedTags) {
-    if (compareReleaseVersions(tag.version, published.version) <= 0) {
-      throw new SoftwarePublishError(
-        "INVALID_HISTORICAL_TAG",
-        `待分类 Tag v${tag.version} 不高于 Latest Published Release v${published.version}。`,
-      );
-    }
-    if (compareReleaseVersions(tag.version, input.targetVersion) >= 0) {
-      throw new SoftwarePublishError(
-        "FAILED_TAG_NOT_BELOW_TARGET",
-        `失败历史 Tag v${tag.version} 必须严格低于目标版本 v${input.targetVersion}。`,
-      );
-    }
-    if (tag.releaseExists) {
-      throw new SoftwarePublishError(
-        "UNEXPECTED_PUBLISHED_RELEASE",
-        `v${tag.version} 已存在 GitHub Release，不能分类为 FAILED_RELEASE_TAG。`,
-      );
-    }
-    const tagCommit = assertCommitIdentity(`失败历史版本 v${tag.version}`, [
-      tag.tagCommit,
-      tag.remoteTagCommit,
-    ]);
-    if (!tag.isMainAncestor) {
-      throw new SoftwarePublishError(
-        "FAILED_TAG_NOT_MAIN_ANCESTOR",
-        `失败历史 Tag v${tag.version} 的提交不是当前 main 的祖先，发布已停止。`,
-      );
-    }
-
-    const runs = tag.workflowRuns || [];
-    const activeRun = runs.find((run) =>
-      run.headBranch === `v${tag.version}`
-      && ["in_progress", "queued", "requested", "waiting"].includes(run.status),
-    );
-    if (activeRun) {
-      throw new SoftwarePublishError(
-        "FAILED_TAG_WORKFLOW_ACTIVE",
-        `v${tag.version} 的正式发布 Workflow 仍处于 ${activeRun.status}，发布已停止。`,
-      );
-    }
-
-    const matchingRuns = runs.filter((run) =>
-      run.event === "push"
-      && run.headBranch === `v${tag.version}`
-      && run.headSha === tagCommit,
-    );
-    const failedRun = matchingRuns.find((run) =>
-      run.status === "completed"
-      && failedReleaseConclusions.has(run.conclusion),
-    );
-    if (!failedRun) {
-      const hasDifferentCommit = runs.some((run) =>
-        run.headBranch === `v${tag.version}` && run.headSha !== tagCommit,
-      );
-      throw new SoftwarePublishError(
-        hasDifferentCommit
-          ? "FAILED_TAG_WORKFLOW_COMMIT_MISMATCH"
-          : "FAILED_TAG_EVIDENCE_MISSING",
-        hasDifferentCommit
-          ? `v${tag.version} 的 Tag 提交与正式发布 Workflow 提交不一致，疑似 Tag 已移动或伪造。`
-          : `v${tag.version} 缺少同提交、终态失败的正式发布 Workflow 证据。`,
-      );
-    }
-    failedReleaseTags.push({
-      version: tag.version,
-      tagCommit,
-      workflowRunId: failedRun.databaseId,
-      workflowConclusion: failedRun.conclusion,
-      workflowUrl: failedRun.url,
+  try {
+    const history = classifyReleaseTagHistory({
+      ...input,
+      compareVersions: compareReleaseVersions,
     });
+    if (history.inProgressReleaseTags.length > 0) {
+      const active = history.inProgressReleaseTags[0];
+      throw Object.assign(new Error(
+        `v${active.version} 的正式发布 Workflow 仍处于 ${active.workflowStatus}。`,
+      ), { code: "IN_PROGRESS_RELEASE", classification: "STATE_CONFLICT" });
+    }
+    if (history.unknownOrphanTags.length > 0) {
+      throw Object.assign(new Error(
+        `v${history.unknownOrphanTags[0].version} 缺少同提交、终态失败的 Workflow 证据，是 UNKNOWN_ORPHAN_TAG。`,
+      ), { code: "UNKNOWN_ORPHAN_TAG", classification: "STATE_CONFLICT" });
+    }
+    return {
+      latestPublishedReleaseVersion: history.latestPublished.version,
+      latestPublishedRelease: history.latestPublished,
+      latestHistoricalTagVersion:
+        history.historicalTags.at(-1)?.version || history.latestPublished.version,
+      historicalReleaseStates: history.historicalTags,
+      failedReleaseTags: history.failedReleaseTags,
+      inProgressReleaseTags: history.inProgressReleaseTags,
+      unknownOrphanTags: history.unknownOrphanTags,
+    };
+  } catch (error) {
+    if (error instanceof SoftwarePublishError) throw error;
+    const legacyMessages = {
+      HISTORICAL_TAG_NOT_MAIN_ANCESTOR: `失败历史 Tag v${error?.version || ""} 不是当前 main 的祖先。`,
+      HISTORICAL_TAG_NOT_BELOW_TARGET: `失败历史 Tag 必须严格低于目标版本 v${input.targetVersion}。`,
+      PUBLISHED_RELEASE_TAG_MISSING: `GitHub Release v${input.latestPublishedRelease?.version} 存在，但对应 Tag 缺失。`,
+      PUBLISHED_RELEASE_COMMIT_MISMATCH: "Tag、远程引用、Release/Workflow 提交不一致。",
+      HISTORICAL_TAG_COMMIT_MISMATCH: "Tag、远程引用、Release/Workflow 提交不一致。",
+      UNEXPECTED_PUBLISHED_RELEASE: "中间版本已有 Release，不能分类为 FAILED_RELEASE_TAG。",
+    };
+    throw new SoftwarePublishError(
+      error?.code || "INVALID_RELEASE_STATE",
+      legacyMessages[error?.code] || (error instanceof Error ? error.message : String(error)),
+      { cause: error, classification: "STATE_CONFLICT", stage: "PREFLIGHT" },
+    );
   }
-
-  return {
-    latestPublishedReleaseVersion: published.version,
-    latestHistoricalTagVersion:
-      failedReleaseTags.at(-1)?.version || published.version,
-    failedReleaseTags,
-  };
 }
 
 export function createSoftwarePublishPlan(input) {
@@ -339,20 +301,22 @@ export function createSoftwarePublishPlan(input) {
     );
   }
   const sourceIsPublished = sourceComparedWithRelease === 0;
-  const versionChangeRequired = sourceIsPublished;
-  const targetVersion = sourceIsPublished
+  const versionChangeRequired = sourceIsPublished && !input.targetVersionOverride;
+  const targetVersion = input.targetVersionOverride || (sourceIsPublished
     ? nextPatchVersion(input.latestReleaseVersion)
-    : input.sourceVersion;
-  if (input.targetTagExists) {
+    : input.sourceVersion);
+  if ((input.targetTagExists || input.targetLocalTagExists || input.targetRemoteTagExists) && !input.resume) {
     throw new SoftwarePublishError(
       "TARGET_TAG_EXISTS",
       `目标 Tag v${targetVersion} 已存在，拒绝覆盖。`,
+      { classification: "STATE_CONFLICT" },
     );
   }
-  if (input.targetReleaseExists) {
+  if (input.targetReleaseExists && !input.resume) {
     throw new SoftwarePublishError(
       "TARGET_RELEASE_EXISTS",
       `GitHub Release v${targetVersion} 已存在，拒绝重复发布。`,
+      { classification: "STATE_CONFLICT" },
     );
   }
   const history = classifyReleaseHistory({
@@ -361,7 +325,7 @@ export function createSoftwarePublishPlan(input) {
     targetVersion,
   });
 
-  if (input.commitsSinceRelease.length === 0) {
+  if (input.commitsSinceRelease.length === 0 && !input.resume) {
     return {
       kind: "none",
       currentVersion: input.latestReleaseVersion,
@@ -371,6 +335,7 @@ export function createSoftwarePublishPlan(input) {
       behind: input.behind,
       commitsToPush: input.commitsToPush,
       commitsSinceRelease: input.commitsSinceRelease,
+      checkpoint: input.checkpoint || "PLAN_READY",
     };
   }
 
@@ -385,6 +350,16 @@ export function createSoftwarePublishPlan(input) {
     behind: input.behind,
     commitsToPush: input.commitsToPush,
     commitsSinceRelease: input.commitsSinceRelease,
+    targetLocalTagExists: Boolean(input.targetLocalTagExists),
+    targetRemoteTagExists: Boolean(input.targetRemoteTagExists),
+    targetReleaseExists: Boolean(input.targetReleaseExists),
+    targetTagCommit: input.targetTagCommit || null,
+    releaseWorkflowState: input.releaseWorkflowState || {
+      status: "not_started",
+      conclusion: null,
+    },
+    checkpoint: input.checkpoint || "PLAN_READY",
+    buildTimestamp: input.buildTimestamp || new Date().toISOString(),
   };
 }
 
@@ -392,13 +367,65 @@ export async function executeSoftwarePublishPlan(plan, options) {
   if (options.dryRun || plan.kind === "none") {
     return { dryRun: options.dryRun, released: false };
   }
+  let session = options.session || {
+    checkpoint: plan.checkpoint || "PLAN_READY",
+    targetVersion: plan.targetVersion,
+  };
   let versionTouched = false;
   let versionCommitted = false;
+  const persist = async (checkpoint, patch = {}) => {
+    session = advanceReleaseCheckpoint(session, checkpoint, patch);
+    const persisted = await options.onCheckpoint?.(session);
+    if (persisted) session = persisted;
+    return session;
+  };
+  const recoveryFor = (checkpoint) => {
+    if (isCheckpointAtLeast(checkpoint, "REMOTE_TAG_PUSHED")) {
+      return {
+        recoveryPoint: "GITHUB_ACTIONS",
+        sideEffects: true,
+        versionConsumed: true,
+        recovery: "重新运行 发布新版.bat；发布器将审计 Actions/Release 状态。若 Actions 已确定失败，必须使用下一版本。",
+      };
+    }
+    if (isCheckpointAtLeast(checkpoint, "MAIN_PUSHED")) {
+      return {
+        recoveryPoint: "TAG",
+        sideEffects: true,
+        versionConsumed: false,
+        recovery: "重新运行 发布新版.bat；核验 HEAD、origin/main、Main CI 和产物后从 Tag 阶段继续。",
+      };
+    }
+    if (isCheckpointAtLeast(checkpoint, "FULL_PASS")) {
+      return {
+        recoveryPoint: isCheckpointAtLeast(checkpoint, "LOCAL_PACKAGE_VERIFIED")
+          ? "RELEASE_COMMIT"
+          : "LOCAL_PACKAGE",
+        sideEffects: false,
+        versionConsumed: false,
+        recovery: "源码和指纹未变化时，重新运行 发布新版.bat 从安全检查点继续。",
+      };
+    }
+    return {
+      recoveryPoint: "PREFLIGHT",
+      sideEffects: false,
+      versionConsumed: false,
+      recovery: "网络或环境恢复后重新运行 发布新版.bat。",
+    };
+  };
   const executeStage = async (stage, operation) => {
     try {
       return await operation();
     } catch (error) {
-      if (error instanceof SoftwarePublishError && error.stage) throw error;
+      const recovery = recoveryFor(session.checkpoint);
+      if (error instanceof SoftwarePublishError && error.stage) {
+        error.checkpoint ||= session.checkpoint;
+        error.recoveryPoint ||= recovery.recoveryPoint;
+        error.sideEffects ??= recovery.sideEffects;
+        error.versionConsumed ??= recovery.versionConsumed;
+        error.recovery ||= recovery.recovery;
+        throw error;
+      }
       throw new SoftwarePublishError(
         "RELEASE_STAGE_FAILED",
         error instanceof Error ? error.message : String(error),
@@ -406,40 +433,98 @@ export async function executeSoftwarePublishPlan(plan, options) {
           cause: error,
           stage,
           classification: classifyReleaseFailure(error),
+          attempt: error?.attempt,
+          maxAttempts: error?.maxAttempts,
+          checkpoint: session.checkpoint,
+          ...recovery,
         },
       );
     }
   };
   try {
-    if (options.operations.preflight) {
+    if (!isCheckpointAtLeast(session.checkpoint, "PREFLIGHT_PASS") && options.operations.preflight) {
       await executeStage("PREFLIGHT", () => options.operations.preflight(plan));
+      await persist("PREFLIGHT_PASS");
     }
-    versionTouched = true;
-    await executeStage("VERSION_UPDATE", () => options.operations.updateVersion(plan));
-    await executeStage("FULL", () => options.operations.validate(plan));
-    await executeStage("RELEASE_COMMIT", () => options.operations.commitVersion(plan));
-    versionCommitted = true;
-    await executeStage("PUSH_MAIN", () => options.operations.pushMain(plan));
-    await executeStage("PUSH_MAIN", () => options.operations.assertMainSynchronized(plan));
-    await executeStage("TAG", () => options.operations.assertTargetAvailable(plan));
-    await executeStage("TAG", () => options.operations.createTag(plan));
-    await executeStage("PUSH_TAG", () => options.operations.pushTag(plan));
-    const actions = await executeStage("GITHUB_ACTIONS", () =>
-      options.operations.waitForActions(plan),
-    );
-    if (!actions.success) {
-      throw new SoftwarePublishError(
-        "ACTIONS_FAILED",
-        `GitHub Actions 发布失败：${actions.url || "未提供运行地址"}`,
-        { stage: "GITHUB_ACTIONS", classification: "DETERMINISTIC" },
+    if (!isCheckpointAtLeast(session.checkpoint, "FULL_PASS")) {
+      versionTouched = true;
+      await executeStage("VERSION_UPDATE", () => options.operations.updateVersion(plan));
+      await executeStage("FULL", () => options.operations.validate(plan));
+      await persist("FULL_PASS");
+    }
+    if (!isCheckpointAtLeast(session.checkpoint, "LOCAL_PACKAGE_VERIFIED")) {
+      if (options.operations.package) {
+        await executeStage("PACKAGE", () => options.operations.package(plan));
+      }
+      const artifact = await executeStage("INSTALLER_VERIFY", () =>
+        options.operations.verifyLocalArtifact?.(plan),
       );
+      await persist("LOCAL_PACKAGE_VERIFIED", { localArtifact: artifact || null });
     }
-    const release = await executeStage("REMOTE_RELEASE_VERIFY", () =>
-      options.operations.verifyRelease(plan, actions),
-    );
-    return { dryRun: false, released: true, actions, release };
+    if (!isCheckpointAtLeast(session.checkpoint, "RELEASE_COMMIT_CREATED")) {
+      await executeStage("RELEASE_COMMIT", () => options.operations.commitVersion(plan));
+      versionCommitted = true;
+      const releaseCommit = await executeStage("RELEASE_COMMIT", () =>
+        options.operations.releaseCommit?.(plan),
+      );
+      await options.operations.bindArtifact?.(plan, releaseCommit);
+      await persist("RELEASE_COMMIT_CREATED", { releaseCommit });
+    }
+    if (!isCheckpointAtLeast(session.checkpoint, "MAIN_PUSHED")) {
+      await executeStage("PUSH_MAIN", () => options.operations.pushMain(plan));
+      await executeStage("PUSH_MAIN", () => options.operations.assertMainSynchronized(plan));
+      await persist("MAIN_PUSHED");
+    }
+    if (!isCheckpointAtLeast(session.checkpoint, "LOCAL_TAG_CREATED")) {
+      await executeStage("MAIN_CI", () => options.operations.waitForMainCi?.(plan));
+      await executeStage("TAG", () => options.operations.assertTargetAvailable(plan));
+      await executeStage("TAG", () => options.operations.createTag(plan));
+      await persist("LOCAL_TAG_CREATED");
+    }
+    if (!isCheckpointAtLeast(session.checkpoint, "REMOTE_TAG_PUSHED")) {
+      await executeStage("PUSH_TAG", () => options.operations.pushTag(plan));
+      await persist("REMOTE_TAG_PUSHED");
+    }
+    let actions = session.actions;
+    if (!isCheckpointAtLeast(session.checkpoint, "GITHUB_ACTIONS_SUCCESS")) {
+      actions = await executeStage("GITHUB_ACTIONS", () =>
+        options.operations.waitForActions(plan),
+      );
+      if (!actions.success) {
+        throw new SoftwarePublishError(
+          "ACTIONS_FAILED",
+          `GitHub Actions 发布失败：${actions.url || "未提供运行地址"}`,
+          {
+            stage: "GITHUB_ACTIONS",
+            classification: "DETERMINISTIC",
+            checkpoint: session.checkpoint,
+            recoveryPoint: "NEXT_VERSION_REQUIRED",
+            sideEffects: true,
+            versionConsumed: true,
+            recovery: "保留失败 Tag，不得移动或补建 Release；修复后准备下一软件版本。",
+          },
+        );
+      }
+      await persist("GITHUB_ACTIONS_SUCCESS", { actions });
+    }
+    let release = session.release;
+    if (!isCheckpointAtLeast(session.checkpoint, "REMOTE_ASSETS_VERIFIED")) {
+      release = await executeStage("REMOTE_ASSETS_VERIFY", () =>
+        options.operations.verifyRelease(plan, actions),
+      );
+      await persist("GITHUB_RELEASE_CREATED", { release });
+      await persist("REMOTE_ASSETS_VERIFIED", { release });
+    }
+    await persist("RELEASE_COMPLETE");
+    return { dryRun: false, released: true, actions, release, session };
   } catch (error) {
-    if (versionTouched && !versionCommitted) await options.operations.restoreVersion(plan);
+    if (
+      versionTouched
+      && !versionCommitted
+      && !isCheckpointAtLeast(session.checkpoint, "FULL_PASS")
+    ) {
+      await options.operations.restoreVersion(plan);
+    }
     throw error;
   }
 }
@@ -466,6 +551,222 @@ function createLogger() {
   return { line, write, logPath };
 }
 
+export function softwareReleaseSessionPath(root, version) {
+  return path.join(
+    root,
+    ".release-work",
+    "checkpoints",
+    `software-release-${version}.json`,
+  );
+}
+
+export function readSoftwareReleaseSession(root, version) {
+  const file = softwareReleaseSessionPath(root, version);
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new SoftwarePublishError(
+      "INVALID_RELEASE_SESSION",
+      `发布恢复记录无法解析：${file}`,
+      { cause: error, stage: "PREFLIGHT", classification: "STATE_CONFLICT" },
+    );
+  }
+}
+
+export function findActiveSoftwareReleaseSession(root) {
+  const directory = path.join(root, ".release-work", "checkpoints");
+  if (!fs.existsSync(directory)) return null;
+  return fs.readdirSync(directory)
+    .filter((name) => /^software-release-\d+\.\d+\.\d+\.json$/u.test(name))
+    .map((name) => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(directory, name), "utf8"));
+      } catch {
+        return null;
+      }
+    })
+    .filter((value) => value && value.checkpoint !== "RELEASE_COMPLETE")
+    .sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)))[0]
+    || null;
+}
+
+export function writeSoftwareReleaseSession(root, version, session) {
+  const file = softwareReleaseSessionPath(root, version);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(session, null, 2)}\n`, "utf8");
+  fs.renameSync(temporary, file);
+  return session;
+}
+
+export function resolveSoftwareReleaseSession(root, plan, observed = {}) {
+  const fingerprint = collectReleaseSourceFingerprint(root);
+  const existing = readSoftwareReleaseSession(root, plan.targetVersion);
+  const state = {
+    targetVersion: plan.targetVersion,
+    sourceVersion: plan.sourceVersion,
+    localHead: observed.localHead,
+    behind: plan.behind,
+  };
+  if (existing) {
+    const validity = validateResumeSession(existing, state, fingerprint);
+    if (!validity.valid) {
+      if (!isCheckpointAtLeast(existing.checkpoint, "LOCAL_TAG_CREATED")) {
+        return {
+          schemaVersion: 1,
+          targetVersion: plan.targetVersion,
+          sourceVersion: plan.sourceVersion,
+          sourceHead: observed.localHead,
+          sourceFingerprint: fingerprint,
+          buildTimestamp: new Date().toISOString(),
+          checkpoint: "PLAN_READY",
+          releaseCommit: null,
+          actions: null,
+          release: null,
+          supersedesReleaseCommit: existing.releaseCommit || null,
+          restartReasons: validity.reasons,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      throw new SoftwarePublishError(
+        "STALE_RELEASE_SESSION",
+        `发布恢复记录已失效：${validity.reasons.join(", ")}`,
+        {
+          stage: "PREFLIGHT",
+          classification: "STATE_CONFLICT",
+          checkpoint: existing.checkpoint,
+          recoveryPoint: "BLOCK",
+          sideEffects: isCheckpointAtLeast(existing.checkpoint, "MAIN_PUSHED"),
+          versionConsumed: isCheckpointAtLeast(existing.checkpoint, "REMOTE_TAG_PUSHED"),
+          recovery: "不要手工修改 Tag 或 Release；先审计源码、HEAD 与远端状态。",
+        },
+      );
+    }
+    let inferred = existing;
+    if (existing.checkpoint === "FULL_PASS") {
+      const artifact = validateReleaseArtifactManifest({
+        projectRoot: root,
+        version: plan.targetVersion,
+        currentHead: observed.localHead,
+      });
+      if (artifact.valid) {
+        inferred = advanceReleaseCheckpoint(existing, "LOCAL_PACKAGE_VERIFIED", {
+          localArtifact: artifact,
+        });
+      }
+    }
+    if (
+      inferred.checkpoint === "LOCAL_PACKAGE_VERIFIED"
+      && observed.localHead !== existing.sourceHead
+    ) {
+      const subject = spawnSync("git", ["log", "-1", "--format=%s", observed.localHead], {
+        cwd: root,
+        encoding: "utf8",
+        windowsHide: true,
+      }).stdout?.trim();
+      const parent = spawnSync("git", ["rev-parse", `${observed.localHead}^`], {
+        cwd: root,
+        encoding: "utf8",
+        windowsHide: true,
+      }).stdout?.trim();
+      if (
+        subject === `chore: release ${plan.targetVersion}`
+        && parent === existing.sourceHead
+      ) {
+        bindArtifactManifestToReleaseCommit(root, plan.targetVersion, observed.localHead);
+        inferred = advanceReleaseCheckpoint(inferred, "RELEASE_COMMIT_CREATED", {
+          releaseCommit: observed.localHead,
+        });
+      }
+    }
+    const checkpoint = isCheckpointAtLeast(plan.checkpoint, inferred.checkpoint)
+      ? plan.checkpoint
+      : inferred.checkpoint;
+    if (
+      isCheckpointAtLeast(checkpoint, "LOCAL_TAG_CREATED")
+      && plan.targetTagCommit
+      && plan.targetTagCommit !== inferred.releaseCommit
+    ) {
+      throw new SoftwarePublishError(
+        "TARGET_TAG_SESSION_MISMATCH",
+        `目标 Tag v${plan.targetVersion} 不属于当前发布恢复记录。`,
+        {
+          stage: "PREFLIGHT",
+          classification: "STATE_CONFLICT",
+          checkpoint,
+          recoveryPoint: "BLOCK",
+          sideEffects: true,
+          versionConsumed: isCheckpointAtLeast(checkpoint, "REMOTE_TAG_PUSHED"),
+        },
+      );
+    }
+    if (["MAIN_PUSHED", "LOCAL_TAG_CREATED"].includes(checkpoint)) {
+      const artifact = validateReleaseArtifactManifest({
+        projectRoot: root,
+        version: plan.targetVersion,
+        currentHead: observed.localHead,
+      });
+      if (!artifact.valid) {
+        throw new SoftwarePublishError(
+          "STALE_LOCAL_ARTIFACT",
+          `Tag 前本地产物已失效：${artifact.reasons.join(", ")}`,
+          {
+            stage: "PREFLIGHT",
+            classification: "DETERMINISTIC_INTEGRITY",
+            checkpoint,
+            recoveryPoint: "BLOCK",
+            sideEffects: checkpoint === "LOCAL_TAG_CREATED",
+            versionConsumed: false,
+          },
+        );
+      }
+    }
+    return {
+      ...inferred,
+      checkpoint,
+      actions: observed.actions || existing.actions,
+      release: observed.release || existing.release,
+    };
+  }
+  if (["MAIN_PUSHED", "LOCAL_TAG_CREATED"].includes(plan.checkpoint)) {
+    const artifact = validateReleaseArtifactManifest({
+      projectRoot: root,
+      version: plan.targetVersion,
+      currentHead: observed.localHead,
+    });
+    if (!artifact.valid) {
+      throw new SoftwarePublishError(
+        "UNRECOVERABLE_RELEASE_STATE",
+        `检测到发布副作用，但没有可验证的恢复记录/本地产物：${artifact.reasons.join(", ")}`,
+        {
+          stage: "PREFLIGHT",
+          classification: "STATE_CONFLICT",
+          checkpoint: plan.checkpoint,
+          recoveryPoint: "BLOCK",
+          sideEffects: true,
+          versionConsumed: isCheckpointAtLeast(plan.checkpoint, "REMOTE_TAG_PUSHED"),
+        },
+      );
+    }
+  }
+  return {
+    schemaVersion: 1,
+    targetVersion: plan.targetVersion,
+    sourceVersion: plan.sourceVersion,
+    sourceHead: observed.localHead,
+    sourceFingerprint: fingerprint,
+    buildTimestamp: plan.buildTimestamp,
+    checkpoint: plan.checkpoint || "PLAN_READY",
+    releaseCommit: plan.targetTagCommit || null,
+    actions: observed.actions || null,
+    release: observed.release || null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 function windowsCommand(executable, args) {
   if (process.platform !== "win32" || !/\.(?:cmd|bat)$/iu.test(executable)) {
     return { executable, args };
@@ -484,27 +785,39 @@ function windowsCommand(executable, args) {
 
 function command(executable, args, options = {}) {
   const normalized = windowsCommand(executable, args);
-  const result = spawnSync(normalized.executable, normalized.args, {
-    cwd: projectRoot,
-    encoding: "utf8",
-    windowsHide: true,
-    maxBuffer: 100 * 1024 * 1024,
-    timeout: options.timeoutMs,
-    env: { ...process.env, ...options.env },
-    stdio: options.inherit ? "inherit" : "pipe",
-  });
-  if (result.error) throw result.error;
-  const stdoutRaw = result.stdout || "";
-  const stderrRaw = result.stderr || "";
-  const stdout = stdoutRaw.trim();
-  const stderr = stderrRaw.trim();
-  if (result.status !== 0 && !options.allowFailure) {
-    throw new SoftwarePublishError(
-      "COMMAND_FAILED",
-      `${executable} ${args.join(" ")} 执行失败（退出码 ${result.status ?? "未知"}）${stderr ? `：${stderr}` : ""}`,
-    );
-  }
-  return { status: result.status, stdout, stderr, stdoutRaw, stderrRaw };
+  const execute = () => {
+    const result = spawnSync(normalized.executable, normalized.args, {
+      cwd: projectRoot,
+      encoding: "utf8",
+      windowsHide: true,
+      maxBuffer: 100 * 1024 * 1024,
+      timeout: options.timeoutMs,
+      env: { ...process.env, ...options.env },
+      stdio: options.inherit ? "inherit" : "pipe",
+    });
+    if (result.error) throw result.error;
+    const stdoutRaw = result.stdout || "";
+    const stderrRaw = result.stderr || "";
+    const stdout = stdoutRaw.trim();
+    const stderr = stderrRaw.trim();
+    if (result.status !== 0 && !options.allowFailure) {
+      throw new SoftwarePublishError(
+        "COMMAND_FAILED",
+        `${executable} ${args.join(" ")} 执行失败（退出码 ${result.status ?? "未知"}）${stderr ? `：${stderr}` : ""}`,
+        {
+          stage: options.stage,
+          classification: classifyReleaseFailure(`${result.error?.message || ""}\n${stderr}`),
+        },
+      );
+    }
+    return { status: result.status, stdout, stderr, stdoutRaw, stderrRaw };
+  };
+  if (!options.readOnlyNetwork) return execute();
+  return retryReadOnlyNetworkOperationSync(
+    `${executable} ${args.join(" ")}`,
+    execute,
+    { onAttempt: options.onAttempt },
+  );
 }
 
 function git(args, options) {
@@ -581,16 +894,19 @@ function strictTagVersion(value) {
 }
 
 function releaseExists(repository, version) {
-  const result = gh(
-    ["api", `repos/${repository}/releases/tags/v${version}`, "--silent"],
-    { allowFailure: true },
-  );
-  if (result.status === 0) return true;
-  if (/HTTP 404|Not Found|release not found/iu.test(result.stderr)) return false;
-  throw new SoftwarePublishError(
-    "GITHUB_LOOKUP_FAILED",
-    `无法确认 GitHub Release v${version} 是否存在：${result.stderr || "未知网络错误"}`,
-  );
+  return retryReadOnlyNetworkOperationSync(`GitHub Release v${version}`, () => {
+    const result = gh(
+      ["api", `repos/${repository}/releases/tags/v${version}`, "--jq", ".draft"],
+      { allowFailure: true },
+    );
+    if (result.status === 0) return result.stdout.trim() !== "true";
+    if (/HTTP 404|Not Found|release not found/iu.test(result.stderr)) return false;
+    throw new SoftwarePublishError(
+      "GITHUB_LOOKUP_FAILED",
+      `无法确认 GitHub Release v${version} 是否存在：${result.stderr || "未知网络错误"}`,
+      { classification: classifyReleaseFailure(result.stderr) },
+    );
+  });
 }
 
 function latestRelease(repository) {
@@ -602,7 +918,7 @@ function latestRelease(repository) {
       repository,
       "--json",
       "tagName,name,isDraft,isPrerelease,url",
-    ]).stdout,
+    ], { readOnlyNetwork: true }).stdout,
   );
   const version = strictTagVersion(value.tagName);
   if (!version || value.isDraft || value.isPrerelease) {
@@ -649,7 +965,7 @@ function remoteTagCommit(version) {
     "origin",
     `refs/tags/v${version}`,
     `refs/tags/v${version}^{}`,
-  ]);
+  ], { readOnlyNetwork: true });
   const references = lines(result.stdout).map((line) => line.split(/\s+/u));
   return references.find(([, reference]) => reference.endsWith("^{}"))?.[0]
     || references[0]?.[0]
@@ -673,26 +989,31 @@ function releaseWorkflowRuns(repository, version) {
       "20",
       "--json",
       "databaseId,headSha,headBranch,status,conclusion,event,createdAt,url,displayTitle",
-    ]).stdout || "[]",
+    ], { readOnlyNetwork: true }).stdout || "[]",
   );
 }
 
 function targetTagExists(version) {
   if (git(["tag", "-l", `v${version}`]).stdout) return true;
-  const result = git(
-    ["ls-remote", "--exit-code", "--tags", "origin", `refs/tags/v${version}`],
-    { allowFailure: true },
-  );
-  if (result.status === 0) return true;
-  if (result.status === 2) return false;
-  throw new SoftwarePublishError(
-    "TAG_LOOKUP_FAILED",
-    `无法确认远程 Tag v${version} 状态：${result.stderr || "未知网络错误"}`,
-  );
+  return retryReadOnlyNetworkOperationSync(`Remote Tag v${version}`, () => {
+    const result = git(
+      ["ls-remote", "--exit-code", "--tags", "origin", `refs/tags/v${version}`],
+      { allowFailure: true },
+    );
+    if (result.status === 0) return true;
+    if (result.status === 2) return false;
+    throw new SoftwarePublishError(
+      "TAG_LOOKUP_FAILED",
+      `无法确认远程 Tag v${version} 状态：${result.stderr || "未知网络错误"}`,
+      { classification: classifyReleaseFailure(result.stderr) },
+    );
+  });
 }
 
-function collectPublishState(repository) {
-  git(["fetch", "--quiet", "origin", "main", "--tags"]);
+function collectPublishState(repository, resumeSession = null) {
+  git(["fetch", "--quiet", "origin", "main", "--tags"], {
+    readOnlyNetwork: true,
+  });
   const branch = git(["branch", "--show-current"]).stdout;
   const dirty = Boolean(
     git(["-c", "core.quotepath=false", "status", "--short"]).stdout,
@@ -736,12 +1057,12 @@ function collectPublishState(repository) {
   const commitsToPush = lines(
     git(["log", "origin/main..HEAD", "--format=%h %s"]).stdout,
   );
-  const targetVersion = compareReleaseVersions(
+  const targetVersion = resumeSession?.targetVersion || (compareReleaseVersions(
     versions.sourceVersion,
     release.version,
   ) === 0
     ? nextPatchVersion(release.version)
-    : versions.sourceVersion;
+    : versions.sourceVersion);
   const publishedTagCommit = localTagCommit(release.version);
   const publishedRemoteTagCommit = remoteTagCommit(release.version);
   const publishedRun = releaseWorkflowRuns(repository, release.version).find((run) =>
@@ -772,8 +1093,62 @@ function collectPublishState(repository) {
         workflowRuns: releaseWorkflowRuns(repository, version),
       };
     });
-  return {
-    ...createSoftwarePublishPlan({
+  const targetLocalTagCommit = localTagCommit(targetVersion);
+  const targetRemoteTagCommit = remoteTagCommit(targetVersion);
+  const targetReleaseExists = releaseExists(repository, targetVersion);
+  const targetRuns = targetLocalTagCommit || targetRemoteTagCommit
+    ? releaseWorkflowRuns(repository, targetVersion)
+    : [];
+  const targetCommit = targetRemoteTagCommit || targetLocalTagCommit;
+  if (
+    targetLocalTagCommit
+    && targetRemoteTagCommit
+    && targetLocalTagCommit !== targetRemoteTagCommit
+  ) {
+    throw new SoftwarePublishError(
+      "TARGET_TAG_COMMIT_MISMATCH",
+      `目标 v${targetVersion} 的本地与远程 Tag 提交不一致。`,
+      { stage: "PREFLIGHT", classification: "STATE_CONFLICT" },
+    );
+  }
+  if (targetCommit) {
+    const targetAncestor = git(
+      ["merge-base", "--is-ancestor", targetCommit, "main"],
+      { allowFailure: true },
+    );
+    if (targetAncestor.status !== 0) {
+      throw new SoftwarePublishError(
+        "TARGET_TAG_NOT_MAIN_ANCESTOR",
+        `目标 v${targetVersion} 的 Tag 提交不是 main 祖先。`,
+        { stage: "PREFLIGHT", classification: "STATE_CONFLICT" },
+      );
+    }
+  }
+  const targetRun = targetRuns.find((run) =>
+    run.event === "push"
+    && run.headBranch === `v${targetVersion}`
+    && run.headSha === targetCommit,
+  );
+  let checkpoint = "PLAN_READY";
+  if (targetLocalTagCommit) checkpoint = "LOCAL_TAG_CREATED";
+  if (targetRemoteTagCommit) checkpoint = "REMOTE_TAG_PUSHED";
+  if (targetRun?.status === "completed" && targetRun.conclusion === "success") {
+    checkpoint = "GITHUB_ACTIONS_SUCCESS";
+    if (targetReleaseExists) checkpoint = "GITHUB_RELEASE_CREATED";
+  }
+  const localHead = git(["rev-parse", "HEAD"]).stdout;
+  const remoteMainHead = git(["rev-parse", "origin/main"]).stdout;
+  if (!targetLocalTagCommit && resumeSession?.releaseCommit === localHead) {
+    checkpoint = "RELEASE_COMMIT_CREATED";
+    if (remoteMainHead === localHead) checkpoint = "MAIN_PUSHED";
+  }
+  if (
+    resumeSession?.checkpoint
+    && isCheckpointAtLeast(resumeSession.checkpoint, checkpoint)
+  ) {
+    checkpoint = resumeSession.checkpoint;
+  }
+  const publishPlan = createSoftwarePublishPlan({
       dirty,
       branch,
       ahead,
@@ -792,16 +1167,109 @@ function collectPublishState(repository) {
         releaseCommit: publishedRun?.headSha,
       },
       historicalTags,
-      targetTagExists: targetTagExists(targetVersion),
-      targetReleaseExists: releaseExists(repository, targetVersion),
-    }),
+      targetLocalTagExists: Boolean(targetLocalTagCommit),
+      targetRemoteTagExists: Boolean(targetRemoteTagCommit),
+      targetTagCommit: targetCommit,
+      targetReleaseExists,
+      releaseWorkflowState: targetRun || {
+        status: targetRemoteTagCommit ? "queued" : "not_started",
+        conclusion: null,
+      },
+      checkpoint,
+      targetVersionOverride: resumeSession?.targetVersion,
+      resume: Boolean(resumeSession),
+    });
+  const localArtifactState = validateReleaseArtifactManifest({
+    projectRoot,
+    version: targetVersion,
+    currentHead: localHead,
+  });
+  return {
+    ...publishPlan,
     release,
+    localHead,
+    remoteMainHead,
+    targetRun,
+    releaseState: {
+      schemaVersion: 1,
+      stateType: targetRemoteTagCommit
+        ? targetReleaseExists
+          ? "PUBLISHED_RELEASE"
+          : targetRun?.status === "completed" && targetRun?.conclusion !== "success"
+            ? "FAILED_RELEASE_TAG"
+            : "IN_PROGRESS_RELEASE"
+        : "TARGET_VERSION",
+      sourceVersion: versions.sourceVersion,
+      sourceType: "UNPUBLISHED_SOURCE",
+      workingTreeClean: !dirty,
+      localHead,
+      remoteMainHead,
+      ahead,
+      behind,
+      latestPublishedVersion: release.version,
+      latestPublishedTag: releaseTag,
+      latestPublishedCommit: publishedTagCommit,
+      historicalTags: publishPlan.historicalReleaseStates,
+      failedReleaseTags: publishPlan.failedReleaseTags,
+      inProgressReleaseTags: publishPlan.inProgressReleaseTags,
+      unknownOrphanTags: publishPlan.unknownOrphanTags,
+      targetVersion,
+      targetLocalTagExists: Boolean(targetLocalTagCommit),
+      targetRemoteTagExists: Boolean(targetRemoteTagCommit),
+      targetReleaseExists,
+      targetTagCommit: targetCommit,
+      mainCiState: { status: "unknown", conclusion: null },
+      releaseWorkflowState: publishPlan.releaseWorkflowState,
+      localArtifactState,
+      remoteArtifactState: targetReleaseExists
+        ? { status: "PENDING_VERIFY" }
+        : { status: "MISSING" },
+      checkpoint,
+      recoveryPoint: checkpoint === "PLAN_READY" ? "PREFLIGHT" : "RESUME",
+      versionConsumed: Boolean(targetRemoteTagCommit),
+    },
   };
+}
+
+function collectPublishStateForPreflight(repository, resumeSession = null) {
+  try {
+    return collectPublishState(repository, resumeSession);
+  } catch (error) {
+    if (error instanceof SoftwarePublishError) {
+      error.stage ||= "PREFLIGHT";
+      error.checkpoint ||= resumeSession?.checkpoint || "PLAN_READY";
+      error.recoveryPoint ||= "PREFLIGHT";
+      error.sideEffects ??= isCheckpointAtLeast(
+        resumeSession?.checkpoint || "PLAN_READY",
+        "MAIN_PUSHED",
+      );
+      error.versionConsumed ??= isCheckpointAtLeast(
+        resumeSession?.checkpoint || "PLAN_READY",
+        "REMOTE_TAG_PUSHED",
+      );
+      error.recovery ||= "网络或状态恢复后重新运行 发布新版.bat。";
+      throw error;
+    }
+    throw new SoftwarePublishError(
+      "PREFLIGHT_STATE_FAILED",
+      error instanceof Error ? error.message : String(error),
+      {
+        cause: error,
+        stage: "PREFLIGHT",
+        classification: classifyReleaseFailure(error),
+        checkpoint: resumeSession?.checkpoint || "PLAN_READY",
+        recoveryPoint: "PREFLIGHT",
+        sideEffects: false,
+        versionConsumed: false,
+        recovery: "网络或环境恢复后重新运行 发布新版.bat。",
+      },
+    );
+  }
 }
 
 function printPlan(plan, logger) {
   logger.line("========================================");
-  logger.line("VERIDIA 发布计划");
+  logger.line("VERIDIA 正式软件发布");
   logger.line("========================================");
   logger.line(`Latest Published Release：v${plan.latestPublishedReleaseVersion}`);
   logger.line(`Latest Historical Tag：v${plan.latestHistoricalTagVersion}`);
@@ -812,9 +1280,9 @@ function printPlan(plan, logger) {
       `- v${tag.version}（Historical Failed Attempt；Run ${tag.workflowRunId}，${tag.workflowConclusion}）`,
     );
   }
-  logger.line(`当前源码版本：${plan.sourceVersion}`);
-  logger.line(`Target Version：v${plan.targetVersion}`);
-  logger.line("Release Preflight：PASS");
+  logger.line(`Target：${plan.targetVersion}`);
+  logger.line(`HEAD：${plan.localHead || "待确认"}`);
+  logger.line(`Resume：${checkpointLabel(plan.checkpoint || "PLAN_READY")}`);
   logger.line("");
   logger.line(`待 Push 提交：${plan.commitsToPush.length} 个`);
   for (const commit of plan.commitsToPush) logger.line(`- ${commit}`);
@@ -827,14 +1295,24 @@ function printPlan(plan, logger) {
   logger.line(`main ahead：${plan.ahead}`);
   logger.line(`main behind：${plan.behind}`);
   logger.line("");
-  logger.line("即将执行：");
-  logger.line(`1. 更新版本号至 ${plan.targetVersion}`);
-  logger.line("2. 执行完整正式发布门禁并生成安装包");
-  logger.line("3. 创建独立 release 版本提交");
-  logger.line("4. 一次性 Push main");
-  logger.line(`5. 创建并 Push v${plan.targetVersion}`);
-  logger.line("6. 等待 GitHub Actions 完成");
-  logger.line("7. 核验 Release、三件套和自动更新元数据");
+  logger.line("发布阶段：");
+  for (const [index, name, checkpoint] of [
+    [1, "Preflight", "PREFLIGHT_PASS"],
+    [2, "FULL + Build", "FULL_PASS"],
+    [3, "Package", "LOCAL_PACKAGE_VERIFIED"],
+    [4, "Release Commit", "RELEASE_COMMIT_CREATED"],
+    [5, "Push main + Main CI", "MAIN_PUSHED"],
+    [6, "Local Tag", "LOCAL_TAG_CREATED"],
+    [7, "Push Tag", "REMOTE_TAG_PUSHED"],
+    [8, "GitHub Actions", "GITHUB_ACTIONS_SUCCESS"],
+    [9, "GitHub Release", "GITHUB_RELEASE_CREATED"],
+    [10, "Remote Verify", "RELEASE_COMPLETE"],
+  ]) {
+    const status = isCheckpointAtLeast(plan.checkpoint || "PLAN_READY", checkpoint)
+      ? "PASS"
+      : "WAITING";
+    logger.line(`[${index}/10] ${name.padEnd(20)} ${status}`);
+  }
   logger.line("");
 }
 
@@ -978,6 +1456,11 @@ function structuredSoftwareError(result, fallback) {
       maxAttempts: result?.maxAttempts,
       elapsedMs: result?.elapsedMs,
       cacheStatus: redactReleaseText(result?.cacheStatus || "") || undefined,
+      checkpoint: result?.checkpoint || fallback.checkpoint,
+      recoveryPoint: result?.recoveryPoint || fallback.recoveryPoint,
+      sideEffects: result?.sideEffects ?? fallback.sideEffects,
+      versionConsumed: result?.versionConsumed ?? fallback.versionConsumed,
+      recovery: redactReleaseText(result?.recovery || fallback.recovery || "") || undefined,
     },
   );
 }
@@ -995,11 +1478,20 @@ function readStructuredResult(file, combinedOutput = "") {
 
 function runReleasePreflight(plan, logger) {
   logger.line("开始 Release Preflight 与发布依赖预热（正式 FULL 之前）。");
+  const stateFile = path.join(
+    projectRoot,
+    ".release-work",
+    "checkpoints",
+    `release-state-${plan.targetVersion}.json`,
+  );
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  fs.writeFileSync(stateFile, `${JSON.stringify(plan.releaseState, null, 2)}\n`, "utf8");
   const result = command(
     "node",
     [
       path.join(projectRoot, "scripts", "release-preflight.mjs"),
       `--target-version=${plan.targetVersion}`,
+      `--release-state=${stateFile}`,
     ],
     { allowFailure: true, timeoutMs: 120_000 },
   );
@@ -1019,16 +1511,23 @@ function runReleasePreflight(plan, logger) {
 }
 
 function runFullValidation(plan, logger) {
-  logger.line("开始完整正式发布门禁和本地安装包构建。");
+  logger.line("开始完整正式发布门禁（FULL 内含唯一一次正式 Next.js Build）。");
   assertNoGoogleFontBuildDependency();
   git(["diff", "--check"]);
   try {
     fs.rmSync(path.join(projectRoot, ".release-work", "release-result.json"), {
       force: true,
     });
-    command("node", [path.join(projectRoot, "scripts", "release.mjs"), "current"], {
+    command("node", [
+      path.join(projectRoot, "scripts", "release.mjs"),
+      "current",
+      "--stage=full",
+    ], {
       inherit: true,
-      env: { VERIDIA_APP_VERSION: plan.targetVersion },
+      env: {
+        VERIDIA_APP_VERSION: plan.targetVersion,
+        VERIDIA_BUILD_DATE: plan.buildTimestamp,
+      },
     });
   } catch (error) {
     const resultFile = path.join(
@@ -1040,7 +1539,7 @@ function runFullValidation(plan, logger) {
     throw structuredSoftwareError(structured, {
       stage: "FULL",
       classification: "DETERMINISTIC",
-      command: "node scripts/release.mjs current",
+      command: "node scripts/release.mjs current --stage=full",
       message: error instanceof Error ? error.message : String(error),
       detailLog: path.join(projectRoot, ".release-work", "logs"),
     });
@@ -1048,22 +1547,44 @@ function runFullValidation(plan, logger) {
   assertOnlyVersionFilesChanged();
   assertNoGoogleFontBuildDependency();
   git(["diff", "--check"]);
+  logger.line("完整门禁与 Google Fonts 检查通过；FULL 构建将由 Package 直接复用。");
+}
+
+function runLocalPackage(plan, logger) {
+  logger.line("开始本地 electron-builder Package；不重复 FULL 或 Next.js Build。");
   try {
+    command("node", [
+      path.join(projectRoot, "scripts", "release.mjs"),
+      "current",
+      "--stage=package",
+    ], {
+      inherit: true,
+      env: {
+        VERIDIA_APP_VERSION: plan.targetVersion,
+        VERIDIA_BUILD_DATE: plan.buildTimestamp,
+      },
+    });
     command("node", [path.join(projectRoot, "scripts", "validate-software-release.mjs")], {
       inherit: true,
     });
   } catch (error) {
-    throw new SoftwarePublishError(
-      "INSTALLER_VERIFY_FAILED",
-      error instanceof Error ? error.message : String(error),
-      {
-        cause: error,
-        stage: "INSTALLER_VERIFY",
-        classification: classifyReleaseFailure(error),
-      },
-    );
+    const resultFile = path.join(projectRoot, ".release-work", "release-result.json");
+    const structured = readStructuredResult(resultFile);
+    throw structuredSoftwareError(structured, {
+      stage: "PACKAGE",
+      classification: "DETERMINISTIC",
+      command: "node scripts/release.mjs current --stage=package",
+      message: error instanceof Error ? error.message : String(error),
+      detailLog: path.join(projectRoot, ".release-work", "logs"),
+    });
   }
-  logger.line("完整门禁、Google Fonts 检查和本地三件套校验通过。");
+  const manifest = writeReleaseArtifactManifest({
+    projectRoot,
+    version: plan.targetVersion,
+    buildTimestamp: plan.buildTimestamp,
+  });
+  logger.line(`本地三件套与源码指纹已绑定：${manifest.sourceFingerprint}`);
+  return manifest;
 }
 
 function commitVersion(plan) {
@@ -1077,7 +1598,7 @@ function commitVersion(plan) {
 }
 
 function assertMainSynchronized() {
-  git(["fetch", "--quiet", "origin", "main"]);
+  git(["fetch", "--quiet", "origin", "main"], { readOnlyNetwork: true });
   const [ahead, behind] = git([
     "rev-list",
     "--left-right",
@@ -1122,11 +1643,76 @@ function actionsRun(repository, tag, headSha) {
       "20",
       "--json",
       "databaseId,headBranch,headSha,status,conclusion,url,createdAt",
-    ]).stdout,
+    ], { readOnlyNetwork: true }).stdout,
   );
   return runs.find(
     (run) => run.headBranch === tag && run.headSha === headSha,
   );
+}
+
+function mainCiRun(repository, headSha) {
+  const runs = JSON.parse(
+    gh([
+      "run",
+      "list",
+      "--repo",
+      repository,
+      "--workflow",
+      "veridia-ci.yml",
+      "--event",
+      "push",
+      "--branch",
+      "main",
+      "--limit",
+      "20",
+      "--json",
+      "databaseId,headBranch,headSha,status,conclusion,url,createdAt",
+    ], { readOnlyNetwork: true }).stdout || "[]",
+  );
+  return runs.find((run) => run.headBranch === "main" && run.headSha === headSha);
+}
+
+async function waitForMainCi(repository, plan, logger) {
+  const headSha = git(["rev-parse", "HEAD"]).stdout;
+  const discoveryDeadline = Date.now() + 5 * 60_000;
+  let run;
+  while (!run && Date.now() < discoveryDeadline) {
+    run = mainCiRun(repository, headSha);
+    if (!run) await sleep(10_000);
+  }
+  if (!run) {
+    throw new SoftwarePublishError(
+      "MAIN_CI_NOT_FOUND",
+      `Push main 后 5 分钟内未找到 HEAD ${headSha} 的 Main CI。`,
+      { stage: "MAIN_CI", classification: "STATE_CONFLICT" },
+    );
+  }
+  logger.line(`Main CI 已启动，Run ID：${run.databaseId}`);
+  const deadline = Date.now() + 70 * 60_000;
+  while (Date.now() < deadline) {
+    run = JSON.parse(
+      gh([
+        "run",
+        "view",
+        String(run.databaseId),
+        "--repo",
+        repository,
+        "--json",
+        "databaseId,status,conclusion,url,jobs",
+      ], { readOnlyNetwork: true }).stdout,
+    );
+    if (run.status === "completed") break;
+    await sleep(30_000);
+  }
+  if (run.status !== "completed" || run.conclusion !== "success") {
+    throw new SoftwarePublishError(
+      "MAIN_CI_FAILED",
+      `Main CI 未成功：${run.status}/${run.conclusion || ""} ${run.url || ""}`,
+      { stage: "MAIN_CI", classification: "DETERMINISTIC" },
+    );
+  }
+  logger.line(`Main CI：SUCCESS（${run.url}）`);
+  return { success: true, id: run.databaseId, url: run.url, headSha };
 }
 
 function sleep(milliseconds) {
@@ -1162,7 +1748,7 @@ async function waitForActions(repository, plan, logger) {
         repository,
         "--json",
         "databaseId,status,conclusion,url,jobs",
-      ]).stdout,
+      ], { readOnlyNetwork: true }).stdout,
     );
     const status = `${run.status}/${run.conclusion || ""}`;
     if (status !== previousStatus) {
@@ -1199,7 +1785,11 @@ async function waitForActions(repository, plan, logger) {
 }
 
 async function fetchAndHash(url, collect = false) {
-  const response = await fetch(url, { redirect: "follow" });
+  return retryReadOnlyNetworkOperation(`Release asset GET ${url}`, async () => {
+  const response = await fetch(url, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!response.ok || !response.body) {
     throw new SoftwarePublishError(
       "ASSET_HTTP_FAILED",
@@ -1223,6 +1813,7 @@ async function fetchAndHash(url, collect = false) {
     sha512: sha512.digest("base64"),
     buffer: collect ? Buffer.concat(chunks) : null,
   };
+  }, { attempts: 2, backoffMs: 500 });
 }
 
 function yamlValue(text, expression) {
@@ -1242,7 +1833,7 @@ async function verifyRemoteRelease(repository, plan, actions, logger) {
       repository,
       "--json",
       "tagName,name,isDraft,isPrerelease,url,assets",
-    ]).stdout,
+    ], { readOnlyNetwork: true }).stdout,
   );
   if (
     release.tagName !== tag ||
@@ -1263,7 +1854,7 @@ async function verifyRemoteRelease(repository, plan, actions, logger) {
       repository,
       "--json",
       "tagName,name,isDraft,isPrerelease,url",
-    ]).stdout,
+    ], { readOnlyNetwork: true }).stdout,
   );
   if (latest.tagName !== tag) {
     throw new SoftwarePublishError(
@@ -1340,7 +1931,7 @@ async function verifyRemoteRelease(repository, plan, actions, logger) {
   }
   return {
     url: release.url,
-    actionsUrl: actions.url,
+    actionsUrl: actions?.url,
     installerName,
     installerSize: installer.size,
     installerSha256: installer.sha256,
@@ -1376,10 +1967,22 @@ async function main() {
     ]) {
       assertCommandAvailable(name, friendly);
     }
-    gh(["auth", "status"]);
+    gh(["auth", "status"], { stage: "PREFLIGHT" });
     const repository = repositoryFromOrigin();
-    gh(["api", `repos/${repository}`, "--silent"]);
-    const plan = collectPublishState(repository);
+    gh(["api", `repos/${repository}`, "--silent"], {
+      readOnlyNetwork: true,
+      stage: "PREFLIGHT",
+    });
+    let activeSession = findActiveSoftwareReleaseSession(projectRoot);
+    const currentSourceVersion = readVersions().sourceVersion;
+    if (
+      activeSession
+      && isCheckpointAtLeast(activeSession.checkpoint, "REMOTE_TAG_PUSHED")
+      && compareReleaseVersions(currentSourceVersion, activeSession.targetVersion) > 0
+    ) {
+      activeSession = null;
+    }
+    const plan = collectPublishStateForPreflight(repository, activeSession);
     logger.line(`当前 HEAD：${git(["rev-parse", "HEAD"]).stdout}`);
     if (plan.kind === "none") {
       logger.line("当前没有待发布的新提交。");
@@ -1397,7 +2000,7 @@ async function main() {
       logger.line("用户已取消，未修改本地或远程状态。");
       return;
     }
-    const current = collectPublishState(repository);
+    const current = collectPublishStateForPreflight(repository, activeSession);
     if (
       current.kind !== "release" ||
       current.targetVersion !== plan.targetVersion ||
@@ -1410,26 +2013,74 @@ async function main() {
       );
     }
     const state = { originals: null };
-    const result = await executeSoftwarePublishPlan(plan, {
+    const session = resolveSoftwareReleaseSession(projectRoot, current, {
+      localHead: current.localHead,
+      actions: current.targetRun?.conclusion === "success"
+        ? {
+            success: true,
+            id: current.targetRun.databaseId,
+            url: current.targetRun.url,
+          }
+        : null,
+      release: current.targetReleaseExists ? { url: current.release.url } : null,
+    });
+    current.checkpoint = session.checkpoint;
+    current.buildTimestamp = session.buildTimestamp;
+    current.releaseState.checkpoint = session.checkpoint;
+    writeSoftwareReleaseSession(projectRoot, current.targetVersion, session);
+    const result = await executeSoftwarePublishPlan(current, {
       dryRun: false,
+      session,
+      onCheckpoint: async (value) => {
+        const updated = {
+          ...value,
+          sourceVersion: readVersions().sourceVersion,
+          sourceFingerprint: collectReleaseSourceFingerprint(projectRoot),
+        };
+        writeSoftwareReleaseSession(projectRoot, current.targetVersion, updated);
+        return updated;
+      },
       operations: {
-        preflight: async () => runReleasePreflight(plan, logger),
-        updateVersion: async () => updateVersionFiles(plan, state),
-        validate: async () => runFullValidation(plan, logger),
-        commitVersion: async () => commitVersion(plan),
+        preflight: async () => runReleasePreflight(current, logger),
+        updateVersion: async () => updateVersionFiles(current, state),
+        validate: async () => runFullValidation(current, logger),
+        package: async () => runLocalPackage(current, logger),
+        verifyLocalArtifact: async () => {
+          const artifact = validateReleaseArtifactManifest({
+            projectRoot,
+            version: current.targetVersion,
+          });
+          if (!artifact.valid) {
+            throw new SoftwarePublishError(
+              "STALE_LOCAL_ARTIFACT",
+              `本地产物未绑定当前源码：${artifact.reasons.join(", ")}`,
+              { stage: "INSTALLER_VERIFY", classification: "DETERMINISTIC_INTEGRITY" },
+            );
+          }
+          return artifact;
+        },
+        commitVersion: async () => commitVersion(current),
+        releaseCommit: async () => git(["rev-parse", "HEAD"]).stdout,
+        bindArtifact: async (_value, releaseCommit) =>
+          bindArtifactManifestToReleaseCommit(
+            projectRoot,
+            current.targetVersion,
+            releaseCommit,
+          ),
         restoreVersion: async () => restoreVersionFiles(state),
         pushMain: async () => {
           logger.line("正在一次性 Push 开发提交和版本提交到 origin/main...");
           git(["push", "origin", "main"]);
         },
         assertMainSynchronized: async () => assertMainSynchronized(),
-        assertTargetAvailable: async () => assertTargetAvailable(repository, plan),
+        waitForMainCi: async () => waitForMainCi(repository, current, logger),
+        assertTargetAvailable: async () => assertTargetAvailable(repository, current),
         createTag: async () =>
-          git(["tag", "-a", `v${plan.targetVersion}`, "-m", `VERIDIA ${plan.targetVersion}`]),
-        pushTag: async () => git(["push", "origin", `v${plan.targetVersion}`]),
-        waitForActions: async () => waitForActions(repository, plan, logger),
+          git(["tag", "-a", `v${current.targetVersion}`, "-m", `VERIDIA ${current.targetVersion}`]),
+        pushTag: async () => git(["push", "origin", `v${current.targetVersion}`]),
+        waitForActions: async () => waitForActions(repository, current, logger),
         verifyRelease: async (_value, actions) =>
-          verifyRemoteRelease(repository, plan, actions, logger),
+          verifyRemoteRelease(repository, current, actions, logger),
       },
     });
     assertMainSynchronized();
@@ -1444,6 +2095,7 @@ async function main() {
     logger.line(`VERIDIA ${plan.targetVersion} 正式发布成功`);
     logger.line("========================================");
     logger.line(`软件版本：${plan.targetVersion}`);
+    logger.line(`Commit：${git(["rev-parse", "HEAD"]).stdout}`);
     logger.line("Git main：ahead 0 / behind 0");
     logger.line(`Tag：v${plan.targetVersion}`);
     logger.line("GitHub Actions：SUCCESS");
@@ -1453,7 +2105,10 @@ async function main() {
       `安装包大小：${(result.release.installerSize / 1024 / 1024).toFixed(2)} MB`,
     );
     logger.line(`SHA-256：${result.release.installerSha256}`);
+    logger.line("Auto Update：READY");
+    logger.line("Git：CLEAN");
     logger.line("本次未执行 rules:publish，本次未发布远程规则。");
+    logger.line("RELEASE = PASS");
   } catch (error) {
     logger.line("");
     for (const line of formatSoftwarePublishFailure(error, logger.logPath)) {

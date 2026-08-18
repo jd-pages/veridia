@@ -185,6 +185,7 @@ describe("FULL 门禁验收凭证", { timeout: 15_000 }, () => {
   it("日常本地 package 可复用凭证，但方案 A 正式发布始终执行 FULL", () => {
     const localWorkflow = fs.readFileSync(path.resolve("scripts/fixed-workflow.mjs"), "utf8");
     const release = fs.readFileSync(path.resolve("scripts/release.mjs"), "utf8");
+    const verify = fs.readFileSync(path.resolve("scripts/testing/verify.mjs"), "utf8");
     const softwareBat = fs.readFileSync(path.resolve("发布新版.bat"), "utf8");
     const releaseWorkflow = fs.readFileSync(path.resolve(".github/workflows/veridia-release.yml"), "utf8");
     const gitignore = fs.readFileSync(path.resolve(".gitignore"), "utf8");
@@ -194,7 +195,8 @@ describe("FULL 门禁验收凭证", { timeout: 15_000 }, () => {
     expect(release).not.toContain("validateFullGateAttestation");
     expect(release).not.toContain("VERIDIA_ALLOW_FULL_ATTESTATION_REUSE");
     expect(release).toContain('"verify:full"');
-    expect(release).toContain("sensitive-scan.mjs");
+    expect(release).not.toContain("sensitive-scan.mjs");
+    expect(verify).toContain('npm("Sensitive scan", ["run", "scan:sensitive"])');
     expect(softwareBat).not.toContain("VERIDIA_ALLOW_FULL_ATTESTATION_REUSE");
     expect(releaseWorkflow).toContain("npm run verify:full");
     expect(releaseWorkflow).toContain('VERIDIA_DISABLE_ATTESTATION_WRITE: "true"');

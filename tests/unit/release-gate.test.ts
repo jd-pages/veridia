@@ -44,6 +44,37 @@ describe("本地打包发布门禁", () => {
     expect(source).toContain('VERIDIA_DISABLE_ATTESTATION_WRITE: "true"');
   });
 
+  it("本地和远端各只有一个 FULL Build，Package 不重复 Next Build", () => {
+    const local = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts", "release.mjs"),
+      "utf8",
+    );
+    const remote = fs.readFileSync(
+      path.resolve(process.cwd(), ".github", "workflows", "veridia-release.yml"),
+      "utf8",
+    );
+    expect(local.match(/npm\.cmd", \["run", "verify:full"\]/gu)).toHaveLength(1);
+    expect(local).not.toContain('run("PRODUCTION_BUILD"');
+    expect(local).not.toContain('run("SENSITIVE_SCAN"');
+    expect(local).toContain('releaseStage === "full"');
+    expect(local).toContain('["all", "full", "package"].includes(releaseStage)');
+    expect(remote.match(/npm run verify:full/gu)).toHaveLength(1);
+    expect(remote).not.toContain("构建正式 Next.js 版本");
+    expect(remote.match(/electron-builder --win nsis/gu)).toHaveLength(1);
+  });
+
+  it("只有明确标记的只读网络命令进入有限 Retry，Push 与 Release 写入不重试", () => {
+    const orchestrator = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts", "software-publish-orchestrator.mjs"),
+      "utf8",
+    );
+    expect(orchestrator).toContain("readOnlyNetwork: true");
+    expect(orchestrator).toContain('git(["push", "origin", "main"])');
+    expect(orchestrator).toContain('git(["push", "origin", `v${current.targetVersion}`])');
+    expect(orchestrator).not.toMatch(/git\(\["push"[^\n]+readOnlyNetwork/gu);
+    expect(orchestrator).not.toMatch(/gh\(\["release", "create"[^\n]+readOnlyNetwork/gu);
+  });
+
   it("Preflight 位于用户确认后、版本修改和 FULL 之前", () => {
     const source = fs.readFileSync(
       path.resolve(process.cwd(), "scripts/software-publish-orchestrator.mjs"),
@@ -233,9 +264,14 @@ describe("本地打包发布门禁", () => {
     expect(releaseWorkflow).toContain(
       "validate-software-release.mjs --directory=dist-installer",
     );
-    expect(releaseWorkflow).toContain(
-      "finalize-release.mjs verify-remote --directory=dist-installer",
-    );
+    expect(releaseWorkflow).toContain("gh release create");
+    expect(releaseWorkflow).toContain("--draft");
+    expect(releaseWorkflow).not.toContain("softprops/action-gh-release");
+    expect(releaseWorkflow).toContain("gh release download");
+    expect(releaseWorkflow).toContain("validate-software-release.mjs --directory=$draft");
+    expect(releaseWorkflow).toContain("gh release edit");
+    expect(releaseWorkflow).toContain("--draft=false --latest");
+    expect(releaseWorkflow).not.toContain("finalize-release.mjs verify-remote");
     for (const asset of [
       "dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe",
       "dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe.blockmap",

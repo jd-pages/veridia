@@ -14,6 +14,7 @@ import {
   releaseResultLine,
 } from "./release-failure.mjs";
 import { DESKTOP_NODE_RUNTIME } from "./desktop-node-runtime.mjs";
+import { retryReadOnlyNetworkOperation } from "./release-network.mjs";
 
 const require = createRequire(import.meta.url);
 const scriptRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -51,25 +52,9 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function retryNetwork(label, operation, attempts = NETWORK_ATTEMPTS) {
-  let lastError;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      return await operation(attempt);
-    } catch (error) {
-      lastError = error;
-      if (classifyReleaseFailure(error) !== "TRANSIENT_NETWORK" || attempt >= attempts) {
-        throw error;
-      }
-      await sleep(400 * attempt);
-    }
-  }
-  throw lastError || new Error(`${label} failed`);
-}
-
-async function runNetworkCommand(command, args, options = {}) {
-  return retryNetwork(plainCommand(command, args), async () => {
-    const result = commandResult(command, args, {
+export async function runReadOnlyNetworkCommand(command, args, options = {}) {
+  return retryReadOnlyNetworkOperation(plainCommand(command, args), async () => {
+    const result = (options.commandResult || commandResult)(command, args, {
       ...options,
       timeoutMs: options.timeoutMs || NETWORK_TIMEOUT_MS,
     });
@@ -80,6 +65,11 @@ async function runNetworkCommand(command, args, options = {}) {
     const error = new Error(message);
     if (result.error?.code) error.code = result.error.code;
     throw error;
+  }, {
+    attempts: options.attempts || NETWORK_ATTEMPTS,
+    backoffMs: 500,
+    sleep: options.sleep,
+    onAttempt: options.onAttempt,
   });
 }
 
@@ -155,6 +145,38 @@ export function validatePreflightSnapshot(snapshot, targetVersion) {
   return snapshot;
 }
 
+export function validateStructuredReleaseState(state, targetVersion) {
+  requireCondition(state && state.targetVersion === targetVersion, {
+    stage: "PREFLIGHT",
+    classification: "STATE_CONFLICT",
+    summary: "ReleaseState target version does not match Preflight target",
+  });
+  requireCondition(state.stateType !== "UNKNOWN_ORPHAN_TAG", {
+    stage: "PREFLIGHT",
+    classification: "STATE_CONFLICT",
+    summary: "UNKNOWN_ORPHAN_TAG blocks software publishing",
+  });
+  requireCondition(state.stateType !== "INVALID_RELEASE_STATE", {
+    stage: "PREFLIGHT",
+    classification: "STATE_CONFLICT",
+    summary: "INVALID_RELEASE_STATE blocks software publishing",
+  });
+  return validatePreflightSnapshot({
+    branch: "main",
+    dirty: !state.workingTreeClean,
+    ahead: state.ahead,
+    behind: state.behind,
+    head: state.localHead,
+    originHead: state.remoteMainHead,
+    sourceVersion: state.sourceVersion,
+    lockVersion: state.sourceVersion,
+    lockRootVersion: state.sourceVersion,
+    localTagExists: state.targetLocalTagExists,
+    remoteTagExists: state.targetRemoteTagExists,
+    targetReleaseExists: state.targetReleaseExists,
+  }, targetVersion);
+}
+
 export function validateWarmupResult(result) {
   const prerequisites = result?.prerequisites || [];
   const failed = prerequisites.find(
@@ -163,7 +185,7 @@ export function validateWarmupResult(result) {
   requireCondition(!failed && prerequisites.length >= 5, {
     stage: "PREREQUISITE_WARMUP",
     classification:
-      failed?.integrity === "MISMATCH" ? "DETERMINISTIC" : "ENVIRONMENT",
+      failed?.integrity === "MISMATCH" ? "DETERMINISTIC_INTEGRITY" : "ENVIRONMENT",
     summary: failed
       ? `${failed.name} prerequisite is not ready (${failed.integrity || "UNKNOWN"})`
       : "Release prerequisite warmup returned an incomplete result",
@@ -177,7 +199,7 @@ export function verifyFileSha256(file, expected) {
   if (hash !== String(expected).toLowerCase()) {
     throw new ReleaseStageError({
       stage: "PREREQUISITE_WARMUP",
-      classification: "DETERMINISTIC",
+      classification: "DETERMINISTIC_INTEGRITY",
       summary: `checksum mismatch for ${path.basename(file)}`,
       target: file,
     });
@@ -214,7 +236,7 @@ async function inspectGit(root, targetVersion) {
       ...versions,
     };
   }
-  await runNetworkCommand("git", ["fetch", "--quiet", "origin", "main", "--tags"], {
+  await runReadOnlyNetworkCommand("git", ["fetch", "--quiet", "origin", "main", "--tags"], {
     cwd: root,
     timeoutMs: 15_000,
   });
@@ -223,7 +245,7 @@ async function inspectGit(root, targetVersion) {
     .split(/\s+/u)
     .map(Number);
   const localTagExists = Boolean(git(["tag", "-l", `v${targetVersion}`]).stdout.trim());
-  const remoteTag = await runNetworkCommand(
+  const remoteTag = await runReadOnlyNetworkCommand(
     "git",
     ["ls-remote", "--tags", "origin", `refs/tags/v${targetVersion}`],
     { cwd: root, timeoutMs: 15_000 },
@@ -257,16 +279,16 @@ async function inspectGitHub(root, targetVersion) {
   const auth = commandResult("gh", ["auth", "status"], { cwd: root, timeoutMs: 10_000 });
   requireCondition(auth.status === 0 && !auth.error, {
     stage: "PREFLIGHT",
-    classification: "ENVIRONMENT",
+    classification: "AUTHENTICATION",
     summary: `GitHub CLI authentication is unavailable: ${auth.stderr || auth.error?.message || "unknown"}`,
   });
-  await runNetworkCommand("gh", ["api", `repos/${repository}`, "--silent"], {
+  await runReadOnlyNetworkCommand("gh", ["api", `repos/${repository}`, "--silent"], {
     cwd: root,
   });
-  await runNetworkCommand("gh", ["api", `repos/${repository}/releases/latest`, "--silent"], {
+  await runReadOnlyNetworkCommand("gh", ["api", `repos/${repository}/releases/latest`, "--silent"], {
     cwd: root,
   });
-  const target = await retryNetwork(`GitHub Release v${targetVersion}`, async () => {
+  const target = await retryReadOnlyNetworkOperation(`GitHub Release v${targetVersion}`, async () => {
     const result = commandResult(
       "gh",
       ["api", `repos/${repository}/releases/tags/v${targetVersion}`, "--silent"],
@@ -280,8 +302,21 @@ async function inspectGitHub(root, targetVersion) {
       summary: `Unable to query GitHub Release v${targetVersion}: ${result.error?.message || result.stderr}`,
       target: `v${targetVersion}`,
     });
-  });
+  }, { attempts: NETWORK_ATTEMPTS, backoffMs: 500 });
   return { repository, targetReleaseExists: target.status === 0 };
+}
+
+async function inspectGitHubHealth(root, repository) {
+  const auth = commandResult("gh", ["auth", "status"], { cwd: root, timeoutMs: 10_000 });
+  requireCondition(auth.status === 0 && !auth.error, {
+    stage: "PREFLIGHT",
+    classification: "AUTHENTICATION",
+    summary: `GitHub CLI authentication is unavailable: ${auth.stderr || auth.error?.message || "unknown"}`,
+  });
+  await runReadOnlyNetworkCommand("gh", ["api", `repos/${repository}`, "--silent"], {
+    cwd: root,
+  });
+  return { repository, targetReleaseExists: false };
 }
 
 function findFile(root, name, maximumEntries = 20_000) {
@@ -510,10 +545,8 @@ export async function fetchTextWithRetry(url, options = {}) {
   const attempts = options.attempts || NETWORK_ATTEMPTS;
   const fetchImpl = options.fetchImpl || fetch;
   const sleepImpl = options.sleep || sleep;
-  let lastError;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const attemptStartedAt = performance.now();
-    try {
+  return retryReadOnlyNetworkOperation(url, async (attempt) => {
+      const attemptStartedAt = performance.now();
       const response = await fetchImpl(url, {
         signal: AbortSignal.timeout(timeoutMs),
         headers: { "user-agent": "VERIDIA-release-preflight" },
@@ -532,25 +565,24 @@ export async function fetchTextWithRetry(url, options = {}) {
         success: true,
       });
       return text;
-    } catch (error) {
-      lastError = error;
-      const classification = classifyReleaseFailure(error);
+    }, {
+      attempts,
+      backoffMs: 500,
+      sleep: sleepImpl,
+      onAttempt: (result) => {
+        if (result.success) return;
+        const classification = result.classification;
       options.onAttempt?.({
         url,
-        attempt,
+        attempt: result.attempt,
         maxAttempts: attempts,
-        elapsedMs: Math.round(performance.now() - attemptStartedAt),
+        elapsedMs: 0,
         success: false,
         classification,
-        summary: error instanceof Error ? error.message : String(error),
+        summary: result.summary,
       });
-      if (classification !== "TRANSIENT_NETWORK" || attempt >= attempts) {
-        throw error;
       }
-      await sleepImpl(400 * attempt);
-    }
-  }
-  throw lastError || new Error(`Unable to fetch ${url}`);
+    });
 }
 
 async function fetchWarmupText(url, failedItem) {
@@ -699,6 +731,7 @@ export async function runReleasePreflight(input, dependencyOverrides = {}) {
   const dependencies = {
     inspectGit,
     inspectGitHub,
+    inspectGitHubHealth,
     inspectDesktop,
     inspectSystem,
     warmup: async (valueRoot, electronVersion) => runWarmupWorker(valueRoot, electronVersion),
@@ -711,13 +744,27 @@ export async function runReleasePreflight(input, dependencyOverrides = {}) {
     timings.push({ name, milliseconds: Math.round(performance.now() - startedAt) });
     return result;
   };
-  const gitState = await measure("Git", () => dependencies.inspectGit(root, targetVersion));
-  validatePreflightSnapshot(
-    { ...gitState, targetReleaseExists: false },
-    targetVersion,
-  );
-  const github = await measure("GitHub", () => dependencies.inspectGitHub(root, targetVersion));
-  validatePreflightSnapshot({ ...gitState, ...github }, targetVersion);
+  const releaseState = input.releaseState || null;
+  const gitState = releaseState
+    ? {
+        ...validateStructuredReleaseState(releaseState, targetVersion),
+        electronVersion: readPackageVersions(root).electronVersion,
+      }
+    : await measure("Git", () => dependencies.inspectGit(root, targetVersion));
+  if (!releaseState) {
+    validatePreflightSnapshot(
+      { ...gitState, targetReleaseExists: false },
+      targetVersion,
+    );
+  } else {
+    timings.push({ name: "ReleaseState", milliseconds: 0 });
+  }
+  const github = releaseState
+    ? await measure("GitHub", () =>
+        dependencies.inspectGitHubHealth(root, input.repository),
+      )
+    : await measure("GitHub", () => dependencies.inspectGitHub(root, targetVersion));
+  if (!releaseState) validatePreflightSnapshot({ ...gitState, ...github }, targetVersion);
   const desktop = await measure("Desktop", () => dependencies.inspectDesktop(root));
   const system = await measure("System", () => dependencies.inspectSystem(root));
   const warmup = validateWarmupResult(
@@ -744,6 +791,10 @@ function targetVersionArgument() {
   return process.argv.find((value) => value.startsWith("--target-version="))?.split("=")[1];
 }
 
+function releaseStateArgument() {
+  return process.argv.find((value) => value.startsWith("--release-state="))?.split("=")[1];
+}
+
 async function runCli() {
   if (process.argv.includes("--warmup-worker")) {
     try {
@@ -757,9 +808,16 @@ async function runCli() {
     return;
   }
   try {
+    const stateFile = releaseStateArgument();
     const result = await runReleasePreflight({
       root: process.cwd(),
       targetVersion: targetVersionArgument(),
+      releaseState: stateFile
+        ? JSON.parse(fs.readFileSync(path.resolve(stateFile), "utf8"))
+        : undefined,
+      repository: stateFile
+        ? repositoryFromOrigin(process.cwd())
+        : undefined,
     });
     process.stdout.write(
       [
@@ -778,7 +836,12 @@ async function runCli() {
     process.stderr.write(
       [
         "RELEASE PREFLIGHT = BLOCKED",
-        releaseResultLine(error, { stage }),
+        releaseResultLine(error, {
+          stage,
+          classification: classifyReleaseFailure(error),
+          attempt: error?.attempt,
+          maxAttempts: error?.maxAttempts,
+        }),
         "",
       ].join("\n"),
     );

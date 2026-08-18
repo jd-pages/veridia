@@ -47,6 +47,10 @@ export declare function validatePreflightSnapshot<T extends Record<string, unkno
   targetVersion: string,
 ): T;
 export declare function validateWarmupResult<T extends WarmupResult>(result: T): T;
+export declare function validateStructuredReleaseState<T extends Record<string, unknown>>(
+  state: T,
+  targetVersion: string,
+): Record<string, unknown>;
 export declare function verifyFileSha256(file: string, expected: string): string;
 export declare function fetchTextWithRetry(
   url: string,
@@ -69,6 +73,11 @@ export declare function fetchTextWithRetry(
     }) => void;
   },
 ): Promise<string>;
+export declare function runReadOnlyNetworkCommand(
+  command: string,
+  args: string[],
+  options?: Record<string, unknown>,
+): Promise<Record<string, unknown>>;
 export declare function createElectronDownloadOptions(
   zipName: string,
   expectedChecksum: string,
@@ -78,6 +87,11 @@ export declare function createElectronDownloadOptions(
   downloadOptions: { timeout: { request: number } };
 };
 export declare function runReleasePreflight(
-  input: { root?: string; targetVersion: string },
+  input: {
+    root?: string;
+    targetVersion: string;
+    releaseState?: Record<string, unknown>;
+    repository?: string;
+  },
   dependencyOverrides?: Record<string, unknown>,
 ): Promise<PreflightResult>;

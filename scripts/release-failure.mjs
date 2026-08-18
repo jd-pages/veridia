@@ -17,19 +17,26 @@ export const RELEASE_STAGES = Object.freeze([
   "INSTALLER_VERIFY",
   "RELEASE_COMMIT",
   "PUSH_MAIN",
+  "MAIN_CI",
   "TAG",
   "PUSH_TAG",
   "GITHUB_ACTIONS",
+  "GITHUB_RELEASE_CREATED",
+  "REMOTE_ASSETS_VERIFY",
   "REMOTE_RELEASE_VERIFY",
   "VERSION_UPDATE",
 ]);
 
 export const RELEASE_CLASSIFICATIONS = Object.freeze([
   "DETERMINISTIC",
+  "DETERMINISTIC_INTEGRITY",
   "TRANSIENT_NETWORK",
+  "AUTHENTICATION",
   "TEST_TIMEOUT",
   "FLAKY_CANDIDATE",
   "ENVIRONMENT",
+  "STATE_CONFLICT",
+  "UNKNOWN",
 ]);
 
 const ansiPattern = /\u001b\[[0-9;]*m/gu;
@@ -43,7 +50,7 @@ export function redactReleaseText(value) {
     .replace(/([?&](?:token|signature|key|auth)=)[^&\s]+/giu, "$1[REDACTED]");
 }
 
-export function classifyReleaseFailure(value, fallback = "DETERMINISTIC") {
+export function classifyReleaseFailure(value, fallback = "UNKNOWN") {
   if (
     value &&
     typeof value === "object" &&
@@ -58,11 +65,18 @@ export function classifyReleaseFailure(value, fallback = "DETERMINISTIC") {
     return "TEST_TIMEOUT";
   }
   if (
-    /\b(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EPIPE|UND_ERR_CONNECT_TIMEOUT|TimeoutError|AbortError)\b|Timeout awaiting ['"](?:request|connect|secureConnect|response)['"] for \d+ms|DNS|TLS handshake|socket hang up|network.*timeout|request.*timeout/iu.test(
+    /\b(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|ENOTFOUND|EAI_AGAIN|EPIPE|UND_ERR_CONNECT_TIMEOUT|TimeoutError|AbortError)\b|schannel|SSL\/TLS connection failed|SSL connect error|TLS (?:handshake )?timeout|failed to receive handshake|Could not resolve host|Failed to connect|Could not connect|Connection timed out|Operation timed out|Recv failure|Send failure|Timeout awaiting ['"](?:request|connect|secureConnect|response)['"] for \d+ms|DNS|TLS handshake|socket hang up|network.*timeout|request.*timeout|Release CDN.*timeout|GitHub HTTP 5\d\d|HTTP 5\d\d/iu.test(
       text,
     )
   ) {
     return "TRANSIENT_NETWORK";
+  }
+  if (
+    /authentication failed|not authenticated|bad credentials|credential.*unavailable|HTTP 401|HTTP 403|permission denied.*publickey|could not read Username|GH_TOKEN.*(?:missing|invalid)|GitHub CLI authentication/iu.test(
+      text,
+    )
+  ) {
+    return "AUTHENTICATION";
   }
   if (
     /\b(?:ENOSPC|EACCES|EPERM|EBUSY|ELOCKED)\b|disk space|Temp.*(?:writable|write)|port.*(?:occupied|conflict)|missing.*node|not executable/iu.test(
@@ -71,10 +85,30 @@ export function classifyReleaseFailure(value, fallback = "DETERMINISTIC") {
   ) {
     return "ENVIRONMENT";
   }
-  if (/checksum.*mismatch|integrity.*(?:fail|mismatch)|hash.*mismatch/iu.test(text)) {
+  if (/checksum.*mismatch|integrity.*(?:fail|mismatch)|hash.*mismatch|SHA-?\d+.*(?:fail|mismatch)|digest.*mismatch|artifact.*stale|stale.*artifact/iu.test(text)) {
+    return "DETERMINISTIC_INTEGRITY";
+  }
+  if (
+    /Tag .*exists|Release .*exists|version.*conflict|version.*mismatch|main.*diverg|main\/origin|behind remote|not.*ancestor|STATE_CONFLICT|FAILED_RELEASE_TAG|Latest Release.*Latest Historical|Actions.*in_progress|orphan Tag|Tag.*moved|Tag.*overwritten/iu.test(
+      text,
+    )
+  ) {
+    return "STATE_CONFLICT";
+  }
+  if (/Chromium.*(?:timing|filesystem)|EBUSY.*Chromium|browser.*race|flaky candidate/iu.test(text)) {
+    return "FLAKY_CANDIDATE";
+  }
+  if (/browser restart.*deadlock|Runner.*(?:RUNNING|QUEUED).*cascade/iu.test(text)) {
+    return "FLAKY_CANDIDATE";
+  }
+  if (
+    /AssertionError|TypeScript.*(?:failed|error)|compile failed|build failed|migration.*failed|Sensitive Scan.*failed|test failed|invalid .*metadata|missing .*asset|missing file-logger|GitHub Actions.*(?:fail|failure)|business assertion/iu.test(
+      text,
+    )
+  ) {
     return "DETERMINISTIC";
   }
-  return RELEASE_CLASSIFICATIONS.includes(fallback) ? fallback : "DETERMINISTIC";
+  return RELEASE_CLASSIFICATIONS.includes(fallback) ? fallback : "UNKNOWN";
 }
 
 export class ReleaseStageError extends Error {
@@ -95,6 +129,11 @@ export class ReleaseStageError extends Error {
     this.maxAttempts = input.maxAttempts;
     this.elapsedMs = input.elapsedMs;
     this.cacheStatus = input.cacheStatus;
+    this.checkpoint = input.checkpoint;
+    this.recoveryPoint = input.recoveryPoint;
+    this.sideEffects = input.sideEffects;
+    this.versionConsumed = input.versionConsumed;
+    this.recovery = input.recovery;
     this.code = input.code || "RELEASE_STAGE_FAILED";
   }
 }
@@ -125,6 +164,11 @@ export function releaseFailureResult(error, fallback = {}) {
     cacheStatus:
       redactReleaseText(source?.cacheStatus || fallback.cacheStatus || "").trim() ||
       undefined,
+    checkpoint: source?.checkpoint || fallback.checkpoint,
+    recoveryPoint: source?.recoveryPoint || fallback.recoveryPoint,
+    sideEffects: source?.sideEffects ?? fallback.sideEffects,
+    versionConsumed: source?.versionConsumed ?? fallback.versionConsumed,
+    recovery: redactReleaseText(source?.recovery || fallback.recovery || "").trim() || undefined,
   };
 }
 

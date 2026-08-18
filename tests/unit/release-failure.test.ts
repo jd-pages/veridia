@@ -64,7 +64,7 @@ describe("Release stage error propagation", () => {
     ["Timeout awaiting 'request' for 10000ms", "TRANSIENT_NETWORK"],
     ["Test timed out in 5000ms", "TEST_TIMEOUT"],
     ["ENOSPC: disk full", "ENVIRONMENT"],
-    ["checksum mismatch", "DETERMINISTIC"],
+    ["checksum mismatch", "DETERMINISTIC_INTEGRITY"],
   ])("classifies %s", (message, expected) => {
     expect(classifyReleaseFailure(message)).toBe(expected);
   });

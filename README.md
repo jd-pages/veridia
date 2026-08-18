@@ -306,15 +306,26 @@ Codex 完成功能修改后不得直接发布，也不得直接上传安装包�
    Windows 打包。安装包只保存在 `release\<版本号>\` 和 `dist-installer\`，
    不创建 Tag、Release 或上传文件。安装、升级、登录、规则同步、审核和导出必须
    在本机验收通过。
-3. 以上两步均通过后，最后双击 `发布新版.bat`。脚本会验证本地打包验收记录、
-   当前源码指纹、版本、Git 状态、分支、最近提交、敏感信息及待上传文件。只有准确
-   输入“我确认发布”才会创建 Tag 和 GitHub Release，并上传安装包、`latest.yml` 和
-   blockmap。版本变更必须事先提交并同步到 `origin/main`，发布脚本不会代为提交源码。
+3. 以上两步均通过后，最后双击 `发布新版.bat`，核对计划并输入 `Y`。这是正式软件发布
+   和恢复的唯一用户入口。脚本统一审计 ReleaseState，在本地 FULL 与安装包校验通过后
+   创建独立 Release Commit、Push main、等待 exact HEAD 的 Main CI，再创建并 Push Tag；
+   GitHub Release Workflow 在 clean runner 独立完成 FULL、Package、Release 和远端校验。
+   最终必须显示 `RELEASE = PASS`。
+
+   如果网络或进程中断，仍然重新运行 `发布新版.bat`。发布器会依据持久化 Checkpoint、
+   HEAD、版本、源码指纹、Tag、Actions 和 Release 状态自动恢复，不会重复 FULL、Build、
+   Release Commit、Tag 或 Release 写操作。不要手工 Tag/Release，不要 reset、rebase、
+   force push。只有幂等只读网络请求会在明确的临时网络错误时有限重试；发布写操作不重试。
 
    软件 Release 的 EXE、同名 `.exe.blockmap` 和 `latest.yml` 缺一不可。发布脚本会在
    本机和 GitHub Actions 中分别校验三件套，并在 Release 创建后再次核对远程文件大小、
-   SHA-256 与匿名下载状态。客户端通过 `latest.yml` 检测版本，并优先使用 blockmap
+   SHA-256/SHA-512 与匿名下载状态。客户端通过 Published Latest Release 的 `latest.yml`
+   检测版本，并优先使用 blockmap
    进行差分更新；该流程不会执行 `rules:publish`。
+
+   只有 Tag、没有 Published Release 的失败版本属于 `FAILED_RELEASE_TAG`，不会成为自动
+   更新版本。远程 Tag 一旦 Push 即消费版本；Workflow 确定失败时保留 Tag，不移动、不删除、
+   不补建 Release，修复后准备下一版本。
 
 本地打包后的任何源码变化都会使验收记录失效，必须重新运行
 `本地打包验收.bat`。普通代码保存、预览和测试不会触发正式发布。
@@ -332,7 +343,7 @@ Codex 完成功能修改后不得直接发布，也不得直接上传安装包�
 - `发布新版.bat` 不会发布规则；`发布规则新版.bat` 不会发布软件安装包。
 
 底层 `npm run release:patch`、`release:minor` 和 `release:major` 只用于脚本内部的
-本地版本准备与打包，不应绕过三个阶段单独执行。客户端启动后检查软件更新，发现新版
+本地版本准备与打包，不应绕过正式 BAT 入口单独执行。客户端启动后检查软件更新，发现新版
 时由用户选择下载和重启安装。
 
 代码签名通过 GitHub Secrets `WINDOWS_CSC_LINK` 和 `WINDOWS_CSC_KEY_PASSWORD`

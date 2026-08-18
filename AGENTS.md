@@ -116,6 +116,12 @@ Regression 已包含 Production Build 时不得再单独重复 Build。只有 te
 
 FULL Attestation 继续用于同一 HEAD、同一依赖和同一环境下避免重复本地 FULL。凭证 VALID 时，本地 package acceptance 可以复用；正式 GitHub Release 不得盲信开发机凭证。
 
+正式软件发布与中断恢复只有一个用户入口：`发布新版.bat`。发布器必须使用统一 ReleaseState 和单调 Checkpoint 审计后自动 Resume；禁止指导用户手工创建、移动、覆盖 Tag 或手工补建 Release，也禁止用 reset、rebase、force push 修复发布状态。只有明确只读、幂等且分类为 `TRANSIENT_NETWORK` 的操作允许最多两次有限重试；Push main、创建/Push Tag、创建 Release、上传资产和 `rules:publish` 禁止自动重试。
+
+远程 Tag Push 后版本即被消费。Workflow 确定失败的 Tag 永久保留为 `FAILED_RELEASE_TAG`，不得删除、移动或补建 Release；修复代码后准备下一版本。Updater 只认 Published Latest Release，孤立 Tag 或 Failed Release Tag 不得成为更新版本。UNKNOWN_ORPHAN_TAG、INVALID_RELEASE_STATE 和 UNKNOWN 错误必须阻断，不能猜测继续。
+
+BAT 的本地 FULL 内含唯一一次 Production Build，Package 必须复用该 Build；GitHub Release Workflow 仍须在独立 clean runner 上重新执行一次完整 FULL、Build、Package 和资产校验。Main CI 结果只有在 exact HEAD、版本、依赖和全部输入指纹可严格证明一致时才可复用，否则保留 BAT FULL。
+
 ### 避免重复工作
 
 - Regression 已完成 Production Build 时，不再单独 Build。

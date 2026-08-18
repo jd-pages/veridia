@@ -54,6 +54,18 @@ describe("Windows desktop automatic updates", () => {
     expect(updateCheck).toContain("durationMs");
   });
 
+  it("discovers updates from GitHub Published Latest Release, never from the newest raw Tag", () => {
+    const buildDesktop = source("scripts/build-desktop.mjs");
+    const releaseScript = source("scripts/release.mjs");
+    const desktopMain = source("desktop/main.cjs");
+
+    expect(buildDesktop).toContain("/releases/latest/download");
+    expect(releaseScript).toContain("/releases/latest/download");
+    expect(desktopMain).toContain("/releases/latest");
+    expect(buildDesktop).not.toContain("git tag");
+    expect(releaseScript).not.toContain("git tag --sort");
+  });
+
   it("keeps a stable installer identity and the existing install mode", () => {
     const packageJson = JSON.parse(source("package.json"));
 

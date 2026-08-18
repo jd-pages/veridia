@@ -12,9 +12,15 @@ import {
 } from "./release-failure.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const bump = process.argv[2];
+const bump = process.argv.slice(2).find((value) => !value.startsWith("--"));
+const releaseStage = process.argv
+  .find((value) => value.startsWith("--stage="))
+  ?.slice("--stage=".length) || "all";
 if (!["current", "patch", "minor", "major"].includes(bump)) {
   throw new Error("本地打包模式必须为 current、patch、minor 或 major");
+}
+if (!["all", "full", "package"].includes(releaseStage)) {
+  throw new Error("发布阶段必须为 all、full 或 package");
 }
 
 const packagePath = path.join(root, "package.json");
@@ -176,17 +182,17 @@ try {
   const version = JSON.parse(fs.readFileSync(packagePath, "utf8")).version;
   if (bump !== "current") updateChangelog(version);
 
-  run("FULL", "正式FULL门禁", "npm.cmd", ["run", "verify:full"], {
-    VERIDIA_DISABLE_ATTESTATION_WRITE: "true",
-  });
-  run("SENSITIVE_SCAN", "敏感信息扫描", "node", [
-    path.join(root, "scripts", "sensitive-scan.mjs"),
-  ]);
-
-  run("PRODUCTION_BUILD", "正式Next构建", "npm.cmd", ["run", "build"], {
-    VERIDIA_APP_VERSION: version,
-    VERIDIA_BUILD_DATE: new Date().toISOString(),
-  });
+  if (releaseStage === "all" || releaseStage === "full") {
+    run("FULL", "正式FULL门禁", "npm.cmd", ["run", "verify:full"], {
+      VERIDIA_DISABLE_ATTESTATION_WRITE: "true",
+      VERIDIA_APP_VERSION: version,
+      VERIDIA_BUILD_DATE: process.env.VERIDIA_BUILD_DATE || new Date().toISOString(),
+    });
+  }
+  if (releaseStage === "full") {
+    process.stdout.write(`\nVERIDIA ${version} 正式 FULL 已通过；未执行 Package。\n`);
+    process.exitCode = 0;
+  } else {
   run("DESKTOP_PREPARE", "准备桌面资源", "npm.cmd", ["run", "desktop:prepare"]);
   run("PREREQUISITE_WARMUP", "准备并检查 Electron 运行文件", "npm.cmd", ["run", "electron:ensure"]);
   fs.rmSync(path.join(root, "dist-installer"), {
@@ -234,6 +240,7 @@ try {
     `\nVERIDIA ${version} 已完成本地打包：${destination}\n` +
       "当前仅生成本地安装包，没有创建 Tag、GitHub Release 或上传文件。\n",
   );
+  }
 } catch (error) {
   restoreVersionFiles();
   const result = releaseFailureResult(error, {

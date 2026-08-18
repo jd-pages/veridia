@@ -26,3 +26,27 @@ export function validateSoftwareReleaseArtifacts(options: {
 }): SoftwareReleaseValidation;
 
 export function formatArtifactSize(bytes: number): string;
+export function collectReleaseSourceFingerprint(projectRoot: string): string;
+export function artifactManifestPath(projectRoot: string, version: string): string;
+export function writeReleaseArtifactManifest(options: {
+  projectRoot: string;
+  version?: string;
+  directory?: string;
+  buildTimestamp?: string;
+}): Record<string, unknown>;
+export function bindArtifactManifestToReleaseCommit(
+  projectRoot: string,
+  version: string,
+  releaseCommit: string,
+): Record<string, unknown>;
+export function validateReleaseArtifactManifest(options: {
+  projectRoot: string;
+  version?: string;
+  currentHead?: string;
+}): {
+  status: string;
+  valid: boolean;
+  reasons: string[];
+  manifest?: Record<string, unknown>;
+  sourceFingerprint?: string;
+};

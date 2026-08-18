@@ -5,26 +5,26 @@
 推送到 `main` 时，`veridia-ci.yml` 只执行 TypeScript、ESLint、单元测试、
 隔离数据库端到端测试和 Next.js 生产构建，不创建 Release。
 
-## 本地确认发布
+## 正式软件发布
 
-按变更范围运行以下命令之一：
+唯一用户入口是双击根目录的 `发布新版.bat`，核对计划后输入 `Y`。发布器统一读取
+`ReleaseState`，依次完成 Preflight、FULL、Package、本地产物校验、Release Commit、
+Push main、Main CI、Tag、GitHub Release Workflow 和远端三件套校验。正常结束必须显示
+`RELEASE = PASS`。
 
-```powershell
-npm run release:patch
-npm run release:minor
-npm run release:major
-```
+发布器持久化单调 Checkpoint。网络或进程中断后仍然重新运行同一个 BAT；它会先审计
+HEAD、origin/main、Main CI、Tag、Workflow、Release 和产物指纹，再从安全阶段继续。
+不要手工创建或移动 Tag，不要手工创建 Release，也不要用 reset、rebase 或 force push
+“修复”发布状态。
 
-也可以双击根目录的 `发布新版.bat`。命令会先完成全部检查；只有检查通过后才修改
-`package.json`、`package-lock.json` 和 `CHANGELOG.md`。最终桌面构建失败时会恢复这些文件。
+只有明确只读、幂等的网络查询允许在 `TRANSIENT_NETWORK` 时自动重试一次；Push main、
+创建/Push Tag、创建 Release 和上传资产都不会自动重试。远程 Tag 一旦 Push，该版本即被
+消费；后续 Workflow 确定失败时保留为 `FAILED_RELEASE_TAG`，修复代码后使用下一版本。
 
-成功后：
-
-1. 验收 `release\<版本号>\VERIDIA-Setup-<版本号>.exe`。
-2. 提交源码、版本文件和更新日志。
-3. 运行 `npm run release:tag`。
-4. 推送提示中的 `v<版本号>` Tag。
-5. GitHub Actions 创建 Release 并上传 EXE、`latest.yml` 和 blockmap。
+本地 FULL 已包含唯一一次 Next.js Production Build，随后 Package 直接复用；正式
+GitHub Release Workflow 仍在独立 clean runner 上重新执行一次 FULL、Build、Package 和
+资产校验，不信任开发机产物。Main CI 凭证不替代 BAT FULL，因为本地打包环境、依赖与
+正式产物绑定无法仅由 CI 结果完整证明。
 
 ## GitHub 手动发布
 
@@ -44,6 +44,8 @@ Electron 主进程使用 `electron-updater`：
 - 更新程序仅覆盖安装目录；`%LOCALAPPDATA%\VERIDIA` 不在更新范围内。
 - GitHub provider 使用带版本 Tag 的 Release URL，并从当前版本 Release 读取旧
   blockmap、从目标版本 Release 读取新 blockmap；差分失败时自动回退完整 EXE。
+- 更新源使用 GitHub Published Latest Release；只有 Tag、没有 Published Release 的
+  `FAILED_RELEASE_TAG` 不会被客户端识别为更新版本。
 - 下载界面显示已下载大小、总大小、速度、预计剩余时间和差分/完整更新状态。
 - updater 诊断信息写入本地数据目录的 `logs\desktop.log`，可搜索
   `Download block maps`、`differential` 和 `fallback to full download`。
@@ -51,6 +53,9 @@ Electron 主进程使用 `electron-updater`：
 每个软件 Release 必须同时上传 EXE、同名 `.exe.blockmap` 和 `latest.yml`。当前公开
 GitHub 仓库由客户端匿名读取；禁止把 GitHub Token 写入桌面应用。如果未来改为私有仓库，
 需要另行部署客户端可读取且能保留历史版本 blockmap 的 HTTPS 更新服务。
+
+Release 完成前会校验公开、非 Draft、非 Prerelease、Latest 指向、版本、文件名、大小、
+SHA-512、blockmap 和 `latest.yml`。任一项不一致都不能进入 `RELEASE_COMPLETE`。
 
 ## 数据库迁移与回滚
 

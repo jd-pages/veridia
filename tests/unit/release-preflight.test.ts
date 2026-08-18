@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createElectronDownloadOptions,
   fetchTextWithRetry,
+  runReadOnlyNetworkCommand,
   runReleasePreflight,
   validateWarmupResult,
   validatePreflightSnapshot,
@@ -63,6 +64,10 @@ function dependencies(overrides: Record<string, unknown> = {}) {
       repository: "jd-pages/veridia",
       targetReleaseExists: false,
     }),
+    inspectGitHubHealth: vi.fn().mockResolvedValue({
+      repository: "jd-pages/veridia",
+      targetReleaseExists: false,
+    }),
     inspectDesktop: vi.fn().mockResolvedValue({
       bundledNode: "node.exe",
       nodeVersion: "v24.14.0",
@@ -82,6 +87,53 @@ function dependencies(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Release Preflight", () => {
+  it("Git fetch Case A: Schannel once then success retries once and passes", async () => {
+    const execute = vi.fn()
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "schannel: failed to receive handshake; SSL/TLS connection failed" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+    await expect(runReadOnlyNetworkCommand("git", ["fetch", "origin"], {
+      commandResult: execute,
+      sleep: async () => undefined,
+    })).resolves.toMatchObject({ status: 0 });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("Git fetch Case B: two TLS failures block as TRANSIENT_NETWORK", async () => {
+    const execute = vi.fn().mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "SSL/TLS connection failed",
+    });
+    await expect(runReadOnlyNetworkCommand("git", ["fetch", "origin"], {
+      commandResult: execute,
+      sleep: async () => undefined,
+    })).rejects.toSatisfy((error: Error) =>
+      error.message.includes("SSL/TLS") && execute.mock.calls.length === 2,
+    );
+  });
+
+  it("Git fetch Case C: first success has no second attempt", async () => {
+    const execute = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "" });
+    await runReadOnlyNetworkCommand("git", ["fetch", "origin"], {
+      commandResult: execute,
+      sleep: async () => undefined,
+    });
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it("Git fetch Case D: Tag conflict is not retried", async () => {
+    const execute = vi.fn().mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "Tag v1.1.15 exists",
+    });
+    await expect(runReadOnlyNetworkCommand("git", ["ls-remote"], {
+      commandResult: execute,
+      sleep: async () => undefined,
+    })).rejects.toThrow("Tag v1.1.15 exists");
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it("healthy state passes and warms every official prerequisite", async () => {
     const deps = dependencies();
     const result = await runReleasePreflight(
@@ -92,6 +144,34 @@ describe("Release Preflight", () => {
     expect(result.success).toBe(true);
     expect(result.warmup.prerequisites).toHaveLength(5);
     expect(deps.warmup).toHaveBeenCalledOnce();
+  });
+
+  it("canonical ReleaseState is consumed without re-running Git/Release state discovery", async () => {
+    const deps = dependencies({
+      inspectGitHubHealth: vi.fn().mockResolvedValue({ repository: "jd-pages/veridia" }),
+    });
+    const result = await runReleasePreflight({
+      root: process.cwd(),
+      targetVersion: "1.1.15",
+      repository: "jd-pages/veridia",
+      releaseState: {
+        stateType: "TARGET_VERSION",
+        targetVersion: "1.1.15",
+        sourceVersion: "1.1.15",
+        workingTreeClean: true,
+        localHead: "abc123",
+        remoteMainHead: "abc123",
+        ahead: 0,
+        behind: 0,
+        targetLocalTagExists: false,
+        targetRemoteTagExists: false,
+        targetReleaseExists: false,
+      },
+    }, deps);
+    expect(result.success).toBe(true);
+    expect(deps.inspectGit).not.toHaveBeenCalled();
+    expect(deps.inspectGitHub).not.toHaveBeenCalled();
+    expect(deps.inspectGitHubHealth).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -228,7 +308,7 @@ describe("Release prerequisite warmup", () => {
     expect(() => validateWarmupResult(result)).toThrow(message);
   });
 
-  it("checksum mismatch remains a deterministic hard block", () => {
+  it("checksum mismatch remains a deterministic integrity hard block", () => {
     const result = warmupResult();
     result.prerequisites[0] = {
       ...result.prerequisites[0],
@@ -238,7 +318,7 @@ describe("Release prerequisite warmup", () => {
     expect(() => validateWarmupResult(result)).toThrowError(
       expect.objectContaining({
         stage: "PREREQUISITE_WARMUP",
-        classification: "DETERMINISTIC",
+        classification: "DETERMINISTIC_INTEGRITY",
       }),
     );
   });

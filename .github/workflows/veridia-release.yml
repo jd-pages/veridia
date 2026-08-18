@@ -106,14 +106,9 @@ jobs:
         shell: pwsh
         env:
           VERIDIA_DISABLE_ATTESTATION_WRITE: "true"
-        run: npm run verify:full *>&1 | Tee-Object artifacts/release-logs/verify-full.log
-
-      - name: 构建正式 Next.js 版本
-        shell: pwsh
-        env:
           VERIDIA_APP_VERSION: ${{ steps.version.outputs.version }}
           VERIDIA_BUILD_DATE: ${{ github.event.repository.updated_at }}
-        run: npm run build *>&1 | Tee-Object artifacts/release-logs/next-build.log
+        run: npm run verify:full *>&1 | Tee-Object artifacts/release-logs/verify-full.log
 
       - name: 准备桌面运行资源
         shell: pwsh
@@ -169,22 +164,30 @@ jobs:
           git commit -m "chore(release): VERIDIA ${{ steps.version.outputs.version }}"
           git push origin HEAD:main
 
-      - name: 创建 GitHub Release 并上传更新文件
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: VERIDIA ${{ steps.version.outputs.version }}
-          body_path: artifacts/software-release-notes.md
-          draft: false
-          prerelease: false
-          files: |
-            dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe
-            dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe.blockmap
-            dist-installer/latest.yml
-
-      - name: 校验 GitHub Release 自动更新文件
+      - name: 创建 Draft GitHub Release 并上传更新文件
         shell: pwsh
-        run: node scripts/finalize-release.mjs verify-remote --directory=dist-installer
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" `
+            --draft `
+            --title "VERIDIA ${{ steps.version.outputs.version }}" `
+            --notes-file artifacts/software-release-notes.md `
+            --repo "${{ github.repository }}" `
+            "dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe" `
+            "dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe.blockmap" `
+            "dist-installer/latest.yml"
+
+      - name: 校验 Draft Release 自动更新文件
+        shell: pwsh
+        run: |
+          $draft = Join-Path $env:RUNNER_TEMP "veridia-draft-release"
+          Remove-Item -LiteralPath $draft -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $draft | Out-Null
+          gh release download "${{ steps.version.outputs.tag }}" --dir $draft --repo "${{ github.repository }}"
+          node scripts/validate-software-release.mjs --directory=$draft
+
+      - name: 发布为正式 Latest Release
+        shell: pwsh
+        run: gh release edit "${{ steps.version.outputs.tag }}" --draft=false --latest --repo "${{ github.repository }}"
 
       - name: 上传构建日志和安装产物
         if: always()
