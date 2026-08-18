@@ -8,6 +8,7 @@ import process from "node:process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import {
+  classifyReadOnlyNetworkFailure,
   classifyReleaseFailure,
   parseReleaseResult,
   ReleaseStageError,
@@ -219,6 +220,8 @@ function readPackageVersions(root) {
 }
 
 async function inspectGit(root, targetVersion) {
+  const networkAttempts = [];
+  const recordAttempt = (attempt) => networkAttempts.push(attempt);
   const git = (args) => commandResult("git", args, { cwd: root });
   const branch = git(["branch", "--show-current"]).stdout.trim();
   const status = git(["status", "--porcelain=v1"]).stdout;
@@ -239,6 +242,7 @@ async function inspectGit(root, targetVersion) {
   await runReadOnlyNetworkCommand("git", ["fetch", "--quiet", "origin", "main", "--tags"], {
     cwd: root,
     timeoutMs: 15_000,
+    onAttempt: recordAttempt,
   });
   const counts = git(["rev-list", "--left-right", "--count", "origin/main...main"])
     .stdout.trim()
@@ -248,7 +252,7 @@ async function inspectGit(root, targetVersion) {
   const remoteTag = await runReadOnlyNetworkCommand(
     "git",
     ["ls-remote", "--tags", "origin", `refs/tags/v${targetVersion}`],
-    { cwd: root, timeoutMs: 15_000 },
+    { cwd: root, timeoutMs: 15_000, onAttempt: recordAttempt },
   );
   return {
     branch,
@@ -259,6 +263,7 @@ async function inspectGit(root, targetVersion) {
     originHead: git(["rev-parse", "origin/main"]).stdout.trim(),
     localTagExists,
     remoteTagExists: Boolean(remoteTag.stdout.trim()),
+    networkAttempts,
     ...versions,
   };
 }
@@ -276,15 +281,20 @@ function repositoryFromOrigin(root) {
 
 async function inspectGitHub(root, targetVersion) {
   const repository = repositoryFromOrigin(root);
+  const networkAttempts = [];
+  const recordAttempt = (attempt) => networkAttempts.push(attempt);
   await runReadOnlyNetworkCommand("gh", ["auth", "status"], {
     cwd: root,
     timeoutMs: NETWORK_TIMEOUT_MS,
+    onAttempt: recordAttempt,
   });
   await runReadOnlyNetworkCommand("gh", ["api", `repos/${repository}`, "--silent"], {
     cwd: root,
+    onAttempt: recordAttempt,
   });
   await runReadOnlyNetworkCommand("gh", ["api", `repos/${repository}/releases/latest`, "--silent"], {
     cwd: root,
+    onAttempt: recordAttempt,
   });
   const target = await retryReadOnlyNetworkOperation(`GitHub Release v${targetVersion}`, async () => {
     const result = commandResult(
@@ -296,23 +306,34 @@ async function inspectGitHub(root, targetVersion) {
     if (result.status === 0 || notFound) return result;
     throw new ReleaseStageError({
       stage: "PREFLIGHT",
-      classification: classifyReleaseFailure(result.error || result.stderr, "ENVIRONMENT"),
+      classification: classifyReadOnlyNetworkFailure(
+        result.error || result.stderr,
+        "ENVIRONMENT",
+      ),
       summary: `Unable to query GitHub Release v${targetVersion}: ${result.error?.message || result.stderr}`,
       target: `v${targetVersion}`,
     });
-  }, { attempts: NETWORK_ATTEMPTS, backoffMs: 500 });
-  return { repository, targetReleaseExists: target.status === 0 };
+  }, {
+    attempts: NETWORK_ATTEMPTS,
+    backoffMs: 500,
+    onAttempt: recordAttempt,
+  });
+  return { repository, targetReleaseExists: target.status === 0, networkAttempts };
 }
 
 async function inspectGitHubHealth(root, repository) {
+  const networkAttempts = [];
+  const recordAttempt = (attempt) => networkAttempts.push(attempt);
   await runReadOnlyNetworkCommand("gh", ["auth", "status"], {
     cwd: root,
     timeoutMs: NETWORK_TIMEOUT_MS,
+    onAttempt: recordAttempt,
   });
   await runReadOnlyNetworkCommand("gh", ["api", `repos/${repository}`, "--silent"], {
     cwd: root,
+    onAttempt: recordAttempt,
   });
-  return { repository, targetReleaseExists: false };
+  return { repository, targetReleaseExists: false, networkAttempts };
 }
 
 function findFile(root, name, maximumEntries = 20_000) {
@@ -778,6 +799,10 @@ export async function runReleasePreflight(input, dependencyOverrides = {}) {
     desktop,
     system,
     warmup,
+    networkAttempts: [
+      ...(gitState.networkAttempts || []),
+      ...(github.networkAttempts || []),
+    ],
     timings,
     elapsedMs: timings.reduce((sum, value) => sum + value.milliseconds, 0),
   };

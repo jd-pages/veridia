@@ -1968,7 +1968,10 @@ async function main() {
     ]) {
       assertCommandAvailable(name, friendly);
     }
-    gh(["auth", "status"], { stage: "PREFLIGHT" });
+    gh(["auth", "status"], {
+      readOnlyNetwork: true,
+      stage: "PREFLIGHT",
+    });
     const repository = repositoryFromOrigin();
     gh(["api", `repos/${repository}`, "--silent"], {
       readOnlyNetwork: true,

@@ -111,6 +111,30 @@ export function classifyReleaseFailure(value, fallback = "UNKNOWN") {
   return RELEASE_CLASSIFICATIONS.includes(fallback) ? fallback : "UNKNOWN";
 }
 
+export function classifyReadOnlyNetworkFailure(value, fallback = "UNKNOWN") {
+  if (
+    value &&
+    typeof value === "object" &&
+    value.classification &&
+    value.classification !== "UNKNOWN"
+  ) {
+    return classifyReleaseFailure(value, fallback);
+  }
+  const text = redactReleaseText(
+    value instanceof Error ? `${value.name} ${value.message} ${value.cause || ""}` : value,
+  );
+  const classification = classifyReleaseFailure(text);
+  if (classification !== "UNKNOWN") return classification;
+  if (
+    /\bEOF\b|unexpected end of file|connection closed(?: before response)?|connection reset|socket hang up/iu.test(
+      text,
+    )
+  ) {
+    return "TRANSIENT_NETWORK";
+  }
+  return classifyReleaseFailure("", fallback);
+}
+
 export class ReleaseStageError extends Error {
   constructor(input, options = {}) {
     const safeSummary = redactReleaseText(input.summary || "发布阶段失败")

@@ -9,6 +9,7 @@ import {
   validatePreflightSnapshot,
 } from "../../scripts/release-preflight.mjs";
 import { ReleaseStageError } from "../../scripts/release-failure.mjs";
+import type { NetworkAttempt } from "../../scripts/release-network.mjs";
 
 function gitState(overrides: Record<string, unknown> = {}) {
   return {
@@ -154,6 +155,93 @@ describe("Release Preflight", () => {
       sleep: async () => undefined,
     })).rejects.toMatchObject({ classification: "AUTHENTICATION" });
     expect(badCredentials).toHaveBeenCalledOnce();
+  });
+
+  it("gh api EOF once then success passes with two structured attempts", async () => {
+    const execute = vi.fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: 'Get "https://api.github.com/repos/jd-pages/veridia": EOF',
+      })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+    const attempts: NetworkAttempt[] = [];
+
+    await expect(runReadOnlyNetworkCommand(
+      "gh",
+      ["api", "repos/jd-pages/veridia", "--silent"],
+      {
+        commandResult: execute,
+        sleep: async () => undefined,
+        onAttempt: (attempt: NetworkAttempt) => attempts.push(attempt),
+      },
+    )).resolves.toMatchObject({ status: 0 });
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(attempts).toMatchObject([
+      { attempt: 1, maxAttempts: 2, success: false, classification: "TRANSIENT_NETWORK" },
+      { attempt: 2, maxAttempts: 2, success: true, classification: null },
+    ]);
+    expect(attempts.every((attempt) => typeof attempt.elapsedMs === "number")).toBe(true);
+  });
+
+  it("gh api two EOF failures block as TRANSIENT_NETWORK after attempt 2", async () => {
+    const execute = vi.fn().mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: 'Get "https://api.github.com/repos/jd-pages/veridia": EOF',
+    });
+
+    await expect(runReadOnlyNetworkCommand(
+      "gh",
+      ["api", "repos/jd-pages/veridia", "--silent"],
+      { commandResult: execute, sleep: async () => undefined },
+    )).rejects.toMatchObject({
+      classification: "TRANSIENT_NETWORK",
+      attempt: 2,
+      maxAttempts: 2,
+    });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["unexpected EOF", "unexpected end of file"])(
+    "gh api %s is TRANSIENT_NETWORK",
+    async (message) => {
+      const execute = vi.fn().mockReturnValue({
+        status: 1,
+        stdout: "",
+        stderr: message,
+      });
+      await expect(runReadOnlyNetworkCommand("gh", ["api", "repos/jd-pages/veridia"], {
+        commandResult: execute,
+        sleep: async () => undefined,
+      })).rejects.toMatchObject({ classification: "TRANSIENT_NETWORK" });
+      expect(execute).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each([502, 503])("GitHub HTTP %s once then success retries and passes", async (status) => {
+    const execute = vi.fn()
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: `GitHub HTTP ${status}` })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+    await expect(runReadOnlyNetworkCommand("gh", ["api", "repos/jd-pages/veridia"], {
+      commandResult: execute,
+      sleep: async () => undefined,
+    })).resolves.toMatchObject({ status: 0 });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("GitHub 404 is deterministic absence and is not retried", async () => {
+    const execute = vi.fn().mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "HTTP 404: Not Found",
+    });
+    await expect(runReadOnlyNetworkCommand("gh", ["api", "repos/jd-pages/veridia"], {
+      commandResult: execute,
+      sleep: async () => undefined,
+    })).rejects.not.toMatchObject({ classification: "TRANSIENT_NETWORK" });
+    expect(execute).toHaveBeenCalledOnce();
   });
 
   it("healthy state passes and warms every official prerequisite", async () => {

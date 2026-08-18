@@ -44,6 +44,10 @@ export declare function classifyReleaseFailure(
   value: unknown,
   fallback?: ReleaseClassification,
 ): ReleaseClassification;
+export declare function classifyReadOnlyNetworkFailure(
+  value: unknown,
+  fallback?: ReleaseClassification,
+): ReleaseClassification;
 export declare class ReleaseStageError extends Error {
   constructor(input: ReleaseFailureInput, options?: { cause?: unknown });
   stage: string;

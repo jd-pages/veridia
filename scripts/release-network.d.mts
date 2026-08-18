@@ -4,6 +4,7 @@ export interface NetworkAttempt {
   maxAttempts: number;
   success: boolean;
   classification: string | null;
+  elapsedMs: number;
   summary?: string;
 }
 

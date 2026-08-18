@@ -38,6 +38,15 @@ export interface PreflightResult {
   desktop: Record<string, unknown>;
   system: Record<string, unknown>;
   warmup: WarmupResult;
+  networkAttempts: Array<{
+    label: string;
+    attempt: number;
+    maxAttempts: number;
+    success: boolean;
+    classification: string | null;
+    elapsedMs: number;
+    summary?: string;
+  }>;
   timings: Array<{ name: string; milliseconds: number }>;
   elapsedMs: number;
 }

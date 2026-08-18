@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  classifyReadOnlyNetworkFailure,
   classifyReleaseFailure,
   inferVerifyFailure,
   parseReleaseResult,
@@ -73,5 +74,44 @@ describe("Release stage error propagation", () => {
     expect(classifyReleaseFailure("Test timed out in 5000ms")).toBe(
       "TEST_TIMEOUT",
     );
+  });
+
+  it.each([
+    ['Get "https://api.github.com/repos/jd-pages/veridia": EOF'],
+    ["unexpected EOF"],
+    ["unexpected end of file"],
+    ["connection closed"],
+    ["connection closed before response"],
+    ["connection reset by peer"],
+    ["socket hang up"],
+  ])("classifies read-only network context as transient: %s", (message) => {
+    expect(classifyReadOnlyNetworkFailure(message)).toBe("TRANSIENT_NETWORK");
+  });
+
+  it("does not classify a local file parse EOF as a network failure", () => {
+    expect(classifyReleaseFailure("Local JSON parse failed: unexpected EOF")).toBe(
+      "UNKNOWN",
+    );
+  });
+
+  it("preserves authentication and deterministic 404 classifications", () => {
+    expect(
+      classifyReadOnlyNetworkFailure("authentication failed: bad credentials"),
+    ).toBe("AUTHENTICATION");
+    expect(
+      classifyReadOnlyNetworkFailure("HTTP 404: release not found", "DETERMINISTIC"),
+    ).toBe("DETERMINISTIC");
+  });
+
+  it.each([
+    ["schannel: failed to receive handshake", "TRANSIENT_NETWORK"],
+    ["SSL/TLS connection failed", "TRANSIENT_NETWORK"],
+    ["Failed to connect to github.com", "TRANSIENT_NETWORK"],
+    ["Could not connect to server", "TRANSIENT_NETWORK"],
+    ["Could not resolve host: github.com", "TRANSIENT_NETWORK"],
+    ["request ETIMEDOUT", "TRANSIENT_NETWORK"],
+    ["read ECONNRESET", "TRANSIENT_NETWORK"],
+  ])("preserves existing network classification: %s", (message, expected) => {
+    expect(classifyReadOnlyNetworkFailure(message)).toBe(expected);
   });
 });
