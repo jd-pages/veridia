@@ -98,6 +98,105 @@ test("Excel 店铺忽略英文大小写完成精确映射", async ({
   });
 });
 
+test("爱他美优选店铺新旧 Excel 名称归一到同一 identity", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  expect((await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  })).ok()).toBeTruthy();
+
+  const canonicalName = "Aptamil爱他美海外优选进口超市";
+  const oldName = "爱他美优选海外专卖店";
+  const products = (await (await page.request.get("/api/products")).json())
+    .data as Array<{ id: string; name: string }>;
+  const product = products.find((item) => item.name === "爱他美澳洲白金版")!;
+  const campaigns = (
+    await (
+      await page.request.get(
+        `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
+      )
+    ).json()
+  ).data as Array<{ id: string; name: string }>;
+  const campaign = campaigns.find((item) =>
+    item.name.includes("爱他美2026年7月")
+  )!;
+  expect(product).toBeTruthy();
+  expect(campaign).toBeTruthy();
+
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("店铺更名兼容");
+  sheet.addRow([
+    "平台",
+    "店铺名称（必填）",
+    "客户名（必填）",
+    "产品系列（必填）",
+    "阶段（IFFO/GUM）",
+    "段位",
+    "订单编号",
+    "内容渠道",
+    "链接（必填）",
+    "发布时间（必填）",
+    "活动名称（必填）",
+  ]);
+  for (const [index, storeName] of [oldName, canonicalName].entries()) {
+    sheet.addRow([
+      "京东",
+      storeName,
+      "店铺更名 E2E",
+      product.name,
+      "IFFO",
+      "2段",
+      `APTAMIL-RENAME-${Date.now()}-${index}`,
+      "小红书",
+      `${E2E_ORIGIN}/mock/xhs?case=passed&aptamil-rename=${Date.now()}-${index}`,
+      "2026-08-05 12:00:00",
+      campaign.name,
+    ]);
+  }
+
+  const response = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: "aptamil-store-rename.xlsx",
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
+      },
+      commit: "false",
+      skipDuplicates: "true",
+    },
+  });
+  const payload = await response.json();
+  expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
+  expect(payload.data).toMatchObject({ validCount: 2, invalidCount: 0 });
+  for (const [index, storeName] of [oldName, canonicalName].entries()) {
+    expect(payload.data.rows[index]).toMatchObject({
+      shopName: storeName,
+      storeTopicRuleId: "store-topic-jd-01",
+      storeMappingStatus: "MATCHED",
+      matchedStoreName: canonicalName,
+      expectedStoreTopics: [`#${canonicalName}`, `#${oldName}`],
+      requiredStoreTopics: ["#京东"],
+    });
+  }
+
+  const rulesPayload = await (
+    await page.request.get("/api/store-topic-rules?commercePlatform=JD&pageSize=100")
+  ).json();
+  const renamedRules = rulesPayload.data.items.filter(
+    (item: { id: string }) => item.id === "store-topic-jd-01",
+  );
+  expect(renamedRules).toHaveLength(1);
+  expect(renamedRules[0]).toMatchObject({
+    storeName: canonicalName,
+    aliases: [
+      { alias: canonicalName },
+      { alias: oldName },
+    ],
+  });
+});
+
 test("同一店铺任意命中第二条可点击话题即通过并保存结构化快照", async ({
   page,
 }) => {

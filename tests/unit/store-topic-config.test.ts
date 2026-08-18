@@ -30,6 +30,28 @@ const topic = (
 const storeTopicConfigs = storeTopicRuleSeeds.map((seed) => ({
   ...seed,
   normalizedStoreName: normalizeStoreNameForMatch(seed.storeName),
+  aliases: [
+    {
+      id: `${seed.id}-canonical-alias`,
+      alias: seed.storeName,
+      normalizedAlias: normalizeStoreNameForMatch(seed.storeName),
+      enabled: true,
+    },
+    ...storeAcceptedTopicSeeds
+      .filter(
+        (accepted) =>
+          accepted.isStoreAlias &&
+          accepted.commercePlatform === seed.commercePlatform &&
+          normalizeStoreNameForMatch(accepted.storeName) ===
+            normalizeStoreNameForMatch(seed.storeName),
+      )
+      .map((accepted, index) => ({
+        id: `${seed.id}-alias-${index + 1}`,
+        alias: accepted.topic.replace(/^#/u, ""),
+        normalizedAlias: normalizeStoreTopicForMatch(accepted.topic),
+        enabled: true,
+      })),
+  ],
   expectedTopic: expectedStoreTopicForName(seed.storeName),
   acceptedTopics: [
     {
@@ -112,6 +134,73 @@ describe("店铺话题配置与精确审核", () => {
       status: "MATCHED",
       matchedStoreName,
     });
+  });
+
+  it("爱他美优选店铺新旧名称精确归一到同一 identity", () => {
+    const canonicalName = "Aptamil爱他美海外优选进口超市";
+    const oldName = "爱他美优选海外专卖店";
+    const oldResolution = resolve({ commercePlatform: "京东", storeName: oldName });
+    const newResolution = resolve({ commercePlatform: "京东", storeName: canonicalName });
+
+    expect(oldResolution).toMatchObject({
+      status: "MATCHED",
+      storeTopicRuleId: "store-topic-jd-01",
+      matchedStoreName: canonicalName,
+      expectedTopics: [`#${canonicalName}`, `#${oldName}`],
+      requiredTopics: ["#京东"],
+    });
+    expect(newResolution).toMatchObject({
+      status: "MATCHED",
+      storeTopicRuleId: "store-topic-jd-01",
+      matchedStoreName: canonicalName,
+    });
+    expect(newResolution.storeTopicRuleId).toBe(oldResolution.storeTopicRuleId);
+    expect(oldResolution.config?.aliases.map((item) => item.alias)).toEqual([
+      canonicalName,
+      oldName,
+    ]);
+  });
+
+  it("爱他美优选店铺兼容英文大小写与首尾空格，但不扩大为简称或模糊匹配", () => {
+    expect(resolve({
+      commercePlatform: "京东",
+      storeName: "  aptamil爱他美海外优选进口超市  ",
+    })).toMatchObject({
+      status: "MATCHED",
+      storeTopicRuleId: "store-topic-jd-01",
+    });
+    for (const storeName of [
+      "优选",
+      "爱他美",
+      "Aptamil爱他美海外进口超市优选",
+      "爱他美精选海外专卖店",
+    ]) {
+      const resolution = resolve({ commercePlatform: "京东", storeName });
+      if (storeName === "爱他美精选海外专卖店") {
+        expect(resolution.storeTopicRuleId).not.toBe("store-topic-jd-01");
+      } else {
+        expect(resolution.status).toBe("STORE_NOT_MAPPED");
+      }
+    }
+  });
+
+  it.each([
+    "#Aptamil爱他美海外优选进口超市",
+    "#爱他美优选海外专卖店",
+  ])("爱他美优选店铺的新旧可点击话题都保持合规：%s", (displayText) => {
+    const resolved = resolve({
+      commercePlatform: "京东",
+      storeName: "爱他美优选海外专卖店",
+    });
+    expect(validateStoreTopic({
+      channel: "XIAOHONGSHU",
+      storeName: "爱他美优选海外专卖店",
+      expectedTopics: resolved.expectedTopics,
+      requiredTopics: resolved.requiredTopics,
+      mappingStatus: resolved.status,
+      extractedTopics: [topic(displayText), topic("#京东")],
+      pageUrl: "https://www.xiaohongshu.com/explore/aptamil-store-rename",
+    })).toMatchObject({ status: "COMPLIANT" });
   });
 
   it("只移除店铺名称首尾空格，并同时校验成交平台", () => {

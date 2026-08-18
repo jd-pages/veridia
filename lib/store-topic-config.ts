@@ -15,9 +15,17 @@ export interface StoreTopicConfig {
   commercePlatform: CommercePlatform;
   storeName: string;
   normalizedStoreName: string;
+  aliases: readonly StoreAliasConfig[];
   expectedTopic: string;
   acceptedTopics: readonly StoreAcceptedTopicConfig[];
   requiredTopics: readonly StoreAcceptedTopicConfig[];
+  enabled: boolean;
+}
+
+export interface StoreAliasConfig {
+  id: string;
+  alias: string;
+  normalizedAlias: string;
   enabled: boolean;
 }
 
@@ -97,7 +105,11 @@ export function resolveStoreTopicConfig(
     (item) =>
       item.enabled &&
       item.commercePlatform === commercePlatform &&
-      item.normalizedStoreName === normalizedStoreName,
+      (item.normalizedStoreName === normalizedStoreName ||
+        item.aliases.some(
+          (alias) =>
+            alias.enabled && alias.normalizedAlias === normalizedStoreName,
+        )),
   );
   if (matches.length !== 1) {
     return {

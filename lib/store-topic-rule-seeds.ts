@@ -16,11 +16,12 @@ export interface StoreAcceptedTopicSeed {
   commercePlatform: CommercePlatform;
   storeName: string;
   topic: string;
+  isStoreAlias?: boolean;
 }
 
 const storesByPlatform: Record<CommercePlatform, readonly string[]> = {
   JD: [
-    "爱他美优选海外专卖店", "爱他美国际进口超市", "Aptamil爱他美海外进口超市",
+    "Aptamil爱他美海外优选进口超市", "爱他美国际进口超市", "Aptamil爱他美海外进口超市",
     "爱他美精选海外专卖店", "爱他美海外京东自营专区", "FOLO海外官方旗舰店",
     "国际平价会员店", "环球甄选旗舰店", "海星健康官方进口超市",
     "京东全球购母婴直营店", "佳贝艾特(Kabrita)海外专卖店",
@@ -55,6 +56,12 @@ export const storeTopicRuleSeeds: readonly StoreTopicRuleSeed[] = Object.entries
 
 export const storeAcceptedTopicSeeds: readonly StoreAcceptedTopicSeed[] = [
   {
+    commercePlatform: "JD",
+    storeName: "Aptamil爱他美海外优选进口超市",
+    topic: "#爱他美优选海外专卖店",
+    isStoreAlias: true,
+  },
+  {
     commercePlatform: "DOUYIN_ECOMMERCE",
     storeName: "ROCKCHECK海外专营店",
     topic: "#爱他美RC奶粉直播间",
@@ -63,7 +70,7 @@ export const storeAcceptedTopicSeeds: readonly StoreAcceptedTopicSeed[] = [
 
 const jdStoresRequiringPlatformTopic = [
   "健康官方进口超市",
-  "爱他美优选海外专卖店",
+  "Aptamil爱他美海外优选进口超市",
   "Aptamil爱他美海外进口超市",
   "爱他美国际进口超市",
   "FOLO海外官方旗舰店",

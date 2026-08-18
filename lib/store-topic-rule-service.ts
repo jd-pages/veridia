@@ -7,6 +7,7 @@ import {
   normalizeStoreTopicForMatch,
   resolveStoreTopicConfig,
   storeTopicWithHash,
+  type StoreAliasConfig,
   type StoreAcceptedTopicConfig,
   type StoreTopicConfig,
   type StoreTopicResolution,
@@ -23,6 +24,7 @@ import {
 } from "@/lib/result-source";
 
 export type StoreTopicEntryType = "ACCEPTED" | "REQUIRED";
+type StoredStoreTopicEntryType = StoreTopicEntryType | "ACCEPTED_ALIAS";
 
 interface TopicInput {
   id?: unknown;
@@ -60,7 +62,11 @@ function activeTopicSnapshot(
 ) {
   return topics
     .filter(
-      (topic) => topic.topicType === topicType && topic.deletedAt === null,
+      (topic) =>
+        (topic.topicType === topicType ||
+          (topicType === "ACCEPTED" &&
+            topic.topicType === "ACCEPTED_ALIAS")) &&
+        topic.deletedAt === null,
     )
     .sort((left, right) => left.sortOrder - right.sortOrder)
     .map((topic) => ({
@@ -72,12 +78,50 @@ function activeTopicSnapshot(
     }));
 }
 
-function withTopicGroups<T extends { topicEntries: TopicEntryRecord[] }>(
+function activeStoreAliases(input: {
+  id: string;
+  storeName: string;
+  normalizedStoreName: string;
+  enabled: boolean;
+  topicEntries: readonly TopicEntryRecord[];
+}): StoreAliasConfig[] {
+  return [
+    {
+      id: `${input.id}-canonical-alias`,
+      alias: input.storeName,
+      normalizedAlias: input.normalizedStoreName,
+      enabled: input.enabled,
+    },
+    ...input.topicEntries
+      .filter(
+        (topic) =>
+          topic.topicType === "ACCEPTED_ALIAS" && topic.deletedAt === null,
+      )
+      .sort((left, right) => left.sortOrder - right.sortOrder)
+      .map((topic) => ({
+        id: topic.id,
+        alias: topic.topic.replace(/^#/u, ""),
+        normalizedAlias: topic.normalizedTopic,
+        enabled: topic.enabled,
+      })),
+  ];
+}
+
+function withTopicGroups<
+  T extends {
+    id: string;
+    storeName: string;
+    normalizedStoreName: string;
+    enabled: boolean;
+    topicEntries: TopicEntryRecord[];
+  },
+>(
   rule: T,
 ) {
   const { topicEntries, ...identity } = rule;
   return {
     ...identity,
+    aliases: activeStoreAliases(rule),
     acceptedTopics: activeTopicSnapshot(topicEntries, "ACCEPTED"),
     requiredTopics: activeTopicSnapshot(topicEntries, "REQUIRED"),
   };
@@ -244,11 +288,15 @@ export async function ensureStoreTopicRuleSeeds() {
           storeTopicRuleId: rule.id,
           topic: storeTopicWithHash(seed.topic),
           normalizedTopic,
-          topicType: "ACCEPTED",
+          topicType: seed.isStoreAlias ? "ACCEPTED_ALIAS" : "ACCEPTED",
           sortOrder: 1,
           enabled: true,
         },
-        update: {},
+        update: {
+          topicType: seed.isStoreAlias ? "ACCEPTED_ALIAS" : "ACCEPTED",
+          enabled: true,
+          deletedAt: null,
+        },
       });
     }
     for (const seed of storeRequiredTopicSeeds) {
@@ -410,7 +458,11 @@ async function replaceTopicEntries(
   tx: Prisma.TransactionClient,
   storeTopicRuleId: string,
   topics: ValidatedTopic[],
-  existingTopics: Array<{ id: string; normalizedTopic: string }>,
+  existingTopics: Array<{
+    id: string;
+    normalizedTopic: string;
+    topicType: string;
+  }>,
   userId: string,
 ) {
   const retainedIds = new Set<string>();
@@ -423,12 +475,17 @@ async function replaceTopicEntries(
         ) || existingTopics.find((candidate) => candidate.id === topic.id);
       if (existing) {
         retainedIds.add(existing.id);
+        const storedTopicType: StoredStoreTopicEntryType =
+          topicType === "ACCEPTED" &&
+          existing.topicType === "ACCEPTED_ALIAS"
+            ? "ACCEPTED_ALIAS"
+            : topicType;
         await tx.storeTopicEntry.update({
           where: { id: existing.id },
           data: {
             topic: topic.topic,
             normalizedTopic: topic.normalizedTopic,
-            topicType,
+            topicType: storedTopicType,
             sortOrder,
             enabled: topic.enabled,
             deletedAt: null,

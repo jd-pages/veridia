@@ -27,6 +27,13 @@ const rockcheckTopicMigration = readFileSync(
   ),
   "utf8",
 );
+const aptamilStoreRenameMigration = readFileSync(
+  path.join(
+    root,
+    "prisma/migrations/202608180001_aptamil_store_rename/migration.sql",
+  ),
+  "utf8",
+);
 const sqliteSchema = readFileSync(path.join(root, "prisma/schema.prisma"), "utf8");
 const postgresSchema = readFileSync(
   path.join(root, "prisma/schema.postgresql.prisma"),
@@ -141,8 +148,14 @@ describe("店铺话题规则数据模型与迁移", () => {
     }
   });
 
-  it("只为抖音电商 ROCKCHECK 店铺幂等增加第二条可接受话题", () => {
+  it("只为指定店铺增加历史兼容话题", () => {
     expect(storeAcceptedTopicSeeds).toEqual([
+      {
+        commercePlatform: "JD",
+        storeName: "Aptamil爱他美海外优选进口超市",
+        topic: "#爱他美优选海外专卖店",
+        isStoreAlias: true,
+      },
       {
         commercePlatform: "DOUYIN_ECOMMERCE",
         storeName: "ROCKCHECK海外专营店",
@@ -161,6 +174,26 @@ describe("店铺话题规则数据模型与迁移", () => {
     expect(rockcheckTopicMigration).not.toMatch(
       /^\s*(?:DELETE|DROP|TRUNCATE|UPDATE)\b/imu,
     );
+  });
+
+  it("爱他美优选店铺数据迁移原位复用 identity 并保留历史数据", () => {
+    expect(aptamilStoreRenameMigration).toContain("store-topic-jd-01");
+    expect(aptamilStoreRenameMigration).toContain("Aptamil爱他美海外优选进口超市");
+    expect(aptamilStoreRenameMigration).toContain("爱他美优选海外专卖店");
+    expect(aptamilStoreRenameMigration).toContain("ACCEPTED_ALIAS");
+    expect(aptamilStoreRenameMigration).not.toMatch(
+      /\b(?:DELETE|DROP|TRUNCATE)\b/iu,
+    );
+    expect(aptamilStoreRenameMigration).not.toMatch(
+      /\bUPDATE\s+"?(?:audit_results|audit_tasks)"?/iu,
+    );
+    expect(storeTopicRuleSeeds.filter((seed) =>
+      seed.id === "store-topic-jd-01"
+    )).toEqual([{
+      id: "store-topic-jd-01",
+      commercePlatform: "JD",
+      storeName: "Aptamil爱他美海外优选进口超市",
+    }]);
   });
 
   it("管理页明确展示店铺话题为任选其一", () => {
