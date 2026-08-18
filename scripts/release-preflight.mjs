@@ -276,11 +276,9 @@ function repositoryFromOrigin(root) {
 
 async function inspectGitHub(root, targetVersion) {
   const repository = repositoryFromOrigin(root);
-  const auth = commandResult("gh", ["auth", "status"], { cwd: root, timeoutMs: 10_000 });
-  requireCondition(auth.status === 0 && !auth.error, {
-    stage: "PREFLIGHT",
-    classification: "AUTHENTICATION",
-    summary: `GitHub CLI authentication is unavailable: ${auth.stderr || auth.error?.message || "unknown"}`,
+  await runReadOnlyNetworkCommand("gh", ["auth", "status"], {
+    cwd: root,
+    timeoutMs: NETWORK_TIMEOUT_MS,
   });
   await runReadOnlyNetworkCommand("gh", ["api", `repos/${repository}`, "--silent"], {
     cwd: root,
@@ -307,11 +305,9 @@ async function inspectGitHub(root, targetVersion) {
 }
 
 async function inspectGitHubHealth(root, repository) {
-  const auth = commandResult("gh", ["auth", "status"], { cwd: root, timeoutMs: 10_000 });
-  requireCondition(auth.status === 0 && !auth.error, {
-    stage: "PREFLIGHT",
-    classification: "AUTHENTICATION",
-    summary: `GitHub CLI authentication is unavailable: ${auth.stderr || auth.error?.message || "unknown"}`,
+  await runReadOnlyNetworkCommand("gh", ["auth", "status"], {
+    cwd: root,
+    timeoutMs: NETWORK_TIMEOUT_MS,
   });
   await runReadOnlyNetworkCommand("gh", ["api", `repos/${repository}`, "--silent"], {
     cwd: root,

@@ -134,6 +134,28 @@ describe("Release Preflight", () => {
     expect(execute).toHaveBeenCalledOnce();
   });
 
+  it("gh auth timeout retries as network, while bad credentials never retry", async () => {
+    const timeoutThenPass = vi.fn()
+      .mockReturnValueOnce({ status: null, stdout: "", stderr: "", error: Object.assign(new Error("spawnSync gh ETIMEDOUT"), { code: "ETIMEDOUT" }) })
+      .mockReturnValueOnce({ status: 0, stdout: "authenticated", stderr: "" });
+    await runReadOnlyNetworkCommand("gh", ["auth", "status"], {
+      commandResult: timeoutThenPass,
+      sleep: async () => undefined,
+    });
+    expect(timeoutThenPass).toHaveBeenCalledTimes(2);
+
+    const badCredentials = vi.fn().mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "authentication failed: bad credentials",
+    });
+    await expect(runReadOnlyNetworkCommand("gh", ["auth", "status"], {
+      commandResult: badCredentials,
+      sleep: async () => undefined,
+    })).rejects.toMatchObject({ classification: "AUTHENTICATION" });
+    expect(badCredentials).toHaveBeenCalledOnce();
+  });
+
   it("healthy state passes and warms every official prerequisite", async () => {
     const deps = dependencies();
     const result = await runReleasePreflight(
