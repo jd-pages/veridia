@@ -42,6 +42,7 @@ type State = {
   auditPageReuseCount: number;
   closing: boolean;
   controlError?: string;
+  lifecycleGeneration: number;
 };
 const globalState = globalThis as typeof globalThis & { douyinBrowserManagerState?: State };
 const state = globalState.douyinBrowserManagerState ?? (globalState.douyinBrowserManagerState = {
@@ -50,7 +51,9 @@ const state = globalState.douyinBrowserManagerState ?? (globalState.douyinBrowse
   auditPageCreateCount: 0,
   auditPageReuseCount: 0,
   closing: false,
+  lifecycleGeneration: 0,
 });
+state.lifecycleGeneration ??= 0;
 
 let chromiumPromise: Promise<BrowserType> | undefined;
 function chromium() {
@@ -138,13 +141,16 @@ export async function getDouyinAutomationSession() {
 
 async function launchContextNow() {
   if (state.context && state.browser?.isConnected()) return state.context;
+  const launchGeneration = state.lifecycleGeneration;
   await getDouyinAutomationSession();
   const browserType = await chromium();
   let context: BrowserContext;
+  let launchedBrowser: Browser | undefined;
+  let closeLaunchedBrowser: (() => Promise<void>) | undefined;
   if (process.platform === "win32") {
     const connection = await launchWindowsHiddenChromium(browserType, PROFILE_DIRECTORY);
-    state.browser = connection.browser;
-    state.closeBrowser = connection.close;
+    launchedBrowser = connection.browser;
+    closeLaunchedBrowser = connection.close;
     context = connection.context;
   } else {
     context = await browserType.launchPersistentContext(PROFILE_DIRECTORY, {
@@ -155,9 +161,18 @@ async function launchContextNow() {
       timeout: BROWSER_OPERATION_TIMEOUT_MS,
       ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH?.trim() ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH.trim() } : {}),
     });
-    state.browser = context.browser() || undefined;
-    state.closeBrowser = () => boundedOperation("关闭抖音 Persistent Context", context.close());
+    launchedBrowser = context.browser() || undefined;
+    closeLaunchedBrowser = () => boundedOperation("关闭抖音 Persistent Context", context.close());
   }
+  if (launchGeneration !== state.lifecycleGeneration) {
+    await (closeLaunchedBrowser?.() || context.close()).catch(() => undefined);
+    throw new AutomaticExtractionError(
+      "BROWSER_CONTROL_ERROR",
+      "抖音浏览器操作已被 Pause 或 extraction deadline 取消",
+    );
+  }
+  state.browser = launchedBrowser;
+  state.closeBrowser = closeLaunchedBrowser;
   state.context = context;
   state.launchCount += 1;
   state.controlError = undefined;
@@ -187,6 +202,7 @@ async function ensureContext() {
 }
 
 async function closeContextNow() {
+  state.lifecycleGeneration += 1;
   state.closing = true;
   const close = state.closeBrowser;
   const context = state.context;
@@ -314,6 +330,27 @@ export async function logoutDouyinSession() {
 }
 export async function closeDouyinBrowserContext() {
   await serializeBrowserLifecycle(closeContextNow);
+}
+export async function cancelDouyinActiveExtraction() {
+  state.lifecycleGeneration += 1;
+  state.closing = true;
+  const close = state.closeBrowser;
+  const context = state.context;
+  state.context = undefined;
+  state.browser = undefined;
+  state.auditPage = undefined;
+  state.auditPagePromise = undefined;
+  state.closeBrowser = undefined;
+  try {
+    if (close) await close().catch(() => undefined);
+    else if (context) {
+      await boundedOperation("取消抖音审核浏览器操作", context.close()).catch(
+        () => undefined,
+      );
+    }
+  } finally {
+    state.closing = false;
+  }
 }
 export async function closeDouyinAuditPageForTesting() {
   await serializeBrowserLifecycle(async () => {

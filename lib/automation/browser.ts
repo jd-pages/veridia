@@ -91,6 +91,7 @@ type XhsBrowserState = {
   controlLastError?: string;
   controlDisconnectedAt?: Date;
   automaticRecoveryCount: number;
+  lifecycleGeneration: number;
 };
 
 const globalForAutomation = globalThis as typeof globalThis & {
@@ -110,6 +111,7 @@ const state =
     auditPageRequestCount: 0,
     controlState: "NOT_STARTED",
     automaticRecoveryCount: 0,
+    lifecycleGeneration: 0,
   });
 state.closingContext ??= false;
 state.contextClosedUnexpectedly ??= false;
@@ -119,6 +121,7 @@ state.auditPageReuseCount ??= 0;
 state.auditPageRequestCount ??= 0;
 state.controlState ??= "NOT_STARTED";
 state.automaticRecoveryCount ??= 0;
+state.lifecycleGeneration ??= 0;
 
 function persistentOptions() {
   const channel = process.env.PLAYWRIGHT_BROWSER_CHANNEL?.trim();
@@ -304,6 +307,7 @@ async function ensureBrowserContext(allowRelaunch = false) {
   }
   await getAutomationSession();
   const launchStartedAt = new Date();
+  const launchGeneration = state.lifecycleGeneration;
   state.controlState = "CONNECTING";
   console.info(
     "[小红书浏览器] 启动 Persistent Context",
@@ -347,6 +351,20 @@ async function ensureBrowserContext(allowRelaunch = false) {
     return context;
   })()
     .then((context) => {
+      if (launchGeneration !== state.lifecycleGeneration) {
+        const closeBrowser = state.closeBrowser;
+        state.browser = undefined;
+        state.context = undefined;
+        state.closeBrowser = undefined;
+        return (closeBrowser ? closeBrowser() : context.close())
+          .catch(() => undefined)
+          .then(() => {
+            throw new AutomaticExtractionError(
+              "BROWSER_CONTROL_ERROR",
+              "小红书浏览器操作已被 Pause 或 extraction deadline 取消",
+            );
+          });
+      }
       state.context = context;
       state.profileLocked = false;
       state.contextClosedUnexpectedly = false;
@@ -575,6 +593,7 @@ export async function getXhsAuditPageDiagnostics() {
 }
 
 export async function closeXhsBrowserContext() {
+  state.lifecycleGeneration += 1;
   const context = state.context;
   const closeBrowser = state.closeBrowser;
   state.closingContext = true;

@@ -5,6 +5,7 @@ export type AutomaticAuditQueueState = {
   recovery?: Promise<void>;
   activeBatchId?: string;
   activePlatform?: AutomationPlatform;
+  restartRequested?: boolean;
 };
 
 const globalForQueue = globalThis as typeof globalThis & {

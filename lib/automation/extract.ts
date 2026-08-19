@@ -90,6 +90,7 @@ function effectiveMockUrl(task: AuditTask) {
   const retryCase = url.searchParams.get("retryCase");
   if (retryCase && task.attempts > 1) {
     url.searchParams.set("case", retryCase);
+    url.searchParams.delete("simulate");
   }
   return url.toString();
 }

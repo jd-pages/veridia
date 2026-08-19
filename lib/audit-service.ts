@@ -33,6 +33,10 @@ import {
 import {
   resolveDuplicateReauditAutomaticOutcome,
 } from "@/lib/import-task-metadata";
+import {
+  lockValidExecutionLease,
+  type AutomaticExecutionLease,
+} from "@/lib/automation/execution-lease";
 
 export async function getAuditContext(
   productId: string,
@@ -235,7 +239,11 @@ export async function getAuditContext(
   };
 }
 
-export async function runAuditTask(taskId: string, payload: ExtractedNote) {
+export async function runAuditTask(
+  taskId: string,
+  payload: ExtractedNote,
+  options: { executionLease?: AutomaticExecutionLease } = {},
+) {
   const task = await prisma.auditTask.findUnique({ where: { id: taskId } });
   if (!task) throw new Error("审核任务不存在");
   const contentChannel = resolveTaskAutomationPlatform(task);
@@ -250,19 +258,6 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
   const storeTopicRequirement = baseContext.rulesConfigured
     ? await resolveStoreTopicAuditRequirement(task)
     : null;
-  if (storeTopicRequirement) {
-    await prisma.auditTask.update({
-      where: { id: task.id },
-      data: {
-        storeTopicRuleId: storeTopicRequirement.storeTopicRuleId,
-        matchedStoreName: storeTopicRequirement.matchedStoreName,
-        expectedStoreTopic: storeTopicRequirement.expectedTopic,
-        expectedStoreTopics: JSON.stringify(storeTopicRequirement.expectedTopics),
-        requiredStoreTopics: JSON.stringify(storeTopicRequirement.requiredTopics),
-        storeMappingStatus: storeTopicRequirement.mappingStatus,
-      },
-    });
-  }
   const context = {
     ...baseContext,
     storeTopicRequirement,
@@ -292,6 +287,26 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
   });
 
   const result = await prisma.$transaction(async (tx) => {
+    if (options.executionLease) {
+      await lockValidExecutionLease(tx, options.executionLease);
+    }
+    if (storeTopicRequirement) {
+      await tx.auditTask.update({
+        where: { id: task.id },
+        data: {
+          storeTopicRuleId: storeTopicRequirement.storeTopicRuleId,
+          matchedStoreName: storeTopicRequirement.matchedStoreName,
+          expectedStoreTopic: storeTopicRequirement.expectedTopic,
+          expectedStoreTopics: JSON.stringify(
+            storeTopicRequirement.expectedTopics,
+          ),
+          requiredStoreTopics: JSON.stringify(
+            storeTopicRequirement.requiredTopics,
+          ),
+          storeMappingStatus: storeTopicRequirement.mappingStatus,
+        },
+      });
+    }
     const existingByPlatformId = payload.noteId
       ? await tx.noteRecord.findUnique({
           where: {
@@ -495,13 +510,24 @@ export async function runAuditTask(taskId: string, payload: ExtractedNote) {
             status: "NEEDS_REVIEW",
             finishedAt: new Date(),
             notes: duplicateReauditOutcome.notes,
+            claimEpoch: null,
           }
         : evaluation.autoStatus === "READ_FAILED"
-          ? { status: "READ_FAILED", finishedAt: new Date() }
+          ? { status: "READ_FAILED", finishedAt: new Date(), claimEpoch: null }
           : evaluation.autoStatus === "NEEDS_REVIEW"
-            ? { status: "NEEDS_REVIEW", finishedAt: new Date() }
-          : completedAuditTaskUpdate(),
+            ? {
+                status: "NEEDS_REVIEW",
+                finishedAt: new Date(),
+                claimEpoch: null,
+              }
+            : { ...completedAuditTaskUpdate(), claimEpoch: null },
     });
+    if (options.executionLease) {
+      await tx.auditBatch.update({
+        where: { id: options.executionLease.batchId },
+        data: { currentTaskId: null },
+      });
+    }
 
     return auditResult;
   });

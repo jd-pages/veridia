@@ -110,7 +110,10 @@ describe("小红书持久会话与访问节奏", () => {
     expect(queue).toContain("keepProcessingOnlyWhileBatchRuns");
     expect(queue).toContain('["PENDING", "PROCESSING", "LOGIN_EXPIRED"]');
     expect(queue).toContain('where: { id: task.id, status: "PENDING" }');
-    expect(queue).toContain('where: { id: batchId, status: "RUNNING" }');
+    expect(queue).toContain(
+      'where: { id: batchId, status: "RUNNING", runEpoch }',
+    );
+    expect(queue).toContain("claimEpoch: runEpoch");
     expect(queue).toContain("queueState.activeBatchId");
     expect(pacing).toContain("XHS_NETWORK_MAX_RETRIES: 2");
     expect(pacing).toContain("XHS_NETWORK_RETRY_FIRST_MS: 5_000");
@@ -133,7 +136,7 @@ describe("小红书持久会话与访问节奏", () => {
     expect(queue).toContain(
       'extractionError.code === "BROWSER_CONTROL_ERROR"',
     );
-    expect(queue).toContain('status: browserControlIssue\n              ? "PAUSED"');
+    expect(queue).toMatch(/status:\s*browserControlIssue\s*\? "PAUSED"/u);
     expect(queue).toContain("await runtime.ensureBrowserReady()");
     expect(platformRuntime).toContain("ensureXhsBrowserControlReady(true)");
   });

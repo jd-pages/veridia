@@ -14,6 +14,10 @@ import {
   markAuditResultSuperseded,
   resolveAuditResultSlot,
 } from "@/lib/audit-result-lifecycle";
+import {
+  lockValidExecutionLease,
+  type AutomaticExecutionLease,
+} from "@/lib/automation/execution-lease";
 
 const globalForFailureBackfill = globalThis as typeof globalThis & {
   processingFailureBackfill?: Promise<number>;
@@ -36,6 +40,8 @@ export async function recordProcessingFailureResult(input: {
   failureCode: string | null;
   failureMessage: string | null;
   finishedAt?: Date;
+  executionLease?: AutomaticExecutionLease;
+  batchError?: { code: string; message: string };
 }) {
   const finishedAt = input.finishedAt || new Date();
   const noteNotFound = [
@@ -63,6 +69,19 @@ export async function recordProcessingFailureResult(input: {
   );
 
   return prisma.$transaction(async (tx) => {
+    if (input.executionLease) {
+      await lockValidExecutionLease(tx, input.executionLease);
+    }
+    if (input.executionLease) {
+      await tx.auditBatch.update({
+        where: { id: input.executionLease.batchId },
+        data: {
+          currentTaskId: null,
+          lastErrorCode: input.batchError?.code,
+          lastErrorMessage: input.batchError?.message,
+        },
+      });
+    }
     const task = await tx.auditTask.findUnique({
       where: { id: input.taskId },
       include: {
@@ -85,6 +104,7 @@ export async function recordProcessingFailureResult(input: {
         failureCode: input.failureCode,
         failureMessage: input.failureMessage || reason,
         finishedAt,
+        claimEpoch: null,
       },
     });
 

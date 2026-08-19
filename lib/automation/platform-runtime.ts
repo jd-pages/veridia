@@ -7,6 +7,7 @@ import {
 import { extractDouyinAuditTaskAutomatically } from "./douyin-extract";
 import {
   clearXhsAuditLockForBatch,
+  closeXhsBrowserContext,
   ensureXhsBrowserControlReady,
   getXhsAutomationProfilePath,
   heartbeatXhsAuditLock,
@@ -15,6 +16,7 @@ import {
 } from "./browser";
 import {
   clearDouyinAuditLockForBatch,
+  cancelDouyinActiveExtraction,
   ensureDouyinBrowserControlReady,
   getDouyinAutomationProfilePath,
   heartbeatDouyinAuditLock,
@@ -36,6 +38,7 @@ export interface PlatformAutomationRuntime {
   extract: (task: AuditTask) => Promise<AutomaticExtractionOutcome>;
   pacing: () => ReturnType<typeof getAutomationPacingSettings>;
   ensureBrowserReady: () => Promise<unknown>;
+  cancelActiveExtraction: () => Promise<void>;
   updateLock: typeof updateXhsAuditLock;
   heartbeatLock: typeof heartbeatXhsAuditLock;
   clearLock: typeof clearXhsAuditLockForBatch;
@@ -59,6 +62,7 @@ const runtimeRegistry: Record<
       extract: (task: AuditTask) => extractDouyinAuditTaskAutomatically(task),
       pacing: () => getAutomationPacingSettings("DOUYIN"),
       ensureBrowserReady: () => ensureDouyinBrowserControlReady(),
+      cancelActiveExtraction: () => cancelDouyinActiveExtraction(),
       updateLock: updateDouyinAuditLock,
       heartbeatLock: heartbeatDouyinAuditLock,
       clearLock: clearDouyinAuditLockForBatch,
@@ -77,6 +81,7 @@ const runtimeRegistry: Record<
     extract: (task: AuditTask) => extractAuditTaskAutomatically(task),
     pacing: () => getAutomationPacingSettings("XIAOHONGSHU"),
     ensureBrowserReady: () => ensureXhsBrowserControlReady(true),
+    cancelActiveExtraction: () => closeXhsBrowserContext(),
     updateLock: updateXhsAuditLock,
     heartbeatLock: heartbeatXhsAuditLock,
     clearLock: clearXhsAuditLockForBatch,

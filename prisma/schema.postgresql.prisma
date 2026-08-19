@@ -305,6 +305,7 @@ model AuditTask {
   source              String             @default("MANUAL")
   status              String             @default("PENDING")
   queueOrder          Int                @default(0)
+  claimEpoch         Int?
   replacesResultId    String?
   attempts            Int                @default(0)
   failureCode         String?
@@ -366,6 +367,7 @@ model AuditBatch {
   channel          String?
   queueOrder       Int           @default(0)
   status           String        @default("QUEUED")
+  runEpoch         Int           @default(0)
   totalCount       Int           @default(0)
   intervalMs       Int           @default(5000)
   currentTaskId    String?

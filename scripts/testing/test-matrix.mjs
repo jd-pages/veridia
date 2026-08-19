@@ -39,6 +39,7 @@ export const E2E_MANIFEST = Object.freeze({
   "tests/e2e/local-fonts.spec.ts": entry(["UI_LAYOUT", "UPDATE"], "RESULTS_UI", true),
   "tests/e2e/localization.spec.ts": entry(["UI_LAYOUT"], "RESULTS_UI", true),
   "tests/e2e/platform-published-at.spec.ts": entry(["XHS", "DOUYIN", "RESULTS", "MIXED_PLATFORM"], "RESULTS_UI", true),
+  "tests/e2e/pause-resume-runner-lifecycle.spec.ts": entry(["XHS", "AUTOMATION", "RESULTS", "DATABASE"], "AUTOMATION"),
   "tests/e2e/product-stage-topic.spec.ts": entry(["CAMPAIGN", "RULES", "XHS"], "DATA_RULES"),
   "tests/e2e/result-lifecycle.spec.ts": entry(["RESULTS", "RECHECK", "MIXED_PLATFORM", "XHS", "DOUYIN"], "RESULTS_UI"),
   "tests/e2e/results-horizontal-scroll.spec.ts": entry(["RESULTS", "UI_LAYOUT"], "RESULTS_UI", true),
