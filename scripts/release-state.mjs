@@ -3,6 +3,7 @@ export const RELEASE_STATE_SCHEMA_VERSION = 1;
 export const RELEASE_STATUS_TYPES = Object.freeze([
   "PUBLISHED_RELEASE",
   "FAILED_RELEASE_TAG",
+  "BINARY_PUBLISH_RECOVERABLE",
   "IN_PROGRESS_RELEASE",
   "TARGET_VERSION",
   "UNPUBLISHED_SOURCE",
@@ -249,6 +250,7 @@ export function createReleaseState(input) {
       input.releaseWorkflowState || { status: "not_started", conclusion: null },
     localArtifactState: input.localArtifactState || { status: "MISSING" },
     remoteArtifactState: input.remoteArtifactState || { status: "UNKNOWN" },
+    binaryPublishState: input.binaryPublishState || { status: "UNKNOWN" },
     checkpoint: input.checkpoint || "PLAN_READY",
     recoveryPoint: "PREFLIGHT",
     versionConsumed: Boolean(input.targetRemoteTagExists),
@@ -262,7 +264,9 @@ export function createReleaseState(input) {
           ? "PUBLISHED_RELEASE"
           : input.releaseWorkflowState?.status === "completed"
             && failedConclusions.has(input.releaseWorkflowState?.conclusion)
-            ? "FAILED_RELEASE_TAG"
+            ? input.binaryPublishState?.status === "VERIFIED"
+              ? "BINARY_PUBLISH_RECOVERABLE"
+              : "FAILED_RELEASE_TAG"
             : "IN_PROGRESS_RELEASE"
         : "TARGET_VERSION",
   };
@@ -280,6 +284,9 @@ export function determineReleaseRecovery(state, checkpoint = state.checkpoint) {
       : { recoveryPoint: "REMOTE_ASSETS_VERIFY", versionConsumed: true };
   }
   if (state.targetRemoteTagExists) {
+    if (state.stateType === "BINARY_PUBLISH_RECOVERABLE") {
+      return { recoveryPoint: "BINARY_PUBLISH", versionConsumed: true };
+    }
     if (
       state.releaseWorkflowState?.status === "completed"
       && failedConclusions.has(state.releaseWorkflowState?.conclusion)

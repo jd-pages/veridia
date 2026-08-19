@@ -10,6 +10,10 @@ import {
   packageVersion,
   validateSoftwareReleaseArtifacts,
 } from "./software-release-artifacts.mjs";
+import {
+  retryReadOnlyNetworkOperation,
+  retryReadOnlyNetworkOperationSync,
+} from "./release-network.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const owner = "jd-pages";
@@ -30,6 +34,13 @@ function git(args, options = {}) {
     );
   }
   return result;
+}
+
+function gitReadOnly(args, options = {}) {
+  return retryReadOnlyNetworkOperationSync(
+    `git ${args.join(" ")}`,
+    () => git(args, options),
+  );
 }
 
 function currentVersion() {
@@ -112,23 +123,15 @@ function requestJson({
   });
 }
 
-function wait(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
 async function requestJsonWithRetry(options) {
-  let lastError;
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
-    try {
+  return retryReadOnlyNetworkOperation(
+    `${options.method || "GET"} https://${options.hostname || "api.github.com"}${options.requestPath}`,
+    async () => {
       const response = await requestJson(options);
       if (response.status < 500 && response.status !== 429) return response;
-      lastError = new Error(`GitHub HTTP ${response.status}`);
-    } catch (error) {
-      lastError = error;
-    }
-    if (attempt < 5) await wait(attempt * 1_000);
-  }
-  throw lastError;
+      throw new Error(`GitHub HTTP ${response.status}`);
+    },
+  );
 }
 
 function githubToken() {
@@ -233,18 +236,11 @@ async function headStatus(url, redirects = 6) {
 }
 
 async function headStatusWithRetry(url) {
-  let lastError;
-  for (let attempt = 1; attempt <= 4; attempt += 1) {
-    try {
-      const status = await headStatus(url);
-      if (status === 200) return status;
-      lastError = new Error(`HTTP ${status}`);
-    } catch (error) {
-      lastError = error;
-    }
-    if (attempt < 4) await wait(attempt * 1_000);
-  }
-  throw lastError;
+  return retryReadOnlyNetworkOperation(`HEAD ${url}`, async () => {
+    const status = await headStatus(url);
+    if (status === 200) return status;
+    throw new Error(`HTTP ${status}`);
+  });
 }
 
 function scanReleaseSources() {
@@ -333,7 +329,7 @@ async function pendingRelease() {
   const local = validateLocalRelease();
   const response = await lookupRelease(local.version, githubToken());
   const tag = `v${local.version}`;
-  const remoteTag = git(["ls-remote", "--tags", "origin", `refs/tags/${tag}`])
+  const remoteTag = gitReadOnly(["ls-remote", "--tags", "origin", `refs/tags/${tag}`])
     .stdout.trim();
   if (response.status === 404 && !remoteTag) {
     printSummary(local);
@@ -353,7 +349,7 @@ async function triggerActionsRelease() {
   if (existingRelease.status !== 404) {
     throw new Error(`${tag} 已存在 GitHub Release，拒绝重复发布。`);
   }
-  const remoteTag = git(["ls-remote", "--tags", "origin", `refs/tags/${tag}`])
+  const remoteTag = gitReadOnly(["ls-remote", "--tags", "origin", `refs/tags/${tag}`])
     .stdout.trim();
   if (remoteTag) throw new Error(`${tag} 已存在远程 Tag，拒绝重复发布。`);
 
@@ -463,7 +459,7 @@ async function publishRelease() {
     );
   }
   await verifyRemoteRelease(local, lookup.data, token);
-  git(["fetch", "origin", "tag", `v${local.version}`]);
+  gitReadOnly(["fetch", "origin", "tag", `v${local.version}`]);
 }
 
 async function verifyPublishedRelease() {

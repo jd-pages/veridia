@@ -127,7 +127,11 @@ jobs:
       - name: 检查自动更新发布三件套
         shell: pwsh
         run: |
-          node scripts/validate-software-release.mjs --directory=dist-installer *>&1 |
+          node scripts/validate-software-release.mjs `
+            --mode=LOCAL_BUILD `
+            --directory=dist-installer `
+            --tag-commit=${{ github.sha }} `
+            --write-manifest=artifacts/release-manifest.json *>&1 |
             Tee-Object artifacts/release-logs/software-release-assets.log
           $notes = Get-Content CHANGELOG.md -Raw
           $autoUpdate = @'
@@ -183,11 +187,15 @@ jobs:
           Remove-Item -LiteralPath $draft -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $draft | Out-Null
           gh release download "${{ steps.version.outputs.tag }}" --dir $draft --repo "${{ github.repository }}"
-          node scripts/validate-software-release.mjs --directory=$draft
+          node scripts/validate-software-release.mjs `
+            --mode=REMOTE_DOWNLOAD `
+            --directory=$draft `
+            --manifest=artifacts/release-manifest.json `
+            --tag-commit=${{ github.sha }}
 
-      - name: 发布为正式 Latest Release
+      - name: 保留 Draft 等待 Binary Publish Resume
         shell: pwsh
-        run: gh release edit "${{ steps.version.outputs.tag }}" --draft=false --latest --repo "${{ github.repository }}"
+        run: Write-Output "Draft Release 已通过内容身份校验；请使用上传发布包.bat 完成正式发布。"
 
       - name: 上传构建日志和安装产物
         if: always()
@@ -199,6 +207,7 @@ jobs:
             dist-installer/*.exe
             dist-installer/*.blockmap
             dist-installer/latest.yml
+            artifacts/release-manifest.json
             playwright-report
             test-results
           if-no-files-found: ignore

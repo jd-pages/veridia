@@ -20,6 +20,15 @@ function hashFile(filePath, algorithm, encoding) {
   return hash.digest(encoding);
 }
 
+export const SOFTWARE_RELEASE_VALIDATION_MODES = Object.freeze({
+  LOCAL_BUILD: "LOCAL_BUILD",
+  REMOTE_DOWNLOAD: "REMOTE_DOWNLOAD",
+});
+
+export function hashSoftwareReleaseFile(filePath, algorithm, encoding) {
+  return hashFile(filePath, algorithm, encoding);
+}
+
 function yamlValue(value) {
   return String(value || "")
     .trim()
@@ -51,7 +60,15 @@ export function validateSoftwareReleaseArtifacts({
   projectRoot,
   version = packageVersion(projectRoot),
   directory = path.join(projectRoot, "release", version),
+  mode = SOFTWARE_RELEASE_VALIDATION_MODES.LOCAL_BUILD,
+  manifest,
+  manifestPath,
+  expectedTagCommit,
+  expectedSourceFingerprint,
 }) {
+  if (!Object.values(SOFTWARE_RELEASE_VALIDATION_MODES).includes(mode)) {
+    throw new Error(`Unknown software release validation mode: ${mode}`);
+  }
   const names = softwareReleaseArtifactNames(version);
   const files = names.map((name) => {
     const filePath = path.join(directory, name);
@@ -66,6 +83,7 @@ export function validateSoftwareReleaseArtifacts({
       size: stat.size,
       mtimeMs: stat.mtimeMs,
       sha256: hashFile(filePath, "sha256", "hex"),
+      sha512: hashFile(filePath, "sha512", "base64"),
     };
   });
 
@@ -99,7 +117,7 @@ export function validateSoftwareReleaseArtifacts({
   const latestSha512 = yamlValue(
     latest.match(/^\s+sha512:\s*(.+)$/mu)?.[1],
   );
-  const actualSha512 = hashFile(installer.path, "sha512", "base64");
+  const actualSha512 = installer.sha512;
   if (
     latestVersion !== version ||
     latestPath !== installer.name ||
@@ -111,14 +129,55 @@ export function validateSoftwareReleaseArtifacts({
       `发布已停止：latest.yml 与 ${installer.name} 的版本、文件名、大小或 SHA-512 不一致。`,
     );
   }
-  const timestampToleranceMs = 2_000;
-  if (
-    latestFile.mtimeMs + timestampToleranceMs <
-    Math.max(installer.mtimeMs, blockmap.mtimeMs)
-  ) {
-    throw new Error(
-      "发布已停止：latest.yml 早于本次安装包或 blockmap，请重新执行打包。",
-    );
+  if (mode === SOFTWARE_RELEASE_VALIDATION_MODES.LOCAL_BUILD) {
+    const timestampToleranceMs = 2_000;
+    if (
+      latestFile.mtimeMs + timestampToleranceMs <
+      Math.max(installer.mtimeMs, blockmap.mtimeMs)
+    ) {
+      throw new Error(
+        "发布已停止：本地 latest.yml 早于本次安装包或 blockmap，请重新执行打包。",
+      );
+    }
+  } else {
+    const document = manifest || (manifestPath
+      ? JSON.parse(fs.readFileSync(manifestPath, "utf8"))
+      : null);
+    if (!document) {
+      throw new Error("REMOTE_DOWNLOAD validation requires an Artifact Manifest");
+    }
+    const reasons = [];
+    if (document.schemaVersion !== 2) reasons.push("SCHEMA_VERSION");
+    if (document.version !== version) reasons.push("VERSION");
+    const manifestCommit = document.tagCommit || document.releaseCommit || document.commitSha;
+    if (expectedTagCommit && manifestCommit !== expectedTagCommit) {
+      reasons.push("TAG_COMMIT");
+    }
+    const revisionFingerprint = expectedTagCommit
+      ? collectGitRevisionSourceFingerprint(projectRoot, expectedTagCommit)
+      : null;
+    if (
+      (expectedSourceFingerprint && document.sourceFingerprint !== expectedSourceFingerprint) ||
+      (revisionFingerprint && document.sourceFingerprint !== revisionFingerprint)
+    ) {
+      reasons.push("SOURCE_FINGERPRINT");
+    }
+    const expectedFiles = new Map((document.files || []).map((file) => [file.name, file]));
+    for (const file of files) {
+      const expected = expectedFiles.get(file.name);
+      if (
+        !expected ||
+        expected.size !== file.size ||
+        expected.sha256 !== file.sha256 ||
+        expected.sha512 !== file.sha512
+      ) {
+        reasons.push(`ARTIFACT_IDENTITY:${file.name}`);
+      }
+    }
+    if (expectedFiles.size !== files.length) reasons.push("ARTIFACT_SET");
+    if (reasons.length > 0) {
+      throw new Error(`REMOTE_ASSET_VALIDATION failed: ${[...new Set(reasons)].join(", ")}`);
+    }
   }
 
   return {
@@ -126,6 +185,9 @@ export function validateSoftwareReleaseArtifacts({
     directory,
     files,
     installerSha256: installer.sha256,
+    installerSha512: installer.sha512,
+    mode,
+    manifestValid: mode === SOFTWARE_RELEASE_VALIDATION_MODES.REMOTE_DOWNLOAD,
     latestValid: true,
     blockmapValid: true,
   };
@@ -144,21 +206,17 @@ function git(projectRoot, args) {
 }
 
 export function collectReleaseSourceFingerprint(projectRoot) {
-  const files = git(projectRoot, ["ls-files", "-z"])
-    .split("\0")
-    .filter(Boolean)
-    .sort();
+  const tree = git(projectRoot, ["write-tree"]);
+  const unstaged = git(projectRoot, ["diff", "--binary"]);
+  if (!unstaged) return tree;
   const hash = createHash("sha256");
-  for (const relative of files) {
-    const absolute = path.join(projectRoot, relative);
-    hash.update(`${relative}\0`);
-    if (fs.existsSync(absolute) && fs.statSync(absolute).isFile()) {
-      hash.update(fs.readFileSync(absolute));
-    } else {
-      hash.update("<missing>");
-    }
-  }
+  hash.update(`${tree}\0`);
+  hash.update(unstaged);
   return hash.digest("hex");
+}
+
+export function collectGitRevisionSourceFingerprint(projectRoot, revision) {
+  return git(projectRoot, ["rev-parse", `${revision}^{tree}`]);
 }
 
 export function artifactManifestPath(projectRoot, version) {
@@ -175,17 +233,21 @@ export function writeReleaseArtifactManifest({
   version = packageVersion(projectRoot),
   directory = path.join(projectRoot, "release", version),
   buildTimestamp = new Date().toISOString(),
+  tagCommit = null,
+  outputPath,
+  validation: suppliedValidation,
 }) {
-  const validation = validateSoftwareReleaseArtifacts({
+  const validation = suppliedValidation || validateSoftwareReleaseArtifacts({
     projectRoot,
     version,
     directory,
   });
   const document = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     version,
     commitSha: git(projectRoot, ["rev-parse", "HEAD"]),
     releaseCommit: null,
+    tagCommit,
     buildTimestamp,
     sourceFingerprint: collectReleaseSourceFingerprint(projectRoot),
     directory,
@@ -193,9 +255,10 @@ export function writeReleaseArtifactManifest({
       name: file.name,
       size: file.size,
       sha256: file.sha256,
+      sha512: file.sha512,
     })),
   };
-  const output = artifactManifestPath(projectRoot, version);
+  const output = outputPath || artifactManifestPath(projectRoot, version);
   fs.mkdirSync(path.dirname(output), { recursive: true });
   fs.writeFileSync(output, `${JSON.stringify(document, null, 2)}\n`, "utf8");
   return document;
@@ -232,7 +295,7 @@ export function validateReleaseArtifactManifest({
     return { status: "INVALID", valid: false, reasons: ["MANIFEST_INVALID"] };
   }
   const reasons = [];
-  if (document.schemaVersion !== 1) reasons.push("SCHEMA_VERSION");
+  if (document.schemaVersion !== 2) reasons.push("SCHEMA_VERSION");
   if (document.version !== version) reasons.push("VERSION_CHANGED");
   if (![document.commitSha, document.releaseCommit].filter(Boolean).includes(currentHead)) {
     reasons.push("HEAD_CHANGED");
@@ -245,6 +308,9 @@ export function validateReleaseArtifactManifest({
       projectRoot,
       version,
       directory: document.directory,
+      mode: SOFTWARE_RELEASE_VALIDATION_MODES.REMOTE_DOWNLOAD,
+      manifest: document,
+      expectedTagCommit: document.tagCommit || document.releaseCommit || document.commitSha,
     });
   } catch {
     reasons.push("ARTIFACT_VALIDATION_FAILED");
@@ -253,7 +319,12 @@ export function validateReleaseArtifactManifest({
     const actual = new Map(validation.files.map((item) => [item.name, item]));
     for (const expected of document.files || []) {
       const item = actual.get(expected.name);
-      if (!item || item.size !== expected.size || item.sha256 !== expected.sha256) {
+      if (
+        !item ||
+        item.size !== expected.size ||
+        item.sha256 !== expected.sha256 ||
+        item.sha512 !== expected.sha512
+      ) {
         reasons.push(`ARTIFACT_CHANGED:${expected.name}`);
       }
     }

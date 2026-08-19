@@ -169,6 +169,10 @@ describe("本地打包发布门禁", () => {
       path.resolve(process.cwd(), "发布新版.bat"),
     );
     const softwareBat = new TextDecoder("utf-8").decode(softwareBatBytes);
+    const binaryBatBytes = fs.readFileSync(
+      path.resolve(process.cwd(), "上传发布包.bat"),
+    );
+    const binaryBat = new TextDecoder("utf-8").decode(binaryBatBytes);
     const rulesBatBytes = fs.readFileSync(
       path.resolve(process.cwd(), "发布规则新版.bat"),
     );
@@ -204,9 +208,9 @@ describe("本地打包发布门禁", () => {
       "utf8",
     );
 
-    expect(softwareBat).toContain("software-publish-orchestrator.mjs");
+    expect(softwareBat).toContain("fixed-workflow.mjs publish");
     expect(softwareBat).toContain("%*");
-    expect(softwareBat).not.toContain("fixed-workflow.mjs publish");
+    expect(softwareBat).not.toContain("software-publish-orchestrator.mjs");
     expect(softwareBat).not.toContain("validate-software-release.mjs");
     expect(softwareBat).not.toMatch(/npm(?:\.cmd)?[^\r\n]*rules:publish/iu);
     expect([...softwareBatBytes.subarray(0, 3)]).not.toEqual([
@@ -214,8 +218,6 @@ describe("本地打包发布门禁", () => {
     ]);
     expect(softwareBat).toContain("chcp 65001 >nul");
     expect(softwareBat).not.toContain("chcp 936 >nul");
-    expect(softwareBat).toContain("software-publish-bat-tail.mjs failure");
-    expect(softwareBat).toContain("software-publish-bat-tail.mjs success");
     expect(softwareBatBytes.includes(Buffer.from("\r\n"))).toBe(true);
     expect(softwareBat).not.toMatch(/[\u0080-\uffff]/u);
     const batTail = fs.readFileSync(
@@ -231,6 +233,12 @@ describe("本地打包发布门禁", () => {
     expect(softwareBat.match(/^pause$/gmu)).toHaveLength(2);
     expect(softwareBat).toContain("exit /b %VERIDIA_EXIT_CODE%");
     expect(softwareBat).not.toMatch(/^\s*exit(?:\s|$)(?!\/b)/gmu);
+    expect(binaryBat).toContain("software-binary-publish.mjs");
+    expect(binaryBat).toContain("%*");
+    expect(binaryBat).not.toContain("electron-builder");
+    expect(binaryBat).not.toContain("verify:full");
+    expect(binaryBat).not.toContain("git tag");
+    expect(binaryBatBytes.includes(Buffer.from("\r\n"))).toBe(true);
     expect(rulesBat).toContain("rules:publish");
     expect(rulesBat).not.toContain("fixed-workflow.mjs publish");
     expect([...rulesBatBytes.subarray(0, 3)]).not.toEqual([0xef, 0xbb, 0xbf]);
@@ -263,16 +271,19 @@ describe("本地打包发布门禁", () => {
     expect(orchestrator).toContain("verifyRemoteRelease");
     expect(orchestrator).toContain("--dry-run");
     expect(releaseWorkflow).toContain("检查自动更新发布三件套");
+    expect(releaseWorkflow).toContain("--mode=LOCAL_BUILD");
     expect(releaseWorkflow).toContain(
-      "validate-software-release.mjs --directory=dist-installer",
+      "--write-manifest=artifacts/release-manifest.json",
     );
     expect(releaseWorkflow).toContain("gh release create");
     expect(releaseWorkflow).toContain("--draft");
     expect(releaseWorkflow).not.toContain("softprops/action-gh-release");
     expect(releaseWorkflow).toContain("gh release download");
-    expect(releaseWorkflow).toContain("validate-software-release.mjs --directory=$draft");
-    expect(releaseWorkflow).toContain("gh release edit");
-    expect(releaseWorkflow).toContain("--draft=false --latest");
+    expect(releaseWorkflow).toContain("--mode=REMOTE_DOWNLOAD");
+    expect(releaseWorkflow).toContain("--directory=$draft");
+    expect(releaseWorkflow).toContain("--manifest=artifacts/release-manifest.json");
+    expect(releaseWorkflow).not.toContain("gh release edit");
+    expect(releaseWorkflow).toContain("保留 Draft 等待 Binary Publish Resume");
     expect(releaseWorkflow).not.toContain("finalize-release.mjs verify-remote");
     for (const asset of [
       "dist-installer/VERIDIA-Setup-${{ steps.version.outputs.version }}.exe",

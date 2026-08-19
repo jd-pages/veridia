@@ -7,6 +7,8 @@ import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  collectGitRevisionSourceFingerprint,
+  SOFTWARE_RELEASE_VALIDATION_MODES,
   softwareReleaseArtifactNames,
   validateReleaseArtifactManifest,
   validateSoftwareReleaseArtifacts,
@@ -44,6 +46,23 @@ function fixture(version = "1.1.0") {
     ].join("\n"),
   );
   return { projectRoot, directory, version, installerName, blockmapName };
+}
+
+function initializeGit(value: ReturnType<typeof fixture>) {
+  fs.writeFileSync(path.join(value.projectRoot, "source.txt"), "source-v1");
+  execFileSync("git", ["init"], { cwd: value.projectRoot });
+  execFileSync("git", ["config", "user.email", "release-test@example.invalid"], {
+    cwd: value.projectRoot,
+  });
+  execFileSync("git", ["config", "user.name", "VERIDIA Release Test"], {
+    cwd: value.projectRoot,
+  });
+  execFileSync("git", ["add", "package.json", "source.txt"], { cwd: value.projectRoot });
+  execFileSync("git", ["commit", "-m", "fixture"], { cwd: value.projectRoot });
+  return execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: value.projectRoot,
+    encoding: "utf8",
+  }).trim();
 }
 
 afterEach(() => {
@@ -89,6 +108,16 @@ describe("软件发布三件套", () => {
     expect(result.blockmapValid).toBe(true);
   });
 
+  it("LOCAL_BUILD keeps a weak local mtime freshness guard", () => {
+    const value = fixture();
+    const old = new Date(Date.now() - 30_000);
+    fs.utimesSync(path.join(value.directory, "latest.yml"), old, old);
+    expect(() => validateSoftwareReleaseArtifacts({
+      ...value,
+      mode: SOFTWARE_RELEASE_VALIDATION_MODES.LOCAL_BUILD,
+    })).toThrow("本地 latest.yml 早于本次安装包");
+  });
+
   it("latest.yml 版本错误时停止", () => {
     const value = fixture();
     const latestPath = path.join(value.directory, "latest.yml");
@@ -104,16 +133,7 @@ describe("软件发布三件套", () => {
 
   it("产物 Manifest 绑定 Commit 和源码指纹，HEAD 内容变化后标记 STALE", () => {
     const value = fixture();
-    fs.writeFileSync(path.join(value.projectRoot, "source.txt"), "source-v1");
-    execFileSync("git", ["init"], { cwd: value.projectRoot });
-    execFileSync("git", ["config", "user.email", "release-test@example.invalid"], {
-      cwd: value.projectRoot,
-    });
-    execFileSync("git", ["config", "user.name", "VERIDIA Release Test"], {
-      cwd: value.projectRoot,
-    });
-    execFileSync("git", ["add", "package.json", "source.txt"], { cwd: value.projectRoot });
-    execFileSync("git", ["commit", "-m", "fixture"], { cwd: value.projectRoot });
+    initializeGit(value);
 
     const manifest = writeReleaseArtifactManifest(value);
     expect(manifest).toMatchObject({
@@ -131,5 +151,89 @@ describe("软件发布三件套", () => {
       valid: false,
       reasons: expect.arrayContaining(["SOURCE_FINGERPRINT_CHANGED"]),
     });
+  });
+
+  it("REMOTE_DOWNLOAD ignores copied mtimes when Manifest content identity matches", () => {
+    const value = fixture();
+    const tagCommit = initializeGit(value);
+    const manifest = writeReleaseArtifactManifest({ ...value, tagCommit });
+    const copied = path.join(value.projectRoot, "downloaded");
+    fs.cpSync(value.directory, copied, { recursive: true });
+    const newest = new Date();
+    const oldest = new Date(Date.now() - 30_000);
+    fs.utimesSync(path.join(copied, value.installerName), newest, newest);
+    fs.utimesSync(path.join(copied, value.blockmapName), newest, newest);
+    fs.utimesSync(path.join(copied, "latest.yml"), oldest, oldest);
+
+    expect(validateSoftwareReleaseArtifacts({
+      projectRoot: value.projectRoot,
+      version: value.version,
+      directory: copied,
+      mode: SOFTWARE_RELEASE_VALIDATION_MODES.REMOTE_DOWNLOAD,
+      manifest,
+      expectedTagCommit: tagCommit,
+    })).toMatchObject({ mode: "REMOTE_DOWNLOAD", manifestValid: true });
+  });
+
+  it("REMOTE_DOWNLOAD blocks a wrong latest.yml SHA-512 and Installer size", () => {
+    const wrongHash = fixture();
+    const tagCommit = initializeGit(wrongHash);
+    const manifest = writeReleaseArtifactManifest({ ...wrongHash, tagCommit });
+    const latestPath = path.join(wrongHash.directory, "latest.yml");
+    fs.writeFileSync(
+      latestPath,
+      fs.readFileSync(latestPath, "utf8").replace(/sha512: .+/u, "sha512: invalid"),
+    );
+    expect(() => validateSoftwareReleaseArtifacts({
+      ...wrongHash,
+      mode: SOFTWARE_RELEASE_VALIDATION_MODES.REMOTE_DOWNLOAD,
+      manifest,
+      expectedTagCommit: tagCommit,
+    })).toThrow("SHA-512 不一致");
+
+    const wrongSize = fixture();
+    const secondCommit = initializeGit(wrongSize);
+    const secondManifest = writeReleaseArtifactManifest({ ...wrongSize, tagCommit: secondCommit });
+    fs.appendFileSync(path.join(wrongSize.directory, wrongSize.installerName), "changed");
+    expect(() => validateSoftwareReleaseArtifacts({
+      ...wrongSize,
+      mode: SOFTWARE_RELEASE_VALIDATION_MODES.REMOTE_DOWNLOAD,
+      manifest: secondManifest,
+      expectedTagCommit: secondCommit,
+    })).toThrow("大小或 SHA-512 不一致");
+  });
+
+  it("REMOTE_DOWNLOAD blocks Manifest Tag commit and source fingerprint mismatches", () => {
+    const value = fixture();
+    const tagCommit = initializeGit(value);
+    const manifest = writeReleaseArtifactManifest({ ...value, tagCommit });
+    expect(() => validateSoftwareReleaseArtifacts({
+      ...value,
+      mode: SOFTWARE_RELEASE_VALIDATION_MODES.REMOTE_DOWNLOAD,
+      manifest: { ...manifest, tagCommit: "wrong-commit" },
+      expectedTagCommit: tagCommit,
+    })).toThrow("TAG_COMMIT");
+    expect(() => validateSoftwareReleaseArtifacts({
+      ...value,
+      mode: SOFTWARE_RELEASE_VALIDATION_MODES.REMOTE_DOWNLOAD,
+      manifest: { ...manifest, sourceFingerprint: "wrong-fingerprint" },
+      expectedTagCommit: tagCommit,
+    })).toThrow("SOURCE_FINGERPRINT");
+    expect(manifest.sourceFingerprint).toBe(
+      collectGitRevisionSourceFingerprint(value.projectRoot, tagCommit),
+    );
+  });
+
+  it("REMOTE_DOWNLOAD blocks a locally old file whose Manifest hash no longer matches", () => {
+    const value = fixture();
+    const tagCommit = initializeGit(value);
+    const manifest = writeReleaseArtifactManifest({ ...value, tagCommit });
+    fs.appendFileSync(path.join(value.directory, "latest.yml"), "# stale copy\n");
+    expect(() => validateSoftwareReleaseArtifacts({
+      ...value,
+      mode: SOFTWARE_RELEASE_VALIDATION_MODES.REMOTE_DOWNLOAD,
+      manifest,
+      expectedTagCommit: tagCommit,
+    })).toThrow("ARTIFACT_IDENTITY:latest.yml");
   });
 });

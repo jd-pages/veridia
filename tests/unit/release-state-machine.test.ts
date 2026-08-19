@@ -75,6 +75,7 @@ describe("ReleaseState canonical types", () => {
     expect(RELEASE_STATUS_TYPES).toEqual([
       "PUBLISHED_RELEASE",
       "FAILED_RELEASE_TAG",
+      "BINARY_PUBLISH_RECOVERABLE",
       "IN_PROGRESS_RELEASE",
       "TARGET_VERSION",
       "UNPUBLISHED_SOURCE",
@@ -100,6 +101,16 @@ describe("ReleaseState canonical types", () => {
       releaseWorkflowState: { status: "completed", conclusion: "failure" },
     }));
     expect(failedTarget.stateType).toBe("FAILED_RELEASE_TAG");
+    const recoverableTarget = createReleaseState(stateInput({
+      targetRemoteTagExists: true,
+      releaseWorkflowState: { status: "completed", conclusion: "failure" },
+      binaryPublishState: { status: "VERIFIED" },
+    }));
+    expect(recoverableTarget).toMatchObject({
+      stateType: "BINARY_PUBLISH_RECOVERABLE",
+      recoveryPoint: "BINARY_PUBLISH",
+      versionConsumed: true,
+    });
     const activeTarget = createReleaseState(stateInput({
       targetRemoteTagExists: true,
       releaseWorkflowState: { status: "in_progress", conclusion: null },
