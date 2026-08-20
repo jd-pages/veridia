@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  XhsContextPageArbiter,
+  type XhsArbiterPage,
+} from "../../lib/automation/xhs-page-arbiter";
 
 function source(relativePath: string) {
   return fs
@@ -8,8 +12,256 @@ function source(relativePath: string) {
     .replace(/\r\n/gu, "\n");
 }
 
+class FakeArbiterPage implements XhsArbiterPage {
+  closed = false;
+  closeFailures = 0;
+  openerPage: FakeArbiterPage | null = null;
+
+  constructor(private currentUrl: string) {}
+
+  async close() {
+    if (this.closeFailures > 0) {
+      this.closeFailures -= 1;
+      throw Object.assign(new Error("simulated EBUSY page close"), {
+        code: "EBUSY",
+      });
+    }
+    this.closed = true;
+  }
+
+  isClosed() {
+    return this.closed;
+  }
+
+  async opener() {
+    return this.openerPage;
+  }
+
+  url() {
+    return this.currentUrl;
+  }
+
+  navigate(url: string) {
+    this.currentUrl = url;
+  }
+}
+
+class FakeArbiterContext {
+  private readonly listeners: Array<(page: FakeArbiterPage) => void> = [];
+  private readonly pageList: FakeArbiterPage[] = [];
+
+  on(_event: "page", listener: (page: FakeArbiterPage) => void) {
+    this.listeners.push(listener);
+    return this;
+  }
+
+  pages() {
+    return this.pageList.filter((page) => !page.isClosed());
+  }
+
+  open(url: string, opener?: FakeArbiterPage) {
+    const page = new FakeArbiterPage(url);
+    page.openerPage = opener || null;
+    this.pageList.push(page);
+    for (const listener of this.listeners) listener(page);
+    return page;
+  }
+}
+
+type FakeOwnedPages = {
+  audit?: FakeArbiterPage;
+  interactive?: FakeArbiterPage;
+  login?: FakeArbiterPage;
+};
+
+async function exerciseDelayedRestoreFixture(input: {
+  delays: number[];
+  includeAnchor?: boolean;
+  includeInteractive?: boolean;
+  includeLogin?: boolean;
+  navigateAudit?: boolean;
+  quietWindowMs?: number;
+}) {
+  const context = new FakeArbiterContext();
+  const owned: FakeOwnedPages = {};
+  let currentGeneration = 1;
+  const arbiter = new XhsContextPageArbiter<FakeArbiterPage>({
+    context,
+    generation: currentGeneration,
+    getOwnedPages: () => owned,
+    isCurrentGeneration: () => currentGeneration === 1,
+    safeUrl: (url) => new URL(url).origin + new URL(url).pathname,
+    log: () => undefined,
+    onAsyncInvariantFailure: (error) => {
+      throw error;
+    },
+    quietWindowMs: input.quietWindowMs || 300,
+    maxStabilizationMs: 1_000,
+    closeRetryDelaysMs: [1, 2, 4],
+  });
+  arbiter.observeContextPages(new Date());
+  if (input.includeAnchor) context.open("about:blank");
+  const audit = await arbiter.createClaimedPage(
+    "AUDIT",
+    "AUDIT_CREATE",
+    async () => context.open("https://www.xiaohongshu.com/explore?audit=owned"),
+  );
+  owned.audit = audit;
+  if (input.includeLogin) {
+    const login = context.open("https://www.xiaohongshu.com/login?secret=redacted");
+    owned.login = login;
+    arbiter.claimPage(login, "LOGIN", "LOGIN_CREATE");
+  }
+  if (input.includeInteractive) {
+    const interactive = context.open(
+      "https://www.xiaohongshu.com/security?token=redacted",
+      owned.login,
+    );
+    owned.interactive = interactive;
+    arbiter.claimPage(interactive, "INTERACTIVE", "INTERACTIVE_CLAIM");
+  }
+  if (input.navigateAudit) {
+    audit.navigate("https://www.xiaohongshu.com/explore/navigating?secret=redacted");
+  }
+  const restoredPages: FakeArbiterPage[] = [];
+  input.delays.forEach((delay, index) => {
+    setTimeout(() => {
+      restoredPages.push(
+        context.open(
+          `https://www.xiaohongshu.com/explore/restored-${index}?secret=redacted`,
+        ),
+      );
+    }, delay);
+  });
+  const result = await arbiter.settleAndReconcile("AUDIT_PAGE_CREATED");
+  await new Promise((resolve) =>
+    setTimeout(resolve, Math.max(...input.delays, 0) + (input.quietWindowMs || 300) + 20),
+  );
+  const finalResult = await arbiter.reconcile("AUDIT_REQUEST");
+  expect(result.auditPageCount).toBe(1);
+  expect(finalResult.auditPageCount).toBe(1);
+  expect(finalResult.stalePageCount).toBe(0);
+  expect(owned.audit).toBe(audit);
+  expect(context.pages()).toContain(audit);
+  expect(context.pages().filter((page) => page.url().includes("restored-"))).toHaveLength(0);
+  expect(restoredPages.every((page) => page.isClosed())).toBe(true);
+  currentGeneration += 1;
+  arbiter.dispose();
+  return { audit, context };
+}
+
+async function verifyPageArbiterFixtures() {
+  await exerciseDelayedRestoreFixture({ delays: [83, 102] });
+  await Promise.all([
+    exerciseDelayedRestoreFixture({ delays: [10] }),
+    exerciseDelayedRestoreFixture({ delays: [100] }),
+    exerciseDelayedRestoreFixture({ delays: [250] }),
+    exerciseDelayedRestoreFixture({ delays: [50, 80, 120, 180] }),
+    exerciseDelayedRestoreFixture({ delays: [100], navigateAudit: true }),
+    exerciseDelayedRestoreFixture({ delays: [100], includeLogin: true }),
+    exerciseDelayedRestoreFixture({
+      delays: [100],
+      includeLogin: true,
+      includeInteractive: true,
+    }),
+    exerciseDelayedRestoreFixture({ delays: [100], includeAnchor: true }),
+  ]);
+
+  const growthContext = new FakeArbiterContext();
+  const growthOwned: FakeOwnedPages = {};
+  const growthArbiter = new XhsContextPageArbiter<FakeArbiterPage>({
+    context: growthContext,
+    generation: 1,
+    getOwnedPages: () => growthOwned,
+    isCurrentGeneration: () => true,
+    safeUrl: (url) => url.split("?")[0],
+    log: () => undefined,
+    onAsyncInvariantFailure: (error) => {
+      throw error;
+    },
+    quietWindowMs: 5,
+    maxStabilizationMs: 100,
+  });
+  growthArbiter.observeContextPages(new Date());
+  growthOwned.audit = await growthArbiter.createClaimedPage(
+    "AUDIT",
+    "AUDIT_CREATE",
+    async () => growthContext.open("https://xhs.test/audit"),
+  );
+  await growthArbiter.settleAndReconcile("AUDIT_PAGE_CREATED");
+  let peakPageCount = growthContext.pages().length;
+  for (let task = 0; task < 100; task += 1) {
+    const result = await growthArbiter.reconcile("AUDIT_REQUEST");
+    expect(result.auditPageCount).toBe(1);
+    peakPageCount = Math.max(peakPageCount, growthContext.pages().length);
+  }
+  expect(peakPageCount).toBe(1);
+  growthArbiter.dispose();
+
+  let generation = 0;
+  for (let restart = 0; restart < 10; restart += 1) {
+    generation += 1;
+    const context = new FakeArbiterContext();
+    const owned: FakeOwnedPages = {};
+    const currentGeneration = generation;
+    const arbiter = new XhsContextPageArbiter<FakeArbiterPage>({
+      context,
+      generation: currentGeneration,
+      getOwnedPages: () => owned,
+      isCurrentGeneration: () => generation === currentGeneration,
+      safeUrl: (url) => url.split("?")[0],
+      log: () => undefined,
+      onAsyncInvariantFailure: (error) => {
+        throw error;
+      },
+      quietWindowMs: 10,
+      maxStabilizationMs: 1_000,
+      closeRetryDelaysMs: [1, 2],
+    });
+    arbiter.observeContextPages(new Date());
+    owned.audit = await arbiter.createClaimedPage(
+      "AUDIT",
+      "AUDIT_CREATE",
+      async () => context.open(`https://xhs.test/audit-${restart}`),
+    );
+    setTimeout(() => context.open(`https://xhs.test/restored-${restart}`), 2);
+    const result = await arbiter.settleAndReconcile("AUDIT_PAGE_CREATED");
+    expect(result.auditPageCount).toBe(1);
+    expect(context.pages()).toEqual([owned.audit]);
+    arbiter.dispose();
+  }
+
+  const retryContext = new FakeArbiterContext();
+  const retryOwned: FakeOwnedPages = {};
+  const retryArbiter = new XhsContextPageArbiter<FakeArbiterPage>({
+    context: retryContext,
+    generation: 1,
+    getOwnedPages: () => retryOwned,
+    isCurrentGeneration: () => true,
+    safeUrl: (url) => url,
+    log: () => undefined,
+    onAsyncInvariantFailure: (error) => {
+      throw error;
+    },
+    quietWindowMs: 5,
+    maxStabilizationMs: 100,
+    closeRetryDelaysMs: [1, 2, 4],
+  });
+  retryArbiter.observeContextPages(new Date());
+  retryOwned.audit = await retryArbiter.createClaimedPage(
+    "AUDIT",
+    "AUDIT_CREATE",
+    async () => retryContext.open("https://xhs.test/audit"),
+  );
+  const retryPage = retryContext.open("https://xhs.test/restored");
+  retryPage.closeFailures = 2;
+  await retryArbiter.settleAndReconcile("AUDIT_PAGE_CREATED");
+  expect(retryPage.isClosed()).toBe(true);
+  retryArbiter.dispose();
+}
+
 describe("小红书持久会话与访问节奏", () => {
-  it("登录、检测和审核复用唯一 persistent context 与固定 Profile", () => {
+  it("登录、检测和审核复用唯一 persistent context 与固定 Profile", async () => {
     const browser = source("lib/automation/browser.ts");
     const extract = source("lib/automation/extract.ts");
     const hiddenChromium = source(
@@ -51,10 +303,10 @@ describe("小红书持久会话与访问节奏", () => {
       "PW_CHROMIUM_ATTACH_TO_OTHER",
     );
     expect(browser).toContain("createAuditPage");
-    expect(browser).toContain("createExclusiveAuditPage");
-    expect(browser).toContain("stalePage.close()");
-    expect(browser).toContain("page !== loginPage");
-    expect(browser).toContain('page.url() !== "about:blank"');
+    expect(browser).toContain("XhsContextPageArbiter");
+    expect(browser).toContain('"AUDIT_PAGE_CREATED"');
+    expect(browser).toContain('"POST_NAVIGATION"');
+    expect(browser).toContain('"INTERACTIVE"');
     expect(browser).toContain("stalePageCleanupCount");
     expect(browser).toContain("getXhsAuditPage");
     expect(browser).toContain("auditPageCreateCount");
@@ -64,6 +316,7 @@ describe("小红书持久会话与访问节奏", () => {
     expect(extract).not.toContain("page.bringToFront()");
     expect(extract).not.toContain("await page.close()");
     expect(extract).toContain("auditPageKeptOpen");
+    await verifyPageArbiterFixtures();
   });
 
   it("仅人工登录或安全验证允许显示窗口，自动导航不聚焦或恢复", () => {

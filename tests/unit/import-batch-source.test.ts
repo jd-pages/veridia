@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
@@ -12,6 +12,7 @@ import {
   buildAuditResultWhere,
   readResultQueryFilters,
 } from "../../lib/result-query";
+import { removeTemporaryDirectoryWithRetry } from "../helpers/remove-temporary-directory";
 
 const root = process.cwd();
 const source = (relativePath: string) =>
@@ -149,7 +150,7 @@ describe("审核结果导入批次来源", () => {
       expect(afterSecondRun).toEqual(batches);
     } finally {
       await client.$disconnect();
-      rmSync(temporaryRoot, { recursive: true, force: true });
+      await removeTemporaryDirectoryWithRetry(temporaryRoot);
     }
   }, 30_000);
 

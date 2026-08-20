@@ -1,15 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 import { E2E_ORIGIN } from "./e2e-origin";
+import { cleanupAutomaticBatches } from "./automation-cleanup";
 
 const cleanupBatchIds: string[] = [];
 
 test.afterEach(async ({ page }) => {
-  for (const batchId of cleanupBatchIds.reverse()) {
-    await page.request
-      .post(`/api/automation/batches/${batchId}/clear`)
-      .catch(() => undefined);
+  try {
+    await cleanupAutomaticBatches(page, cleanupBatchIds);
+  } finally {
+    cleanupBatchIds.length = 0;
   }
-  cleanupBatchIds.length = 0;
 });
 
 async function waitForBatch(page: Page, batchId: string) {

@@ -2,6 +2,17 @@ import { expect, test, type Page } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import path from "node:path";
 import { E2E_ORIGIN } from "./e2e-origin";
+import { cleanupAutomaticBatches } from "./automation-cleanup";
+
+const cleanupBatchIds: string[] = [];
+
+test.afterEach(async ({ page }) => {
+  try {
+    await cleanupAutomaticBatches(page, cleanupBatchIds);
+  } finally {
+    cleanupBatchIds.length = 0;
+  }
+});
 
 const databaseUrl =
   process.env.E2E_DATABASE_URL?.trim() ||
@@ -206,6 +217,7 @@ test("清除当前批次仅移出任务页并保留正式审核结果", async ({
     historyName,
     `${E2E_ORIGIN}/mock/xhs?case=passed&clear-history=${suffix}`,
   );
+  cleanupBatchIds.push(historyBatchId);
   await page.request.post(`/api/automation/batches/${historyBatchId}/control`, {
     data: { action: "CANCEL" },
   });
@@ -215,6 +227,7 @@ test("清除当前批次仅移出任务页并保留正式审核结果", async ({
     targetName,
     `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-passed&clear-target=${suffix}`,
   );
+  cleanupBatchIds.push(targetBatchId);
   await waitForBatchToStop(page, targetBatchId);
   const resultBeforeClear = (
     await (

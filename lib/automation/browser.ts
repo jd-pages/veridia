@@ -19,6 +19,11 @@ import {
   AutomaticExtractionError,
   isBrowserControlInfrastructureError,
 } from "./failure";
+import {
+  XhsContextPageArbiter,
+  XhsPageInvariantError,
+  type XhsPageReconcileReason,
+} from "./xhs-page-arbiter";
 
 const SESSION_ID = "xiaohongshu";
 const DEFAULT_PROFILE_DIRECTORY = path.join(
@@ -61,16 +66,6 @@ type AuditLock = {
   profilePath: string;
 };
 
-type PageMetadata = {
-  createdAt: string;
-  source:
-    | "AUDIT_CREATE"
-    | "CONTEXT_EVENT"
-    | "CONTEXT_STARTUP"
-    | "LOGIN_CREATE"
-    | "POPUP";
-};
-
 type XhsBrowserState = {
   browser?: Browser;
   context?: BrowserContext;
@@ -84,6 +79,7 @@ type XhsBrowserState = {
   auditPage?: Page;
   auditPagePromise?: Promise<Page>;
   loginPage?: Page;
+  interactivePage?: Page;
   launchPromise?: Promise<BrowserContext>;
   sessionState: XhsSessionState;
   lastCheckedAt?: Date;
@@ -102,8 +98,7 @@ type XhsBrowserState = {
   controlDisconnectedAt?: Date;
   automaticRecoveryCount: number;
   lifecycleGeneration: number;
-  pageMetadata: WeakMap<Page, PageMetadata>;
-  observedContexts: WeakSet<BrowserContext>;
+  pageArbiter?: XhsContextPageArbiter<Page>;
 };
 
 const globalForAutomation = globalThis as typeof globalThis & {
@@ -124,8 +119,6 @@ const state =
     controlState: "NOT_STARTED",
     automaticRecoveryCount: 0,
     lifecycleGeneration: 0,
-    pageMetadata: new WeakMap(),
-    observedContexts: new WeakSet(),
   });
 state.closingContext ??= false;
 state.contextClosedUnexpectedly ??= false;
@@ -136,8 +129,6 @@ state.auditPageRequestCount ??= 0;
 state.controlState ??= "NOT_STARTED";
 state.automaticRecoveryCount ??= 0;
 state.lifecycleGeneration ??= 0;
-state.pageMetadata ??= new WeakMap();
-state.observedContexts ??= new WeakSet();
 
 function persistentOptions() {
   const channel = process.env.PLAYWRIGHT_BROWSER_CHANNEL?.trim();
@@ -172,43 +163,15 @@ function safeDiagnosticUrl(value: string) {
   }
 }
 
-function recordPageMetadata(page: Page, source: PageMetadata["source"]) {
-  state.pageMetadata.set(page, {
-    createdAt: new Date().toISOString(),
-    source,
-  });
-}
-
-function observeContextPages(context: BrowserContext, launchStartedAt: Date) {
-  for (const page of context.pages()) {
-    if (!state.pageMetadata.has(page)) {
-      state.pageMetadata.set(page, {
-        createdAt: launchStartedAt.toISOString(),
-        source: "CONTEXT_STARTUP",
-      });
-    }
-  }
-  if (state.observedContexts.has(context)) return;
-  state.observedContexts.add(context);
-  context.on("page", async (page) => {
-    if (state.pageMetadata.has(page)) return;
-    const opener = await page.opener().catch(() => null);
-    if (state.pageMetadata.has(page)) return;
-    recordPageMetadata(
-      page,
-      opener ? "POPUP" : "CONTEXT_EVENT",
-    );
-  });
-}
-
 async function e2ePageSummaries() {
   if (process.env.VERIDIA_E2E !== "true") return undefined;
   const auditPage = livingPage(state.auditPage);
   const loginPage = livingPage(state.loginPage);
+  const interactivePage = livingPage(state.interactivePage);
   return Promise.all(
     (state.context?.pages() || []).map(async (page, index) => {
       const opener = await page.opener().catch(() => null);
-      const metadata = state.pageMetadata.get(page);
+      const metadata = state.pageArbiter?.metadataFor(page);
       return {
         index,
         url: safeDiagnosticUrl(page.url()),
@@ -216,8 +179,11 @@ async function e2ePageSummaries() {
         closed: page.isClosed(),
         isAuditPage: page === auditPage,
         isLoginPage: page === loginPage,
-        isInteractivePage: page === loginPage,
+        isInteractivePage: page === interactivePage,
         createdAt: metadata?.createdAt || null,
+        generation: metadata?.generation ?? null,
+        role: metadata?.role || "UNKNOWN",
+        roles: metadata?.roles || ["UNKNOWN"],
         source: metadata?.source || "UNKNOWN",
         opener: opener ? safeDiagnosticUrl(opener.url()) : null,
       };
@@ -265,7 +231,13 @@ async function setChromiumWindowState(
 }
 
 export async function keepXhsAuditPageInBackground(page: Page) {
-  if (page === livingPage(state.loginPage)) return false;
+  if (
+    page === livingPage(state.loginPage) ||
+    page === livingPage(state.interactivePage)
+  ) {
+    return false;
+  }
+  await reconcileCurrentContextPages("POST_NAVIGATION");
   return setChromiumWindowState(page, "minimized");
 }
 
@@ -332,6 +304,16 @@ export async function getAutomationSession() {
 const BROWSER_CONTROL_MESSAGE =
   "审核浏览器连接异常，当前批次已暂停。请点击“重新启动专用浏览器”后继续。";
 
+class XhsPageGenerationInvalidatedError extends AutomaticExtractionError {
+  constructor() {
+    super(
+      "BROWSER_CONTROL_ERROR",
+      "小红书浏览器操作已被 Pause 或 extraction deadline 取消",
+    );
+    this.name = "XhsPageGenerationInvalidatedError";
+  }
+}
+
 function diagnosticProfilePath() {
   const localAppData = process.env.LOCALAPPDATA;
   return localAppData && PROFILE_DIRECTORY.startsWith(localAppData)
@@ -357,44 +339,120 @@ function browserControlError(error?: unknown) {
   );
 }
 
-async function createExclusiveAuditPage(context: BrowserContext) {
-  const loginPage = livingPage(state.loginPage);
-  const stalePages = context
-    .pages()
-    .filter(
-      (page) =>
-        !page.isClosed() &&
-        page !== loginPage &&
-        page.url() !== "about:blank",
-    );
-  const page = await createAuditPage(context);
-  let stalePageCleanupCount = 0;
+function createContextPageArbiter(
+  context: BrowserContext,
+  generation: number,
+  launchStartedAt: Date,
+) {
+  state.pageArbiter?.dispose();
+  const arbiter = new XhsContextPageArbiter<Page>({
+    context,
+    generation,
+    getOwnedPages: () => ({
+      audit: livingPage(state.auditPage),
+      interactive: livingPage(state.interactivePage),
+      login: livingPage(state.loginPage),
+    }),
+    isCurrentGeneration: () =>
+      state.context === context && state.lifecycleGeneration === generation,
+    safeUrl: safeDiagnosticUrl,
+    classifyOwnedPopup: (page, opener) => {
+      const loginPage = livingPage(state.loginPage);
+      const interactivePage = livingPage(state.interactivePage);
+      if (opener !== loginPage && opener !== interactivePage) return undefined;
+      state.interactivePage = page;
+      page.once("close", () => {
+        if (state.interactivePage === page) state.interactivePage = undefined;
+      });
+      return "INTERACTIVE";
+    },
+    log: (event, details) => {
+      console.info(`[小红书浏览器] ${event}`, JSON.stringify(details));
+    },
+    onAsyncInvariantFailure: async (error) => {
+      if (state.context !== context || state.lifecycleGeneration !== generation) {
+        return;
+      }
+      console.error(
+        "[小红书浏览器] XHS_PAGE_INVARIANT_FAILED",
+        JSON.stringify({
+          generation,
+          message: error.message.slice(0, 500),
+          pageCount: context.pages().filter((page) => !page.isClosed()).length,
+        }),
+      );
+      await closeXhsBrowserContext();
+      state.contextClosedUnexpectedly = true;
+      state.controlState = "RESTART_REQUIRED";
+      state.controlLastError = BROWSER_CONTROL_MESSAGE;
+    },
+  });
+  state.pageArbiter = arbiter;
+  arbiter.observeContextPages(launchStartedAt);
+  return arbiter;
+}
+
+function ensureContextPageArbiter(context: BrowserContext) {
+  return (
+    state.pageArbiter ||
+    createContextPageArbiter(
+      context,
+      state.lifecycleGeneration,
+      new Date(),
+    )
+  );
+}
+
+async function reconcileCurrentContextPages(
+  reason: XhsPageReconcileReason,
+  settle = true,
+) {
+  const context = state.context;
+  if (!context) throw browserControlError();
+  const arbiter = ensureContextPageArbiter(context);
   try {
-    for (const stalePage of stalePages) {
-      if (stalePage.isClosed()) continue;
-      await stalePage.close();
-      stalePageCleanupCount += 1;
+    const result = settle
+      ? await arbiter.settleAndReconcile(reason)
+      : await arbiter.reconcile(reason);
+    if (!result.active || state.context !== context) {
+      throw new XhsPageGenerationInvalidatedError();
     }
+    return result;
   } catch (error) {
-    await page.close().catch(() => undefined);
-    throw error;
+    if (error instanceof XhsPageGenerationInvalidatedError) throw error;
+    if (error instanceof XhsPageInvariantError) throw error;
+    throw new XhsPageInvariantError(
+      error instanceof Error ? error.message : String(error),
+    );
   }
-  return { page, stalePageCleanupCount };
 }
 
 async function ensureBrowserContext(allowRelaunch = false) {
   if (browserControlAvailable()) {
     state.controlState = "READY";
+    ensureContextPageArbiter(state.context!);
     return state.context!;
   }
   if (state.context || state.browser) {
+    const staleContext = state.context;
+    const staleCloseBrowser = state.closeBrowser;
+    state.pageArbiter?.dispose();
+    state.pageArbiter = undefined;
+    state.lifecycleGeneration += 1;
     state.context = undefined;
     state.browser = undefined;
+    state.closeBrowser = undefined;
     state.auditPage = undefined;
     state.auditPagePromise = undefined;
     state.loginPage = undefined;
+    state.interactivePage = undefined;
     state.controlState = "DISCONNECTED";
     state.controlDisconnectedAt = new Date();
+    if (staleCloseBrowser) {
+      await staleCloseBrowser().catch(() => undefined);
+    } else if (staleContext) {
+      await staleContext.close().catch(() => undefined);
+    }
   }
   if (state.launchPromise) return state.launchPromise;
   if (state.contextClosedUnexpectedly && !allowRelaunch) {
@@ -461,7 +519,7 @@ async function ensureBrowserContext(allowRelaunch = false) {
           });
       }
       state.context = context;
-      observeContextPages(context, launchStartedAt);
+      createContextPageArbiter(context, launchGeneration, launchStartedAt);
       state.profileLocked = false;
       state.contextClosedUnexpectedly = false;
       state.controlState = "READY";
@@ -487,16 +545,24 @@ async function ensureBrowserContext(allowRelaunch = false) {
       );
       context.once("close", () => {
         const unexpected = !state.closingContext;
-        state.context = undefined;
-        state.browser = undefined;
-        state.closeBrowser = undefined;
-        state.browserProcessId = null;
-        state.auditPage = undefined;
-        state.auditPagePromise = undefined;
-        state.loginPage = undefined;
-        state.contextClosedUnexpectedly = unexpected;
-        state.controlState = unexpected ? "DISCONNECTED" : "NOT_STARTED";
-        state.controlDisconnectedAt = unexpected ? new Date() : undefined;
+        const currentGeneration =
+          state.context === context &&
+          state.lifecycleGeneration === launchGeneration;
+        if (currentGeneration) {
+          state.pageArbiter?.dispose();
+          state.pageArbiter = undefined;
+          state.context = undefined;
+          state.browser = undefined;
+          state.closeBrowser = undefined;
+          state.browserProcessId = null;
+          state.auditPage = undefined;
+          state.auditPagePromise = undefined;
+          state.loginPage = undefined;
+          state.interactivePage = undefined;
+          state.contextClosedUnexpectedly = unexpected;
+          state.controlState = unexpected ? "DISCONNECTED" : "NOT_STARTED";
+          state.controlDisconnectedAt = unexpected ? new Date() : undefined;
+        }
         console.warn(
           "[小红书浏览器] Persistent Context 已关闭",
           JSON.stringify({
@@ -505,7 +571,7 @@ async function ensureBrowserContext(allowRelaunch = false) {
             browserInstanceCount: 0,
           }),
         );
-        if (unexpected) {
+        if (unexpected && currentGeneration) {
           state.controlLastError = BROWSER_CONTROL_MESSAGE;
         }
       });
@@ -535,6 +601,16 @@ export async function getXhsAuditPage(input?: {
   state.auditPageRequestCount += 1;
   const existing = livingPage(state.auditPage);
   if (existing && browserControlAvailable()) {
+    const reconciled = await reconcileCurrentContextPages("AUDIT_REQUEST");
+    if (
+      livingPage(state.auditPage) !== existing ||
+      reconciled.auditPageCount !== 1 ||
+      reconciled.stalePageCount !== 0
+    ) {
+      throw browserControlError(
+        new XhsPageInvariantError("复用 auditPage 前 exclusive invariant 失败"),
+      );
+    }
     state.auditPageReuseCount += 1;
     console.info(
       "[小红书浏览器] 复用自动审核页面",
@@ -567,13 +643,29 @@ export async function getXhsAuditPage(input?: {
       try {
         const context = await ensureBrowserContext(recoveryAttempt > 0);
         const pageCountBefore = context.pages().length;
-        const { page, stalePageCleanupCount } =
-          await createExclusiveAuditPage(context);
-        recordPageMetadata(page, "AUDIT_CREATE");
+        await reconcileCurrentContextPages("CONTEXT_READY");
+        const arbiter = ensureContextPageArbiter(context);
+        const page = await arbiter.createClaimedPage(
+          "AUDIT",
+          "AUDIT_CREATE",
+          () => createAuditPage(context),
+        );
+        state.auditPage = page;
+        const reconciled = await reconcileCurrentContextPages(
+          "AUDIT_PAGE_CREATED",
+        );
+        if (
+          livingPage(state.auditPage) !== page ||
+          reconciled.auditPageCount !== 1 ||
+          reconciled.stalePageCount !== 0
+        ) {
+          throw new XhsPageInvariantError(
+            "创建 auditPage 后 exclusive invariant 失败",
+          );
+        }
         if (process.platform === "win32") {
           await setChromiumWindowState(page, "minimized");
         }
-        state.auditPage = page;
         state.auditPageCreateCount += 1;
         state.controlState = "READY";
         state.controlLastError = undefined;
@@ -588,6 +680,9 @@ export async function getXhsAuditPage(input?: {
           );
           if (state.auditPage === page) state.auditPage = undefined;
           if (state.loginPage === page) state.loginPage = undefined;
+          if (state.interactivePage === page) {
+            state.interactivePage = undefined;
+          }
         });
         console.info(
           "[小红书浏览器] 创建标准自动审核页面",
@@ -597,7 +692,7 @@ export async function getXhsAuditPage(input?: {
             browserInstanceCount: 1,
             pageCountBefore,
             pageCountAfter: context.pages().length,
-            stalePageCleanupCount,
+            stalePageCleanupCount: reconciled.closedStalePageCount,
             auditPageCreateCount: state.auditPageCreateCount,
             pageCreationMethod: "browserContext.newPage",
             auditPageReused: false,
@@ -610,7 +705,13 @@ export async function getXhsAuditPage(input?: {
         );
         return page;
       } catch (error) {
-        if (!isBrowserControlInfrastructureError(error) || recoveryAttempt >= 1) {
+        if (error instanceof XhsPageGenerationInvalidatedError) throw error;
+        const pageInvariantFailure = error instanceof XhsPageInvariantError;
+        if (
+          (!isBrowserControlInfrastructureError(error) &&
+            !pageInvariantFailure) ||
+          recoveryAttempt >= 1
+        ) {
           state.controlState = "RESTART_REQUIRED";
           state.controlLastError = BROWSER_CONTROL_MESSAGE;
           throw browserControlError(error);
@@ -638,14 +739,22 @@ export async function showXhsManualIntervention(
   page: Page,
   reason: "LOGIN_REQUIRED" | "SECURITY_RESTRICTED" | "USER_REQUESTED",
 ) {
-  let interactivePage = livingPage(state.loginPage);
+  let interactivePage =
+    livingPage(state.interactivePage) || livingPage(state.loginPage);
   if (!interactivePage) {
     interactivePage = page;
-    state.loginPage = interactivePage;
     interactivePage.once("close", () => {
-      if (state.loginPage === interactivePage) state.loginPage = undefined;
+      if (state.interactivePage === interactivePage) {
+        state.interactivePage = undefined;
+      }
     });
   }
+  state.interactivePage = interactivePage;
+  state.pageArbiter?.claimPage(
+    interactivePage,
+    "INTERACTIVE",
+    "INTERACTIVE_CLAIM",
+  );
   await setChromiumWindowState(interactivePage, "normal");
   await interactivePage.bringToFront();
   console.info(
@@ -662,7 +771,8 @@ export async function showXhsManualIntervention(
 
 export async function getXhsAuditPageDiagnostics() {
   const page = livingPage(state.auditPage);
-  const interactivePage = livingPage(state.loginPage);
+  const loginPage = livingPage(state.loginPage);
+  const interactivePage = livingPage(state.interactivePage);
   const windowState = page ? await chromiumWindowState(page) : "closed";
   return {
     browserInstanceCount: state.context ? 1 : 0,
@@ -674,6 +784,7 @@ export async function getXhsAuditPageDiagnostics() {
     auditPageReuseCount: state.auditPageReuseCount,
     auditPageRequestCount: state.auditPageRequestCount,
     auditPageUrl: page ? safeDiagnosticUrl(page.url()) : null,
+    loginPageOpen: Boolean(loginPage),
     interactivePageOpen: Boolean(interactivePage),
     interactivePageIsAuditPage: Boolean(
       page && interactivePage && page === interactivePage,
@@ -695,6 +806,8 @@ export async function getXhsAuditPageDiagnostics() {
 }
 
 export async function closeXhsBrowserContext() {
+  state.pageArbiter?.dispose();
+  state.pageArbiter = undefined;
   state.lifecycleGeneration += 1;
   const context = state.context;
   const closeBrowser = state.closeBrowser;
@@ -706,6 +819,7 @@ export async function closeXhsBrowserContext() {
   state.auditPage = undefined;
   state.auditPagePromise = undefined;
   state.loginPage = undefined;
+  state.interactivePage = undefined;
   try {
     if (closeBrowser) await closeBrowser().catch(() => undefined);
     else if (context) await context.close().catch(() => undefined);
@@ -725,6 +839,7 @@ async function sessionCheckPage(preferredPage?: Page) {
   const existing =
     livingPage(preferredPage) ||
     livingPage(state.loginPage) ||
+    livingPage(state.interactivePage) ||
     livingPage(state.auditPage) ||
     context.pages().find((page) => !page.isClosed());
   if (existing) return existing;
@@ -788,15 +903,23 @@ export async function checkXhsSessionState(preferredPage?: Page) {
 export async function startXiaohongshuLogin() {
   state.contextClosedUnexpectedly = false;
   const context = await ensureBrowserContext(true);
-  const existingPage = livingPage(state.loginPage);
+  const existingPage =
+    livingPage(state.loginPage) || livingPage(state.interactivePage);
   if (existingPage) {
     await showXhsManualIntervention(existingPage, "USER_REQUESTED");
     return getXhsSessionDiagnostics();
   }
-  state.loginPage = await context.newPage();
-  recordPageMetadata(state.loginPage, "LOGIN_CREATE");
-  state.loginPage.once("close", () => {
-    state.loginPage = undefined;
+  state.loginPage = await ensureContextPageArbiter(context).createClaimedPage(
+    "LOGIN",
+    "LOGIN_CREATE",
+    () => context.newPage(),
+  );
+  const loginPage = state.loginPage;
+  loginPage.once("close", () => {
+    if (state.loginPage === loginPage) state.loginPage = undefined;
+    if (state.interactivePage === loginPage) {
+      state.interactivePage = undefined;
+    }
   });
   await prisma.automationSession.update({
     where: { id: SESSION_ID },
@@ -811,7 +934,8 @@ export async function startXiaohongshuLogin() {
 }
 
 export async function completeXiaohongshuLogin() {
-  const page = livingPage(state.loginPage);
+  const page =
+    livingPage(state.interactivePage) || livingPage(state.loginPage);
   if (!page) {
     await persistSessionState("LOGGED_OUT", "专用登录浏览器未打开");
     return getXhsSessionDiagnostics();
@@ -820,11 +944,22 @@ export async function completeXiaohongshuLogin() {
   await checkXhsSessionState(page);
   // 登录/验证完成后保留自动审核 Page，仅关闭独立人工登录 Page。
   if (state.sessionState === "LOGGED_IN") {
+    const loginPage = livingPage(state.loginPage);
+    const interactivePage = livingPage(state.interactivePage);
     state.loginPage = undefined;
+    state.interactivePage = undefined;
+    if (loginPage) state.pageArbiter?.releasePageRole(loginPage, "LOGIN");
+    if (interactivePage) {
+      state.pageArbiter?.releasePageRole(interactivePage, "INTERACTIVE");
+    }
     if (page === livingPage(state.auditPage)) {
       await setChromiumWindowState(page, "minimized");
     } else {
-      await page.close().catch(() => undefined);
+      for (const manualPage of new Set([page, loginPage, interactivePage])) {
+        if (manualPage && manualPage !== livingPage(state.auditPage)) {
+          await manualPage.close().catch(() => undefined);
+        }
+      }
       const auditPage = livingPage(state.auditPage);
       if (auditPage) {
         await setChromiumWindowState(auditPage, "minimized");
