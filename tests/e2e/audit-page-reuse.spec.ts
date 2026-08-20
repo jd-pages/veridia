@@ -49,11 +49,16 @@ test("连续审核与网络重试复用唯一后台 auditPage", async ({ page })
   ).data as {
     browserInstanceCount: number;
     contextLaunchCount: number;
+    pageCount: number;
     auditPageOpen: boolean;
     auditPageCreateCount: number;
     auditPageReuseCount: number;
     auditPageRequestCount: number;
+    pageSummaries: Array<Record<string, unknown>>;
   };
+  console.info(
+    `[AUDIT_PAGE_REUSE_DIAGNOSTICS] before=${JSON.stringify(diagnosticsBefore)}`,
+  );
 
   const products = (
     await (await page.request.get("/api/products")).json()
@@ -117,7 +122,11 @@ test("连续审核与网络重试复用唯一后台 auditPage", async ({ page })
     windowState: string;
     controlState: string;
     controlReady: boolean;
+    pageSummaries: Array<Record<string, unknown>>;
   };
+  console.info(
+    `[AUDIT_PAGE_REUSE_DIAGNOSTICS] afterFive=${JSON.stringify(diagnosticsAfterFive)}`,
+  );
   expect(diagnosticsAfterFive).toMatchObject({
     browserInstanceCount: 1,
     pageCount: 1,

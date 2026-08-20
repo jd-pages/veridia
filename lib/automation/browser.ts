@@ -61,6 +61,16 @@ type AuditLock = {
   profilePath: string;
 };
 
+type PageMetadata = {
+  createdAt: string;
+  source:
+    | "AUDIT_CREATE"
+    | "CONTEXT_EVENT"
+    | "CONTEXT_STARTUP"
+    | "LOGIN_CREATE"
+    | "POPUP";
+};
+
 type XhsBrowserState = {
   browser?: Browser;
   context?: BrowserContext;
@@ -92,6 +102,8 @@ type XhsBrowserState = {
   controlDisconnectedAt?: Date;
   automaticRecoveryCount: number;
   lifecycleGeneration: number;
+  pageMetadata: WeakMap<Page, PageMetadata>;
+  observedContexts: WeakSet<BrowserContext>;
 };
 
 const globalForAutomation = globalThis as typeof globalThis & {
@@ -112,6 +124,8 @@ const state =
     controlState: "NOT_STARTED",
     automaticRecoveryCount: 0,
     lifecycleGeneration: 0,
+    pageMetadata: new WeakMap(),
+    observedContexts: new WeakSet(),
   });
 state.closingContext ??= false;
 state.contextClosedUnexpectedly ??= false;
@@ -122,6 +136,8 @@ state.auditPageRequestCount ??= 0;
 state.controlState ??= "NOT_STARTED";
 state.automaticRecoveryCount ??= 0;
 state.lifecycleGeneration ??= 0;
+state.pageMetadata ??= new WeakMap();
+state.observedContexts ??= new WeakSet();
 
 function persistentOptions() {
   const channel = process.env.PLAYWRIGHT_BROWSER_CHANNEL?.trim();
@@ -147,12 +163,66 @@ function getChromium() {
 }
 
 function safeDiagnosticUrl(value: string) {
+  if (value === "about:blank" || value.startsWith("chrome:")) return value;
   try {
     const url = new URL(value);
     return `${url.origin}${url.pathname}`;
   } catch {
     return value.slice(0, 200);
   }
+}
+
+function recordPageMetadata(page: Page, source: PageMetadata["source"]) {
+  state.pageMetadata.set(page, {
+    createdAt: new Date().toISOString(),
+    source,
+  });
+}
+
+function observeContextPages(context: BrowserContext, launchStartedAt: Date) {
+  for (const page of context.pages()) {
+    if (!state.pageMetadata.has(page)) {
+      state.pageMetadata.set(page, {
+        createdAt: launchStartedAt.toISOString(),
+        source: "CONTEXT_STARTUP",
+      });
+    }
+  }
+  if (state.observedContexts.has(context)) return;
+  state.observedContexts.add(context);
+  context.on("page", async (page) => {
+    if (state.pageMetadata.has(page)) return;
+    const opener = await page.opener().catch(() => null);
+    if (state.pageMetadata.has(page)) return;
+    recordPageMetadata(
+      page,
+      opener ? "POPUP" : "CONTEXT_EVENT",
+    );
+  });
+}
+
+async function e2ePageSummaries() {
+  if (process.env.VERIDIA_E2E !== "true") return undefined;
+  const auditPage = livingPage(state.auditPage);
+  const loginPage = livingPage(state.loginPage);
+  return Promise.all(
+    (state.context?.pages() || []).map(async (page, index) => {
+      const opener = await page.opener().catch(() => null);
+      const metadata = state.pageMetadata.get(page);
+      return {
+        index,
+        url: safeDiagnosticUrl(page.url()),
+        title: await page.title().catch(() => ""),
+        closed: page.isClosed(),
+        isAuditPage: page === auditPage,
+        isLoginPage: page === loginPage,
+        isInteractivePage: page === loginPage,
+        createdAt: metadata?.createdAt || null,
+        source: metadata?.source || "UNKNOWN",
+        opener: opener ? safeDiagnosticUrl(opener.url()) : null,
+      };
+    }),
+  );
 }
 
 async function chromiumWindowState(page: Page) {
@@ -287,6 +357,31 @@ function browserControlError(error?: unknown) {
   );
 }
 
+async function createExclusiveAuditPage(context: BrowserContext) {
+  const loginPage = livingPage(state.loginPage);
+  const stalePages = context
+    .pages()
+    .filter(
+      (page) =>
+        !page.isClosed() &&
+        page !== loginPage &&
+        page.url() !== "about:blank",
+    );
+  const page = await createAuditPage(context);
+  let stalePageCleanupCount = 0;
+  try {
+    for (const stalePage of stalePages) {
+      if (stalePage.isClosed()) continue;
+      await stalePage.close();
+      stalePageCleanupCount += 1;
+    }
+  } catch (error) {
+    await page.close().catch(() => undefined);
+    throw error;
+  }
+  return { page, stalePageCleanupCount };
+}
+
 async function ensureBrowserContext(allowRelaunch = false) {
   if (browserControlAvailable()) {
     state.controlState = "READY";
@@ -366,6 +461,7 @@ async function ensureBrowserContext(allowRelaunch = false) {
           });
       }
       state.context = context;
+      observeContextPages(context, launchStartedAt);
       state.profileLocked = false;
       state.contextClosedUnexpectedly = false;
       state.controlState = "READY";
@@ -471,7 +567,9 @@ export async function getXhsAuditPage(input?: {
       try {
         const context = await ensureBrowserContext(recoveryAttempt > 0);
         const pageCountBefore = context.pages().length;
-        const page = await createAuditPage(context);
+        const { page, stalePageCleanupCount } =
+          await createExclusiveAuditPage(context);
+        recordPageMetadata(page, "AUDIT_CREATE");
         if (process.platform === "win32") {
           await setChromiumWindowState(page, "minimized");
         }
@@ -499,6 +597,7 @@ export async function getXhsAuditPage(input?: {
             browserInstanceCount: 1,
             pageCountBefore,
             pageCountAfter: context.pages().length,
+            stalePageCleanupCount,
             auditPageCreateCount: state.auditPageCreateCount,
             pageCreationMethod: "browserContext.newPage",
             auditPageReused: false,
@@ -589,6 +688,9 @@ export async function getXhsAuditPageDiagnostics() {
     remoteDebuggingMode: state.remoteDebuggingMode || null,
     remoteDebuggingPolicy: state.remoteDebuggingPolicy || null,
     automaticRecoveryCount: state.automaticRecoveryCount,
+    ...(process.env.VERIDIA_E2E === "true"
+      ? { pageSummaries: await e2ePageSummaries() }
+      : {}),
   };
 }
 
@@ -692,6 +794,7 @@ export async function startXiaohongshuLogin() {
     return getXhsSessionDiagnostics();
   }
   state.loginPage = await context.newPage();
+  recordPageMetadata(state.loginPage, "LOGIN_CREATE");
   state.loginPage.once("close", () => {
     state.loginPage = undefined;
   });

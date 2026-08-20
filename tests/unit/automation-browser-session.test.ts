@@ -51,6 +51,11 @@ describe("小红书持久会话与访问节奏", () => {
       "PW_CHROMIUM_ATTACH_TO_OTHER",
     );
     expect(browser).toContain("createAuditPage");
+    expect(browser).toContain("createExclusiveAuditPage");
+    expect(browser).toContain("stalePage.close()");
+    expect(browser).toContain("page !== loginPage");
+    expect(browser).toContain('page.url() !== "about:blank"');
+    expect(browser).toContain("stalePageCleanupCount");
     expect(browser).toContain("getXhsAuditPage");
     expect(browser).toContain("auditPageCreateCount");
     expect(browser).toContain("auditPageReuseCount");

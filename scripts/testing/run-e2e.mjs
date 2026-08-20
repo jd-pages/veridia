@@ -307,6 +307,7 @@ async function main() {
     AUTH_SECRET: process.env.AUTH_SECRET || "e2e-local-secret",
     EXTENSION_TOKEN: process.env.EXTENSION_TOKEN || "local-extension-demo-token",
     AI_ENABLED: "false",
+    VERIDIA_E2E: "true",
     PLAYWRIGHT_BROWSER_CHANNEL: process.env.PLAYWRIGHT_BROWSER_CHANNEL || "",
     ...(executablePath ? { PLAYWRIGHT_EXECUTABLE_PATH: executablePath } : {}),
   };
