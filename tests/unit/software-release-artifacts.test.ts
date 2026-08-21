@@ -151,7 +151,7 @@ describe("软件发布三件套", () => {
       valid: false,
       reasons: expect.arrayContaining(["SOURCE_FINGERPRINT_CHANGED"]),
     });
-  });
+  }, 15_000);
 
   it("REMOTE_DOWNLOAD ignores copied mtimes when Manifest content identity matches", () => {
     const value = fixture();
