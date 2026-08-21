@@ -110,7 +110,7 @@ describe("桌面 Prisma 缓存目录", () => {
     );
 
     expect(migrationSource).toContain('userDataPath: app.getPath("userData")');
-    expect(migrationSource.match(/cwd: \w+\.cwd/gu)).toHaveLength(3);
+    expect(migrationSource.match(/cwd: \w+\.cwd/gu)).toHaveLength(4);
     expect(migrationSource).not.toContain("cwd: applicationRoot()");
   });
 });

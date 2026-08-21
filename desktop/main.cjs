@@ -233,6 +233,34 @@ function childProcessFailureDetails(result) {
     .join("\n");
 }
 
+function reconcileLegacyDatabaseBeforeMigrations(targetDatabasePath) {
+  const scriptPath = path.join(
+    applicationRoot(),
+    "desktop",
+    "legacy-database-reconciliation.cjs",
+  );
+  const execution = migrationExecutionContext(targetDatabasePath);
+  const result = spawnSync(
+    nodeRuntimeExecutable(),
+    [scriptPath, targetDatabasePath],
+    {
+      cwd: execution.cwd,
+      env: execution.env,
+      encoding: "utf8",
+      windowsHide: true,
+      maxBuffer: 20 * 1024 * 1024,
+    },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `数据库兼容协调失败：${childProcessFailureDetails(result)}`,
+    );
+  }
+  const output = String(result.stdout || "").trim().split(/\r?\n/u).at(-1);
+  if (!output) throw new Error("数据库兼容协调未返回结果");
+  return JSON.parse(output);
+}
+
 function verifyDatabaseMigrations(targetDatabasePath) {
   const prismaCli = path.join(
     applicationRoot(),
@@ -281,6 +309,26 @@ function runDatabaseMigrations() {
     `before-migration-${app.getVersion()}-${stamp}.db`,
   );
   if (existed) fs.copyFileSync(databasePath, backupPath);
+
+  if (existed) {
+    try {
+      const reconciliation =
+        reconcileLegacyDatabaseBeforeMigrations(databasePath);
+      if (reconciliation.reconciled) {
+        writeLog(
+          `APTAMIL_STORE_RENAME_COLLISION_RECONCILED ${JSON.stringify(reconciliation)}`,
+        );
+      }
+    } catch (error) {
+      writeLog("数据库迁移前兼容协调失败", error);
+      if (fs.existsSync(backupPath)) {
+        fs.copyFileSync(backupPath, databasePath);
+      }
+      throw new Error(
+        `数据库迁移前兼容协调失败，原数据库已恢复。详情：${desktopLogPath}`,
+      );
+    }
+  }
 
   const prismaCli = path.join(
     applicationRoot(),
