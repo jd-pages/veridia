@@ -82,18 +82,15 @@ export default function AuditDecisionSummary({
   const conclusionTone = auditConclusionCardTone(row);
   const failureReasons = auditConclusionFailureReasons(row);
   const topicSummary = getTopicAuditSummary(row);
-  const expectedTopicCount =
-    topicSummary.required.length +
-    (topicSummary.stageCandidates.length ? 1 : 0);
-  const matchedTopicCount =
-    topicSummary.matched.length +
-    (topicSummary.matchedStageCandidates.length ? 1 : 0);
+  const expectedTopicCount = topicSummary.expectedCount;
+  const matchedTopicCount = topicSummary.matchedCount;
   const topicNeedsReview =
     topicSummary.uncertain.length > 0 || topicSummary.stageGroupUncertain;
   const topicCompliant =
     row.topicsCompliant &&
     row.clickableCompliant &&
     !topicSummary.missing.length &&
+    !topicSummary.anyMissingCount &&
     !topicSummary.forbidden.length &&
     !topicSummary.stageGroupMissing &&
     !topicSummary.stageGroupUnclickable &&
@@ -204,7 +201,7 @@ export default function AuditDecisionSummary({
             )}
           </div>
           <div>
-            <span>发帖时间</span>
+            <span>平台时间</span>
             <strong>
               {formatPlatformPublishedAt(
                 row.note.publishedAt,
@@ -415,6 +412,24 @@ export default function AuditDecisionSummary({
                       ))}
                     </strong>
                   </div>
+                ) : null}
+                {topicSummary.anyCandidates.length ? (
+                  <>
+                    <div>
+                      <span>热门话题</span>
+                      <strong>
+                        已命中 {topicSummary.matchedAnyCandidates.length} / 要求 {topicSummary.anyMinimum}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>已命中热门话题</span>
+                      <strong>{topicSummary.matchedAnyCandidates.join(" / ") || "无"}</strong>
+                    </div>
+                    <div>
+                      <span>未命中候选</span>
+                      <strong>{topicSummary.unmatchedAnyCandidates.join(" / ") || "无"}</strong>
+                    </div>
+                  </>
                 ) : null}
                 <div>
                   <span>状态</span>

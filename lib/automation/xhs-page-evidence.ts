@@ -761,7 +761,7 @@ export async function collectDomPageSnapshot(
     );
 
     const mainNoteRoot = roots.find(visible) || null;
-    const publicationPattern = /^(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|昨天\s*\d{1,2}:\d{2}(?::\d{2})?|\d{1,4}天前|\d{1,6}小时前|\d{1,6}分钟前)(?:\s|$)/u;
+    const publicationPattern = /^(?:(?:编辑于|发布于)\s*)?(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|昨天\s*\d{1,2}:\d{2}(?::\d{2})?|\d{1,4}天前|\d{1,6}小时前|\d{1,6}分钟前)(?:\s+(?:IP属地[：:]?\s*)?[\p{Script=Han}]{2,12})?$/u;
     const publicationNodes = mainNoteRoot
       ? [
           ...mainNoteRoot.querySelectorAll(

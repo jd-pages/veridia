@@ -8,10 +8,18 @@ const douyinContentId = "7658919904867844532";
 async function extractXhsFixture(
   page: Page,
   publishedText: string,
-  commentTime?: string,
+  options: {
+    commentTime?: string;
+    recommendedTime?: string;
+    bodyTime?: string;
+  } = {},
 ) {
   const params = new URLSearchParams({ case: "passed", publishedText });
-  if (commentTime) params.set("commentTime", commentTime);
+  if (options.commentTime) params.set("commentTime", options.commentTime);
+  if (options.recommendedTime) {
+    params.set("recommendedTime", options.recommendedTime);
+  }
+  if (options.bodyTime) params.set("bodyTime", options.bodyTime);
   await page.goto(`/mock/xhs?${params.toString()}`);
   return new PlaywrightXiaohongshuAdapter().extract(
     page,
@@ -52,7 +60,7 @@ test("小红书保留相对时间原文并排除评论时间", async ({ page }) 
   const yesterday = await extractXhsFixture(
     page,
     "昨天 19:05 福建",
-    "昨天 19:44 福建",
+    { commentTime: "昨天 19:44 福建" },
   );
   expect(yesterday.publishedAtRaw).toBe("昨天 19:05");
   expect(yesterday.publishedAt).toBeNull();
@@ -60,9 +68,35 @@ test("小红书保留相对时间原文并排除评论时间", async ({ page }) 
     "19:44",
   );
 
-  const daysAgo = await extractXhsFixture(page, "6天前 福建", "6天前 安徽");
+  const daysAgo = await extractXhsFixture(page, "6天前 福建", {
+    commentTime: "6天前 安徽",
+  });
   expect(daysAgo.publishedAtRaw).toBe("6天前");
   expect(daysAgo.publishedAt).toBeNull();
+});
+
+test("小红书仅从当前作品 metadata 识别带前缀的平台时间", async ({ page }) => {
+  const note = await extractXhsFixture(page, "编辑于 4小时前 河南", {
+    commentTime: "发布于 3小时前 上海",
+    recommendedTime: "发布于 2小时前 北京",
+    bodyTime: "发布于 1小时前 浙江",
+  });
+  expect(note).toMatchObject({
+    noteId: xhsNoteId,
+    publishedAt: null,
+    publishedAtRaw: "编辑于 4小时前",
+  });
+  expect(note.pageEvidence?.publishedAtCandidate).toMatchObject({
+    raw: "编辑于 4小时前",
+    timeToken: "4小时前",
+    location: "河南",
+    timeKind: "EDITED",
+    source: expect.stringContaining("DOM_MAIN_NOTE"),
+  });
+  const evidence = JSON.stringify(note.pageEvidence?.publishedAtCandidate);
+  expect(evidence).not.toContain("3小时前");
+  expect(evidence).not.toContain("2小时前");
+  expect(evidence).not.toContain("1小时前");
 });
 
 test("小红书保留平台明确显示的完整年份", async ({ page }) => {

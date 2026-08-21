@@ -3,6 +3,9 @@ export interface PlatformPublishedAtEvidence {
   raw: string;
   source: string;
   contentId: string | null;
+  timeToken?: string;
+  location?: string | null;
+  timeKind?: "EDITED" | "PUBLISHED" | "DISPLAYED";
 }
 
 interface ShanghaiParts {
@@ -69,6 +72,10 @@ function evidence(
   raw: string,
   source: string,
   contentId: string | null,
+  details?: Pick<
+    PlatformPublishedAtEvidence,
+    "timeToken" | "location" | "timeKind"
+  >,
 ): PlatformPublishedAtEvidence | null {
   if (!raw || (value && Number.isNaN(value.getTime()))) return null;
   return {
@@ -76,6 +83,7 @@ function evidence(
     raw,
     source,
     contentId,
+    ...details,
   };
 }
 
@@ -132,17 +140,29 @@ export function parseXhsPublishedAtText(
   if (!text) return null;
 
   const match = text.match(
-    /^(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|昨天\s*\d{1,2}:\d{2}(?::\d{2})?|\d{1,4}天前|\d{1,6}小时前|\d{1,6}分钟前)(?:\s|$)/u,
+    /^(?:(编辑于|发布于)\s*)?(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|昨天\s*\d{1,2}:\d{2}(?::\d{2})?|\d{1,4}天前|\d{1,6}小时前|\d{1,6}分钟前)(?:\s+(?:IP属地[：:]?\s*)?([\p{Script=Han}]{2,12}))?$/u,
   );
   if (!match) return null;
 
-  const raw = match[1].replace(/\s+/gu, " ").trim();
+  const prefix = match[1] || "";
+  const timeToken = match[2].replace(/\s+/gu, " ").trim();
+  const raw = `${prefix ? `${prefix} ` : ""}${timeToken}`;
+  const timeKind = prefix === "编辑于"
+    ? "EDITED"
+    : prefix === "发布于"
+      ? "PUBLISHED"
+      : "DISPLAYED";
   // XHS may omit the year or use relative wording. Keep those platform
-  // semantics verbatim instead of inventing a calendar date.
-  const value = /^\d{4}[-/.]/u.test(raw)
-    ? parseShanghaiDisplayTime(raw)
+  // semantics verbatim instead of inventing a calendar date. An edit time is
+  // also never promoted to the note's original publication timestamp.
+  const value = timeKind !== "EDITED" && /^\d{4}[-/.]/u.test(timeToken)
+    ? parseShanghaiDisplayTime(timeToken)
     : null;
-  return evidence(value, raw, source, contentId);
+  return evidence(value, raw, source, contentId, {
+    timeToken,
+    location: match[3] || null,
+    timeKind,
+  });
 }
 
 export function formatShanghaiDateTime(input: unknown) {
@@ -159,5 +179,7 @@ export function formatPlatformPublishedAt(
   raw: unknown,
 ) {
   const original = typeof raw === "string" ? raw.trim() : "";
-  return original || formatShanghaiDateTime(input);
+  if (original) return original;
+  if (input) return formatShanghaiDateTime(input);
+  return "未识别到平台时间";
 }

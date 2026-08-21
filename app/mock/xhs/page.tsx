@@ -7,6 +7,8 @@ export default async function MockXhsPage({
     case?: string;
     publishedText?: string;
     commentTime?: string;
+    recommendedTime?: string;
+    bodyTime?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -101,7 +103,7 @@ export default async function MockXhsPage({
         </div>
         <h1 data-xhs-title style={{ fontSize: 26 }}>{note.title}</h1>
         <p data-xhs-body style={{ lineHeight: 1.9, whiteSpace: "pre-wrap" }}>
-          {note.body}
+          {note.body}{params.bodyTime ? ` 正文提及 ${params.bodyTime}` : ""}
         </p>
         <div data-xhs-topics style={{ margin: "22px 0" }}>
           {note.topics.map((topic) =>
@@ -132,6 +134,11 @@ export default async function MockXhsPage({
         {params.commentTime ? (
           <section className="comment-list">
             <span className="comment-time date">{params.commentTime}</span>
+          </section>
+        ) : null}
+        {params.recommendedTime ? (
+          <section className="recommend-list">
+            <span className="note-time date">{params.recommendedTime}</span>
           </section>
         ) : null}
       </article>

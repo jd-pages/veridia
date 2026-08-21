@@ -2,10 +2,12 @@ import { filterAuditDetailReasons } from "@/lib/audit-detail-visibility";
 import { isUnavailableNoteResult } from "@/lib/result-display";
 import { parseStoredStringArray } from "@/lib/stored-json";
 import { normalizeTopic } from "@/lib/topic";
+import { topicAuditRuleSummary } from "@/lib/topic-audit-summary";
 
 interface DetailPresentationInput {
   autoStatus: string;
   failureReasons: string;
+  missingTopics?: string;
   ruleSnapshot?: string;
   effectiveBodyLength?: number | null;
   imageCount?: number | null;
@@ -25,42 +27,30 @@ interface DetailPresentationInput {
   manualReviews?: Array<{ result: string }>;
 }
 
-interface RuleSnapshotForPresentation {
-  minBodyLength?: number;
-  minImageCount?: number;
-  rules?: Array<{
-    ruleType?: string;
-    topicCategory?: string;
-    topic?: string;
-    minCount?: number;
-  }>;
-}
-
 const technicalStatePattern =
   /\b(?:ERROR_PAGE|APP_LAUNCH|NOTE_DETAIL|NOTE_NOT_FOUND|PAGE_NOT_FOUND|NOTE_DELETED|PAGE_UNAVAILABLE|NOT_FOUND|NOT_ACCESSIBLE|READ_FAILED)\b/iu;
-
-function ruleSnapshotForPresentation(value?: string) {
-  try {
-    return JSON.parse(value || "{}") as RuleSnapshotForPresentation;
-  } catch {
-    return {};
-  }
-}
 
 function normalizeFailureReason(
   reason: string,
   input: DetailPresentationInput,
 ) {
-  const snapshot = ruleSnapshotForPresentation(input.ruleSnapshot);
+  const topicSummary = topicAuditRuleSummary(
+    input.ruleSnapshot,
+    (input.note?.topics || []).map((topic) =>
+      String(topic.displayText || ""),
+    ),
+  );
   const stageMatch = reason.match(
     /(?:IFFO|GUM)?\s*阶段话题未命中[：:]\s*(.+?)(?:\s*中至少出现\s*1\s*个)?$/u,
   );
   if (stageMatch) {
-    const candidates = stageMatch[1]
+    const candidates = topicSummary.stageCandidates.length
+      ? topicSummary.stageCandidates
+      : stageMatch[1]
       .split(/[、/]/u)
       .map((item) => item.trim())
       .filter(Boolean);
-    return `阶段话题未命中：${candidates.join(" / ")}`;
+    return `阶段话题未命中：${candidates.join(" / ")}，需任意命中 1 个`;
   }
 
   const imageCompactMatch = reason.match(
@@ -98,24 +88,8 @@ function normalizeFailureReason(
 
   const anyTopicMatch = reason.match(/任意话题命中不足\s*(\d+)\s*个/u);
   if (anyTopicMatch) {
-    const anyRules = (snapshot.rules || []).filter(
-      (rule) =>
-        rule.ruleType === "ANY" && rule.topicCategory !== "PRODUCT_STAGE",
-    );
-    const minimum = Math.max(
-      Number(anyTopicMatch[1]),
-      ...anyRules.map((rule) => Number(rule.minCount || 0)),
-    );
-    const detected = new Set(
-      (input.note?.topics || []).map((topic) =>
-        normalizeTopic(String(topic.displayText || "")),
-      ),
-    );
-    const matched = anyRules.filter((rule) =>
-      detected.has(normalizeTopic(String(rule.topic || ""))),
-    ).length;
-    if (anyRules.length) {
-      return `热门话题不足：需 ${anyRules.length} 选 ${minimum}，当前命中 ${matched} 个，缺 ${Math.max(0, minimum - matched)} 个`;
+    if (topicSummary.anyCandidates.length) {
+      return `热门话题不足：需 ${topicSummary.anyCandidates.length} 选 ${topicSummary.anyMinimum}，当前命中 ${topicSummary.matchedAnyCandidates.length} 个，还需任意 ${topicSummary.anyMissingCount} 个；已命中：${topicSummary.matchedAnyCandidates.join("、") || "无"}；未命中候选：${topicSummary.unmatchedAnyCandidates.join("、") || "无"}`;
     }
   }
 
@@ -190,7 +164,34 @@ export function auditConclusionFailureReasons(
   const reasons = filterAuditDetailReasons([...storedReasons, ...fallback])
     .map((reason) => normalizeFailureReason(reason, input))
     .filter(Boolean);
-  return [...new Set(reasons)];
+  const uniqueReasons = [...new Set(reasons)];
+  const exactReasonIndexes = uniqueReasons
+    .map((reason, index) => reason.startsWith("缺少必带话题：") ? index : -1)
+    .filter((index) => index >= 0);
+  if (!exactReasonIndexes.length) return uniqueReasons;
+
+  const topicSummary = topicAuditRuleSummary(
+    input.ruleSnapshot,
+    (input.note?.topics || []).map((topic) => String(topic.displayText || "")),
+  );
+  const snapshotRequired = new Set(topicSummary.requiredTopics);
+  const storedMissing = parseStoredStringArray(input.missingTopics).filter(
+    (topic) => snapshotRequired.has(normalizeTopic(topic)),
+  );
+  const reasonMissing = exactReasonIndexes.flatMap((index) =>
+    uniqueReasons[index]
+      .replace(/^缺少必带话题：/u, "")
+      .split(/[、/]/u)
+      .map((topic) => topic.trim())
+      .filter(Boolean),
+  );
+  const missing = [...new Set([...storedMissing, ...reasonMissing].map(normalizeTopic))];
+  return uniqueReasons.flatMap((reason, index) => {
+    if (index === exactReasonIndexes[0]) {
+      return [`缺少必带话题：${missing.join(" / ")}`];
+    }
+    return exactReasonIndexes.includes(index) ? [] : [reason];
+  });
 }
 
 export function minimumImageCountFromRuleSnapshot(ruleSnapshot: string) {

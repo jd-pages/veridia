@@ -31,6 +31,43 @@ describe("平台真实发帖时间", () => {
     expect(formatPlatformPublishedAt(result?.value, result?.raw)).toBe(raw);
   });
 
+  it.each([
+    ["编辑于 4小时前 河南", "编辑于 4小时前", "4小时前", "河南", "EDITED"],
+    ["编辑于 3天前 上海", "编辑于 3天前", "3天前", "上海", "EDITED"],
+    ["编辑于 昨天 12:30 北京", "编辑于 昨天 12:30", "昨天 12:30", "北京", "EDITED"],
+    ["编辑于 07-29 浙江", "编辑于 07-29", "07-29", "浙江", "EDITED"],
+    ["发布于 4小时前 河南", "发布于 4小时前", "4小时前", "河南", "PUBLISHED"],
+    ["发布于 07-29 上海", "发布于 07-29", "07-29", "上海", "PUBLISHED"],
+  ] as const)(
+    "识别平台时间前缀并从证据中剥离 IP 属地 %s",
+    (input, raw, timeToken, location, timeKind) => {
+      expect(
+        parseXhsPublishedAtText(input, "DOM_MAIN_NOTE:test", "note-id"),
+      ).toMatchObject({
+        raw,
+        timeToken,
+        location,
+        timeKind,
+        value: null,
+      });
+    },
+  );
+
+  it("编辑时间即使带完整日期也不伪装成首次发布时间", () => {
+    expect(
+      parseXhsPublishedAtText(
+        "编辑于 2026-08-21 14:30 河南",
+        "DOM_MAIN_NOTE:test",
+        "note-id",
+      ),
+    ).toMatchObject({
+      raw: "编辑于 2026-08-21 14:30",
+      timeToken: "2026-08-21 14:30",
+      timeKind: "EDITED",
+      value: null,
+    });
+  });
+
   it("不为无年份日期补年份，也不转换相对时间", () => {
     const monthDay = parseXhsPublishedAtText(
       "12-30 浙江",
@@ -90,6 +127,6 @@ describe("平台真实发帖时间", () => {
         "6a5cb375000000000301c549",
       ),
     ).toBeNull();
-    expect(formatPlatformPublishedAt(null, null)).toBe("—");
+    expect(formatPlatformPublishedAt(null, null)).toBe("未识别到平台时间");
   });
 });

@@ -5,55 +5,19 @@ import { parseJsonArray } from "@/lib/client";
 import { productStageTopicLabel } from "@/lib/product-stage";
 import { auditResultListDisplay } from "@/lib/result-display";
 import { normalizeTopic } from "@/lib/topic";
+import { topicAuditRuleSummary } from "@/lib/topic-audit-summary";
 import { classifyTopicCandidates } from "@/lib/topic-clickability";
 import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
 
-function expectedTopics(ruleSnapshot: string) {
-  try {
-    const snapshot = JSON.parse(ruleSnapshot) as {
-      rules?: Array<{
-        ruleType?: string;
-        topic?: string;
-        topicCategory?: string;
-      }>;
-    };
-    const requiredRules = (snapshot.rules || []).filter(
-      (rule) =>
-        Boolean(rule.topic) &&
-        rule.ruleType !== "FORBIDDEN" &&
-        rule.ruleType !== "ALIAS",
-    );
-    return {
-      required: [
-        ...new Set(
-          requiredRules
-            .filter((rule) => rule.topicCategory !== "PRODUCT_STAGE")
-            .map((rule) => normalizeTopic(rule.topic || "")),
-        ),
-      ],
-      stageCandidates: [
-        ...new Set(
-          requiredRules
-            .filter((rule) => rule.topicCategory === "PRODUCT_STAGE")
-            .map((rule) => normalizeTopic(rule.topic || "")),
-        ),
-      ],
-    };
-  } catch {
-    return { required: [], stageCandidates: [] };
-  }
-}
-
 export function getTopicAuditSummary(row: ResultRow) {
-  const { required, stageCandidates } = expectedTopics(row.ruleSnapshot);
   const actual = row.note.topics.map((topic) =>
     normalizeTopic(topic.displayText),
   );
-  const matched = required.filter((topic) => actual.includes(topic));
-  const matchedStageCandidates = stageCandidates.filter((topic) =>
-    actual.includes(topic),
-  );
+  const ruleSummary = topicAuditRuleSummary(row.ruleSnapshot, actual);
+  const required = ruleSummary.requiredTopics;
+  const matched = ruleSummary.matchedRequiredTopics;
+  const { stageCandidates, matchedStageCandidates } = ruleSummary;
   const missing = parseJsonArray(row.missingTopics).filter(
     (expected) => !actual.includes(normalizeTopic(expected)),
   );
@@ -85,6 +49,13 @@ export function getTopicAuditSummary(row: ResultRow) {
   return {
     required,
     matched,
+    anyCandidates: ruleSummary.anyCandidates,
+    anyMinimum: ruleSummary.anyMinimum,
+    matchedAnyCandidates: ruleSummary.matchedAnyCandidates,
+    unmatchedAnyCandidates: ruleSummary.unmatchedAnyCandidates,
+    anyMissingCount: ruleSummary.anyMissingCount,
+    expectedCount: ruleSummary.expectedCount,
+    matchedCount: ruleSummary.matchedCount,
     stageCandidates,
     matchedStageCandidates,
     stageGroupMissing,
@@ -108,16 +79,15 @@ export default function TopicAuditCell({ row }: { row: ResultRow }) {
   }
 
   const summary = getTopicAuditSummary(row);
-  const expectedCount =
-    summary.required.length + (summary.stageCandidates.length ? 1 : 0);
-  const matchedCount =
-    summary.matched.length + (summary.matchedStageCandidates.length ? 1 : 0);
+  const expectedCount = summary.expectedCount;
+  const matchedCount = summary.matchedCount;
   const needsReview =
     summary.uncertain.length > 0 || summary.stageGroupUncertain;
   const compliant =
     row.topicsCompliant &&
     row.clickableCompliant &&
     !summary.missing.length &&
+    !summary.anyMissingCount &&
     !summary.forbidden.length &&
     !summary.stageGroupMissing &&
     !summary.stageGroupUnclickable &&
@@ -126,11 +96,24 @@ export default function TopicAuditCell({ row }: { row: ResultRow }) {
   const detail = (
     <div className={styles.topicDetail}>
       <div className={styles.topicDetailSection}>
-        <div className={styles.topicDetailTitle}>要求话题</div>
+        <div className={styles.topicDetailTitle}>必带话题</div>
         <div>
           {summary.required.join("、") || "无额外通用或产品必填话题"}
         </div>
       </div>
+      {summary.anyCandidates.length ? (
+        <div className={styles.topicDetailSection}>
+          <div className={styles.topicDetailTitle}>
+            热门话题（{summary.anyCandidates.length} 选 {summary.anyMinimum}）
+          </div>
+          <div>
+            已命中：{summary.matchedAnyCandidates.join("、") || "无"}
+          </div>
+          <div>
+            未命中候选：{summary.unmatchedAnyCandidates.join("、") || "无"}
+          </div>
+        </div>
+      ) : null}
       {summary.stageCandidates.length ? (
         <div className={styles.topicDetailSection}>
           <div className={styles.topicDetailTitle}>
@@ -209,6 +192,8 @@ export default function TopicAuditCell({ row }: { row: ResultRow }) {
         <div className={styles.cellSecondary}>
           {summary.stageGroupMissing
             ? "阶段话题候选均未命中"
+            : summary.anyMissingCount
+              ? `热门话题还需任意 ${summary.anyMissingCount} 个`
             : summary.missing.length
               ? "要求话题缺失，可点击不适用"
               : needsReview
@@ -221,9 +206,15 @@ export default function TopicAuditCell({ row }: { row: ResultRow }) {
                       1,
                     )} 个`}
         </div>
-        {summary.missing.length || summary.stageGroupMissing ? (
+        {summary.missing.length ||
+        summary.anyMissingCount ||
+        summary.stageGroupMissing ? (
           <div className={styles.cellSecondary}>
-            缺少 {summary.missing.length + (summary.stageGroupMissing ? 1 : 0)} 个
+            {summary.missing.length
+              ? `缺少必带话题 ${summary.missing.length} 个`
+              : summary.anyMissingCount
+                ? `热门话题还需任意 ${summary.anyMissingCount} 个`
+                : "阶段话题需任意命中 1 个"}
           </div>
         ) : null}
       </div>

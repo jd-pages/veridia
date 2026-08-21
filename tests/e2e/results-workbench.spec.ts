@@ -407,14 +407,14 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
     "平台",
     "店铺",
     "订单编号",
-    "发帖时间",
+    "平台时间",
     "实际审核时间",
   ]) {
     await expect(drawer.getByText(label, { exact: true })).toBeVisible();
   }
   await expect(
-    drawer.getByText("发帖时间", { exact: true }).locator("..").locator("strong"),
-  ).toHaveText(/^(?:—|(?:\d{2}-\d{2}|\d{4}-\d{2}-\d{2})(?: \d{2}:\d{2}(?::\d{2})?)?)$/u);
+    drawer.getByText("平台时间", { exact: true }).locator("..").locator("strong"),
+  ).toHaveText(/^(?:未识别到平台时间|(?:(?:编辑于|发布于) )?(?:\d{2}-\d{2}|\d{4}-\d{2}-\d{2}|昨天 \d{2}:\d{2}|\d+天前|\d+小时前|\d+分钟前)(?: \d{2}:\d{2}(?::\d{2})?)?)$/u);
   await expect(drawer.getByText("笔记基础信息", { exact: true })).toHaveCount(0);
   await expect(drawer.getByText(/笔记ID/u)).toHaveCount(0);
   await expect(page).toHaveURL(/\/results$/u);
@@ -550,6 +550,7 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
       items: Array<{
         id: string;
         failureReasons: string;
+        missingTopics: string;
         task: { url: string; finalUrl: string | null };
         note: {
           url: string;
@@ -565,11 +566,10 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
   expect(fixture).toBeTruthy();
   const originalUrl = fixture!.task.url;
   const finalUrl = fixture!.task.finalUrl || fixture!.note.finalUrl || fixture!.note.url;
-  const missingTopic = (JSON.parse(fixture!.failureReasons) as string[])
-    .find((reason) => reason.startsWith("缺少精确话题"))
-    ?.match(/#[^\s；，,]+/u)?.[0];
+  const missingTopics = JSON.parse(fixture!.missingTopics) as string[];
   expect(finalUrl).not.toBe(originalUrl);
-  expect(missingTopic).toBeTruthy();
+  expect(missingTopics.length).toBeGreaterThan(0);
+  const missingTopicDisplay = `缺少必带话题：${missingTopics.join(" / ")}`;
 
   await page.goto(`/results/${fixture!.id}`);
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {
@@ -587,7 +587,7 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
   await expect(
     page
       .getByRole("region", { name: "失败原因" })
-      .getByText(`缺少必带话题：${missingTopic}`, { exact: true }),
+      .getByText(missingTopicDisplay, { exact: true }),
   ).toBeVisible();
   await linkActions
     .getByRole("button", { name: "复制原链接", exact: true })
@@ -632,7 +632,7 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
   await expect(
     drawer
       .getByRole("region", { name: "失败原因" })
-      .getByText(`缺少必带话题：${missingTopic}`, { exact: true }),
+      .getByText(missingTopicDisplay, { exact: true }),
   ).toBeVisible();
 });
 
