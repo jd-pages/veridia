@@ -37,12 +37,19 @@ interface TopicInput {
   enabled?: unknown;
 }
 
+interface StoreAliasInput {
+  id?: unknown;
+  alias?: unknown;
+  enabled?: unknown;
+}
+
 interface StoreTopicRuleInput {
   commercePlatform?: unknown;
   storeName?: unknown;
   enabled?: unknown;
   acceptedTopics?: unknown;
   requiredTopics?: unknown;
+  storeAliases?: unknown;
 }
 
 interface ValidatedTopic {
@@ -53,6 +60,14 @@ interface ValidatedTopic {
   topicType: StoreTopicEntryType;
 }
 
+export interface ValidatedStoreAlias {
+  id?: string;
+  alias: string;
+  normalizedAlias: string;
+  enabled: boolean;
+  sortOrder: number;
+}
+
 interface TopicEntryRecord extends StoreAcceptedTopicConfig {
   topicType: string;
   deletedAt: Date | null;
@@ -60,6 +75,7 @@ interface TopicEntryRecord extends StoreAcceptedTopicConfig {
 
 const forbiddenTopicSeparators = /[,，、;；/|｜\r\n]/u;
 const MAX_STORE_TOPIC_LENGTH = 100;
+const MAX_STORE_ALIAS_LENGTH = 100;
 
 function activeTopicSnapshot(
   topics: readonly TopicEntryRecord[],
@@ -113,6 +129,21 @@ function activeStoreAliases(input: {
   ];
 }
 
+function managedStoreAliases(topics: readonly TopicEntryRecord[]) {
+  return topics
+    .filter(
+      (topic) => topic.topicType === "STORE_ALIAS" && topic.deletedAt === null,
+    )
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .map((topic) => ({
+      id: topic.id,
+      alias: topic.topic,
+      normalizedAlias: topic.normalizedTopic,
+      enabled: topic.enabled,
+      sortOrder: topic.sortOrder,
+    }));
+}
+
 function withTopicGroups<
   T extends {
     id: string;
@@ -128,6 +159,7 @@ function withTopicGroups<
   return {
     ...identity,
     aliases: activeStoreAliases(rule),
+    storeAliases: managedStoreAliases(topicEntries),
     acceptedTopics: activeTopicSnapshot(topicEntries, "ACCEPTED"),
     requiredTopics: activeTopicSnapshot(topicEntries, "REQUIRED"),
   };
@@ -235,6 +267,48 @@ export function validateStoreTopicGroups(input: {
     }
   }
   return { acceptedTopics, requiredTopics };
+}
+
+export function validateStoreAliases(
+  value: unknown,
+  canonicalStoreName: unknown,
+): ValidatedStoreAlias[] {
+  if (!Array.isArray(value)) {
+    throw new Error("导入别名必须使用结构化数组提交。");
+  }
+  const normalizedCanonical = normalizeStoreNameForMatch(canonicalStoreName);
+  const seen = new Map<string, string>();
+  return value.map((raw, sortOrder) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error(`第 ${sortOrder + 1} 条导入别名格式不正确。`);
+    }
+    const item = raw as StoreAliasInput;
+    const alias = String(item.alias ?? "").trim();
+    if (!alias) throw new Error(`第 ${sortOrder + 1} 条导入别名不能为空。`);
+    if (alias.length > MAX_STORE_ALIAS_LENGTH) {
+      throw new Error(
+        `第 ${sortOrder + 1} 条导入别名不能超过 ${MAX_STORE_ALIAS_LENGTH} 个字符。`,
+      );
+    }
+    const normalizedAlias = normalizeStoreNameForMatch(alias);
+    if (normalizedAlias === normalizedCanonical) {
+      throw new Error(
+        "该名称已经是标准店铺名称，无需重复添加为导入别名。",
+      );
+    }
+    const duplicate = seen.get(normalizedAlias);
+    if (duplicate) {
+      throw new Error(`该店铺已存在相同导入别名：${duplicate}。`);
+    }
+    seen.set(normalizedAlias, alias);
+    return {
+      id: String(item.id ?? "").trim() || undefined,
+      alias,
+      normalizedAlias,
+      enabled: item.enabled !== false,
+      sortOrder,
+    };
+  });
 }
 
 export async function ensureStoreTopicRuleSeeds() {
@@ -492,8 +566,12 @@ export async function listStoreTopicRules(input: {
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
   });
   const filtered = query
-    ? rules.filter((rule) =>
-        normalizeStoreNameForMatch(rule.storeName).includes(query),
+    ? rules.filter(
+        (rule) =>
+          normalizeStoreNameForMatch(rule.storeName).includes(query) ||
+          managedStoreAliases(rule.topicEntries).some((alias) =>
+            alias.normalizedAlias.includes(query),
+          ),
       )
     : rules;
   return {
@@ -562,8 +640,13 @@ async function replaceTopicEntries(
     for (const [sortOrder, topic] of group.entries()) {
       const existing =
         existingTopics.find(
-          (candidate) => candidate.normalizedTopic === topic.normalizedTopic,
-        ) || existingTopics.find((candidate) => candidate.id === topic.id);
+          (candidate) =>
+            candidate.topicType !== "STORE_ALIAS" &&
+            candidate.normalizedTopic === topic.normalizedTopic,
+        ) || existingTopics.find(
+          (candidate) =>
+            candidate.topicType !== "STORE_ALIAS" && candidate.id === topic.id,
+        );
       if (existing) {
         retainedIds.add(existing.id);
         const storedTopicType: StoredStoreTopicEntryType =
@@ -610,10 +693,152 @@ async function replaceTopicEntries(
   });
 }
 
+async function assertStoreAliasesAvailable(
+  tx: Prisma.TransactionClient,
+  input: {
+    storeTopicRuleId: string;
+    commercePlatform: CommercePlatform;
+    aliases: readonly ValidatedStoreAlias[];
+  },
+) {
+  if (input.aliases.length === 0) return;
+  const normalizedAliases = input.aliases.map((alias) => alias.normalizedAlias);
+  const currentRuleTopicCollision = await tx.storeTopicEntry.findFirst({
+    where: {
+      storeTopicRuleId: input.storeTopicRuleId,
+      normalizedTopic: { in: normalizedAliases },
+      topicType: { not: "STORE_ALIAS" },
+      deletedAt: null,
+    },
+  });
+  if (currentRuleTopicCollision) {
+    const alias = input.aliases.find(
+      (item) => item.normalizedAlias === currentRuleTopicCollision.normalizedTopic,
+    )!;
+    throw new Error(
+      `STORE_ALIAS_COLLISION：该导入别名已由当前店铺的话题或历史兼容名称使用：${alias.alias}。`,
+    );
+  }
+  const canonicalCollision = await tx.storeTopicRule.findFirst({
+    where: {
+      commercePlatform: input.commercePlatform,
+      normalizedStoreName: { in: normalizedAliases },
+      id: { not: input.storeTopicRuleId },
+      deletedAt: null,
+    },
+  });
+  if (canonicalCollision) {
+    const alias = input.aliases.find(
+      (item) => item.normalizedAlias === canonicalCollision.normalizedStoreName,
+    )!;
+    throw new Error(
+      `STORE_ALIAS_COLLISION：该导入别名已被本平台其他标准店铺使用：${alias.alias}（${canonicalCollision.storeName}）。`,
+    );
+  }
+  const aliasCollision = await tx.storeTopicEntry.findFirst({
+    where: {
+      normalizedTopic: { in: normalizedAliases },
+      topicType: { in: ["STORE_ALIAS", "ACCEPTED_ALIAS"] },
+      deletedAt: null,
+      storeTopicRuleId: { not: input.storeTopicRuleId },
+      storeTopicRule: {
+        commercePlatform: input.commercePlatform,
+        deletedAt: null,
+      },
+    },
+    include: { storeTopicRule: true },
+  });
+  if (aliasCollision) {
+    const alias = input.aliases.find(
+      (item) => item.normalizedAlias === aliasCollision.normalizedTopic,
+    )!;
+    throw new Error(
+      `STORE_ALIAS_COLLISION：该导入别名已被本平台其他标准店铺使用：${alias.alias}（${aliasCollision.storeTopicRule.storeName}）。`,
+    );
+  }
+}
+
+async function replaceStoreAliases(
+  tx: Prisma.TransactionClient,
+  input: {
+    storeTopicRuleId: string;
+    commercePlatform: CommercePlatform;
+    aliases: readonly ValidatedStoreAlias[];
+    existingTopics: Array<{
+      id: string;
+      normalizedTopic: string;
+      topicType: string;
+    }>;
+    userId: string;
+  },
+) {
+  await assertStoreAliasesAvailable(tx, input);
+  const existingAliases = input.existingTopics.filter(
+    (topic) => topic.topicType === "STORE_ALIAS",
+  );
+  const retainedIds = new Set<string>();
+  for (const alias of input.aliases) {
+    const existing =
+      existingAliases.find(
+        (candidate) => candidate.normalizedTopic === alias.normalizedAlias,
+      ) || existingAliases.find((candidate) => candidate.id === alias.id);
+    if (existing) {
+      retainedIds.add(existing.id);
+      await tx.storeTopicEntry.update({
+        where: { id: existing.id },
+        data: {
+          topic: alias.alias,
+          normalizedTopic: alias.normalizedAlias,
+          topicType: "STORE_ALIAS",
+          sortOrder: alias.sortOrder,
+          enabled: alias.enabled,
+          deletedAt: null,
+          updatedBy: input.userId,
+        },
+      });
+    } else {
+      const created = await tx.storeTopicEntry.create({
+        data: {
+          storeTopicRuleId: input.storeTopicRuleId,
+          topic: alias.alias,
+          normalizedTopic: alias.normalizedAlias,
+          topicType: "STORE_ALIAS",
+          sortOrder: alias.sortOrder,
+          enabled: alias.enabled,
+          createdBy: input.userId,
+          updatedBy: input.userId,
+        },
+      });
+      retainedIds.add(created.id);
+    }
+  }
+  await tx.storeTopicEntry.updateMany({
+    where: {
+      storeTopicRuleId: input.storeTopicRuleId,
+      topicType: "STORE_ALIAS",
+      deletedAt: null,
+      ...(retainedIds.size > 0 ? { id: { notIn: [...retainedIds] } } : {}),
+    },
+    data: {
+      enabled: false,
+      deletedAt: new Date(),
+      updatedBy: input.userId,
+    },
+  });
+}
+
 function topicLogSnapshot(topics: readonly ValidatedTopic[]) {
   return topics.map(({ topic, topicType, enabled }, sortOrder) => ({
     topic,
     topicType,
+    enabled,
+    sortOrder,
+  }));
+}
+
+function storeAliasLogSnapshot(aliases: readonly ValidatedStoreAlias[]) {
+  return aliases.map(({ alias, enabled }, sortOrder) => ({
+    alias,
     enabled,
     sortOrder,
   }));
@@ -629,6 +854,10 @@ export async function createStoreTopicRule(
     requiredTopics: input.requiredTopics,
     defaultStoreName: identity.storeName,
   });
+  const storeAliases = validateStoreAliases(
+    input.storeAliases === undefined ? [] : input.storeAliases,
+    identity.storeName,
+  );
   const topics = [...groups.acceptedTopics, ...groups.requiredTopics];
   const duplicate = await duplicateRule(
     identity.commercePlatform,
@@ -649,6 +878,13 @@ export async function createStoreTopicRule(
       },
     });
     await replaceTopicEntries(tx, rule.id, topics, [], user.id);
+    await replaceStoreAliases(tx, {
+      storeTopicRuleId: rule.id,
+      commercePlatform: identity.commercePlatform,
+      aliases: storeAliases,
+      existingTopics: [],
+      userId: user.id,
+    });
     await tx.operationLog.create({
       data: {
         userId: user.id,
@@ -660,6 +896,8 @@ export async function createStoreTopicRule(
           role: user.role,
           commercePlatform: identity.commercePlatform,
           storeName: rule.storeName,
+          beforeStoreAliases: [],
+          afterStoreAliases: storeAliasLogSnapshot(storeAliases),
           beforeTopics: [],
           afterTopics: topicLogSnapshot(topics),
         }),
@@ -703,6 +941,7 @@ export async function updateStoreTopicRule(
   }
   const beforeAccepted = activeTopicSnapshot(existing.topicEntries, "ACCEPTED");
   const beforeRequired = activeTopicSnapshot(existing.topicEntries, "REQUIRED");
+  const beforeStoreAliases = managedStoreAliases(existing.topicEntries);
   const groups = validateStoreTopicGroups({
     acceptedTopics:
       input.acceptedTopics === undefined
@@ -730,6 +969,10 @@ export async function updateStoreTopicRule(
     });
   }
   const topics = [...groups.acceptedTopics, ...groups.requiredTopics];
+  const storeAliases = validateStoreAliases(
+    input.storeAliases === undefined ? beforeStoreAliases : input.storeAliases,
+    identity.storeName,
+  );
   return prisma.$transaction(async (tx) => {
     const rule = await tx.storeTopicRule.update({
       where: { id },
@@ -740,6 +983,21 @@ export async function updateStoreTopicRule(
       },
     });
     await replaceTopicEntries(tx, id, topics, existing.topicEntries, user.id);
+    if (input.storeAliases !== undefined) {
+      await replaceStoreAliases(tx, {
+        storeTopicRuleId: id,
+        commercePlatform: identity.commercePlatform,
+        aliases: storeAliases,
+        existingTopics: existing.topicEntries,
+        userId: user.id,
+      });
+    } else {
+      await assertStoreAliasesAvailable(tx, {
+        storeTopicRuleId: id,
+        commercePlatform: identity.commercePlatform,
+        aliases: storeAliases,
+      });
+    }
     await tx.operationLog.create({
       data: {
         userId: user.id,
@@ -754,6 +1012,8 @@ export async function updateStoreTopicRule(
           afterStoreName: rule.storeName,
           beforeEnabled: existing.enabled,
           afterEnabled: rule.enabled,
+          beforeStoreAliases: storeAliasLogSnapshot(beforeStoreAliases),
+          afterStoreAliases: storeAliasLogSnapshot(storeAliases),
           beforeTopics: topicLogSnapshot([
             ...beforeAccepted.map((topic) => ({ ...topic, topicType: "ACCEPTED" as const })),
             ...beforeRequired.map((topic) => ({ ...topic, topicType: "REQUIRED" as const })),

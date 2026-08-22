@@ -64,6 +64,10 @@ const storeTopicPanel = readFileSync(
   path.join(root, "components/campaigns/StoreTopicRulesPanel.tsx"),
   "utf8",
 );
+const storeTopicRuleService = readFileSync(
+  path.join(root, "lib/store-topic-rule-service.ts"),
+  "utf8",
+);
 
 describe("店铺话题规则数据模型与迁移", () => {
   it("SQLite 与 PostgreSQL 使用相同独立模型和唯一键", () => {
@@ -305,6 +309,20 @@ describe("店铺话题规则数据模型与迁移", () => {
   it("管理页明确展示店铺话题为任选其一", () => {
     expect(storeTopicPanel).toContain('title: "店铺话题（任选其一）"');
     expect(storeTopicPanel).toContain('label="店铺话题（任选其一）"');
+  });
+
+  it("管理页以独立 STORE_ALIAS DTO 提供导入别名列、搜索和 Form.List", () => {
+    expect(storeTopicPanel).toContain('title: "导入别名"');
+    expect(storeTopicPanel).toContain('<Form.List name="storeAliases">');
+    expect(storeTopicPanel).toContain("搜索标准店铺或导入别名");
+    expect(storeTopicPanel).toContain(
+      "用于匹配 Excel / 上游系统中的店铺名称，不参与小红书或抖音页面话题审核。",
+    );
+    expect(storeTopicRuleService).toContain(
+      'topic.topicType === "STORE_ALIAS" && topic.deletedAt === null',
+    );
+    expect(storeTopicRuleService).toContain("beforeStoreAliases");
+    expect(storeTopicRuleService).toContain("afterStoreAliases");
   });
 
   it("管理入口与读写接口统一使用管理员和审核员业务权限", () => {

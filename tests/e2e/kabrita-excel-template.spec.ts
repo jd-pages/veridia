@@ -38,6 +38,24 @@ test("佳贝艾特13行多平台显式店铺 Alias 预检全部命中 Canonical"
   });
   expect(login.ok()).toBeTruthy();
 
+  const platformCodes = {
+    天猫: "TMALL",
+    抖音: "DOUYIN_ECOMMERCE",
+    京东: "JD",
+  } as const;
+  for (const [platform, alias, canonical] of kabritaStoreAliases) {
+    const ruleResponse = await page.request.get(
+      `/api/store-topic-rules?commercePlatform=${platformCodes[platform]}&query=${encodeURIComponent(alias)}&pageSize=10`,
+    );
+    const rulePayload = await ruleResponse.json();
+    expect(ruleResponse.ok(), JSON.stringify(rulePayload)).toBeTruthy();
+    const rule = rulePayload.data.items.find(
+      (item: { storeName: string }) => item.storeName === canonical,
+    ) as { storeAliases: Array<{ alias: string }> } | undefined;
+    expect(rule, `${platform} ${canonical} 未通过导入别名搜索显示`).toBeTruthy();
+    expect(rule!.storeAliases.map((item) => item.alias)).toContain(alias);
+  }
+
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("佳贝艾特店铺映射预检");
   sheet.addRow(importHeaders);

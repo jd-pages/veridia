@@ -35,6 +35,13 @@ interface StoreTopicRule {
   commercePlatform: CommercePlatform;
   storeName: string;
   expectedTopic: string;
+  storeAliases: Array<{
+    id: string;
+    alias: string;
+    normalizedAlias: string;
+    enabled: boolean;
+    sortOrder: number;
+  }>;
   acceptedTopics: Array<{
     id: string;
     topic: string;
@@ -63,6 +70,11 @@ interface RuleFormValue {
   commercePlatform: CommercePlatform;
   storeName: string;
   enabled: boolean;
+  storeAliases: Array<{
+    id?: string;
+    alias: string;
+    enabled?: boolean;
+  }>;
   acceptedTopics: Array<{
     id?: string;
     topic: string;
@@ -81,6 +93,12 @@ function topicText(value: unknown) {
 
 function normalizedTopicText(value: unknown) {
   return topicText(value).replace(/[A-Z]/g, (character) =>
+    character.toLowerCase(),
+  );
+}
+
+function normalizedStoreNameText(value: unknown) {
+  return String(value ?? "").trim().replace(/[A-Z]/g, (character) =>
     character.toLowerCase(),
   );
 }
@@ -134,6 +152,7 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
       commercePlatform: "TMALL",
       storeName: "",
       enabled: true,
+      storeAliases: [],
       acceptedTopics: [{ topic: "", enabled: true }],
       requiredTopics: [],
     });
@@ -147,6 +166,11 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
       commercePlatform: rule.commercePlatform,
       storeName: rule.storeName,
       enabled: rule.enabled,
+      storeAliases: rule.storeAliases.map((alias) => ({
+        id: alias.id,
+        alias: alias.alias,
+        enabled: alias.enabled,
+      })),
       acceptedTopics: (rule.acceptedTopics.length
         ? rule.acceptedTopics
         : [{ topic: rule.expectedTopic, enabled: true }]
@@ -243,9 +267,9 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
             onChange={(value) => { setStatus(value); setPage(1); }}
           />
           <Input.Search
-            aria-label="搜索店铺名称"
+            aria-label="搜索标准店铺或导入别名"
             allowClear
-            placeholder="搜索店铺名称"
+            placeholder="搜索标准店铺或导入别名"
             style={{ width: 260 }}
             onSearch={(value) => { setQuery(value); setPage(1); }}
           />
@@ -267,7 +291,7 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
         rowKey="id"
         loading={loading}
         dataSource={items}
-        scroll={{ x: 880 }}
+        scroll={{ x: 1080 }}
         columns={[
           {
             title: "成交平台",
@@ -276,6 +300,23 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
             render: (value: CommercePlatform) => commercePlatformLabels[value],
           },
           { title: "标准店铺名称", dataIndex: "storeName", width: 230 },
+          {
+            title: "导入别名",
+            dataIndex: "storeAliases",
+            width: 240,
+            render: (aliases: StoreTopicRule["storeAliases"]) =>
+              aliases.length ? (
+                <Space direction="vertical" size={2}>
+                  {aliases.map((alias) => (
+                    <Typography.Text key={alias.id}>
+                      {alias.alias}
+                    </Typography.Text>
+                  ))}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">—</Typography.Text>
+              ),
+          },
           {
             title: "店铺话题（任选其一）",
             dataIndex: "acceptedTopics",
@@ -412,6 +453,88 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
           </Form.Item>
           <Form.Item name="storeName" label="标准店铺名称" rules={[{ required: true, whitespace: true, message: "请输入标准店铺名称" }]}>
             <Input placeholder="请输入完整店铺名称" />
+          </Form.Item>
+          <Form.Item
+            label="导入别名"
+            extra="用于匹配 Excel / 上游系统中的店铺名称，不参与小红书或抖音页面话题审核。"
+          >
+            <Form.List name="storeAliases">
+              {(fields, { add, remove }) => (
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  {fields.map((field, index) => (
+                    <Space key={field.key} align="start" style={{ width: "100%" }}>
+                      <Form.Item name={[field.name, "id"]} hidden>
+                        <Input />
+                      </Form.Item>
+                      <Form.Item
+                        name={[field.name, "enabled"]}
+                        hidden
+                        valuePropName="checked"
+                      >
+                        <Switch />
+                      </Form.Item>
+                      <Form.Item
+                        name={[field.name, "alias"]}
+                        style={{ flex: 1, marginBottom: 0 }}
+                        rules={[
+                          {
+                            required: true,
+                            whitespace: true,
+                            message: `请输入第 ${index + 1} 条导入别名`,
+                          },
+                          { max: 100, message: "每条导入别名不能超过 100 个字符" },
+                          {
+                            validator: async (_rule, value) => {
+                              const normalized = normalizedStoreNameText(value);
+                              if (!normalized) return;
+                              if (
+                                normalized === normalizedStoreNameText(
+                                  form.getFieldValue("storeName"),
+                                )
+                              ) {
+                                throw new Error(
+                                  "该名称已经是标准店铺名称，无需重复添加为导入别名。",
+                                );
+                              }
+                              const duplicates = (form.getFieldValue("storeAliases") || [])
+                                .filter(
+                                  (alias: RuleFormValue["storeAliases"][number]) =>
+                                    normalizedStoreNameText(alias?.alias) === normalized,
+                                );
+                              if (duplicates.length > 1) {
+                                throw new Error(`该店铺已存在相同导入别名：${String(value).trim()}`);
+                              }
+                            },
+                          },
+                        ]}
+                      >
+                        <Input
+                          placeholder="请输入 Excel / 上游系统中的完整店铺名称"
+                          aria-label={`导入别名 ${index + 1}`}
+                          data-testid={`store-alias-${index}`}
+                        />
+                      </Form.Item>
+                      <Button
+                        danger
+                        type="text"
+                        icon={<DeleteOutlined />}
+                        aria-label={`删除导入别名 ${index + 1}`}
+                        onClick={() => remove(field.name)}
+                      >
+                        删除
+                      </Button>
+                    </Space>
+                  ))}
+                  <Button
+                    type="dashed"
+                    icon={<PlusOutlined />}
+                    onClick={() => add({ alias: "", enabled: true })}
+                  >
+                    添加导入别名
+                  </Button>
+                </Space>
+              )}
+            </Form.List>
           </Form.Item>
           <Form.Item
             label="店铺话题（任选其一）"
