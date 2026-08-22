@@ -22,6 +22,7 @@ function listFiles(directory) {
 export function e2eTemplateFingerprint(projectRoot = root) {
   const files = [
     path.join(projectRoot, "prisma", "schema.prisma"),
+    path.join(projectRoot, "rules", "default-rules.json"),
     path.join(projectRoot, "tests", "e2e", "setup-database.ts"),
     ...listFiles(path.join(projectRoot, "prisma", "migrations")),
   ].sort();

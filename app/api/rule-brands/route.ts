@@ -35,7 +35,11 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
           select: { id: true },
         }),
         prisma.topicRule.count({
-          where: { brandName, contentChannel: { in: [contentChannel, "ALL"] } },
+          where: {
+            brandName,
+            status: "ACTIVE",
+            contentChannel: { in: [contentChannel, "ALL"] },
+          },
         }),
       ]);
       return {

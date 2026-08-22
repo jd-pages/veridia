@@ -23,8 +23,13 @@ describe("分层测试门禁", () => {
       path.join(process.cwd(), "vitest.config.ts"),
       "utf8",
     );
+    const e2eTemplate = fs.readFileSync(
+      path.join(process.cwd(), "scripts/testing/e2e-database-template.mjs"),
+      "utf8",
+    );
     expect(config).toContain("fileParallelism: false");
     expect(config).not.toContain("dangerouslyIgnoreUnhandledErrors");
+    expect(e2eTemplate).toContain('path.join(projectRoot, "rules", "default-rules.json")');
   });
 
   it("正式 E2E 清单与 Playwright 正式测试文件完全一致且没有 skip", () => {

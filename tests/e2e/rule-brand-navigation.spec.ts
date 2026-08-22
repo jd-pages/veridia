@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { prisma } from "@/lib/db";
 import {
   dismissRuleUpdateNoticeIfPresent,
   waitForRuleUpdateCheck,
@@ -225,6 +226,50 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
   expect(requirements.rules.map((rule) => rule.topic).join("、")).not.toMatch(
     /爱他美|新生儿奶粉|二段奶粉推荐|三段奶粉推荐/u,
   );
+
+  const brandRulesResponse = await page.request.get(
+    `/api/rules?brandName=${encodeURIComponent("佳贝艾特")}&month=2026-08&contentChannel=XIAOHONGSHU`,
+  );
+  const brandRules = (await brandRulesResponse.json()).data as Array<{
+    status: string;
+    topicCategory: string;
+  }>;
+  expect(
+    brandRules
+      .filter((rule) => rule.status === "ACTIVE")
+      .reduce<Record<string, number>>((counts, rule) => {
+        counts[rule.topicCategory] = (counts[rule.topicCategory] || 0) + 1;
+        return counts;
+      }, {}),
+  ).toEqual({ BRAND_COMMON: 1, PRODUCT_COMMON: 2, POPULAR: 4 });
+
+  const inactiveStageRule = await prisma.topicRule.create({
+    data: {
+      ruleSource: "LOCAL_DRAFT",
+      scope: "CAMPAIGN",
+      campaignId: campaign!.id,
+      brandName: "佳贝艾特",
+      contentChannel: "XIAOHONGSHU",
+      ruleType: "MUST_ALL",
+      topicCategory: "PRODUCT_STAGE",
+      applicableStage: "IFFO_2",
+      topic: "#初见小温柔成长更友好",
+      status: "INACTIVE",
+    },
+  });
+  try {
+    const brandsResponse = await page.request.get(
+      "/api/rule-brands?contentChannel=XIAOHONGSHU",
+    );
+    const brands = (await brandsResponse.json()).data as Array<{
+      brandName: string;
+      ruleCount: number;
+    }>;
+    expect(brands.find((brand) => brand.brandName === "佳贝艾特")?.ruleCount)
+      .toBe(7);
+  } finally {
+    await prisma.topicRule.delete({ where: { id: inactiveStageRule.id } });
+  }
 
   await page.goto("/rules");
   const kabritaBrandCard = page.locator(".ant-card").filter({
