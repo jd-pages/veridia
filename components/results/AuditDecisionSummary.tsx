@@ -229,26 +229,12 @@ export default function AuditDecisionSummary({
             <strong>{formatAuditTime(row.auditedAt)}</strong>
           </div>
           {row.task.importRecord ? (
-            <>
-              <div>
-                <span>导入文件</span>
-                <Tooltip title={row.task.importRecord.fileName}>
-                  <strong className={styles.storeName}>
-                    {row.task.importRecord.fileName}
-                  </strong>
-                </Tooltip>
-              </div>
-              <div>
-                <span>导入时间</span>
-                <strong>{formatAuditTime(row.task.importRecord.createdAt)}</strong>
-              </div>
-              <div>
-                <span>导入批次 ID</span>
-                <Typography.Text copyable={{ text: row.task.importRecord.id }}>
-                  {row.task.importRecord.id}
-                </Typography.Text>
-              </div>
-            </>
+            <div>
+              <span>导入批次 ID</span>
+              <Typography.Text copyable={{ text: row.task.importRecord.id }}>
+                {row.task.importRecord.id}
+              </Typography.Text>
+            </div>
           ) : null}
           <div className={styles.decisionTitleField}>
             <span>标题</span>

@@ -413,6 +413,8 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   ]) {
     await expect(drawer.getByText(label, { exact: true })).toBeVisible();
   }
+  await expect(drawer.getByText("导入文件", { exact: true })).toHaveCount(0);
+  await expect(drawer.getByText("导入时间", { exact: true })).toHaveCount(0);
   await expect(
     drawer.getByText("原始发布时间", { exact: true }).locator("..").locator("strong"),
   ).toHaveText(/^(?:未能确认|待确认|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$/u);

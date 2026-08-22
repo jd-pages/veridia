@@ -3,25 +3,24 @@ chcp 936 >nul
 cd /d "%~dp0"
 setlocal EnableExtensions DisableDelayedExpansion
 set "VERIDIA_RULES_REPOSITORY=jd-pages/veridia-rules"
-title VERIDIA 发布规则新版
-
-rem 默认使用项目内 rules/default-rules.json。
-rem 如需从明确指定的数据库发布，请取消下一行注释并修改路径：
-rem set "VERIDIA_RULE_DATABASE_PATH=E:\xxx\data\veridia.db"
+set "VERIDIA_RULE_PROJECT_SOURCE="
+title VERIDIA 远程规则发布
 
 echo.
 echo VERIDIA 远程规则发布
 echo 当前目录：%CD%
 if defined VERIDIA_RULE_DATABASE_PATH (
-  echo 规则来源：指定数据库
+  echo 规则来源：显式数据库 override
   echo VERIDIA_RULE_DATABASE_PATH=%VERIDIA_RULE_DATABASE_PATH%
 ) else (
-  echo 规则来源：项目内 rules/default-rules.json
-  echo VERIDIA_RULE_DATABASE_PATH：未设置
+  echo 规则来源：自动解析当前 VERIDIA Desktop 正式数据库
+  echo 路径配置：%%LOCALAPPDATA%%\VERIDIA\config\data-location.json
 )
+echo 注意：不会回退发布 rules\default-rules.json；找不到正式数据库会直接停止。
 
 echo.
 echo 即将执行 npm.cmd run rules:publish
+echo 实际数据库路径、规则版本和各类规则数量将在发布前显示。
 echo 发布权限仅使用本机 GitHub CLI 登录，不会写入安装包。
 call npm.cmd run rules:publish
 set "VERIDIA_EXIT_CODE=%ERRORLEVEL%"

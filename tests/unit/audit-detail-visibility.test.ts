@@ -65,7 +65,10 @@ describe("审核详情展示过滤", () => {
     expect(decision).toContain("平台显示时间");
     expect(decision).toContain("formatPlatformPublishedAt");
     expect(decision).toContain("row.note.publishedAtRaw");
-    expect(decision).toContain("导入时间");
+    expect(decision).not.toContain("导入文件");
+    expect(decision).not.toContain("导入时间");
+    expect(decision).toContain("导入批次 ID");
+    expect(decision).toContain("row.task.importRecord.id");
     expect(decision).toContain("实际审核时间");
     expect(decision).toContain("复制订单编号");
   });

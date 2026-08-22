@@ -17,6 +17,7 @@ import {
   RULE_PACKAGE_SCHEMA_VERSION,
   type RuleCounts,
   type RulePackageManifest,
+  type RulePackagePayload,
 } from "./types";
 
 const MAX_RULE_PACKAGE_BYTES = 20 * 1024 * 1024;
@@ -93,9 +94,24 @@ async function retainBundledLocalRules() {
 
 function countsFromState(value: string | null | undefined): RuleCounts {
   try {
-    return JSON.parse(value || "{}") as RuleCounts;
+    const parsed = JSON.parse(value || "{}") as Partial<RuleCounts>;
+    return {
+      products: parsed.products ?? 0,
+      activities: parsed.activities ?? 0,
+      stageGroups: parsed.stageGroups ?? 0,
+      topicRules: parsed.topicRules ?? 0,
+      storeTopicRules: parsed.storeTopicRules ?? 0,
+      storeAliases: parsed.storeAliases ?? 0,
+    };
   } catch {
-    return { products: 0, activities: 0, stageGroups: 0, topicRules: 0 };
+    return {
+      products: 0,
+      activities: 0,
+      stageGroups: 0,
+      topicRules: 0,
+      storeTopicRules: 0,
+      storeAliases: 0,
+    };
   }
 }
 
@@ -211,6 +227,14 @@ export function validateRuleManifest(input: unknown): RulePackageManifest {
     activityCount: Number(value.activityCount),
     stageGroupCount: Number(value.stageGroupCount),
     topicRuleCount: Number(value.topicRuleCount),
+    storeTopicRuleCount:
+      value.storeTopicRuleCount === undefined
+        ? undefined
+        : Number(value.storeTopicRuleCount),
+    storeAliasCount:
+      value.storeAliasCount === undefined
+        ? undefined
+        : Number(value.storeAliasCount),
     templateVersion: value.templateVersion
       ? String(value.templateVersion)
       : undefined,
@@ -240,8 +264,55 @@ export function validateRuleManifest(input: unknown): RulePackageManifest {
   ) {
     throw new Error("表格模板配置 SHA-256 无效");
   }
+  for (const count of [
+    manifest.productCount,
+    manifest.activityCount,
+    manifest.stageGroupCount,
+    manifest.topicRuleCount,
+    manifest.storeTopicRuleCount,
+    manifest.storeAliasCount,
+  ]) {
+    if (
+      count !== undefined &&
+      (!Number.isSafeInteger(count) || count < 0)
+    ) {
+      throw new Error("规则包数量统计无效");
+    }
+  }
   assertAllowedUrl(manifest.downloadUrl);
   return manifest;
+}
+
+export function validateRulePackageCounts(
+  payload: RulePackagePayload,
+  manifest: RulePackageManifest,
+): RuleCounts {
+  const counts = {
+    products: payload.products.length,
+    activities: payload.campaigns.length,
+    stageGroups: payload.stageGroups.length,
+    topicRules: payload.topicRules.length,
+    storeTopicRules: payload.storeTopicRules?.length ?? 0,
+    storeAliases:
+      payload.storeTopicRules?.reduce(
+        (total, rule) => total + rule.storeAliases.length,
+        0,
+      ) ?? 0,
+  };
+  if (
+    counts.products !== manifest.productCount ||
+    counts.activities !== manifest.activityCount ||
+    counts.stageGroups !== manifest.stageGroupCount ||
+    counts.topicRules !== manifest.topicRuleCount ||
+    (payload.storeTopicRules !== undefined &&
+      (manifest.storeTopicRuleCount === undefined ||
+        manifest.storeAliasCount === undefined ||
+        counts.storeTopicRules !== manifest.storeTopicRuleCount ||
+        counts.storeAliases !== manifest.storeAliasCount))
+  ) {
+    throw new Error("规则包数量统计与清单不一致");
+  }
+  return counts;
 }
 
 export function verifyRuleManifestSignature(
@@ -355,7 +426,6 @@ async function initializeBuiltinRules() {
     if (current.source === "BUILTIN") await retainBundledLocalRules();
     return current;
   }
-
   const existingRuleCount = await prisma.topicRule.count();
   if (existingRuleCount > 0) {
     await prisma.$transaction(async (tx) => {
@@ -377,12 +447,27 @@ async function initializeBuiltinRules() {
           update: {},
         });
       }
-      const [products, activities, stageGroups, topicRules] =
+      const [
+        products,
+        activities,
+        stageGroups,
+        topicRules,
+        storeTopicRules,
+        storeAliases,
+      ] =
         await Promise.all([
           tx.product.count({ where: { deletedAt: null } }),
           tx.campaign.count({ where: { deletedAt: null } }),
           tx.ruleStageGroup.count(),
           tx.topicRule.count(),
+          tx.storeTopicRule.count({ where: { deletedAt: null } }),
+          tx.storeTopicEntry.count({
+            where: {
+              topicType: "STORE_ALIAS",
+              deletedAt: null,
+              storeTopicRule: { deletedAt: null },
+            },
+          }),
         ]);
       await tx.ruleSyncState.upsert({
         where: { id: "active" },
@@ -397,6 +482,8 @@ async function initializeBuiltinRules() {
             activities,
             stageGroups,
             topicRules,
+            storeTopicRules,
+            storeAliases,
           }),
         },
         update: {},
@@ -597,20 +684,7 @@ export async function synchronizeLatestRules() {
     ) {
       throw new Error("规则包内容与清单版本不一致");
     }
-    const counts = {
-      products: payload.products.length,
-      activities: payload.campaigns.length,
-      stageGroups: payload.stageGroups.length,
-      topicRules: payload.topicRules.length,
-    };
-    if (
-      counts.products !== manifest.productCount ||
-      counts.activities !== manifest.activityCount ||
-      counts.stageGroups !== manifest.stageGroupCount ||
-      counts.topicRules !== manifest.topicRuleCount
-    ) {
-      throw new Error("规则包数量统计与清单不一致");
-    }
+    validateRulePackageCounts(payload, manifest);
     await prisma.ruleSyncState.update({
       where: { id: "active" },
       data: { status: "APPLYING" },

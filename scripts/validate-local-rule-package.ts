@@ -12,7 +12,7 @@ try {
     minimumAppVersion: packageJson.version,
   });
   console.log(
-    `本地规则读取检查通过：产品 ${payload.products.length}，活动 ${payload.campaigns.length}，阶段组 ${payload.stageGroups.length}，话题规则 ${payload.topicRules.length}。`,
+    `本地规则读取检查通过：产品 ${payload.products.length}，活动 ${payload.campaigns.length}，阶段组 ${payload.stageGroups.length}，话题规则 ${payload.topicRules.length}，店铺规则 ${payload.storeTopicRules?.length ?? 0}，导入别名 ${payload.storeTopicRules?.reduce((total, rule) => total + rule.storeAliases.length, 0) ?? 0}。`,
   );
 } catch (error) {
   console.error(

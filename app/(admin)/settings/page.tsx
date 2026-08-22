@@ -55,6 +55,8 @@ interface RuleSyncStatus {
     activities: number;
     stageGroups: number;
     topicRules: number;
+    storeTopicRules: number;
+    storeAliases: number;
   };
   lastCheckedAt: string | null;
   lastSyncedAt: string | null;
@@ -520,7 +522,9 @@ export default function SettingsPage() {
             产品 {ruleSync?.counts.products ?? 0} · 活动{" "}
             {ruleSync?.counts.activities ?? 0} · 阶段组{" "}
             {ruleSync?.counts.stageGroups ?? 0} · 话题{" "}
-            {ruleSync?.counts.topicRules ?? 0}
+            {ruleSync?.counts.topicRules ?? 0} · 店铺规则{" "}
+            {ruleSync?.counts.storeTopicRules ?? 0} · 导入别名{" "}
+            {ruleSync?.counts.storeAliases ?? 0}
           </Descriptions.Item>
         </Descriptions>
         {!ruleSync?.configured && (

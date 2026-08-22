@@ -6,6 +6,7 @@ import builtinRules from "@/rules/default-rules.json";
 import {
   normalizeLocalStageReferences,
   payloadSha256,
+  storeTopicRuleStableKey,
   validateRulePayload,
 } from "@/lib/rules/package";
 import defaultTemplates from "@/rules/default-import-export-templates.json";
@@ -13,6 +14,7 @@ import {
   isRulePackageCompatible,
   ruleSyncFailureDetails,
   validateRuleManifest,
+  validateRulePackageCounts,
   verifyRuleManifestSignature,
 } from "@/lib/rules/sync";
 
@@ -248,6 +250,70 @@ describe("GitHub 规则同步", () => {
     expect(isRulePackageCompatible("1.0.1", "1.0.2")).toBe(false);
     expect(isRulePackageCompatible("1.0.2", "1.0.2")).toBe(true);
     expect(isRulePackageCompatible("1.1.0", "1.0.2")).toBe(true);
+    expect(isRulePackageCompatible("1.1.16", "1.1.17")).toBe(false);
+    expect(isRulePackageCompatible("1.1.17", "1.1.17")).toBe(true);
+  });
+
+  it("旧 Manifest 可缺店铺统计，新规则包必须精确绑定店铺规则和 Alias 数量", () => {
+    const payload = validateRulePayload({
+      ...structuredClone(builtinRules),
+      minimumAppVersion: "1.1.17",
+      storeTopicRules: [
+        {
+          key: storeTopicRuleStableKey("TMALL", "规则同步测试店"),
+          commercePlatform: "TMALL",
+          storeName: "规则同步测试店",
+          enabled: true,
+          storeAliases: [
+            { value: "规则同步测试别名", enabled: true, sortOrder: 0 },
+          ],
+          acceptedTopics: [
+            { value: "#规则同步测试店", enabled: true, sortOrder: 0 },
+          ],
+          acceptedAliases: [],
+          requiredTopics: [],
+        },
+      ],
+    });
+    const manifest = validateRuleManifest({
+      ruleVersion: "rules-2026.08.22.1",
+      schemaVersion: 1,
+      publishedAt: "2026-08-22T00:00:00.000Z",
+      minimumAppVersion: "1.1.17",
+      downloadUrl:
+        "https://github.com/example/rules/releases/download/rules-2026.08.22.1/veridia-rules.zip",
+      fileSize: 100,
+      sha256: "a".repeat(64),
+      productCount: payload.products.length,
+      activityCount: payload.campaigns.length,
+      stageGroupCount: payload.stageGroups.length,
+      topicRuleCount: payload.topicRules.length,
+      storeTopicRuleCount: 1,
+      storeAliasCount: 1,
+    });
+    expect(validateRulePackageCounts(payload, manifest)).toMatchObject({
+      storeTopicRules: 1,
+      storeAliases: 1,
+    });
+    expect(() =>
+      validateRulePackageCounts(payload, {
+        ...manifest,
+        storeAliasCount: 0,
+      }),
+    ).toThrow(/数量统计/u);
+
+    const legacy = validateRulePayload(structuredClone(builtinRules));
+    expect(() =>
+      validateRulePackageCounts(legacy, {
+        ...manifest,
+        productCount: legacy.products.length,
+        activityCount: legacy.campaigns.length,
+        stageGroupCount: legacy.stageGroups.length,
+        topicRuleCount: legacy.topicRules.length,
+        storeTopicRuleCount: undefined,
+        storeAliasCount: undefined,
+      }),
+    ).not.toThrow();
   });
 
   it("保留普通客户端规则同步的真实错误码和技术原因", () => {

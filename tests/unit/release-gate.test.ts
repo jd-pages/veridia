@@ -248,7 +248,16 @@ describe("本地打包发布门禁", () => {
       'set "VERIDIA_RULES_REPOSITORY=jd-pages/veridia-rules"',
     );
     expect(rulesBat).toContain('cd /d "%~dp0"');
-    expect(rulesBat).toContain("规则来源：项目内 rules/default-rules.json");
+    expect(rulesBat).toContain(
+      "规则来源：自动解析当前 VERIDIA Desktop 正式数据库",
+    );
+    expect(rulesBat).toContain(
+      "不会回退发布 rules\\default-rules.json",
+    );
+    expect(rulesBat).toContain('set "VERIDIA_RULE_PROJECT_SOURCE="');
+    expect(rulesBat).not.toContain(
+      "规则来源：项目内 rules/default-rules.json",
+    );
     expect(rulesBat).toContain("if defined VERIDIA_RULE_DATABASE_PATH (");
     expect(rulesBat).not.toContain("E:\\veridi\\shuju\\data\\veridia.db");
     expect(rulesBat).not.toContain("E:\\v-preview\\data\\veridia.db");

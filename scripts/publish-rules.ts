@@ -83,6 +83,15 @@ const payload = await publishSource.createPayload({
   ruleVersion,
   minimumAppVersion: packageJson.version,
 });
+const storeAliasCount =
+  payload.storeTopicRules?.reduce(
+    (total, rule) => total + rule.storeAliases.length,
+    0,
+  ) ?? 0;
+console.log(`待发布规则版本：${ruleVersion}`);
+console.log(
+  `规则数量：产品 ${payload.products.length}，活动 ${payload.campaigns.length}，话题规则 ${payload.topicRules.length}，店铺规则 ${payload.storeTopicRules?.length ?? 0}，导入别名 ${storeAliasCount}`,
+);
 const zip = new JSZip();
 zip.file("rules.json", JSON.stringify(payload, null, 2));
 const packageBytes = await zip.generateAsync({
@@ -104,6 +113,8 @@ const manifest: RulePackageManifest = {
   activityCount: payload.campaigns.length,
   stageGroupCount: payload.stageGroups.length,
   topicRuleCount: payload.topicRules.length,
+  storeTopicRuleCount: payload.storeTopicRules?.length,
+  storeAliasCount: payload.storeTopicRules ? storeAliasCount : undefined,
   templateVersion: payload.importExportTemplates?.templateVersion,
   templateConfigSha256: payload.importExportTemplates
     ? createHash("sha256")

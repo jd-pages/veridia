@@ -39,6 +39,8 @@ interface RuleSyncStatus {
     activities: number;
     stageGroups: number;
     topicRules: number;
+    storeTopicRules: number;
+    storeAliases: number;
   };
 }
 
@@ -294,6 +296,10 @@ function SetupContent() {
                 </Descriptions.Item>
                 <Descriptions.Item label="阶段组数量">
                   {rules?.counts.stageGroups ?? 0}
+                </Descriptions.Item>
+                <Descriptions.Item label="店铺规则 / 导入别名">
+                  {rules?.counts.storeTopicRules ?? 0} /{" "}
+                  {rules?.counts.storeAliases ?? 0}
                 </Descriptions.Item>
                 <Descriptions.Item label="同步状态">
                   {ruleSyncStatusLabel(rules?.status)}

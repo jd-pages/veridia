@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
+import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import {
+  normalizeStoreNameForMatch,
+  normalizeStoreTopicForMatch,
+  storeTopicWithHash,
+} from "@/lib/store-topic-config";
 import { normalizeTopic } from "@/lib/topic";
 import {
   DEFAULT_PAGE_STATUS_RULES,
@@ -18,6 +24,11 @@ import {
 
 const nonEmpty = z.string().trim().min(1);
 const nullableText = z.string().nullable();
+const storeValueSchema = z.object({
+  value: nonEmpty,
+  enabled: z.boolean(),
+  sortOrder: z.number().int(),
+});
 
 const payloadSchema = z.object({
   ruleVersion: nonEmpty,
@@ -98,6 +109,25 @@ const payloadSchema = z.object({
       notes: nullableText.optional().default(null),
     }),
   ),
+  storeTopicRules: z
+    .array(
+      z.object({
+        key: nonEmpty,
+        commercePlatform: z.enum([
+          "JD",
+          "DOUYIN_ECOMMERCE",
+          "TMALL",
+          "TAOBAO",
+        ]),
+        storeName: nonEmpty,
+        enabled: z.boolean(),
+        storeAliases: z.array(storeValueSchema),
+        acceptedTopics: z.array(storeValueSchema).min(1),
+        acceptedAliases: z.array(storeValueSchema),
+        requiredTopics: z.array(storeValueSchema),
+      }),
+    )
+    .optional(),
   pageStatusRules: z.object({
     normalStatuses: z.array(nonEmpty).min(1),
     technicalFailureStatuses: z.array(nonEmpty),
@@ -111,6 +141,30 @@ function stableKey(prefix: string, parts: Array<string | null | undefined>) {
     .digest("hex")
     .slice(0, 20);
   return `${prefix}_${digest}`;
+}
+
+export function storeTopicRuleStableKey(
+  commercePlatform: string,
+  storeName: string,
+) {
+  return stableKey("store", [
+    commercePlatform,
+    normalizeStoreNameForMatch(storeName),
+  ]);
+}
+
+function compareSemver(left: string, right: string) {
+  const parse = (value: string) =>
+    value
+      .split(/[.+-]/u)
+      .slice(0, 3)
+      .map((part) => Number.parseInt(part, 10) || 0);
+  const a = parse(left);
+  const b = parse(right);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  return 0;
 }
 
 function normalizedRuleBrand(brand: string | null | undefined) {
@@ -136,6 +190,108 @@ export function validateRulePayload(input: unknown): RulePackagePayload {
   uniqueValues(payload.campaigns.map((item) => item.key), "活动键");
   uniqueValues(payload.stageGroups.map((item) => item.key), "阶段组键");
   uniqueValues(payload.topicRules.map((item) => item.key), "话题规则键");
+
+  if (payload.storeTopicRules !== undefined) {
+    if (compareSemver(payload.minimumAppVersion, "1.1.17") < 0) {
+      throw new Error("包含店铺规则的规则包最低软件版本不能低于 1.1.17");
+    }
+    uniqueValues(
+      payload.storeTopicRules.map((item) => item.key),
+      "店铺规则键",
+    );
+    const canonicalIdentities = new Set<string>();
+    const resolvingNames = new Map<string, string>();
+    for (const rule of payload.storeTopicRules) {
+      const normalizedStoreName = normalizeStoreNameForMatch(rule.storeName);
+      const identity = `${rule.commercePlatform}\u001f${normalizedStoreName}`;
+      if (
+        rule.key !==
+        storeTopicRuleStableKey(rule.commercePlatform, rule.storeName)
+      ) {
+        throw new Error(
+          `店铺规则稳定键与平台/标准店铺不一致：${rule.storeName}`,
+        );
+      }
+      if (canonicalIdentities.has(identity)) {
+        throw new Error(
+          `同一平台存在重复标准店铺：${rule.commercePlatform} / ${rule.storeName}`,
+        );
+      }
+      canonicalIdentities.add(identity);
+      resolvingNames.set(identity, `标准店铺“${rule.storeName}”`);
+    }
+
+    for (const rule of payload.storeTopicRules) {
+      const entryNames = new Map<string, string>();
+      const assertEntry = (
+        value: string,
+        label: string,
+        kind: "TOPIC" | "STORE_NAME",
+      ) => {
+        const normalized =
+          kind === "TOPIC"
+            ? normalizeStoreTopicForMatch(value)
+            : normalizeStoreNameForMatch(value);
+        if (kind === "TOPIC") {
+          const normalizedTopic = storeTopicWithHash(value);
+          if (normalizeTopic(normalizedTopic) !== normalizedTopic) {
+            throw new Error(`${label}格式不规范：${value}`);
+          }
+        }
+        const existing = entryNames.get(normalized);
+        if (existing) {
+          throw new Error(
+            `店铺“${rule.storeName}”存在规范化 Entry 冲突：${existing} / ${label}`,
+          );
+        }
+        entryNames.set(normalized, label);
+        return normalized;
+      };
+
+      for (const item of rule.acceptedTopics) {
+        assertEntry(item.value, `可接受话题“${item.value}”`, "TOPIC");
+      }
+      for (const item of rule.requiredTopics) {
+        assertEntry(item.value, `附加必需话题“${item.value}”`, "TOPIC");
+      }
+      for (const item of rule.acceptedAliases) {
+        const normalized = assertEntry(
+          item.value,
+          `历史兼容别名“${item.value}”`,
+          "TOPIC",
+        );
+        const identity = `${rule.commercePlatform}\u001f${normalized}`;
+        const occupied = resolvingNames.get(identity);
+        if (occupied) {
+          throw new Error(
+            `STORE_ALIAS_COLLISION：${rule.commercePlatform} / ${item.value} 已被${occupied}占用`,
+          );
+        }
+        resolvingNames.set(
+          identity,
+          `店铺“${rule.storeName}”的 ACCEPTED_ALIAS`,
+        );
+      }
+      for (const item of rule.storeAliases) {
+        const normalized = assertEntry(
+          item.value,
+          `导入别名“${item.value}”`,
+          "STORE_NAME",
+        );
+        const identity = `${rule.commercePlatform}\u001f${normalized}`;
+        const occupied = resolvingNames.get(identity);
+        if (occupied) {
+          throw new Error(
+            `STORE_ALIAS_COLLISION：${rule.commercePlatform} / ${item.value} 已被${occupied}占用`,
+          );
+        }
+        resolvingNames.set(
+          identity,
+          `店铺“${rule.storeName}”的 STORE_ALIAS`,
+        );
+      }
+    }
+  }
 
   const productKeys = new Set(payload.products.map((item) => item.key));
   const productBrandByKey = new Map(
@@ -234,24 +390,44 @@ export async function exportCurrentRulePayload(options?: {
   ruleVersion?: string;
   minimumAppVersion?: string;
   publishedAt?: Date;
-}) {
-  const [products, campaigns, topicRules, storedGroups, syncState] =
-    await prisma.$transaction([
-      prisma.product.findMany({
+}, database: PrismaClient = prisma) {
+  const [
+    products,
+    campaigns,
+    topicRules,
+    storedGroups,
+    storeTopicRules,
+    syncState,
+  ] =
+    await database.$transaction([
+      database.product.findMany({
         where: { deletedAt: null },
         include: { aliases: true },
         orderBy: [{ createdAt: "asc" }, { name: "asc" }],
       }),
-      prisma.campaign.findMany({
+      database.campaign.findMany({
         where: { deletedAt: null },
         include: { products: { orderBy: { sortOrder: "asc" } } },
         orderBy: [{ startDate: "asc" }, { name: "asc" }],
       }),
-      prisma.topicRule.findMany({
+      database.topicRule.findMany({
         orderBy: [{ campaignId: "asc" }, { sortOrder: "asc" }],
       }),
-      prisma.ruleStageGroup.findMany({ orderBy: { sortOrder: "asc" } }),
-      prisma.ruleSyncState.findUnique({ where: { id: "active" } }),
+      database.ruleStageGroup.findMany({ orderBy: { sortOrder: "asc" } }),
+      database.storeTopicRule.findMany({
+        where: { deletedAt: null },
+        include: {
+          topicEntries: {
+            where: { deletedAt: null },
+            orderBy: [{ topicType: "asc" }, { sortOrder: "asc" }],
+          },
+        },
+        orderBy: [
+          { commercePlatform: "asc" },
+          { normalizedStoreName: "asc" },
+        ],
+      }),
+      database.ruleSyncState.findUnique({ where: { id: "active" } }),
     ]);
 
   const productKeyById = new Map(
@@ -353,7 +529,7 @@ export async function exportCurrentRulePayload(options?: {
       "builtin-2026.07.29.1",
     schemaVersion: RULE_PACKAGE_SCHEMA_VERSION,
     publishedAt: (options?.publishedAt || new Date()).toISOString(),
-    minimumAppVersion: options?.minimumAppVersion || "1.0.0",
+    minimumAppVersion: options?.minimumAppVersion || "1.1.17",
     products: products.map((product) => ({
       key: productKeyById.get(product.id),
       code: product.code,
@@ -399,6 +575,29 @@ export async function exportCurrentRulePayload(options?: {
     })),
     stageGroups: normalizedLocalRules.stageGroups,
     topicRules: normalizedLocalRules.topicRules,
+    storeTopicRules: storeTopicRules.map((rule) => {
+      const valuesByType = (topicType: string) =>
+        rule.topicEntries
+          .filter((entry) => entry.topicType === topicType)
+          .map((entry) => ({
+            value: entry.topic,
+            enabled: entry.enabled,
+            sortOrder: entry.sortOrder,
+          }));
+      return {
+        key: storeTopicRuleStableKey(
+          rule.commercePlatform,
+          rule.normalizedStoreName,
+        ),
+        commercePlatform: rule.commercePlatform,
+        storeName: rule.storeName,
+        enabled: rule.enabled,
+        storeAliases: valuesByType("STORE_ALIAS"),
+        acceptedTopics: valuesByType("ACCEPTED"),
+        acceptedAliases: valuesByType("ACCEPTED_ALIAS"),
+        requiredTopics: valuesByType("REQUIRED"),
+      };
+    }),
     pageStatusRules: DEFAULT_PAGE_STATUS_RULES,
     importExportTemplates: syncState?.templateConfigJson
       ? validateImportExportTemplates(
@@ -417,14 +616,15 @@ export function payloadSha256(payload: RulePackagePayload) {
 export async function applyRulePayload(
   input: unknown,
   source: "BUILTIN" | "GITHUB" | "RESTORE",
+  database: PrismaClient = prisma,
 ) {
   const payload = validateRulePayload(input);
-  const previous = await exportCurrentRulePayload();
-  const previousState = await prisma.ruleSyncState.findUnique({
+  const previous = await exportCurrentRulePayload(undefined, database);
+  const previousState = await database.ruleSyncState.findUnique({
     where: { id: "active" },
   });
 
-  return prisma.$transaction(async (tx) => {
+  return database.$transaction(async (tx) => {
     await tx.rulePackageBackup.create({
       data: {
         ruleVersion: previous.ruleVersion,
@@ -434,6 +634,138 @@ export async function applyRulePayload(
         payloadJson: JSON.stringify(previous),
       },
     });
+
+    if (payload.storeTopicRules !== undefined) {
+      const appliedAt = new Date();
+      const publishedIdentities = new Set(
+        payload.storeTopicRules.map(
+          (item) =>
+            `${item.commercePlatform}\u001f${normalizeStoreNameForMatch(item.storeName)}`,
+        ),
+      );
+      const existingActiveRules = await tx.storeTopicRule.findMany({
+        where: { deletedAt: null },
+        select: {
+          id: true,
+          commercePlatform: true,
+          normalizedStoreName: true,
+        },
+      });
+      for (const existing of existingActiveRules) {
+        const identity =
+          `${existing.commercePlatform}\u001f${existing.normalizedStoreName}`;
+        if (publishedIdentities.has(identity)) continue;
+        await tx.storeTopicEntry.updateMany({
+          where: { storeTopicRuleId: existing.id, deletedAt: null },
+          data: { enabled: false, deletedAt: appliedAt },
+        });
+        await tx.storeTopicRule.update({
+          where: { id: existing.id },
+          data: { enabled: false, deletedAt: appliedAt },
+        });
+      }
+
+      for (const item of payload.storeTopicRules) {
+        const normalizedStoreName = normalizeStoreNameForMatch(item.storeName);
+        const expectedTopic = storeTopicWithHash(
+          item.acceptedTopics.find((topic) => topic.enabled)?.value ||
+            item.acceptedTopics[0].value,
+        );
+        const existing = await tx.storeTopicRule.findUnique({
+          where: {
+            commercePlatform_normalizedStoreName: {
+              commercePlatform: item.commercePlatform,
+              normalizedStoreName,
+            },
+          },
+        });
+        const rule = existing
+          ? await tx.storeTopicRule.update({
+              where: { id: existing.id },
+              data: {
+                storeName: item.storeName,
+                normalizedStoreName,
+                expectedTopic,
+                enabled: item.enabled,
+                deletedAt: null,
+              },
+            })
+          : await tx.storeTopicRule.create({
+              data: {
+                commercePlatform: item.commercePlatform,
+                storeName: item.storeName,
+                normalizedStoreName,
+                expectedTopic,
+                enabled: item.enabled,
+              },
+            });
+        const entries = [
+          ...item.storeAliases.map((entry) => ({
+            ...entry,
+            topic: entry.value,
+            topicType: "STORE_ALIAS",
+            normalizedTopic: normalizeStoreNameForMatch(entry.value),
+          })),
+          ...item.acceptedTopics.map((entry) => ({
+            ...entry,
+            topic: storeTopicWithHash(entry.value),
+            topicType: "ACCEPTED",
+            normalizedTopic: normalizeStoreTopicForMatch(entry.value),
+          })),
+          ...item.acceptedAliases.map((entry) => ({
+            ...entry,
+            topic: storeTopicWithHash(entry.value),
+            topicType: "ACCEPTED_ALIAS",
+            normalizedTopic: normalizeStoreTopicForMatch(entry.value),
+          })),
+          ...item.requiredTopics.map((entry) => ({
+            ...entry,
+            topic: storeTopicWithHash(entry.value),
+            topicType: "REQUIRED",
+            normalizedTopic: normalizeStoreTopicForMatch(entry.value),
+          })),
+        ];
+        await tx.storeTopicEntry.updateMany({
+          where: {
+            storeTopicRuleId: rule.id,
+            deletedAt: null,
+            ...(entries.length
+              ? {
+                  normalizedTopic: {
+                    notIn: entries.map((entry) => entry.normalizedTopic),
+                  },
+                }
+              : {}),
+          },
+          data: { enabled: false, deletedAt: appliedAt },
+        });
+        for (const entry of entries) {
+          await tx.storeTopicEntry.upsert({
+            where: {
+              storeTopicRuleId_normalizedTopic: {
+                storeTopicRuleId: rule.id,
+                normalizedTopic: entry.normalizedTopic,
+              },
+            },
+            create: {
+              storeTopicRuleId: rule.id,
+              topic: entry.topic,
+              normalizedTopic: entry.normalizedTopic,
+              topicType: entry.topicType,
+              sortOrder: entry.sortOrder,
+              enabled: entry.enabled,
+            },
+            update: {
+              topic: entry.topic,
+              topicType: entry.topicType,
+              sortOrder: entry.sortOrder,
+              enabled: entry.enabled,
+              deletedAt: null,
+            },
+          });
+        }
+      }
+    }
 
     const publishedProductKeys = payload.products.map((item) => item.key);
     const publishedCampaignKeys = payload.campaigns.map((item) => item.key);
@@ -657,11 +989,23 @@ export async function applyRulePayload(
       });
     }
 
+    const [storeTopicRuleCount, storeAliasCount] = await Promise.all([
+      tx.storeTopicRule.count({ where: { deletedAt: null } }),
+      tx.storeTopicEntry.count({
+        where: {
+          topicType: "STORE_ALIAS",
+          deletedAt: null,
+          storeTopicRule: { deletedAt: null },
+        },
+      }),
+    ]);
     const counts = {
       products: payload.products.length,
       activities: payload.campaigns.length,
       stageGroups: payload.stageGroups.length,
       topicRules: payload.topicRules.length,
+      storeTopicRules: storeTopicRuleCount,
+      storeAliases: storeAliasCount,
     };
     const templates =
       payload.importExportTemplates || BUILTIN_IMPORT_EXPORT_TEMPLATES;

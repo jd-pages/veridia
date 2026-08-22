@@ -8,6 +8,7 @@ import { prepareRulePublishSource } from "@/lib/rules/publish-source";
 
 const originalDatabaseUrl = process.env.DATABASE_URL;
 const originalRuleDatabasePath = process.env.VERIDIA_RULE_DATABASE_PATH;
+const originalProjectSource = process.env.VERIDIA_RULE_PROJECT_SOURCE;
 
 afterEach(() => {
   if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
@@ -17,118 +18,173 @@ afterEach(() => {
   } else {
     process.env.VERIDIA_RULE_DATABASE_PATH = originalRuleDatabasePath;
   }
+  if (originalProjectSource === undefined) {
+    delete process.env.VERIDIA_RULE_PROJECT_SOURCE;
+  } else {
+    process.env.VERIDIA_RULE_PROJECT_SOURCE = originalProjectSource;
+  }
 });
 
-describe("规则发布来源", () => {
-  it("未指定数据库时使用包含达能和佳贝艾特的项目规则快照", async () => {
-    process.env.DATABASE_URL = "file:E:\\v-preview\\data\\veridia.db";
-    const source = await prepareRulePublishSource({ ruleDatabasePath: null });
+function readiness(
+  databasePath: string,
+  source: "DESKTOP_DATA_LOCATION" | "VERIDIA_RULE_DATABASE_PATH" =
+    "DESKTOP_DATA_LOCATION",
+) {
+  return {
+    migrated: false,
+    readOnly: true,
+    database: {
+      databasePath,
+      databaseUrl: `file:${databasePath.replaceAll("\\", "/")}?mode=ro`,
+      source,
+    },
+    structure: {
+      hasRequireBodyStage: true,
+      requireBodyStageDefaultsToFalse: true,
+      hasStoreTopicRules: true,
+      hasStoreTopicEntries: true,
+    },
+  };
+}
 
+describe("规则发布来源", () => {
+  it("普通发布默认使用 Desktop 正式数据库且不回退项目规则", async () => {
+    const temporaryRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "veridia-rule-source-"),
+    );
+    const databasePath = path.join(temporaryRoot, "veridia.db");
+    fs.writeFileSync(databasePath, "read-only-source");
+    const ensureDatabaseReady = vi.fn(async () => readiness(databasePath));
+    const databasePayload = validateRulePayload(builtinRules);
+    const exportDatabasePayload = vi.fn(async () => databasePayload);
+
+    try {
+      const source = await prepareRulePublishSource({
+        ruleDatabasePath: null,
+        ensureDatabaseReady,
+        exportDatabasePayload,
+      });
+      expect(source.source).toBe("DESKTOP_DATA_LOCATION");
+      expect(source.sourcePath).toBe(databasePath);
+      await expect(
+        source.createPayload({
+          ruleVersion: "rules-2026.08.22.1",
+          minimumAppVersion: "1.1.17",
+        }),
+      ).resolves.toBe(databasePayload);
+      expect(ensureDatabaseReady).toHaveBeenCalledOnce();
+      expect(exportDatabasePayload).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("显式数据库 override 保持最高优先级", async () => {
+    const temporaryRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "veridia-rule-override-"),
+    );
+    const databasePath = path.join(temporaryRoot, "publisher.db");
+    fs.writeFileSync(databasePath, "override-source");
+    const ensureDatabaseReady = vi.fn(async () =>
+      readiness(databasePath, "VERIDIA_RULE_DATABASE_PATH"),
+    );
+    try {
+      const source = await prepareRulePublishSource({
+        ruleDatabasePath: databasePath,
+        projectSourceEnabled: true,
+        ensureDatabaseReady,
+        exportDatabasePayload: async () => validateRulePayload(builtinRules),
+      });
+      expect(source.source).toBe("VERIDIA_RULE_DATABASE_PATH");
+      expect(process.env.VERIDIA_RULE_DATABASE_PATH).toBe(databasePath);
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("项目 default-rules 仅在显式开发者模式启用", async () => {
+    const source = await prepareRulePublishSource({
+      ruleDatabasePath: null,
+      projectSourceEnabled: true,
+    });
     expect(source.source).toBe("PROJECT_RULE_SOURCE");
     expect(source.sourcePath).toBe(
       path.join(process.cwd(), "rules", "default-rules.json"),
     );
-
     const payload = await source.createPayload({
-      ruleVersion: "rules-2026.08.04.1",
-      minimumAppVersion: "1.1.1",
-      publishedAt: new Date("2026-08-04T00:00:00.000Z"),
+      ruleVersion: "rules-2026.08.22.2",
+      minimumAppVersion: "1.1.17",
+      publishedAt: new Date("2026-08-22T00:00:00.000Z"),
     });
-    expect(payload.ruleVersion).toBe("rules-2026.08.04.1");
-    expect(payload.minimumAppVersion).toBe("1.1.1");
-    expect(new Set(payload.products.map((product) => product.brand))).toEqual(
-      new Set(["达能", "佳贝艾特"]),
-    );
-    expect(payload.campaigns.map((campaign) => campaign.name)).toEqual(
-      expect.arrayContaining([
-        "爱他美2026年7月小红书种草审核",
-        "爱他美2026年8月小红书种草审核",
-        "佳贝艾特2026年8月小红书种草审核",
-      ]),
-    );
-    const danoneMonthlyCampaigns = payload.campaigns.filter((campaign) =>
-      campaign.name.startsWith("爱他美2026年") &&
-      campaign.contentChannel === "XIAOHONGSHU",
-    );
-    expect(danoneMonthlyCampaigns.map((campaign) => campaign.month)).toEqual([
-      "2026-07",
-      "2026-08",
-    ]);
-    expect(new Set(danoneMonthlyCampaigns.map((campaign) => campaign.key)).size).toBe(2);
-    const douyinMonthlyCampaigns = payload.campaigns.filter(
-      (campaign) =>
-        campaign.name.startsWith("爱他美2026年") &&
-        campaign.contentChannel === "DOUYIN",
-    );
-    expect(douyinMonthlyCampaigns.map((campaign) => campaign.month)).toEqual([
-      "2026-07",
-      "2026-08",
-    ]);
-    expect(
-      new Set(douyinMonthlyCampaigns.map((campaign) => campaign.key)).size,
-    ).toBe(2);
-    const augustStageRules = payload.topicRules.filter(
-      (rule) =>
-        rule.campaignKey === "activity_danone_2026_08" &&
-        rule.topicCategory === "PRODUCT_STAGE",
-    );
-    expect(augustStageRules.map((rule) => [rule.applicableStage, rule.topic])).toEqual([
-      ["IFFO_P1", "#新生儿奶粉"],
-      ["IFFO_2", "#二段奶粉推荐"],
-      ["GUM_3_4_1PLUS_2PLUS", "#三段奶粉推荐"],
-    ]);
+    expect(payload.ruleVersion).toBe("rules-2026.08.22.2");
+    expect(payload.storeTopicRules).toBeUndefined();
   });
 
-  it("显式数据库路径优先于项目规则源", async () => {
-    const ensureDatabaseReady = vi.fn(async () => ({
-      migrated: false,
-      structure: {
-        hasRequireBodyStage: true,
-        requireBodyStageDefaultsToFalse: true,
-      },
-    }));
-    const databasePayload = validateRulePayload(builtinRules);
-    const exportDatabasePayload = vi.fn(async () => databasePayload);
-    const databasePath = path.resolve("fixtures", "publisher.db");
-
-    const source = await prepareRulePublishSource({
-      ruleDatabasePath: databasePath,
-      projectRuleSourcePath: path.resolve("missing-project-rules.json"),
-      ensureDatabaseReady,
-      exportDatabasePayload,
+  it("Desktop 数据库定位失败时直接 BLOCKED，不读取 default-rules", async () => {
+    const ensureDatabaseReady = vi.fn(async () => {
+      throw new Error("未找到 VERIDIA 当前规则数据库");
     });
-    const payload = await source.createPayload({
-      ruleVersion: "rules-2026.08.04.2",
-      minimumAppVersion: "1.1.1",
-    });
-
-    expect(source.source).toBe("VERIDIA_RULE_DATABASE_PATH");
-    expect(source.sourcePath).toBe(databasePath);
-    expect(ensureDatabaseReady).toHaveBeenCalledOnce();
-    expect(exportDatabasePayload).toHaveBeenCalledWith({
-      ruleVersion: "rules-2026.08.04.2",
-      minimumAppVersion: "1.1.1",
-    });
-    expect(payload).toBe(databasePayload);
+    await expect(
+      prepareRulePublishSource({
+        ruleDatabasePath: null,
+        projectSourceEnabled: false,
+        ensureDatabaseReady,
+        projectRuleSourcePath: path.join(
+          process.cwd(),
+          "rules",
+          "default-rules.json",
+        ),
+      }),
+    ).rejects.toThrow(/未找到 VERIDIA 当前规则数据库/u);
   });
 
-  it("项目规则源不存在时给出明确处理提示", async () => {
+  it("导出期间主库或 WAL sidecar 变化会阻断发布", async () => {
     const temporaryRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "veridia-project-rules-"),
+      path.join(os.tmpdir(), "veridia-rule-guard-"),
     );
-    const missingSource = path.join(temporaryRoot, "default-rules.json");
-
+    const databasePath = path.join(temporaryRoot, "veridia.db");
+    fs.writeFileSync(databasePath, "before");
     try {
+      const source = await prepareRulePublishSource({
+        ruleDatabasePath: databasePath,
+        ensureDatabaseReady: async () =>
+          readiness(databasePath, "VERIDIA_RULE_DATABASE_PATH"),
+        exportDatabasePayload: async () => {
+          fs.writeFileSync(`${databasePath}-wal`, "changed");
+          return validateRulePayload(builtinRules);
+        },
+      });
       await expect(
-        prepareRulePublishSource({
-          ruleDatabasePath: null,
-          projectRuleSourcePath: missingSource,
+        source.createPayload({
+          ruleVersion: "rules-2026.08.22.3",
+          minimumAppVersion: "1.1.17",
         }),
-      ).rejects.toThrow(
-        "未找到项目规则源，请设置 VERIDIA_RULE_DATABASE_PATH 或补充项目规则配置。",
-      );
+      ).rejects.toThrow(/SQLite sidecar.*发生变化/u);
     } finally {
       fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }
+  });
+
+  it("BAT 禁止项目源 fallback，发布器保持 Draft → 远端复核 → Latest", () => {
+    const bat = new TextDecoder("gbk").decode(
+      fs.readFileSync(path.join(process.cwd(), "发布规则新版.bat")),
+    );
+    expect(bat).toContain("chcp 936 >nul");
+    expect(bat).toContain('set "VERIDIA_RULE_PROJECT_SOURCE="');
+    expect(bat).toContain("data-location.json");
+    expect(bat).toContain("不会回退发布 rules\\default-rules.json");
+
+    const publisher = fs.readFileSync(
+      path.join(process.cwd(), "scripts", "publish-rules.ts"),
+      "utf8",
+    );
+    const createDraft = publisher.indexOf('    "--draft",');
+    const downloadRemote = publisher.indexOf('    "download",', createDraft);
+    const publishLatest = publisher.indexOf('    "--draft=false",', downloadRemote);
+    expect(createDraft).toBeGreaterThan(-1);
+    expect(downloadRemote).toBeGreaterThan(createDraft);
+    expect(publishLatest).toBeGreaterThan(downloadRemote);
+    expect(publisher).toContain("storeTopicRuleCount");
+    expect(publisher).toContain("storeAliasCount");
   });
 });

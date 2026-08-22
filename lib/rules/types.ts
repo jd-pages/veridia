@@ -72,6 +72,29 @@ export interface RulePackageTopicRule {
   notes?: string | null;
 }
 
+export type RulePackageCommercePlatform =
+  | "JD"
+  | "DOUYIN_ECOMMERCE"
+  | "TMALL"
+  | "TAOBAO";
+
+export interface RulePackageStoreValue {
+  value: string;
+  enabled: boolean;
+  sortOrder: number;
+}
+
+export interface RulePackageStoreTopicRule {
+  key: string;
+  commercePlatform: RulePackageCommercePlatform;
+  storeName: string;
+  enabled: boolean;
+  storeAliases: RulePackageStoreValue[];
+  acceptedTopics: RulePackageStoreValue[];
+  acceptedAliases: RulePackageStoreValue[];
+  requiredTopics: RulePackageStoreValue[];
+}
+
 export interface RulePackagePayload {
   ruleVersion: string;
   schemaVersion: number;
@@ -81,6 +104,11 @@ export interface RulePackagePayload {
   campaigns: RulePackageCampaign[];
   stageGroups: RulePackageStageGroup[];
   topicRules: RulePackageTopicRule[];
+  /**
+   * Optional for schema-v1 backward compatibility. Absence means that this
+   * package does not manage local StoreTopicRule/StoreTopicEntry records.
+   */
+  storeTopicRules?: RulePackageStoreTopicRule[];
   pageStatusRules: {
     normalStatuses: string[];
     technicalFailureStatuses: string[];
@@ -100,6 +128,8 @@ export interface RulePackageManifest {
   activityCount: number;
   stageGroupCount: number;
   topicRuleCount: number;
+  storeTopicRuleCount?: number;
+  storeAliasCount?: number;
   templateVersion?: string;
   templateConfigSha256?: string;
 }
@@ -120,4 +150,6 @@ export interface RuleCounts {
   activities: number;
   stageGroups: number;
   topicRules: number;
+  storeTopicRules: number;
+  storeAliases: number;
 }

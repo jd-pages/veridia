@@ -1,8 +1,13 @@
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
+
+const require = createRequire(import.meta.url);
+const { readDataLocation } = require("../../desktop/data-location.cjs") as {
+  readDataLocation: (controlRoot: string) => string | null;
+};
 
 const REQUIRED_COLUMN = "requireBodyStage";
 
@@ -14,28 +19,21 @@ type ColumnInfo = {
 export type RuleDatabaseStructure = {
   hasRequireBodyStage: boolean;
   requireBodyStageDefaultsToFalse: boolean;
-};
-
-export type CommandResult = {
-  ok: boolean;
-  status?: number | null;
-  stdout?: string;
-  stderr?: string;
-  error?: string;
+  hasStoreTopicRules: boolean;
+  hasStoreTopicEntries: boolean;
 };
 
 export type RuleDatabaseLocation = {
   databasePath: string;
   databaseUrl: string;
-  source: string;
+  source: "VERIDIA_RULE_DATABASE_PATH" | "DESKTOP_DATA_LOCATION";
 };
 
 export type RuleDatabasePreflightDependencies = {
-  resolveDatabase?: () => RuleDatabaseLocation | null;
-  backupDatabase?: (databasePath: string) => string;
-  inspectStructure?: () => Promise<RuleDatabaseStructure>;
-  checkMigrationStatus?: () => CommandResult;
-  deployMigrations?: () => CommandResult;
+  resolveDatabase?: () => RuleDatabaseLocation;
+  inspectStructure?: (
+    database: RuleDatabaseLocation,
+  ) => Promise<RuleDatabaseStructure>;
   log?: (message: string) => void;
 };
 
@@ -49,7 +47,7 @@ export function formatRulePublishError(
     "code" in error &&
     error.code === "P2022"
   ) {
-    return "本地规则数据库结构不是最新，规则发布已停止。请先完成数据库安全迁移。";
+    return "本地规则数据库结构不是最新，规则发布已停止。请先启动最新版 VERIDIA 完成数据库升级。";
   }
   if (
     error instanceof Error &&
@@ -72,20 +70,20 @@ function isFalseDefault(value: ColumnInfo["dflt_value"]) {
 }
 
 function databaseUrlForPath(databasePath: string) {
-  return `file:${path.resolve(databasePath)}`;
+  return `file:${path.resolve(databasePath).replaceAll("\\", "/")}?mode=ro`;
 }
 
-function assertUsableDatabase(databasePath: string) {
+function assertReadableDatabase(databasePath: string) {
   if (!fs.existsSync(databasePath) || !fs.statSync(databasePath).isFile()) {
     throw new Error(`规则数据库不存在：${databasePath}`);
   }
   let descriptor: number | undefined;
   try {
-    descriptor = fs.openSync(databasePath, "r+");
+    descriptor = fs.openSync(databasePath, "r");
   } catch (error) {
     throw new Error(
-      `规则数据库不可写：${databasePath}\n${
-        error instanceof Error ? error.stack || error.message : String(error)
+      `规则数据库不可读：${databasePath}\n${
+        error instanceof Error ? error.message : String(error)
       }`,
     );
   } finally {
@@ -93,209 +91,106 @@ function assertUsableDatabase(databasePath: string) {
   }
 }
 
+function defaultControlRoot() {
+  const localAppData = process.env.LOCALAPPDATA?.trim();
+  if (localAppData) return path.resolve(localAppData, "VERIDIA");
+  const appData = process.env.APPDATA?.trim();
+  return appData
+    ? path.resolve(appData, "..", "Local", "VERIDIA")
+    : path.resolve(os.homedir(), "AppData", "Local", "VERIDIA");
+}
+
 export function resolveRuleDatabaseLocation(): RuleDatabaseLocation {
   const explicitDatabasePath = process.env.VERIDIA_RULE_DATABASE_PATH?.trim();
-  if (!explicitDatabasePath) {
+  const source = explicitDatabasePath
+    ? "VERIDIA_RULE_DATABASE_PATH"
+    : "DESKTOP_DATA_LOCATION";
+  const dataRoot = explicitDatabasePath
+    ? null
+    : readDataLocation(defaultControlRoot());
+  if (!explicitDatabasePath && !dataRoot) {
     throw new Error(
-      "未设置 VERIDIA_RULE_DATABASE_PATH，不会自动扫描本机 VERIDIA 数据库。",
+      "未找到 VERIDIA 当前规则数据库：缺少 %LOCALAPPDATA%\\VERIDIA\\config\\data-location.json，规则发布已停止。",
     );
   }
-
-  const databasePath = path.resolve(explicitDatabasePath);
-  assertUsableDatabase(databasePath);
+  const databasePath = explicitDatabasePath
+    ? path.resolve(explicitDatabasePath)
+    : path.join(path.resolve(dataRoot!), "data", "veridia.db");
+  assertReadableDatabase(databasePath);
   const databaseUrl = databaseUrlForPath(databasePath);
   process.env.DATABASE_URL = databaseUrl;
-  return {
-    databasePath,
-    databaseUrl,
-    source: "VERIDIA_RULE_DATABASE_PATH",
-  };
+  return { databasePath, databaseUrl, source };
 }
 
-function localTimestamp() {
-  const value = new Date();
-  const part = (number: number) => String(number).padStart(2, "0");
-  return `${value.getFullYear()}${part(value.getMonth() + 1)}${part(
-    value.getDate(),
-  )}-${part(value.getHours())}${part(value.getMinutes())}${part(
-    value.getSeconds(),
-  )}`;
-}
-
-export function backupRuleDatabase(databasePath: string) {
-  const dataDirectory = path.dirname(databasePath);
-  const backupDirectory =
-    path.basename(dataDirectory).toLowerCase() === "data"
-      ? path.join(path.dirname(dataDirectory), "backups")
-      : path.join(dataDirectory, "backups");
-  fs.mkdirSync(backupDirectory, { recursive: true });
-  const backupPath = path.join(
-    backupDirectory,
-    `rules-db-backup-before-preflight-${localTimestamp()}.db`,
-  );
-  fs.copyFileSync(databasePath, backupPath, fs.constants.COPYFILE_EXCL);
-
-  const source = fs.readFileSync(databasePath);
-  const backup = fs.readFileSync(backupPath);
-  const digest = (value: Buffer) =>
-    createHash("sha256").update(value).digest("hex");
-  if (source.byteLength !== backup.byteLength || digest(source) !== digest(backup)) {
-    throw new Error(`规则数据库备份校验失败：${backupPath}`);
-  }
-  return backupPath;
-}
-
-export async function inspectRuleDatabaseStructure() {
-  const client = new PrismaClient({ log: [] });
+export async function inspectRuleDatabaseStructure(
+  database = resolveRuleDatabaseLocation(),
+) {
+  const client = new PrismaClient({
+    datasourceUrl: database.databaseUrl,
+    log: [],
+  });
   try {
-    const columns = await client.$queryRawUnsafe<ColumnInfo[]>(
-      'PRAGMA table_info("rule_stage_groups")',
-    );
-    const column = columns.find((item) => item.name === REQUIRED_COLUMN);
-    return {
-      hasRequireBodyStage: Boolean(column),
-      requireBodyStageDefaultsToFalse: Boolean(
-        column && isFalseDefault(column.dflt_value),
+    const [stageColumns, ruleColumns, entryColumns] = await Promise.all([
+      client.$queryRawUnsafe<ColumnInfo[]>(
+        'PRAGMA table_info("rule_stage_groups")',
       ),
+      client.$queryRawUnsafe<ColumnInfo[]>(
+        'PRAGMA table_info("store_topic_rules")',
+      ),
+      client.$queryRawUnsafe<ColumnInfo[]>(
+        'PRAGMA table_info("store_topic_entries")',
+      ),
+    ]);
+    const requiredColumn = stageColumns.find(
+      (item) => item.name === REQUIRED_COLUMN,
+    );
+    const hasColumns = (columns: ColumnInfo[], required: string[]) =>
+      required.every((name) => columns.some((column) => column.name === name));
+    return {
+      hasRequireBodyStage: Boolean(requiredColumn),
+      requireBodyStageDefaultsToFalse: Boolean(
+        requiredColumn && isFalseDefault(requiredColumn.dflt_value),
+      ),
+      hasStoreTopicRules: hasColumns(ruleColumns, [
+        "commercePlatform",
+        "storeName",
+        "normalizedStoreName",
+        "enabled",
+        "deletedAt",
+      ]),
+      hasStoreTopicEntries: hasColumns(entryColumns, [
+        "storeTopicRuleId",
+        "topic",
+        "normalizedTopic",
+        "topicType",
+        "sortOrder",
+        "enabled",
+        "deletedAt",
+      ]),
     } satisfies RuleDatabaseStructure;
   } finally {
     await client.$disconnect();
   }
 }
 
-function runPrismaMigrate(command: "status" | "deploy"): CommandResult {
-  const prismaCli = path.join(
-    process.cwd(),
-    "node_modules",
-    "prisma",
-    "build",
-    "index.js",
-  );
-  const schemaPath = path.join(process.cwd(), "prisma", "schema.prisma");
-  const result = spawnSync(
-    process.execPath,
-    [prismaCli, "migrate", command, "--schema", schemaPath],
-    {
-      cwd: process.cwd(),
-      env: process.env,
-      encoding: "utf8",
-      stdio: "pipe",
-      windowsHide: true,
-      maxBuffer: 20 * 1024 * 1024,
-    },
-  );
-  return {
-    ok: !result.error && result.status === 0,
-    status: result.status,
-    stdout: result.stdout || "",
-    stderr: result.stderr || "",
-    error: result.error?.stack || result.error?.message,
-  };
-}
-
-function commandFailureDetails(step: string, result: CommandResult) {
-  const details = [result.error, result.stdout, result.stderr]
-    .filter(Boolean)
-    .join("\n")
-    .trim();
-  return [
-    `失败步骤：prisma migrate ${step}`,
-    `退出码：${result.status ?? "未知"}`,
-    details || "Prisma 未返回详细输出。",
-  ].join("\n");
-}
-
 export async function ensureRuleDatabaseReady(
   dependencies: RuleDatabasePreflightDependencies = {},
 ) {
-  const inspectStructure =
-    dependencies.inspectStructure ?? inspectRuleDatabaseStructure;
-  const checkMigrationStatus =
-    dependencies.checkMigrationStatus ?? (() => runPrismaMigrate("status"));
-  const deployMigrations =
-    dependencies.deployMigrations ?? (() => runPrismaMigrate("deploy"));
+  const database = (dependencies.resolveDatabase ?? resolveRuleDatabaseLocation)();
   const log = dependencies.log ?? console.log;
-  const usesRealDatabase =
-    !dependencies.inspectStructure &&
-    !dependencies.checkMigrationStatus &&
-    !dependencies.deployMigrations;
-  const resolveDatabase =
-    dependencies.resolveDatabase ??
-    (usesRealDatabase ? resolveRuleDatabaseLocation : () => null);
-  const backupDatabase = dependencies.backupDatabase ?? backupRuleDatabase;
-  const database = resolveDatabase();
-  if (database) {
-    process.env.DATABASE_URL = database.databaseUrl;
-    log(`规则数据库：${database.databasePath}`);
-  }
-
-  let initialStructure: RuleDatabaseStructure;
-  let inspectionError: unknown;
-  try {
-    initialStructure = await inspectStructure();
-  } catch (error) {
-    inspectionError = error;
-    initialStructure = {
-      hasRequireBodyStage: false,
-      requireBodyStageDefaultsToFalse: false,
-    };
-  }
-
-  const initialMigrationStatus = checkMigrationStatus();
-  const migrationsCurrent = initialMigrationStatus.ok;
-  const needsMigration =
-    !migrationsCurrent ||
-    !initialStructure.hasRequireBodyStage ||
-    !initialStructure.requireBodyStageDefaultsToFalse;
-
-  if (!needsMigration) {
-    return { migrated: false, structure: initialStructure };
-  }
-
-  log("检测到本地规则数据库结构不是最新，正在执行安全迁移。");
-  if (database) {
-    const backupPath = backupDatabase(database.databasePath);
-    log(`迁移前备份：${backupPath}`);
-  }
-  const deployResult = deployMigrations();
-  if (!deployResult.ok) {
-    const inspectionDetails =
-      inspectionError instanceof Error
-        ? `\n结构检查错误：\n${inspectionError.stack || inspectionError.message}`
-        : "";
-    throw new Error(
-      `数据库安全迁移失败，规则发布已停止。\n${commandFailureDetails(
-        "deploy",
-        deployResult,
-      )}${inspectionDetails}\n迁移前状态：\n${commandFailureDetails(
-        "status",
-        initialMigrationStatus,
-      )}`,
-    );
-  }
-
-  let finalStructure: RuleDatabaseStructure;
-  try {
-    finalStructure = await inspectStructure();
-  } catch {
-    throw new Error(
-      "数据库迁移后的结构校验失败，规则发布已停止。请检查本地数据库后重试。",
-    );
-  }
-  const finalMigrationStatus = checkMigrationStatus();
+  log(`规则数据库（严格只读）：${database.databasePath}`);
+  const structure = await (
+    dependencies.inspectStructure ?? inspectRuleDatabaseStructure
+  )(database);
   if (
-    !finalMigrationStatus.ok ||
-    !finalStructure.hasRequireBodyStage ||
-    !finalStructure.requireBodyStageDefaultsToFalse
+    !structure.hasRequireBodyStage ||
+    !structure.requireBodyStageDefaultsToFalse ||
+    !structure.hasStoreTopicRules ||
+    !structure.hasStoreTopicEntries
   ) {
     throw new Error(
-      `数据库迁移未完整生效，规则发布已停止。旧规则不会被覆盖。\n${commandFailureDetails(
-        "status",
-        finalMigrationStatus,
-      )}`,
+      "本地规则数据库结构不是最新，规则发布只读检查已停止；请先启动最新版 VERIDIA 完成数据库升级。",
     );
   }
-
-  log("数据库迁移完成，可以重新发布规则。");
-  return { migrated: true, structure: finalStructure };
+  return { migrated: false, readOnly: true, database, structure };
 }
