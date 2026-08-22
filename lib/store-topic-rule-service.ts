@@ -14,8 +14,10 @@ import {
 } from "@/lib/store-topic-config";
 import {
   storeAcceptedTopicSeeds,
+  storeNameAliasSeeds,
   storeRequiredTopicSeeds,
   storeTopicRuleSeeds,
+  validateStoreNameAliasSeeds,
 } from "@/lib/store-topic-rule-seeds";
 import {
   commercePlatformLabel,
@@ -24,7 +26,10 @@ import {
 } from "@/lib/result-source";
 
 export type StoreTopicEntryType = "ACCEPTED" | "REQUIRED";
-type StoredStoreTopicEntryType = StoreTopicEntryType | "ACCEPTED_ALIAS";
+type StoredStoreTopicEntryType =
+  | StoreTopicEntryType
+  | "ACCEPTED_ALIAS"
+  | "STORE_ALIAS";
 
 interface TopicInput {
   id?: unknown;
@@ -95,7 +100,8 @@ function activeStoreAliases(input: {
     ...input.topicEntries
       .filter(
         (topic) =>
-          topic.topicType === "ACCEPTED_ALIAS" && topic.deletedAt === null,
+          ["ACCEPTED_ALIAS", "STORE_ALIAS"].includes(topic.topicType) &&
+          topic.deletedAt === null,
       )
       .sort((left, right) => left.sortOrder - right.sortOrder)
       .map((topic) => ({
@@ -232,6 +238,7 @@ export function validateStoreTopicGroups(input: {
 }
 
 export async function ensureStoreTopicRuleSeeds() {
+  validateStoreNameAliasSeeds();
   await prisma.$transaction(async (tx) => {
     for (const seed of storeTopicRuleSeeds) {
       const normalizedStoreName = normalizeStoreNameForMatch(seed.storeName);
@@ -294,6 +301,86 @@ export async function ensureStoreTopicRuleSeeds() {
         },
         update: {
           topicType: seed.isStoreAlias ? "ACCEPTED_ALIAS" : "ACCEPTED",
+          enabled: true,
+          deletedAt: null,
+        },
+      });
+    }
+    for (const seed of storeNameAliasSeeds) {
+      const rule = await tx.storeTopicRule.findUnique({
+        where: {
+          commercePlatform_normalizedStoreName: {
+            commercePlatform: seed.commercePlatform,
+            normalizedStoreName: normalizeStoreNameForMatch(
+              seed.canonicalStoreName,
+            ),
+          },
+        },
+      });
+      if (!rule) {
+        throw new Error(
+          `CANONICAL_STORE_NOT_FOUND：${seed.commercePlatform} / ${seed.canonicalStoreName}`,
+        );
+      }
+      const normalizedAlias = normalizeStoreNameForMatch(seed.alias);
+      const canonicalCollision = await tx.storeTopicRule.findFirst({
+        where: {
+          commercePlatform: seed.commercePlatform,
+          normalizedStoreName: normalizedAlias,
+          id: { not: rule.id },
+          deletedAt: null,
+        },
+      });
+      const aliasCollision = await tx.storeTopicEntry.findFirst({
+        where: {
+          normalizedTopic: normalizedAlias,
+          topicType: { in: ["ACCEPTED_ALIAS", "STORE_ALIAS"] },
+          enabled: true,
+          deletedAt: null,
+          storeTopicRuleId: { not: rule.id },
+          storeTopicRule: {
+            commercePlatform: seed.commercePlatform,
+            deletedAt: null,
+          },
+        },
+        include: { storeTopicRule: true },
+      });
+      if (canonicalCollision || aliasCollision) {
+        throw new Error(
+          `STORE_ALIAS_COLLISION：${seed.commercePlatform} / ${seed.alias}`,
+        );
+      }
+      const occupiedEntry = await tx.storeTopicEntry.findUnique({
+        where: {
+          storeTopicRuleId_normalizedTopic: {
+            storeTopicRuleId: rule.id,
+            normalizedTopic: normalizedAlias,
+          },
+        },
+      });
+      if (occupiedEntry && occupiedEntry.topicType !== "STORE_ALIAS") {
+        throw new Error(
+          `STORE_ALIAS_COLLISION：${seed.commercePlatform} / ${seed.alias}`,
+        );
+      }
+      await tx.storeTopicEntry.upsert({
+        where: {
+          storeTopicRuleId_normalizedTopic: {
+            storeTopicRuleId: rule.id,
+            normalizedTopic: normalizedAlias,
+          },
+        },
+        create: {
+          storeTopicRuleId: rule.id,
+          topic: seed.alias,
+          normalizedTopic: normalizedAlias,
+          topicType: "STORE_ALIAS",
+          sortOrder: 0,
+          enabled: true,
+        },
+        update: {
+          topic: seed.alias,
+          topicType: "STORE_ALIAS",
           enabled: true,
           deletedAt: null,
         },
@@ -465,7 +552,11 @@ async function replaceTopicEntries(
   }>,
   userId: string,
 ) {
-  const retainedIds = new Set<string>();
+  const retainedIds = new Set(
+    existingTopics
+      .filter((topic) => topic.topicType === "STORE_ALIAS")
+      .map((topic) => topic.id),
+  );
   for (const topicType of ["ACCEPTED", "REQUIRED"] as const) {
     const group = topics.filter((topic) => topic.topicType === topicType);
     for (const [sortOrder, topic] of group.entries()) {

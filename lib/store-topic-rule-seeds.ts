@@ -1,4 +1,5 @@
 import type { CommercePlatform } from "@/lib/result-source";
+import { normalizeStoreNameForMatch } from "@/lib/store-topic-config";
 
 export interface StoreTopicRuleSeed {
   id: string;
@@ -17,6 +18,12 @@ export interface StoreAcceptedTopicSeed {
   storeName: string;
   topic: string;
   isStoreAlias?: boolean;
+}
+
+export interface StoreNameAliasSeed {
+  commercePlatform: CommercePlatform;
+  alias: string;
+  canonicalStoreName: string;
 }
 
 const storesByPlatform: Record<CommercePlatform, readonly string[]> = {
@@ -67,6 +74,79 @@ export const storeAcceptedTopicSeeds: readonly StoreAcceptedTopicSeed[] = [
     topic: "#爱他美RC奶粉直播间",
   },
 ];
+
+export const storeNameAliasSeeds: readonly StoreNameAliasSeed[] = [
+  {
+    commercePlatform: "TMALL",
+    alias: "天猫佳贝艾特海外旗舰店",
+    canonicalStoreName: "kabrita海外旗舰店",
+  },
+  {
+    commercePlatform: "TMALL",
+    alias: "天猫佳贝艾特母婴海外旗舰店",
+    canonicalStoreName: "kabrita母婴海外旗舰店",
+  },
+  {
+    commercePlatform: "DOUYIN_ECOMMERCE",
+    alias: "抖音佳贝艾特海外旗舰店",
+    canonicalStoreName: "佳贝艾特kabrita海外旗舰店",
+  },
+  {
+    commercePlatform: "JD",
+    alias: "京东佳贝艾特(Kabrita)海外专卖店",
+    canonicalStoreName: "佳贝艾特(Kabrita)海外专卖店",
+  },
+  {
+    commercePlatform: "JD",
+    alias: "京东佳贝艾特官方海外旗舰店",
+    canonicalStoreName: "佳贝艾特官方海外旗舰店",
+  },
+  {
+    commercePlatform: "JD",
+    alias: "京东佳贝艾特海外京东自营旗舰店",
+    canonicalStoreName: "佳贝艾特海外京东自营旗舰店",
+  },
+  {
+    commercePlatform: "JD",
+    alias: "京东佳贝艾特(Kabrita)海外旗舰店",
+    canonicalStoreName: "佳贝艾特(Kabrita)海外旗舰店",
+  },
+];
+
+export function validateStoreNameAliasSeeds(
+  aliases: readonly StoreNameAliasSeed[] = storeNameAliasSeeds,
+  rules: readonly StoreTopicRuleSeed[] = storeTopicRuleSeeds,
+) {
+  const canonicalKeys = new Set(
+    rules.map(
+      (rule) =>
+        `${rule.commercePlatform}\u0000${normalizeStoreNameForMatch(rule.storeName)}`,
+    ),
+  );
+  const aliasTargets = new Map<string, string>();
+  for (const alias of aliases) {
+    const canonicalKey = `${alias.commercePlatform}\u0000${normalizeStoreNameForMatch(alias.canonicalStoreName)}`;
+    if (!canonicalKeys.has(canonicalKey)) {
+      throw new Error(
+        `CANONICAL_STORE_NOT_FOUND：${alias.commercePlatform} / ${alias.canonicalStoreName}`,
+      );
+    }
+    const aliasKey = `${alias.commercePlatform}\u0000${normalizeStoreNameForMatch(alias.alias)}`;
+    const previousTarget = aliasTargets.get(aliasKey);
+    if (previousTarget && previousTarget !== canonicalKey) {
+      throw new Error(
+        `STORE_ALIAS_COLLISION：${alias.commercePlatform} / ${alias.alias}`,
+      );
+    }
+    if (canonicalKeys.has(aliasKey) && aliasKey !== canonicalKey) {
+      throw new Error(
+        `STORE_ALIAS_COLLISION：${alias.commercePlatform} / ${alias.alias}`,
+      );
+    }
+    aliasTargets.set(aliasKey, canonicalKey);
+  }
+  return true;
+}
 
 const jdStoresRequiringPlatformTopic = [
   "健康官方进口超市",

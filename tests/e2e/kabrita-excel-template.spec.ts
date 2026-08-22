@@ -20,6 +20,107 @@ const importHeaders = [
 
 const exportHeaders = [...importHeaders.slice(0, -1), "活动名称", "自审"];
 
+const kabritaStoreAliases = [
+  ["天猫", "天猫佳贝艾特海外旗舰店", "kabrita海外旗舰店"],
+  ["天猫", "天猫佳贝艾特母婴海外旗舰店", "kabrita母婴海外旗舰店"],
+  ["抖音", "抖音佳贝艾特海外旗舰店", "佳贝艾特kabrita海外旗舰店"],
+  ["京东", "京东佳贝艾特(Kabrita)海外专卖店", "佳贝艾特(Kabrita)海外专卖店"],
+  ["京东", "京东佳贝艾特官方海外旗舰店", "佳贝艾特官方海外旗舰店"],
+  ["京东", "京东佳贝艾特海外京东自营旗舰店", "佳贝艾特海外京东自营旗舰店"],
+  ["京东", "京东佳贝艾特(Kabrita)海外旗舰店", "佳贝艾特(Kabrita)海外旗舰店"],
+] as const;
+
+test("佳贝艾特13行多平台显式店铺 Alias 预检全部命中 Canonical", async ({
+  page,
+}) => {
+  const login = await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  });
+  expect(login.ok()).toBeTruthy();
+
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("佳贝艾特店铺映射预检");
+  sheet.addRow(importHeaders);
+  const samples = [
+    ...kabritaStoreAliases,
+    ...kabritaStoreAliases.slice(0, 6),
+  ];
+  samples.forEach(([platform, alias], index) => {
+    sheet.addRow([
+      "",
+      platform,
+      alias,
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      `${E2E_ORIGIN}/mock/xhs?case=passed&kabrita-store-alias=${index + 1}`,
+      "荷兰佳贝1",
+      "佳贝艾特2026年8月小红书种草审核",
+    ]);
+  });
+
+  const previewResponse = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: "佳贝艾特13行店铺别名样本.xlsx",
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
+      },
+      commit: "false",
+      skipDuplicates: "true",
+    },
+  });
+  const payload = await previewResponse.json();
+  expect(
+    previewResponse.ok(),
+    `佳贝艾特 Alias 预检失败：${JSON.stringify(payload)}`,
+  ).toBeTruthy();
+  const preview = payload.data as {
+    validCount: number;
+    invalidCount: number;
+    rows: Array<{
+      shopName: string;
+      matchedStoreName: string;
+      storeMappingStatus: string;
+      expectedStoreTopics: string[];
+      errors: string[];
+    }>;
+  };
+  expect(
+    preview,
+    `佳贝艾特 Alias 行错误：${JSON.stringify(
+      preview.rows.map((row) => ({
+        shopName: row.shopName,
+        matchedStoreName: row.matchedStoreName,
+        storeMappingStatus: row.storeMappingStatus,
+        errors: row.errors,
+      })),
+    )}`,
+  ).toMatchObject({ validCount: 13, invalidCount: 0 });
+  expect(preview.rows).toHaveLength(13);
+  preview.rows.forEach((row, index) => {
+    const [, alias, canonical] = samples[index];
+    expect(row).toMatchObject({
+      shopName: alias,
+      matchedStoreName: canonical,
+      storeMappingStatus: "MATCHED",
+      expectedStoreTopics: [`#${canonical}`],
+      errors: [],
+    });
+    expect(row.expectedStoreTopics).not.toContain(`#${alias}`);
+  });
+  expect(
+    preview.rows.flatMap((row) => row.errors).filter((error) =>
+      error.includes("STORE_NOT_MAPPED"),
+    ),
+  ).toEqual([]);
+});
+
 test("佳贝艾特13列导入模板下载、识别和六种购买产品线预检", async ({
   page,
 }) => {

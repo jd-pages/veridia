@@ -1,6 +1,61 @@
 import { expect, test } from "@playwright/test";
 import ExcelJS from "exceljs";
 
+test("编辑 Canonical 店铺话题时保留隐藏的显式输入 Alias", async ({ page }) => {
+  expect((await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  })).ok()).toBeTruthy();
+
+  const canonicalStoreName = "佳贝艾特官方海外旗舰店";
+  const explicitAlias = "京东佳贝艾特官方海外旗舰店";
+  const getRule = async () => {
+    const response = await page.request.get(
+      `/api/store-topic-rules?commercePlatform=JD&query=${encodeURIComponent(canonicalStoreName)}&pageSize=10`,
+    );
+    expect(response.ok()).toBeTruthy();
+    return (await response.json()).data.items.find(
+      (item: { storeName: string }) => item.storeName === canonicalStoreName,
+    ) as {
+      id: string;
+      storeName: string;
+      enabled: boolean;
+      aliases: Array<{ alias: string }>;
+      acceptedTopics: Array<{ id: string; topic: string; enabled: boolean }>;
+      requiredTopics: Array<{ id: string; topic: string; enabled: boolean }>;
+    };
+  };
+
+  const before = await getRule();
+  expect(before).toBeTruthy();
+  expect(before.aliases.map((item) => item.alias)).toEqual([
+    canonicalStoreName,
+    explicitAlias,
+  ]);
+  expect(before.acceptedTopics.map((item) => item.topic)).toEqual([
+    `#${canonicalStoreName}`,
+  ]);
+
+  const update = await page.request.patch(`/api/store-topic-rules/${before.id}`, {
+    data: {
+      commercePlatform: "JD",
+      storeName: canonicalStoreName,
+      enabled: before.enabled,
+      acceptedTopics: before.acceptedTopics,
+      requiredTopics: before.requiredTopics,
+    },
+  });
+  expect(update.ok(), JSON.stringify(await update.json())).toBeTruthy();
+
+  const after = await getRule();
+  expect(after.aliases.map((item) => item.alias)).toEqual([
+    canonicalStoreName,
+    explicitAlias,
+  ]);
+  expect(after.acceptedTopics.map((item) => item.topic)).toEqual([
+    `#${canonicalStoreName}`,
+  ]);
+});
+
 test("活动与规则可独立维护店铺话题规则", async ({ page }) => {
   const login = await page.request.post("/api/auth/login", {
     data: { username: "admin", password: "Admin123!" },

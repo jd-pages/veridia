@@ -101,17 +101,24 @@ export function resolveStoreTopicConfig(
     };
   }
   const normalizedStoreName = normalizeStoreNameForMatch(storeName);
-  const matches = configs.filter(
+  const directMatches = configs.filter(
     (item) =>
       item.enabled &&
       item.commercePlatform === commercePlatform &&
-      (item.normalizedStoreName === normalizedStoreName ||
-        item.aliases.some(
-          (alias) =>
-            alias.enabled && alias.normalizedAlias === normalizedStoreName,
-        )),
+      item.normalizedStoreName === normalizedStoreName,
   );
+  const aliasMatches = configs.filter(
+    (item) =>
+      item.enabled &&
+      item.commercePlatform === commercePlatform &&
+      item.aliases.some(
+        (alias) =>
+          alias.enabled && alias.normalizedAlias === normalizedStoreName,
+      ),
+  );
+  const matches = directMatches.length ? directMatches : aliasMatches;
   if (matches.length !== 1) {
+    const aliasCollision = directMatches.length === 0 && aliasMatches.length > 1;
     return {
       status: "STORE_NOT_MAPPED",
       storeTopicRuleId: null,
@@ -122,8 +129,10 @@ export function resolveStoreTopicConfig(
       expectedTopics: [],
       requiredTopics: [],
       config: null,
-      failureReason: commercePlatform
-        ? `未在${commercePlatform === "JD" ? "京东" : commercePlatform === "TMALL" ? "天猫" : commercePlatform === "TAOBAO" ? "淘宝" : "抖音电商"}店铺话题规则中找到匹配店铺：${storeName}。`
+      failureReason: aliasCollision
+        ? `STORE_ALIAS_COLLISION：同一平台下的店铺别名指向多个标准店铺，已拒绝匹配：${storeName}。`
+        : commercePlatform
+          ? `未在${commercePlatform === "JD" ? "京东" : commercePlatform === "TMALL" ? "天猫" : commercePlatform === "TAOBAO" ? "淘宝" : "抖音电商"}店铺话题规则中找到匹配店铺：${storeName}。`
         : `未找到有效成交平台，无法匹配店铺：${storeName}。`,
     };
   }

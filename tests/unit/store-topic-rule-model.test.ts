@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import { normalizeStoreNameForMatch } from "@/lib/store-topic-config";
 import {
   storeAcceptedTopicSeeds,
+  storeNameAliasSeeds,
   storeRequiredTopicSeeds,
   storeTopicRuleSeeds,
+  validateStoreNameAliasSeeds,
 } from "@/lib/store-topic-rule-seeds";
 
 const root = process.cwd();
@@ -31,6 +33,13 @@ const aptamilStoreRenameMigration = readFileSync(
   path.join(
     root,
     "prisma/migrations/202608180001_aptamil_store_rename/migration.sql",
+  ),
+  "utf8",
+);
+const kabritaStoreAliasMigration = readFileSync(
+  path.join(
+    root,
+    "prisma/migrations/202608220001_kabrita_platform_store_aliases/migration.sql",
   ),
   "utf8",
 );
@@ -114,6 +123,103 @@ describe("店铺话题规则数据模型与迁移", () => {
       (seed) => `${seed.commercePlatform}\u0000${normalizeStoreNameForMatch(seed.storeName)}`,
     );
     expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("7 条佳贝艾特输入别名严格绑定到同平台既有 Canonical identity", () => {
+    expect(storeNameAliasSeeds).toEqual([
+      {
+        commercePlatform: "TMALL",
+        alias: "天猫佳贝艾特海外旗舰店",
+        canonicalStoreName: "kabrita海外旗舰店",
+      },
+      {
+        commercePlatform: "TMALL",
+        alias: "天猫佳贝艾特母婴海外旗舰店",
+        canonicalStoreName: "kabrita母婴海外旗舰店",
+      },
+      {
+        commercePlatform: "DOUYIN_ECOMMERCE",
+        alias: "抖音佳贝艾特海外旗舰店",
+        canonicalStoreName: "佳贝艾特kabrita海外旗舰店",
+      },
+      {
+        commercePlatform: "JD",
+        alias: "京东佳贝艾特(Kabrita)海外专卖店",
+        canonicalStoreName: "佳贝艾特(Kabrita)海外专卖店",
+      },
+      {
+        commercePlatform: "JD",
+        alias: "京东佳贝艾特官方海外旗舰店",
+        canonicalStoreName: "佳贝艾特官方海外旗舰店",
+      },
+      {
+        commercePlatform: "JD",
+        alias: "京东佳贝艾特海外京东自营旗舰店",
+        canonicalStoreName: "佳贝艾特海外京东自营旗舰店",
+      },
+      {
+        commercePlatform: "JD",
+        alias: "京东佳贝艾特(Kabrita)海外旗舰店",
+        canonicalStoreName: "佳贝艾特(Kabrita)海外旗舰店",
+      },
+    ]);
+    expect(validateStoreNameAliasSeeds()).toBe(true);
+    const aliasKeys = storeNameAliasSeeds.map(
+      (alias) =>
+        `${alias.commercePlatform}\u0000${normalizeStoreNameForMatch(alias.alias)}`,
+    );
+    expect(new Set(aliasKeys).size).toBe(aliasKeys.length);
+    for (const alias of storeNameAliasSeeds) {
+      expect(storeTopicRuleSeeds.some(
+        (rule) =>
+          rule.commercePlatform === alias.commercePlatform &&
+          normalizeStoreNameForMatch(rule.storeName) ===
+            normalizeStoreNameForMatch(alias.canonicalStoreName),
+      )).toBe(true);
+    }
+  });
+
+  it("别名指向缺失 Canonical 或同平台发生碰撞时明确阻断", () => {
+    expect(() => validateStoreNameAliasSeeds([
+      {
+        commercePlatform: "JD",
+        alias: "京东缺失店铺",
+        canonicalStoreName: "不存在的标准店铺",
+      },
+    ])).toThrow(/CANONICAL_STORE_NOT_FOUND/u);
+
+    expect(() => validateStoreNameAliasSeeds([
+      {
+        commercePlatform: "JD",
+        alias: "同一导入名称",
+        canonicalStoreName: "佳贝艾特官方海外旗舰店",
+      },
+      {
+        commercePlatform: "JD",
+        alias: "同一导入名称",
+        canonicalStoreName: "佳贝艾特\(Kabrita\)海外旗舰店",
+      },
+    ])).toThrow(/STORE_ALIAS_COLLISION/u);
+  });
+
+  it("升级迁移只向既有 identity 幂等写入 7 条平台 Alias 并带冲突门禁", () => {
+    expect(kabritaStoreAliasMigration).toContain(
+      'CHECK ("canonicalCount" = 7)',
+    );
+    expect(kabritaStoreAliasMigration).toContain(
+      'CHECK ("collisionCount" = 0)',
+    );
+    expect(kabritaStoreAliasMigration.match(/'store-alias-kabrita-/gu)).toHaveLength(
+      21,
+    );
+    expect(kabritaStoreAliasMigration).toContain("INSERT OR IGNORE");
+    expect(kabritaStoreAliasMigration).toContain("'STORE_ALIAS'");
+    expect(kabritaStoreAliasMigration).not.toMatch(
+      /INSERT\s+(?:OR\s+\w+\s+)?INTO\s+"store_topic_rules"/iu,
+    );
+    expect(kabritaStoreAliasMigration).not.toMatch(
+      /\bUPDATE\s+"?(?:audit_results|audit_tasks|import_records)"?/iu,
+    );
   });
 
   it("附加平台话题只初始化到指定平台的18家店铺", () => {

@@ -10,6 +10,7 @@ import {
 } from "@/lib/store-topic-config";
 import {
   storeAcceptedTopicSeeds,
+  storeNameAliasSeeds,
   storeRequiredTopicSeeds,
   storeTopicRuleSeeds,
 } from "@/lib/store-topic-rule-seeds";
@@ -49,6 +50,19 @@ const storeTopicConfigs = storeTopicRuleSeeds.map((seed) => ({
         id: `${seed.id}-alias-${index + 1}`,
         alias: accepted.topic.replace(/^#/u, ""),
         normalizedAlias: normalizeStoreTopicForMatch(accepted.topic),
+        enabled: true,
+      })),
+    ...storeNameAliasSeeds
+      .filter(
+        (alias) =>
+          alias.commercePlatform === seed.commercePlatform &&
+          normalizeStoreNameForMatch(alias.canonicalStoreName) ===
+            normalizeStoreNameForMatch(seed.storeName),
+      )
+      .map((alias, index) => ({
+        id: `${seed.id}-store-alias-${index + 1}`,
+        alias: alias.alias,
+        normalizedAlias: normalizeStoreNameForMatch(alias.alias),
         enabled: true,
       })),
   ],
@@ -159,6 +173,102 @@ describe("店铺话题配置与精确审核", () => {
       canonicalName,
       oldName,
     ]);
+  });
+
+  it.each([
+    ["天猫", "天猫佳贝艾特海外旗舰店", "kabrita海外旗舰店"],
+    ["天猫", "天猫佳贝艾特母婴海外旗舰店", "kabrita母婴海外旗舰店"],
+    ["抖音", "抖音佳贝艾特海外旗舰店", "佳贝艾特kabrita海外旗舰店"],
+    ["京东", "京东佳贝艾特(Kabrita)海外专卖店", "佳贝艾特(Kabrita)海外专卖店"],
+    ["京东", "京东佳贝艾特官方海外旗舰店", "佳贝艾特官方海外旗舰店"],
+    ["京东", "京东佳贝艾特海外京东自营旗舰店", "佳贝艾特海外京东自营旗舰店"],
+    ["京东", "京东佳贝艾特(Kabrita)海外旗舰店", "佳贝艾特(Kabrita)海外旗舰店"],
+  ])(
+    "佳贝艾特平台显式 Alias 只归一到同平台 Canonical：%s / %s",
+    (commercePlatform, storeName, matchedStoreName) => {
+      const aliasResolution = resolve({ commercePlatform, storeName });
+      const directResolution = resolve({
+        commercePlatform,
+        storeName: matchedStoreName,
+      });
+      expect(aliasResolution).toMatchObject({
+        status: "MATCHED",
+        storeName,
+        matchedStoreName,
+        storeTopicRuleId: directResolution.storeTopicRuleId,
+        expectedTopics: directResolution.expectedTopics,
+        requiredTopics: directResolution.requiredTopics,
+      });
+      expect(aliasResolution.expectedTopics).not.toContain(`#${storeName}`);
+    },
+  );
+
+  it("Canonical 店铺名优先直接匹配且保留名称中的京东字样", () => {
+    expect(resolve({
+      commercePlatform: "京东",
+      storeName: "佳贝艾特海外京东自营旗舰店",
+    })).toMatchObject({
+      status: "MATCHED",
+      storeName: "佳贝艾特海外京东自营旗舰店",
+      matchedStoreName: "佳贝艾特海外京东自营旗舰店",
+      storeTopicRuleId: "store-topic-jd-12",
+    });
+  });
+
+  it.each([
+    ["天猫", "抖音佳贝艾特海外旗舰店"],
+    ["抖音", "天猫佳贝艾特海外旗舰店"],
+    ["京东", "天猫佳贝艾特海外旗舰店"],
+  ])("佳贝艾特 Alias 不跨平台匹配：%s / %s", (commercePlatform, storeName) => {
+    expect(resolve({ commercePlatform, storeName }).status).toBe(
+      "STORE_NOT_MAPPED",
+    );
+  });
+
+  it("没有显式 Alias 的其他品牌店铺不会自动剥离京东前缀", () => {
+    expect(resolve({
+      commercePlatform: "京东",
+      storeName: "京东FOLO海外官方旗舰店",
+    }).status).toBe("STORE_NOT_MAPPED");
+  });
+
+  it("同平台 Alias 指向多个 Canonical 时明确阻断", () => {
+    const canonical = storeTopicConfigs.find(
+      (config) =>
+        config.commercePlatform === "JD" &&
+        config.storeName === "佳贝艾特官方海外旗舰店",
+    )!;
+    const collision = storeTopicConfigs.find(
+      (config) =>
+        config.commercePlatform === "JD" &&
+        config.storeName === "佳贝艾特(Kabrita)海外旗舰店",
+    )!;
+    const alias = "京东佳贝艾特官方海外旗舰店";
+    const resolution = resolveStoreTopicConfig(
+      storeTopicConfigs.map((config) =>
+        config.id === collision.id
+          ? {
+              ...config,
+              aliases: [
+                ...config.aliases,
+                {
+                  id: "collision-alias",
+                  alias,
+                  normalizedAlias: normalizeStoreNameForMatch(alias),
+                  enabled: true,
+                },
+              ],
+            }
+          : config,
+      ),
+      { commercePlatform: "京东", storeName: alias },
+    );
+    expect(canonical.id).not.toBe(collision.id);
+    expect(resolution).toMatchObject({
+      status: "STORE_NOT_MAPPED",
+      matchedStoreName: null,
+    });
+    expect(resolution.failureReason).toContain("STORE_ALIAS_COLLISION");
   });
 
   it("爱他美优选店铺兼容英文大小写与首尾空格，但不扩大为简称或模糊匹配", () => {
