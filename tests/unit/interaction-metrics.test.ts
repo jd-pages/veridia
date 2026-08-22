@@ -13,6 +13,11 @@ describe("小红书互动数解析", () => {
     ["2.3w", 23_000],
     ["1.2w", 12_000],
     ["1.2W", 12_000],
+    ["7,361", 7_361],
+    ["7，361", 7_361],
+    ["7361", 7_361],
+    ["1243", 1_243],
+    ["3052", 3_052],
   ])("解析 %s 为 %i", (input, expected) => {
     expect(parseInteractionCount(input)).toBe(expected);
   });
@@ -49,6 +54,41 @@ describe("小红书互动数解析", () => {
       commentCount: null,
       totalCount: null,
       status: "UNAVAILABLE",
+    });
+  });
+
+  it("当前作品评论控件与评论总数冲突时拒绝静默选值", () => {
+    expect(
+      resolveInteractionMetrics([
+        {
+          kindHint: "LIKE",
+          valueText: "7361",
+          source: "DOM_CURRENT_NOTE_ACTION_BAR:SVG_ICON",
+        },
+        {
+          kindHint: "FAVORITE",
+          valueText: "1243",
+          source: "DOM_CURRENT_NOTE_ACTION_BAR:SVG_ICON",
+        },
+        {
+          kindHint: "COMMENT",
+          valueText: "3052",
+          source: "DOM_CURRENT_NOTE_ACTION_BAR:SVG_ICON",
+        },
+        {
+          kindHint: "COMMENT",
+          valueText: "共 3051 条评论",
+          source: "DOM_COMMENT_SUMMARY",
+        },
+      ]),
+    ).toMatchObject({
+      likeCount: 7_361,
+      favoriteCount: 1_243,
+      commentCount: 3_052,
+      totalCount: null,
+      status: "UNAVAILABLE",
+      conflictCode: "INTERACTION_COUNT_CONFLICT",
+      technicalMessage: expect.stringContaining("INTERACTION_COUNT_CONFLICT"),
     });
   });
 });

@@ -636,6 +636,35 @@ describe("audit engine", () => {
       actualValue: "点赞 176 + 收藏 94 + 评论 4 = 274",
     });
 
+    const realInteractionSample = structuredClone(compliantNote);
+    realInteractionSample.likeCount = 7_361;
+    realInteractionSample.favoriteCount = 1_243;
+    realInteractionSample.commentCount = 3_052;
+    const realInteractionResult = evaluateAudit(
+      realInteractionSample,
+      kabritaContext,
+    );
+    expect(
+      realInteractionResult.ruleResults.find(
+        (rule) => rule.ruleKey === "KABRITA_BASIC_REWARD",
+      ),
+    ).toMatchObject({
+      passed: true,
+      actualValue: "点赞 7361 + 收藏 1243 + 评论 3052 = 11656",
+    });
+    const contentFailedWithReward = structuredClone(realInteractionSample);
+    contentFailedWithReward.body = "好".repeat(49);
+    const independentResult = evaluateAudit(
+      contentFailedWithReward,
+      kabritaContext,
+    );
+    expect(independentResult.autoStatus).toBe("FAILED");
+    expect(
+      independentResult.ruleResults.find(
+        (rule) => rule.ruleKey === "KABRITA_BASIC_REWARD",
+      ),
+    ).toMatchObject({ passed: true });
+
     const belowReward = structuredClone(compliantNote);
     belowReward.likeCount = 3;
     belowReward.favoriteCount = 3;

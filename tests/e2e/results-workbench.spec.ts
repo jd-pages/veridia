@@ -408,7 +408,6 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
     "店铺",
     "订单编号",
     "原始发布时间",
-    "原始时间来源",
     "平台显示时间",
     "实际审核时间",
   ]) {
@@ -417,9 +416,7 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   await expect(
     drawer.getByText("原始发布时间", { exact: true }).locator("..").locator("strong"),
   ).toHaveText(/^(?:未能确认|待确认|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$/u);
-  await expect(
-    drawer.getByText("原始时间来源", { exact: true }).locator("..").locator("strong"),
-  ).toHaveText(/^(?:未能确认|Note ID 推导|结构化发布时间|证据冲突，待确认)$/u);
+  await expect(drawer.getByText("原始时间来源", { exact: true })).toHaveCount(0);
   await expect(
     drawer.getByText("平台显示时间", { exact: true }).locator("..").locator("strong"),
   ).toHaveText(/^(?:未识别到平台时间|(?:(?:编辑于|发布于) )?(?:\d{2}-\d{2}|\d{4}-\d{2}-\d{2}|昨天 \d{2}:\d{2}|\d+天前|\d+小时前|\d+分钟前)(?: \d{2}:\d{2}(?::\d{2})?)?)$/u);

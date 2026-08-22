@@ -762,41 +762,58 @@ export async function collectDomPageSnapshot(
 
     const mainNoteRoot = roots.find(visible) || null;
     const publicationPattern = /^(?:(?:编辑于|发布于)\s*)?(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|昨天\s*\d{1,2}:\d{2}(?::\d{2})?|\d{1,4}天前|\d{1,6}小时前|\d{1,6}分钟前)(?:\s+(?:IP属地[：:]?\s*)?[\p{Script=Han}]{2,12})?$/u;
-    const publicationNodes = mainNoteRoot
-      ? [
-          ...mainNoteRoot.querySelectorAll(
-            "[data-xhs-published-text],[data-testid='note-publish-time'],[data-testid*='publish-time'],time,[class*='publish-time'],[class*='publish-date'],[class*='note-time'],[class*='date']",
-          ),
-        ]
-      : [];
     const descriptionElement = mainNoteRoot?.querySelector(
       "#detail-desc,[data-testid='note-content'],[data-testid='note-desc'],[class*='note-desc'],[class*='note-content'] [class*='desc']",
     );
     const commentElement = mainNoteRoot?.querySelector(
       "[data-testid*='comment'],[class*='comment']",
     );
+    const isCurrentNoteMetadataNode = (element: Element) => {
+      if (!visible(element) || element.closest(excluded)) return false;
+      if (
+        descriptionElement &&
+        !(descriptionElement.compareDocumentPosition(element) &
+          Node.DOCUMENT_POSITION_FOLLOWING)
+      ) {
+        return false;
+      }
+      if (
+        commentElement &&
+        !(element.compareDocumentPosition(commentElement) &
+          Node.DOCUMENT_POSITION_FOLLOWING)
+      ) {
+        return false;
+      }
+      return publicationPattern.test((element.textContent || "").replace(/\s+/gu, " ").trim());
+    };
+    const explicitPublicationNodes = mainNoteRoot
+      ? [
+          ...mainNoteRoot.querySelectorAll(
+            "[data-xhs-published-text],[data-testid='note-publish-time'],[data-testid*='publish-time'],time,[class*='publish-time'],[class*='publish-date'],[class*='note-time'],[class*='date']",
+          ),
+        ]
+      : [];
+    const explicitPublicationSet = new Set(explicitPublicationNodes);
+    // The current XHS detail page may render platform time as an otherwise
+    // unlabelled leaf span below the note description. Scan only the current
+    // note metadata interval and require the complete leaf text to match.
+    const fallbackPublicationNodes = mainNoteRoot
+      ? [...mainNoteRoot.querySelectorAll("span,div,p,time")].filter(
+          (element) =>
+            !explicitPublicationSet.has(element) &&
+            !element.querySelector("span,div,p,time") &&
+            isCurrentNoteMetadataNode(element),
+        )
+      : [];
+    const fallbackPublicationSet = new Set(fallbackPublicationNodes);
+    const publicationNodes = [
+      ...new Set([...explicitPublicationNodes, ...fallbackPublicationNodes]),
+    ];
     const publishedAtTextCandidates = publicationNodes
-      .filter((element) => {
-        if (!visible(element) || element.closest(excluded)) return false;
-        if (
-          descriptionElement &&
-          !(descriptionElement.compareDocumentPosition(element) &
-            Node.DOCUMENT_POSITION_FOLLOWING)
-        ) {
-          return false;
-        }
-        if (
-          commentElement &&
-          !(element.compareDocumentPosition(commentElement) &
-            Node.DOCUMENT_POSITION_FOLLOWING)
-        ) {
-          return false;
-        }
-        return publicationPattern.test((element.textContent || "").trim());
-      })
+      .filter(isCurrentNoteMetadataNode)
       .map((element) => ({
         raw: (element.textContent || "").replace(/\s+/gu, " ").trim(),
-        source: `DOM_MAIN_NOTE:${elementPath(element)}`,
+        source: `${fallbackPublicationSet.has(element) ? "DOM_MAIN_NOTE_METADATA_FALLBACK" : "DOM_MAIN_NOTE"}:${elementPath(element)}`,
       }))
       .filter(
         (item, index, all) =>

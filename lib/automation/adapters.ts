@@ -77,7 +77,7 @@ export class PlaywrightXiaohongshuAdapter
   implements PlaywrightExtractorAdapter
 {
   name = "playwright-xiaohongshu";
-  version = "1.6.0";
+  version = "1.7.0";
 
   canHandle(url: string) {
     try {
@@ -102,6 +102,7 @@ export class PlaywrightXiaohongshuAdapter
         status: "UNAVAILABLE" as const,
         technicalMessage:
           error instanceof Error ? error.message : "互动区域读取失败",
+        conflictCode: null,
         candidates: [],
       }),
     );

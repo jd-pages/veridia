@@ -128,8 +128,8 @@ export default async function MockXhsPage({
             ),
           )}
         </div>
-        <div data-xhs-published-text className="note-publish-time">
-          {params.publishedText || "07-08 上海"}
+        <div className="metadata-row">
+          <span>{params.publishedText || "07-08 上海"}</span>
         </div>
         {params.commentTime ? (
           <section className="comment-list">
