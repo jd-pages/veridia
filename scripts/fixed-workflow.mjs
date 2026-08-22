@@ -8,6 +8,10 @@ import process from "node:process";
 import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { resolveFormalDataRoot } from "./formal-data-root.mjs";
+import {
+  withLocalPackageFileRestore,
+  writeLocalPackageAcceptance,
+} from "./testing/local-package-worktree.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const command = process.argv[2];
@@ -595,54 +599,33 @@ async function localPackage() {
     );
     return;
   }
-  const temporaryVersionFiles = [
-    path.join(root, "package.json"),
-    path.join(root, "package-lock.json"),
-    path.join(root, "CHANGELOG.md"),
-  ];
-  const originalVersionFiles = new Map(
-    temporaryVersionFiles.map((file) => [file, fs.readFileSync(file)]),
-  );
-  let version;
-  try {
+  const version = await withLocalPackageFileRestore(root, () => {
     run("node", [path.join(root, "scripts", "release.mjs"), releaseMode], {
       env: { VERIDIA_ALLOW_FULL_ATTESTATION_REUSE: "true" },
     });
     run("node", [path.join(root, "scripts", "finalize-release.mjs"), "summary"]);
-    version = packageInfo().version;
-  } finally {
-    for (const [file, content] of originalVersionFiles) {
-      fs.writeFileSync(file, content);
-    }
-  }
-  if (git(["status", "--porcelain"]).stdout) {
-    throw new Error("本地验收临时版本恢复后工作区不干净，已停止生成验收记录。");
-  }
-  fs.mkdirSync(path.dirname(acceptancePath), { recursive: true });
-  fs.writeFileSync(
+    return packageInfo().version;
+  });
+  writeLocalPackageAcceptance({
     acceptancePath,
-    JSON.stringify(
-      {
-        version,
-        acceptedAt: new Date().toISOString(),
-        sourceFingerprint: sourceFingerprint(),
-        checks: [
-          "Prisma Client",
-          "TypeScript",
-          "ESLint",
-          "单元测试",
-          "桌面健康检查",
-          "E2E",
-          "Next.js生产构建",
-          "敏感信息扫描",
-          "Windows安装包构建",
-        ],
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
+    worktreeStatus: git(["status", "--porcelain"]).stdout,
+    acceptance: {
+      version,
+      acceptedAt: new Date().toISOString(),
+      sourceFingerprint: sourceFingerprint(),
+      checks: [
+        "Prisma Client",
+        "TypeScript",
+        "ESLint",
+        "单元测试",
+        "桌面健康检查",
+        "E2E",
+        "Next.js生产构建",
+        "敏感信息扫描",
+        "Windows安装包构建",
+      ],
+    },
+  });
   process.stdout.write(
     [
       "",

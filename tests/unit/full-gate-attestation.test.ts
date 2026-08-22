@@ -190,7 +190,7 @@ describe("FULL 门禁验收凭证", { timeout: 15_000 }, () => {
     const releaseWorkflow = fs.readFileSync(path.resolve(".github/workflows/veridia-release.yml"), "utf8");
     const gitignore = fs.readFileSync(path.resolve(".gitignore"), "utf8");
     expect(localWorkflow).toContain('VERIDIA_ALLOW_FULL_ATTESTATION_REUSE: "true"');
-    expect(localWorkflow).toContain("originalVersionFiles");
+    expect(localWorkflow).toContain("withLocalPackageFileRestore");
     expect(localWorkflow).toContain('git(["status", "--porcelain"])');
     expect(release).not.toContain("validateFullGateAttestation");
     expect(release).not.toContain("VERIDIA_ALLOW_FULL_ATTESTATION_REUSE");
