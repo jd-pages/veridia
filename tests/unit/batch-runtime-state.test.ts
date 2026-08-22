@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { classifyBatchRuntimeState } from "@/lib/automation/runtime-state";
+import {
+  classifyBatchRuntimeState,
+  isLiveBatchExecutionStateCoherent,
+} from "@/lib/automation/runtime-state";
 
 describe("自动审核批次真实运行态", () => {
   it("数据库 RUNNING 但没有 runner 时判定 STALE", () => {
@@ -36,5 +39,41 @@ describe("自动审核批次真实运行态", () => {
       currentTaskId: null,
       activeRunner: false,
     })).toBe("STALE");
+  });
+
+  it("runner 刚选中 QUEUED 批次但尚未 claim 时属于合法过渡态", () => {
+    expect(isLiveBatchExecutionStateCoherent({
+      status: "QUEUED",
+      runEpoch: 0,
+      currentTaskId: null,
+      processingTasks: [],
+    })).toBe(true);
+  });
+
+  it("RUNNING 批次在相邻 task claim 之间属于合法过渡态", () => {
+    expect(isLiveBatchExecutionStateCoherent({
+      status: "RUNNING",
+      runEpoch: 2,
+      currentTaskId: null,
+      processingTasks: [],
+    })).toBe(true);
+  });
+
+  it("runner 与 PROCESSING lease 不一致时仍要求人工复核", () => {
+    expect(isLiveBatchExecutionStateCoherent({
+      status: "RUNNING",
+      runEpoch: 2,
+      currentTaskId: "task-current",
+      processingTasks: [{ id: "task-stale", claimEpoch: 1 }],
+    })).toBe(false);
+  });
+
+  it("PAUSED 批次无 lease 时不视为正在合法过渡", () => {
+    expect(isLiveBatchExecutionStateCoherent({
+      status: "PAUSED",
+      runEpoch: 2,
+      currentTaskId: null,
+      processingTasks: [],
+    })).toBe(false);
   });
 });

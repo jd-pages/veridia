@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { taskStatusForPersistedResult } from "./execution-lease";
+import { isLiveBatchExecutionStateCoherent } from "./runtime-state";
 
 const TERMINAL_BATCH_STATUSES = new Set([
   "COMPLETED",
@@ -61,7 +62,16 @@ export async function reconcileBatchExecutionState(input: {
               task.claimEpoch === batch.runEpoch,
           )
         : undefined;
-    if (input.reason === "RESUME" && input.liveRunner && !validLiveTask) {
+    const coherentLiveRunner =
+      input.reason === "RESUME" &&
+      input.liveRunner &&
+      isLiveBatchExecutionStateCoherent({
+        status: batch.status,
+        runEpoch: batch.runEpoch,
+        currentTaskId: batch.currentTaskId,
+        processingTasks: batch.tasks,
+      });
+    if (input.reason === "RESUME" && input.liveRunner && !coherentLiveRunner) {
       const paused = await tx.auditBatch.update({
         where: { id: batch.id },
         data: {
@@ -119,7 +129,7 @@ export async function reconcileBatchExecutionState(input: {
       }
     }
 
-    if (validLiveTask) {
+    if (coherentLiveRunner) {
       const liveBatch = await tx.auditBatch.findUniqueOrThrow({
         where: { id: batch.id },
       });
