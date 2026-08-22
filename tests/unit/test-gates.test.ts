@@ -18,6 +18,15 @@ import {
 import os from "node:os";
 
 describe("分层测试门禁", () => {
+  it("Windows Unit 对重型 SQLite/Prisma 文件关闭并行以保护 worker RPC", () => {
+    const config = fs.readFileSync(
+      path.join(process.cwd(), "vitest.config.ts"),
+      "utf8",
+    );
+    expect(config).toContain("fileParallelism: false");
+    expect(config).not.toContain("dangerouslyIgnoreUnhandledErrors");
+  });
+
   it("正式 E2E 清单与 Playwright 正式测试文件完全一致且没有 skip", () => {
     expect(validateManifest()).toEqual(listFormalE2eFiles());
     expect(Object.keys(E2E_MANIFEST).sort()).toEqual(listFormalE2eFiles());

@@ -11,6 +11,14 @@ const TERMINAL_BATCH_STATUSES = new Set([
   "SECURITY_RESTRICTED",
 ]);
 
+const NON_BLOCKING_FINISHED_BATCH_STATUSES = new Set([
+  "CANCELLED",
+  "COMPLETED",
+  "COMPLETED_WITH_ERRORS",
+  "FAILED",
+  "READ_FAILED",
+]);
+
 async function readBatchStatus(page: Page, batchId: string) {
   const response = await page.request.get(
     `/api/automation/batches?batchId=${batchId}&includeTasks=false`,
@@ -38,6 +46,33 @@ export async function cleanupAutomaticBatches(
         .poll(() => readBatchStatus(page, batchId), { timeout: 15_000 })
         .toMatch(/^(?:CANCELLED|CLEARED)$/u);
     }
+    const clear = await page.request.post(
+      `/api/automation/batches/${batchId}/clear`,
+    );
+    expect(clear.ok()).toBeTruthy();
+  }
+}
+
+export async function cleanupNonTerminalAutomaticBatches(
+  page: Page,
+  batchIds: string[],
+) {
+  for (const batchId of [...new Set(batchIds)].reverse()) {
+    const status = await readBatchStatus(page, batchId);
+    if (
+      status === "CLEARED" ||
+      NON_BLOCKING_FINISHED_BATCH_STATUSES.has(status)
+    ) {
+      continue;
+    }
+    const cancel = await page.request.post(
+      `/api/automation/batches/${batchId}/control`,
+      { data: { action: "CANCEL" } },
+    );
+    expect(cancel.ok()).toBeTruthy();
+    await expect
+      .poll(() => readBatchStatus(page, batchId), { timeout: 15_000 })
+      .toMatch(/^(?:CANCELLED|CLEARED)$/u);
     const clear = await page.request.post(
       `/api/automation/batches/${batchId}/clear`,
     );

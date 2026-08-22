@@ -92,8 +92,12 @@ test("连续审核与网络重试复用唯一后台 auditPage", async ({ page })
       intervalMs: 1000,
     },
   });
-  expect(batchResponse.ok()).toBeTruthy();
-  const batchId = (await batchResponse.json()).data.batchId as string;
+  const batchPayload = await batchResponse.json();
+  expect(
+    batchResponse.ok(),
+    `batch create failed: ${batchResponse.status()} ${JSON.stringify(batchPayload)}`,
+  ).toBeTruthy();
+  const batchId = batchPayload.data.batchId as string;
   cleanupBatchIds.push(batchId);
   await waitForBatch(page, batchId);
 

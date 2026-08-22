@@ -7,6 +7,7 @@ import {
 } from "@/lib/result-query";
 import { summarizeResultStatusGroups } from "@/lib/result-summary";
 import { withHeavyAuditReadSlot } from "@/lib/audit-read-concurrency";
+import { withXhsOriginalPublishedAt } from "@/lib/xhs-original-published-at";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -100,8 +101,15 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       return { total, items, summary };
     }),
   );
+  const presentationNow = new Date();
   return ok(
-    { total, page, pageSize, items, summary },
+    {
+      total,
+      page,
+      pageSize,
+      items: items.map((item) => withXhsOriginalPublishedAt(item, presentationNow)),
+      summary,
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }, "读取审核结果");

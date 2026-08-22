@@ -14,6 +14,10 @@ import { parseStoredStringArray } from "@/lib/stored-json";
 import { formatPlatformPublishedAt } from "@/lib/platform-published-at";
 import { duplicateReauditMetadataFromNotes } from "@/lib/import-task-metadata";
 import {
+  formatOriginalPublishedAt,
+  originalPublishedAtSourceLabel,
+} from "@/lib/xhs-original-published-at";
+import {
   commercePlatformLabel,
   contentChannelLabel,
   formatAuditTime,
@@ -200,8 +204,32 @@ export default function AuditDecisionSummary({
               </Typography.Text>
             )}
           </div>
+          {channel === "XIAOHONGSHU" ? (
+            <>
+              <div>
+                <span>原始发布时间</span>
+                <strong>
+                  {formatOriginalPublishedAt({
+                    originalPublishedAt: row.note.originalPublishedAt ?? null,
+                    originalPublishedAtStatus:
+                      row.note.originalPublishedAtStatus ?? "UNCONFIRMED",
+                  })}
+                </strong>
+              </div>
+              <div>
+                <span>原始时间来源</span>
+                <strong>
+                  {row.note.originalPublishedAtCode === "PUBLISHED_TIME_CONFLICT"
+                    ? "证据冲突，待确认"
+                    : originalPublishedAtSourceLabel(
+                        row.note.originalPublishedAtSource ?? null,
+                      )}
+                </strong>
+              </div>
+            </>
+          ) : null}
           <div>
-            <span>平台时间</span>
+            <span>平台显示时间</span>
             <strong>
               {formatPlatformPublishedAt(
                 row.note.publishedAt,

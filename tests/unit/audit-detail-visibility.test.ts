@@ -58,7 +58,9 @@ describe("审核详情展示过滤", () => {
     expect(decision).toContain("row.task.storeName");
     expect(decision).toContain("row.task.orderNumber");
     expect(decision).toContain("formatAuditTime(row.auditedAt)");
-    expect(decision).toContain("平台时间");
+    expect(decision).toContain("原始发布时间");
+    expect(decision).toContain("原始时间来源");
+    expect(decision).toContain("平台显示时间");
     expect(decision).toContain("formatPlatformPublishedAt");
     expect(decision).toContain("row.note.publishedAtRaw");
     expect(decision).toContain("导入时间");

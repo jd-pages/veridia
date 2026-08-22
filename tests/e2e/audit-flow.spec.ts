@@ -3,6 +3,20 @@ import ExcelJS from "exceljs";
 import { readFile } from "node:fs/promises";
 import { createMockNote } from "../../lib/mock-data";
 import { E2E_ORIGIN } from "./e2e-origin";
+import { cleanupNonTerminalAutomaticBatches } from "./automation-cleanup";
+
+const duplicateReauditCleanupBatchIds: string[] = [];
+
+test.afterEach(async ({ page }) => {
+  try {
+    await cleanupNonTerminalAutomaticBatches(
+      page,
+      duplicateReauditCleanupBatchIds,
+    );
+  } finally {
+    duplicateReauditCleanupBatchIds.length = 0;
+  }
+});
 
 function worksheetHeaders(sheet: ExcelJS.Worksheet) {
   const headers: string[] = [];
@@ -45,6 +59,17 @@ async function waitForBatch(
       const batches = (await response.json()).data;
       return batches.find((item: { id: string }) => item.id === batchId);
     });
+}
+
+async function synchronizeQueuedBatch(page: Page, batchId: string) {
+  const response = await page.request.post(
+    `/api/automation/batches/${batchId}/control`,
+    { data: { action: "CONTINUE" } },
+  );
+  expect(
+    response.ok(),
+    `queue sync failed: ${response.status()} ${await response.text()}`,
+  ).toBeTruthy();
 }
 
 async function openExcelImport(page: Page) {
@@ -1673,6 +1698,8 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     batchId: string;
   };
   expect(initial.imported).toBe(1);
+  duplicateReauditCleanupBatchIds.push(initial.batchId);
+  await synchronizeQueuedBatch(page, initial.batchId);
   await waitForBatch(page, initial.batchId, ["COMPLETED"]);
 
   const databaseFingerprint = async () => {
@@ -1864,6 +1891,12 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     batchId: string;
   };
   expect(committed.imported).toBe(1);
+  duplicateReauditCleanupBatchIds.push(committed.batchId);
+  // This case verifies duplicate precheck/commit semantics, not the unrelated
+  // fire-and-forget queue kick. Synchronize the already-created batch through
+  // the public lifecycle control so a resource-starved shared Next dev server
+  // cannot leave it QUEUED and contaminate the following spec.
+  await synchronizeQueuedBatch(page, committed.batchId);
   const duplicateBatch = await waitForBatch(page, committed.batchId, [
     "COMPLETED",
   ]);

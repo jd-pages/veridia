@@ -79,6 +79,18 @@ export interface ResultRow {
     publishedAt: string | null;
     publishedAtRaw: string | null;
     publishedAtSource: string | null;
+    originalPublishedAt?: string | null;
+    originalPublishedAtStatus?: "CONFIRMED" | "UNCONFIRMED" | "CONFLICT";
+    originalPublishedAtSource?:
+      | "STRUCTURED_PUBLISHED_TIME"
+      | "XHS_NOTE_ID_DERIVED_CREATION_TIME"
+      | null;
+    originalPublishedAtCode?: "PUBLISHED_TIME_CONFLICT" | null;
+    originalPublishedAtEvidence?: {
+      structuredPublishedAt: string | null;
+      noteIdDerivedCreationTime: string | null;
+      differenceSeconds: number | null;
+    };
     lastCapturedAt: string;
     topics: AuditTopic[];
   };
