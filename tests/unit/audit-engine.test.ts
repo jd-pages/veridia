@@ -589,6 +589,17 @@ describe("audit engine", () => {
       bodyRequired: campaign.bodyRequired,
       bodyStageRequired: false,
       clickableTopicRequired: campaign.clickableTopicRequired,
+      storeTopicRequirement: {
+        channel: "XIAOHONGSHU",
+        storeName: "抖音佳贝艾特海外旗舰店",
+        storeTopicRuleId: "store-topic-douyin_ecommerce-03",
+        matchedStoreName: "佳贝艾特kabrita海外旗舰店",
+        commercePlatform: "DOUYIN_ECOMMERCE",
+        expectedTopic: null,
+        expectedTopics: [],
+        requiredTopics: [],
+        mappingStatus: "MATCHED",
+      },
       rules: applicableRules.map((rule) => ({
         id: rule.key,
         scope: rule.scope,
@@ -627,6 +638,20 @@ describe("audit engine", () => {
 
     const rewardPassed = evaluateAudit(compliantNote, kabritaContext);
     expect(rewardPassed.autoStatus).toBe("PASSED");
+    expect(rewardPassed.storeTopicStatus).toBe("NOT_REQUIRED");
+    expect(
+      rewardPassed.ruleResults.some(
+        (rule) =>
+          rule.ruleKey === "STORE_TOPIC" ||
+          rule.ruleKey.startsWith("TOPIC_PRODUCT_STAGE_GROUP_") ||
+          rule.ruleKey === "PRODUCT_STAGE_BODY",
+      ),
+    ).toBe(false);
+    expect(
+      kabritaContext.rules.some(
+        (rule) => rule.topicCategory === "PRODUCT_STAGE",
+      ),
+    ).toBe(false);
     expect(
       rewardPassed.ruleResults.find(
         (rule) => rule.ruleKey === "KABRITA_BASIC_REWARD",

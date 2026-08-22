@@ -1,9 +1,14 @@
 import { expect, test } from "@playwright/test";
 import ExcelJS from "exceljs";
 import { prisma } from "@/lib/db";
+import { ensureStoreTopicRuleSeeds } from "@/lib/store-topic-rule-service";
 import { E2E_ORIGIN } from "./e2e-origin";
 
-test("编辑 Canonical 店铺话题时展示并保留 STORE_ALIAS", async ({ page }) => {
+test.beforeAll(async () => {
+  await ensureStoreTopicRuleSeeds();
+});
+
+test("佳贝艾特 Canonical 可不要求店铺话题并保留 STORE_ALIAS", async ({ page }) => {
   expect((await page.request.post("/api/auth/login", {
     data: { username: "admin", password: "Admin123!" },
   })).ok()).toBeTruthy();
@@ -35,9 +40,7 @@ test("编辑 Canonical 店铺话题时展示并保留 STORE_ALIAS", async ({ pag
     explicitAlias,
   ]);
   expect(before.storeAliases.map((item) => item.alias)).toEqual([explicitAlias]);
-  expect(before.acceptedTopics.map((item) => item.topic)).toEqual([
-    `#${canonicalStoreName}`,
-  ]);
+  expect(before.acceptedTopics).toEqual([]);
 
   const update = await page.request.patch(`/api/store-topic-rules/${before.id}`, {
     data: {
@@ -56,9 +59,7 @@ test("编辑 Canonical 店铺话题时展示并保留 STORE_ALIAS", async ({ pag
     explicitAlias,
   ]);
   expect(after.storeAliases.map((item) => item.alias)).toEqual([explicitAlias]);
-  expect(after.acceptedTopics.map((item) => item.topic)).toEqual([
-    `#${canonicalStoreName}`,
-  ]);
+  expect(after.acceptedTopics).toEqual([]);
 });
 
 test("活动与规则可独立维护店铺话题规则", async ({ page }) => {

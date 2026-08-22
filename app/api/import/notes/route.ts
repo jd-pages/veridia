@@ -689,7 +689,13 @@ export async function POST(request: Request) {
             (rule) => compatibleStages.includes(rule.applicableStage || ""),
           )
         : null;
-      if (importedStage && !stageRule && campaign && product) {
+      if (
+        importedStage &&
+        matchingStageRules.length > 0 &&
+        !stageRule &&
+        campaign &&
+        product
+      ) {
         checked.errors.push(
           `第${checked.rowNumber}行：当前活动要求阶段话题，但产品‘${product.name}’的 ${checked.stageGroup || productStageTopicLabel(importedStage)} 阶段未配置可用话题规则。`,
         );

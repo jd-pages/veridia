@@ -238,7 +238,7 @@ export function validateAcceptedStoreTopics(
   return validateTopicList({
     value,
     topicType: "ACCEPTED",
-    allowEmpty: false,
+    allowEmpty: true,
     defaultTopic: defaultStoreName,
   });
 }
@@ -317,6 +317,7 @@ export async function ensureStoreTopicRuleSeeds() {
     for (const seed of storeTopicRuleSeeds) {
       const normalizedStoreName = normalizeStoreNameForMatch(seed.storeName);
       const expectedTopic = expectedStoreTopicForName(seed.storeName);
+      const acceptedTopics = seed.acceptedTopics ?? [expectedTopic];
       const rule = await tx.storeTopicRule.upsert({
         where: { id: seed.id },
         create: {
@@ -324,28 +325,49 @@ export async function ensureStoreTopicRuleSeeds() {
           commercePlatform: seed.commercePlatform,
           storeName: seed.storeName,
           normalizedStoreName,
-          expectedTopic,
+          expectedTopic: acceptedTopics[0] || "",
           enabled: true,
         },
-        update: {},
+        update:
+          seed.acceptedTopics === undefined
+            ? {}
+            : { expectedTopic: acceptedTopics[0] || "" },
       });
-      await tx.storeTopicEntry.upsert({
-        where: {
-          storeTopicRuleId_normalizedTopic: {
+      if (seed.acceptedTopics !== undefined) {
+        await tx.storeTopicEntry.updateMany({
+          where: {
             storeTopicRuleId: rule.id,
-            normalizedTopic: normalizeStoreTopicForMatch(expectedTopic),
+            topicType: { in: ["ACCEPTED", "ACCEPTED_ALIAS", "REQUIRED"] },
+            deletedAt: null,
           },
-        },
-        create: {
-          storeTopicRuleId: rule.id,
-          topic: expectedTopic,
-          normalizedTopic: normalizeStoreTopicForMatch(expectedTopic),
-          topicType: "ACCEPTED",
-          sortOrder: 0,
-          enabled: true,
-        },
-        update: {},
-      });
+          data: { enabled: false, deletedAt: new Date() },
+        });
+      }
+      for (const [sortOrder, topic] of acceptedTopics.entries()) {
+        await tx.storeTopicEntry.upsert({
+          where: {
+            storeTopicRuleId_normalizedTopic: {
+              storeTopicRuleId: rule.id,
+              normalizedTopic: normalizeStoreTopicForMatch(topic),
+            },
+          },
+          create: {
+            storeTopicRuleId: rule.id,
+            topic,
+            normalizedTopic: normalizeStoreTopicForMatch(topic),
+            topicType: "ACCEPTED",
+            sortOrder,
+            enabled: true,
+          },
+          update: {
+            topic,
+            topicType: "ACCEPTED",
+            sortOrder,
+            enabled: true,
+            deletedAt: null,
+          },
+        });
+      }
     }
     for (const seed of storeAcceptedTopicSeeds) {
       const rule = await tx.storeTopicRule.findUnique({
@@ -872,7 +894,7 @@ export async function createStoreTopicRule(
     const rule = await tx.storeTopicRule.create({
       data: {
         ...identity,
-        expectedTopic: groups.acceptedTopics[0].topic,
+        expectedTopic: groups.acceptedTopics[0]?.topic || "",
         createdBy: user.id,
         updatedBy: user.id,
       },
@@ -945,9 +967,7 @@ export async function updateStoreTopicRule(
   const groups = validateStoreTopicGroups({
     acceptedTopics:
       input.acceptedTopics === undefined
-        ? beforeAccepted.length
-          ? beforeAccepted
-          : [{ topic: existing.expectedTopic, enabled: true }]
+        ? beforeAccepted
         : input.acceptedTopics,
     requiredTopics:
       input.requiredTopics === undefined ? beforeRequired : input.requiredTopics,
@@ -978,7 +998,7 @@ export async function updateStoreTopicRule(
       where: { id },
       data: {
         ...identity,
-        expectedTopic: groups.acceptedTopics[0].topic,
+        expectedTopic: groups.acceptedTopics[0]?.topic || "",
         updatedBy: user.id,
       },
     });

@@ -354,7 +354,24 @@ export default function AuditDecisionSummary({
             {unavailable || row.storeTopicStatus === "NOT_CHECKED" ? (
               <strong>未审核</strong>
             ) : row.storeTopicStatus === "NOT_REQUIRED" ? (
-              <strong>不适用</strong>
+              <div className={styles.auditDetailList}>
+                <div>
+                  <span>导入店铺</span>
+                  <strong>{row.task.storeName || "—"}</strong>
+                </div>
+                <div>
+                  <span>店铺映射</span>
+                  <strong>
+                    {row.task.matchedStoreName
+                      ? `已匹配：${row.task.matchedStoreName}`
+                      : "未匹配"}
+                  </strong>
+                </div>
+                <div>
+                  <span>店铺话题要求</span>
+                  <strong>不要求</strong>
+                </div>
+              </div>
             ) : (
               <div className={styles.auditDetailList}>
                 <div>

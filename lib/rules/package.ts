@@ -122,7 +122,7 @@ const payloadSchema = z.object({
         storeName: nonEmpty,
         enabled: z.boolean(),
         storeAliases: z.array(storeValueSchema),
-        acceptedTopics: z.array(storeValueSchema).min(1),
+        acceptedTopics: z.array(storeValueSchema),
         acceptedAliases: z.array(storeValueSchema),
         requiredTopics: z.array(storeValueSchema),
       }),
@@ -669,7 +669,7 @@ export async function applyRulePayload(
         const normalizedStoreName = normalizeStoreNameForMatch(item.storeName);
         const expectedTopic = storeTopicWithHash(
           item.acceptedTopics.find((topic) => topic.enabled)?.value ||
-            item.acceptedTopics[0].value,
+            item.acceptedTopics[0]?.value,
         );
         const existing = await tx.storeTopicRule.findUnique({
           where: {

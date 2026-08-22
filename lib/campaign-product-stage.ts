@@ -158,7 +158,7 @@ export async function resolveCampaignProductStageConfiguration(input: {
     product,
     rules,
     detailed,
-    requiresProductStage: campaignRequiresProductStage(configuredRules),
+    requiresProductStage: campaignRequiresProductStage(rules),
     stageOptions: campaignProductStageOptions({
       rules,
       productId: input.productId,

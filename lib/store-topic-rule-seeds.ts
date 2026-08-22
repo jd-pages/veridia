@@ -5,6 +5,7 @@ export interface StoreTopicRuleSeed {
   id: string;
   commercePlatform: CommercePlatform;
   storeName: string;
+  acceptedTopics?: readonly string[];
 }
 
 export interface StoreRequiredTopicSeed {
@@ -51,6 +52,16 @@ const storesByPlatform: Record<CommercePlatform, readonly string[]> = {
   TAOBAO: ["ALG阿莱购", "国际进口超市"],
 };
 
+const storesWithoutTopicRequirement = new Set([
+  "DOUYIN_ECOMMERCE\u0000佳贝艾特kabrita海外旗舰店",
+  "JD\u0000佳贝艾特(Kabrita)海外专卖店",
+  "JD\u0000佳贝艾特海外京东自营旗舰店",
+  "JD\u0000佳贝艾特官方海外旗舰店",
+  "JD\u0000佳贝艾特(Kabrita)海外旗舰店",
+  "TMALL\u0000kabrita海外旗舰店",
+  "TMALL\u0000kabrita母婴海外旗舰店",
+]);
+
 export const storeTopicRuleSeeds: readonly StoreTopicRuleSeed[] = Object.entries(
   storesByPlatform,
 ).flatMap(([commercePlatform, stores]) =>
@@ -58,6 +69,9 @@ export const storeTopicRuleSeeds: readonly StoreTopicRuleSeed[] = Object.entries
     id: `store-topic-${commercePlatform.toLowerCase()}-${String(index + 1).padStart(2, "0")}`,
     commercePlatform: commercePlatform as CommercePlatform,
     storeName,
+    ...(storesWithoutTopicRequirement.has(`${commercePlatform}\u0000${storeName}`)
+      ? { acceptedTopics: [] }
+      : {}),
   })),
 );
 

@@ -232,7 +232,7 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
   });
   await expect(kabritaBrandCard).toHaveCount(1);
   await expect(kabritaBrandCard).toContainText("2个");
-  await expect(kabritaBrandCard).toContainText("10条");
+  await expect(kabritaBrandCard).toContainText("7条");
   await kabritaBrandCard.getByRole("button", { name: "进入规则" }).click();
   await expect(
     page.getByRole("heading", { name: "佳贝艾特话题规则" }),

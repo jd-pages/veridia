@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import ExcelJS from "exceljs";
 import { E2E_ORIGIN } from "./e2e-origin";
+import { prisma } from "../../lib/db";
+import { ensureStoreTopicRuleSeeds } from "../../lib/store-topic-rule-service";
+
+test.beforeAll(async () => {
+  await ensureStoreTopicRuleSeeds();
+});
 
 const importHeaders = [
   "登记时间",
@@ -127,7 +133,7 @@ test("佳贝艾特13行多平台显式店铺 Alias 预检全部命中 Canonical"
       shopName: alias,
       matchedStoreName: canonical,
       storeMappingStatus: "MATCHED",
-      expectedStoreTopics: [`#${canonical}`],
+      expectedStoreTopics: [],
       errors: [],
     });
     expect(row.expectedStoreTopics).not.toContain(`#${alias}`);
@@ -306,6 +312,15 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
     });
     expect(createResponse.ok()).toBeTruthy();
     const task = (await createResponse.json()).data.created[0] as { id: string };
+    await prisma.auditTask.update({
+      where: { id: task.id },
+      data: {
+        source: "EXCEL",
+        productStage: "IFFO_2",
+        commercePlatform: "DOUYIN_ECOMMERCE",
+        storeName: "抖音佳贝艾特海外旗舰店",
+      },
+    });
     const auditResponse = await page.request.post(`/api/tasks/${task.id}/audit`, {
       data: {
         extraction: {
@@ -341,6 +356,7 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
       id: string;
       autoStatus: string;
       failureReasons: string;
+      storeTopicStatus: string;
     };
   };
 
@@ -351,6 +367,44 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
     commentCount: 4,
   });
   expect(passed.autoStatus).toBe("PASSED");
+  expect(passed.storeTopicStatus).toBe("NOT_REQUIRED");
+  const passedTask = await prisma.auditTask.findFirstOrThrow({
+    where: { auditResults: { some: { id: passed.id } } },
+    select: {
+      channel: true,
+      commercePlatform: true,
+      storeName: true,
+      matchedStoreName: true,
+      storeMappingStatus: true,
+      expectedStoreTopics: true,
+      requiredStoreTopics: true,
+      productStage: true,
+    },
+  });
+  expect(passedTask).toMatchObject({
+    channel: "XIAOHONGSHU",
+    commercePlatform: "DOUYIN_ECOMMERCE",
+    storeName: "抖音佳贝艾特海外旗舰店",
+    matchedStoreName: "佳贝艾特kabrita海外旗舰店",
+    storeMappingStatus: "MATCHED",
+    expectedStoreTopics: "[]",
+    requiredStoreTopics: "[]",
+    productStage: "IFFO_2",
+  });
+  const passedRuleKeys = (
+    await prisma.ruleResult.findMany({
+      where: { auditResultId: passed.id },
+      select: { ruleKey: true },
+    })
+  ).map((rule) => rule.ruleKey);
+  expect(passedRuleKeys).not.toContain("STORE_TOPIC");
+  expect(
+    passedRuleKeys.some(
+      (ruleKey) =>
+        ruleKey === "PRODUCT_STAGE_BODY" ||
+        ruleKey.startsWith("TOPIC_PRODUCT_STAGE_GROUP_"),
+    ),
+  ).toBe(false);
 
   const below = await audit({
     marker: "below",
@@ -419,6 +473,14 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
   }
 
   await page.goto(`/results/${passed.id}`);
+  const storeCard = page.locator("article", {
+    has: page.getByRole("heading", { name: "店铺话题审核" }),
+  });
+  await expect(storeCard).toContainText("店铺映射");
+  await expect(storeCard).toContainText("已匹配：佳贝艾特kabrita海外旗舰店");
+  await expect(storeCard).toContainText("店铺话题要求");
+  await expect(storeCard).toContainText("不要求");
+  await expect(page.getByText("阶段话题未命中")).toHaveCount(0);
   const rewardCard = page.locator("article", {
     has: page.getByRole("heading", { name: "基础奖励" }),
   });

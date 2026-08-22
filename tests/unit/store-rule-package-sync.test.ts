@@ -36,28 +36,32 @@ async function createStoreRule(
     commercePlatform: "JD" | "TMALL" | "TAOBAO" | "DOUYIN_ECOMMERCE";
     storeName: string;
     storeAliases?: string[];
+    acceptedTopic?: boolean;
     acceptedAlias?: string;
     requiredTopic?: string;
   },
 ) {
   const normalizedStoreName = normalizeStoreNameForMatch(input.storeName);
   const acceptedTopic = storeTopicWithHash(input.storeName);
+  const acceptsCanonicalTopic = input.acceptedTopic !== false;
   const rule = await client.storeTopicRule.create({
     data: {
       commercePlatform: input.commercePlatform,
       storeName: input.storeName,
       normalizedStoreName,
-      expectedTopic: acceptedTopic,
+      expectedTopic: acceptsCanonicalTopic ? acceptedTopic : "",
       enabled: true,
     },
   });
   const entries = [
-    {
-      topic: acceptedTopic,
-      normalizedTopic: normalizeStoreTopicForMatch(acceptedTopic),
-      topicType: "ACCEPTED",
-      sortOrder: 0,
-    },
+    ...(acceptsCanonicalTopic
+      ? [{
+          topic: acceptedTopic,
+          normalizedTopic: normalizeStoreTopicForMatch(acceptedTopic),
+          topicType: "ACCEPTED",
+          sortOrder: 0,
+        }]
+      : []),
     ...(input.storeAliases ?? []).map((alias, sortOrder) => ({
       topic: alias,
       normalizedTopic: normalizeStoreNameForMatch(alias),
@@ -226,6 +230,7 @@ describe.sequential("店铺规则包 Source A → Client B", () => {
         commercePlatform: seed.commercePlatform,
         storeName: seed.canonicalStoreName,
         storeAliases: [seed.alias],
+        acceptedTopic: false,
       });
     }
     await createStoreRule(sourceClient, {
@@ -318,6 +323,9 @@ describe.sequential("店铺规则包 Source A → Client B", () => {
     expect(matched).toMatchObject({
       status: "MATCHED",
       matchedStoreName: "kabrita海外旗舰店",
+      expectedTopic: null,
+      expectedTopics: [],
+      requiredTopics: [],
     });
     expect(matched.expectedTopics).not.toContain("#天猫佳贝艾特海外旗舰店");
     const acceptedAlias = await resolve(

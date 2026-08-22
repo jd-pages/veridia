@@ -33,8 +33,8 @@ describe("可接受店铺话题输入", () => {
     ).toThrow("只能填写一条完整话题");
   });
 
-  it("拒绝空白、零条及仅英文大小写不同的重复话题", () => {
-    expect(() => validateAcceptedStoreTopics([])).toThrow("至少需要配置一条");
+  it("允许零条表示不要求店铺话题，但拒绝空白及仅英文大小写不同的重复话题", () => {
+    expect(validateAcceptedStoreTopics([])).toEqual([]);
     expect(() => validateAcceptedStoreTopics([{ topic: " " }])).toThrow(
       "不能为空",
     );

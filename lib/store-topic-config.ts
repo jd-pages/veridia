@@ -146,20 +146,15 @@ export function resolveStoreTopicConfig(
     .sort((left, right) => left.sortOrder - right.sortOrder)
     .map((topic) => storeTopicWithHash(topic.topic))
     .filter(Boolean);
-  const compatibleExpectedTopic =
-    expectedTopics[0] || storeTopicWithHash(matches[0].expectedTopic);
+  const compatibleExpectedTopic = expectedTopics[0] || null;
   return {
     status: "MATCHED",
     storeTopicRuleId: matches[0].id,
     storeName,
     matchedStoreName: matches[0].storeName,
     commercePlatform: matches[0].commercePlatform,
-    expectedTopic: compatibleExpectedTopic || null,
-    expectedTopics: expectedTopics.length
-      ? expectedTopics
-      : compatibleExpectedTopic
-        ? [compatibleExpectedTopic]
-        : [],
+    expectedTopic: compatibleExpectedTopic,
+    expectedTopics,
     requiredTopics,
     config: matches[0],
     failureReason: null,
@@ -245,12 +240,20 @@ export function validateStoreTopic(input: {
       needsReview: true,
     };
   }
-  if (mappingStatus !== "MATCHED" || !expectedTopics.length) {
+  if (mappingStatus !== "MATCHED") {
     return {
       status: "UNREVIEWABLE",
       ...emptyResult,
       failureReason: "导入店铺名称未匹配店铺话题配置。",
       needsReview: true,
+    };
+  }
+  if (!expectedTopics.length && !requiredTopics.length) {
+    return {
+      status: "NOT_REQUIRED",
+      ...emptyResult,
+      failureReason: null,
+      needsReview: false,
     };
   }
   if (!channel) {
@@ -289,7 +292,7 @@ export function validateStoreTopic(input: {
   const hardFailures: string[] = [];
   const reviewFailures: string[] = [];
 
-  if (!matchedTopics.length) {
+  if (expectedTopics.length && !matchedTopics.length) {
     const exactAcceptedMatches = expectedTopics.flatMap(matchesFor);
     if (!exactAcceptedMatches.length) {
       const onlyInBody = expectedTopics.some((topic) =>

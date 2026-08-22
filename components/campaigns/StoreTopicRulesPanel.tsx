@@ -171,10 +171,7 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
         alias: alias.alias,
         enabled: alias.enabled,
       })),
-      acceptedTopics: (rule.acceptedTopics.length
-        ? rule.acceptedTopics
-        : [{ topic: rule.expectedTopic, enabled: true }]
-      ).map((topic) => ({
+      acceptedTopics: rule.acceptedTopics.map((topic) => ({
         id: "id" in topic ? topic.id : undefined,
         topic: topicText(topic.topic),
         enabled: topic.enabled,
@@ -322,10 +319,8 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
             dataIndex: "acceptedTopics",
             width: 280,
             render: (_value, rule) => {
-              const topics = rule.acceptedTopics.length
-                ? rule.acceptedTopics
-                : [{ topic: rule.expectedTopic }];
-              return (
+              const topics = rule.acceptedTopics;
+              return topics.length ? (
                 <Space direction="vertical" size={2}>
                   {topics.map((topic, index) => (
                     <Typography.Text key={"id" in topic ? topic.id : index}>
@@ -333,6 +328,8 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
                     </Typography.Text>
                   ))}
                 </Space>
+              ) : (
+                <Typography.Text type="secondary">不要求</Typography.Text>
               );
             },
           },
@@ -538,8 +535,7 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
           </Form.Item>
           <Form.Item
             label="店铺话题（任选其一）"
-            required
-            extra="配置多条时，命中任意一条真实可点击话题即可。"
+            extra="不要求店铺话题时可留空；配置多条时，命中任意一条真实可点击话题即可。"
           >
             <Form.List name="acceptedTopics">
               {(fields, { add, remove }) => (
@@ -576,7 +572,6 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
                         danger
                         type="text"
                         icon={<DeleteOutlined />}
-                        disabled={fields.length === 1}
                         aria-label={`删除店铺话题 ${index + 1}`}
                         onClick={() => remove(field.name)}
                       >

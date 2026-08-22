@@ -53,7 +53,7 @@ describe("抖音规则持久化幂等性", () => {
     mocks.productCount.mockResolvedValue(7);
     mocks.campaignCount.mockResolvedValue(6);
     mocks.stageGroupCount.mockResolvedValue(3);
-    mocks.topicRuleCount.mockResolvedValue(54);
+    mocks.topicRuleCount.mockResolvedValue(48);
     mocks.syncUpdateMany.mockResolvedValue({ count: 1 });
   });
 
@@ -64,7 +64,7 @@ describe("抖音规则持久化幂等性", () => {
 
     expect(result).toMatchObject({
       sourceCampaigns: 3,
-      expectedTopicRules: 26,
+      expectedTopicRules: 23,
       createdCampaigns: 0,
       createdTopicRules: 0,
       createdProductRelations: 0,

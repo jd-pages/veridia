@@ -28,6 +28,10 @@ const topic = (
   domPath: "main/topic",
 });
 
+const acceptedTopicsForSeed = (
+  seed: (typeof storeTopicRuleSeeds)[number],
+) => seed.acceptedTopics ?? [expectedStoreTopicForName(seed.storeName)];
+
 const storeTopicConfigs = storeTopicRuleSeeds.map((seed) => ({
   ...seed,
   normalizedStoreName: normalizeStoreNameForMatch(seed.storeName),
@@ -66,15 +70,15 @@ const storeTopicConfigs = storeTopicRuleSeeds.map((seed) => ({
         enabled: true,
       })),
   ],
-  expectedTopic: expectedStoreTopicForName(seed.storeName),
+  expectedTopic: acceptedTopicsForSeed(seed)[0] || "",
   acceptedTopics: [
-    {
-      id: `${seed.id}-topic-1`,
-      topic: expectedStoreTopicForName(seed.storeName),
-      normalizedTopic: normalizeStoreNameForMatch(seed.storeName),
-      sortOrder: 0,
+    ...acceptedTopicsForSeed(seed).map((acceptedTopic, index) => ({
+      id: `${seed.id}-topic-${index + 1}`,
+      topic: acceptedTopic,
+      normalizedTopic: normalizeStoreTopicForMatch(acceptedTopic),
+      sortOrder: index,
       enabled: true,
-    },
+    })),
     ...storeAcceptedTopicSeeds
       .filter(
         (accepted) =>
@@ -83,10 +87,10 @@ const storeTopicConfigs = storeTopicRuleSeeds.map((seed) => ({
             normalizeStoreNameForMatch(seed.storeName),
       )
       .map((accepted, index) => ({
-        id: `${seed.id}-topic-${index + 2}`,
+        id: `${seed.id}-extra-topic-${index + 1}`,
         topic: accepted.topic,
         normalizedTopic: normalizeStoreTopicForMatch(accepted.topic),
-        sortOrder: index + 1,
+        sortOrder: acceptedTopicsForSeed(seed).length + index,
         enabled: true,
       })),
   ],
@@ -121,7 +125,9 @@ describe("店铺话题配置与精确审核", () => {
     ).toMatchObject({
       status: "MATCHED",
       commercePlatform: "JD",
-      expectedTopic: "#佳贝艾特(Kabrita)海外专卖店",
+      expectedTopic: null,
+      expectedTopics: [],
+      requiredTopics: [],
     });
     expect(resolve({ storeName: "佳贝艾特海外专卖店", commercePlatform: "京东" }).status)
       .toBe("STORE_NOT_MAPPED");
@@ -200,8 +206,38 @@ describe("店铺话题配置与精确审核", () => {
         requiredTopics: directResolution.requiredTopics,
       });
       expect(aliasResolution.expectedTopics).not.toContain(`#${storeName}`);
+      expect(aliasResolution.expectedTopics).toEqual([]);
+      expect(aliasResolution.requiredTopics).toEqual([]);
     },
   );
+
+  it("佳贝艾特 Alias 匹配后没有店铺话题要求且页面无店铺话题仍不失败", () => {
+    const resolution = resolve({
+      commercePlatform: "抖音",
+      storeName: "抖音佳贝艾特海外旗舰店",
+    });
+    expect(resolution).toMatchObject({
+      status: "MATCHED",
+      matchedStoreName: "佳贝艾特kabrita海外旗舰店",
+      expectedTopic: null,
+      expectedTopics: [],
+      requiredTopics: [],
+    });
+    expect(
+      validateStoreTopic({
+        channel: "XIAOHONGSHU",
+        mappingStatus: resolution.status,
+        expectedTopic: resolution.expectedTopic,
+        expectedTopics: resolution.expectedTopics,
+        requiredTopics: resolution.requiredTopics,
+        extractedTopics: [],
+      }),
+    ).toMatchObject({
+      status: "NOT_REQUIRED",
+      needsReview: false,
+      failureReason: null,
+    });
+  });
 
   it("Canonical 店铺名优先直接匹配且保留名称中的京东字样", () => {
     expect(resolve({

@@ -141,7 +141,7 @@ export async function getAuditContext(
       rule.topicCategory === "PRODUCT_STAGE" &&
       compatibleStages.includes(rule.applicableStage || ""),
   );
-  if (normalizedProductStage && !selectedStageRule) {
+  if (requiresProductStage && normalizedProductStage && !selectedStageRule) {
     throw new AuditConfigurationError(
       missingProductStageRuleMessage({
         productName: product.name,
@@ -149,7 +149,7 @@ export async function getAuditContext(
       }),
     );
   }
-  const stageGroups = normalizedProductStage
+  const stageGroups = requiresProductStage && normalizedProductStage
     ? await prisma.ruleStageGroup.findMany({
         where: { key: { in: compatibleStages } },
         orderBy: { sortOrder: "asc" },
@@ -175,13 +175,16 @@ export async function getAuditContext(
       ) === index
     );
   });
+  const effectiveRules = requiresProductStage
+    ? uniqueRules
+    : uniqueRules.filter((rule) => rule.topicCategory !== "PRODUCT_STAGE");
 
   return {
     productId,
     campaignId,
     campaignName: campaign.name,
     contentChannel: resolvedContentChannel,
-    rulesConfigured: campaignChannelMatches && uniqueRules.length > 0,
+    rulesConfigured: campaignChannelMatches && effectiveRules.length > 0,
     ruleMonth: campaign.month,
     brandName,
     basicRewardRequired:
@@ -221,7 +224,7 @@ export async function getAuditContext(
     retentionDays: campaign.retentionDays,
     customerRegistrationNotes: campaign.customerRegistrationNotes,
     clickableTopicRequired: campaign.clickableTopicRequired,
-    rules: uniqueRules.map((rule) => ({
+    rules: effectiveRules.map((rule) => ({
       id: rule.id,
       scope: rule.scope,
       ruleType: rule.ruleType,
