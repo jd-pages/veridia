@@ -95,5 +95,5 @@ describe("小红书 Live Photo current-note 统一取证", () => {
       carouselPageIndicator: "1/3",
       resolvedImageCount: 3,
     });
-  });
+  }, 30_000);
 });

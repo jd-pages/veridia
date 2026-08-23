@@ -1,7 +1,10 @@
 import { prisma } from "@/lib/db";
 import { ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
-import { countAuditResultsByImportRecord } from "@/lib/import-record-counts";
+import {
+  countAllAuditResultsByImportRecord,
+  countAuditResultsByImportRecord,
+} from "@/lib/import-record-counts";
 
 export const GET = withApiErrorBoundary(async function GET() {
   const user = await requireApiUser(BUSINESS_ROLES);
@@ -14,9 +17,11 @@ export const GET = withApiErrorBoundary(async function GET() {
         _count: { select: { auditBatches: true, auditTasks: true } },
       },
     });
-  const resultCounts = await countAuditResultsByImportRecord(
-    records.map((record) => record.id),
-  );
+  const importRecordIds = records.map((record) => record.id);
+  const [resultCounts, deletionResultCounts] = await Promise.all([
+    countAuditResultsByImportRecord(importRecordIds),
+    countAllAuditResultsByImportRecord(importRecordIds),
+  ]);
   return ok(
     records.map(({ creator, _count, ...record }) => {
       let activityNames: string[] = [];
@@ -37,6 +42,7 @@ export const GET = withApiErrorBoundary(async function GET() {
         batchCount: _count.auditBatches,
         taskCount: _count.auditTasks,
         resultCount: resultCounts.get(record.id) || 0,
+        deletionResultCount: deletionResultCounts.get(record.id) || 0,
       };
     }),
     { headers: { "Cache-Control": "no-store" } },

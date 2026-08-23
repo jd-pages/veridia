@@ -35,6 +35,7 @@ export const E2E_MANIFEST = Object.freeze({
   "tests/e2e/current-task-content.spec.ts": entry(["XHS", "AUTOMATION", "RESULTS"], "AUTOMATION"),
   "tests/e2e/dashboard-risk-summary.spec.ts": entry(["RESULTS", "UI_LAYOUT"], "RESULTS_UI", true),
   "tests/e2e/douyin-automation.spec.ts": entry(["DOUYIN", "AUTOMATION", "MIXED_PLATFORM", "RESULTS"], "AUTOMATION"),
+  "tests/e2e/import-record-deletion.spec.ts": entry(["IMPORT", "RESULTS", "AUTOMATION", "MIXED_PLATFORM", "DATABASE", "ADMIN", "UI_LAYOUT"], "AUTOMATION"),
   "tests/e2e/kabrita-excel-template.spec.ts": entry(["IMPORT", "CAMPAIGN"], "DATA_RULES"),
   "tests/e2e/local-fonts.spec.ts": entry(["UI_LAYOUT", "UPDATE"], "RESULTS_UI", true),
   "tests/e2e/localization.spec.ts": entry(["UI_LAYOUT"], "RESULTS_UI", true),
