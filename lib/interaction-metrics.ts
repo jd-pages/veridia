@@ -19,6 +19,10 @@ export interface InteractionMetricCandidate {
   iconHref?: string | null;
   slot?: number | null;
   evidenceStatus?: Exclude<InteractionMetricEvidenceStatus, "CONFLICT">;
+  countNodePresent?: boolean;
+  countNodeText?: string | null;
+  wrapperText?: string | null;
+  accessibleText?: string | null;
 }
 
 export interface InteractionMetrics {
@@ -160,8 +164,9 @@ export function resolveInteractionMetrics(
 export async function collectXhsInteractionMetrics(
   page: Page,
   currentNoteScopeSelector?: string | null,
+  context: { extractionReady?: boolean } = {},
 ): Promise<InteractionMetrics> {
-  const candidates = await page.evaluate((scopeSelector) => {
+  const candidates = await page.evaluate(({ scopeSelector, extractionReady }) => {
     type BrowserCandidate = InteractionMetricCandidate;
     const output: BrowserCandidate[] = [];
     const excluded = "[class*='comment'],[class*='recommend'],[class*='related']";
@@ -283,6 +288,17 @@ export async function collectXhsInteractionMetrics(
           element,
           kindHint,
           semanticKind: attributeKind || classKind || iconKind,
+          exactIdentityKind:
+            element.classList.contains("like-wrapper") &&
+            iconHref.split("#").at(-1)?.toLowerCase() === "like"
+              ? ("LIKE" as const)
+              : element.classList.contains("collect-wrapper") &&
+                  iconHref.split("#").at(-1)?.toLowerCase() === "collect"
+                ? ("FAVORITE" as const)
+                : element.classList.contains("chat-wrapper") &&
+                    iconHref.split("#").at(-1)?.toLowerCase() === "chat"
+                  ? ("COMMENT" as const)
+                  : null,
           attributeEvidence,
           classEvidence,
           iconHref,
@@ -298,6 +314,16 @@ export async function collectXhsInteractionMetrics(
         semanticKinds.length === 3 &&
         new Set(semanticKinds).size === 3 &&
         slotKinds.every((kind) => semanticKinds.includes(kind));
+      const exactIdentityKinds = controlEvidence
+        .map((item) => item?.exactIdentityKind)
+        .filter((kind): kind is InteractionMetricKind => Boolean(kind));
+      const isReadyExactXhsMetricSet =
+        extractionReady === true &&
+        Boolean(scopeSelector) &&
+        isCanonicalMetricSet &&
+        exactIdentityKinds.length === 3 &&
+        new Set(exactIdentityKinds).size === 3 &&
+        slotKinds.every((kind) => exactIdentityKinds.includes(kind));
       const zeroLabelPattern: Record<InteractionMetricKind, RegExp> = {
         LIKE: /^点赞$/u,
         FAVORITE: /^收藏$/u,
@@ -309,18 +335,20 @@ export async function collectXhsInteractionMetrics(
         const countElement =
           item.element.querySelector(":scope > .count") ||
           item.element.querySelector(":scope > [class*='count']");
-        const valueText = (
-          countElement?.textContent || item.element.textContent || ""
-        )
+        const cleanText = (value: string | null | undefined) =>
+          (value || "").replace(/\s+/gu, " ").trim().slice(0, 120);
+        const countNodeText = cleanText(countElement?.textContent);
+        const wrapperText = cleanText(item.element.textContent);
+        const valueText = (countNodeText || wrapperText)
           .replace(/\s+/gu, " ")
           .trim()
           .slice(0, 120);
         const hasNumericValue = /[0-9０-９]/u.test(valueText);
         const confirmedZero =
-          isCanonicalMetricSet &&
-          Boolean(item.semanticKind) &&
+          isReadyExactXhsMetricSet &&
+          item.exactIdentityKind === item.kindHint &&
           !hasNumericValue &&
-          zeroLabelPattern[item.kindHint].test(valueText);
+          (valueText === "" || zeroLabelPattern[item.kindHint].test(valueText));
         output.push({
           kindHint: item.kindHint,
           valueText,
@@ -341,6 +369,10 @@ export async function collectXhsInteractionMetrics(
             : confirmedZero
               ? "CONFIRMED_ZERO"
               : "UNAVAILABLE",
+          countNodePresent: Boolean(countElement),
+          countNodeText: countElement ? countNodeText : null,
+          wrapperText: wrapperText || null,
+          accessibleText: item.attributeEvidence || null,
         });
       });
     }
@@ -365,6 +397,9 @@ export async function collectXhsInteractionMetrics(
       }
     }
     return output;
-  }, currentNoteScopeSelector || null);
+  }, {
+    scopeSelector: currentNoteScopeSelector || null,
+    extractionReady: context.extractionReady === true,
+  });
   return resolveInteractionMetrics(candidates);
 }

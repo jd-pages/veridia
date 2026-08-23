@@ -22,12 +22,16 @@ function currentNoteFixture({
   comment = "3052",
   commentSummary = "3052",
   includeFavorite = true,
+  includeLike = true,
+  commentDesert = false,
 }: {
   like?: string;
   favorite?: string;
   comment?: string;
   commentSummary?: string | null;
   includeFavorite?: boolean;
+  includeLike?: boolean;
+  commentDesert?: boolean;
 } = {}) {
   return `
     <div id="noteContainer" class="note-container">
@@ -35,18 +39,22 @@ function currentNoteFixture({
         <div class="note-scroller">
           <div id="detail-desc">当前作品正文</div>
           <div class="comments-container">
-            ${commentSummary === null ? "" : `<div class="total">共 ${commentSummary} 条评论</div>`}
-            <div class="list-container">
-              <div class="parent-comment">
-                <div class="interactions">
-                  <span class="like-wrapper like-active">
-                    <svg class="reds-icon like-icon" width="16" height="16"><use href="#like"></use></svg>
-                    <span class="count">10+</span>
-                  </span>
-                  <span>回复 1</span>
-                </div>
-              </div>
-            </div>
+            ${
+              commentDesert
+                ? `<div class="empty">这是一片荒地</div>`
+                : `${commentSummary === null ? "" : `<div class="total">共 ${commentSummary} 条评论</div>`}
+                  <div class="list-container">
+                    <div class="parent-comment">
+                      <div class="interactions">
+                        <span class="like-wrapper like-active">
+                          <svg class="reds-icon like-icon" width="16" height="16"><use href="#like"></use></svg>
+                          <span class="count">10+</span>
+                        </span>
+                        <span>回复 1</span>
+                      </div>
+                    </div>
+                  </div>`
+            }
           </div>
         </div>
         <div class="interactions engage-bar">
@@ -56,7 +64,7 @@ function currentNoteFixture({
                 <div class="interact-container">
                   <div class="buttons engage-bar-style">
                     <div class="left">
-                      ${actionControl("like-wrapper like-active", "like-icon", "#like", like)}
+                      ${includeLike ? actionControl("like-wrapper like-active", "like-icon", "#like", like) : ""}
                       ${includeFavorite ? actionControl("collect-wrapper", "collect-icon", "/web-static/svg-sprite.6.45.1.svg#collect", favorite) : ""}
                       ${actionControl("chat-wrapper", "", "/web-static/svg-sprite.6.45.1.svg#chat", comment)}
                     </div>
@@ -90,9 +98,14 @@ describe("小红书 current note action bar 互动取证", () => {
     await browser?.close();
   }, 30_000);
 
+  const collectReadyCurrentNote = () =>
+    collectXhsInteractionMetrics(page, "#noteContainer", {
+      extractionReady: true,
+    });
+
   it("按真实 class 与 SVG 签名读取 7361/1243/3052 并排除评论、推荐互动", async () => {
     await page.setContent(currentNoteFixture());
-    const result = await collectXhsInteractionMetrics(page);
+    const result = await collectReadyCurrentNote();
 
     expect(result).toMatchObject({
       likeCount: 7_361,
@@ -140,7 +153,7 @@ describe("小红书 current note action bar 互动取证", () => {
     await page.setContent(
       currentNoteFixture({ like: "22", favorite: "3", comment: "4", commentSummary: "4" }),
     );
-    expect(await collectXhsInteractionMetrics(page)).toMatchObject({
+    expect(await collectReadyCurrentNote()).toMatchObject({
       likeCount: 22,
       favoriteCount: 3,
       commentCount: 4,
@@ -176,7 +189,7 @@ describe("小红书 current note action bar 互动取证", () => {
         commentSummary: null,
       }),
     );
-    const result = await collectXhsInteractionMetrics(page);
+    const result = await collectReadyCurrentNote();
 
     expect(result).toMatchObject({
       likeCount: 1,
@@ -217,7 +230,7 @@ describe("小红书 current note action bar 互动取证", () => {
       }),
     );
 
-    expect(await collectXhsInteractionMetrics(page)).toMatchObject({
+    expect(await collectReadyCurrentNote()).toMatchObject({
       likeCount: 0,
       favoriteCount: 0,
       commentCount: 0,
@@ -231,7 +244,54 @@ describe("小红书 current note action bar 互动取证", () => {
     });
   });
 
-  it("三个控件存在但文本全空时仍为 UNAVAILABLE，不猜成 0", async () => {
+  it("真实空数字 Variant：heart/star 无数字且评论为动作标签时确认为 0/0/0", async () => {
+    await page.setContent(
+      currentNoteFixture({
+        like: "",
+        favorite: "",
+        comment: "评论",
+        commentSummary: null,
+        commentDesert: true,
+      }),
+    );
+    const result = await collectReadyCurrentNote();
+
+    expect(result).toMatchObject({
+      likeCount: 0,
+      favoriteCount: 0,
+      commentCount: 0,
+      totalCount: 0,
+      status: "SUCCESS",
+      metricStatus: {
+        LIKE: "CONFIRMED_ZERO",
+        FAVORITE: "CONFIRMED_ZERO",
+        COMMENT: "CONFIRMED_ZERO",
+      },
+    });
+    expect(result.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kindHint: "LIKE",
+          valueText: "",
+          controlClass: "like-wrapper like-active",
+          iconHref: "#like",
+          evidenceStatus: "CONFIRMED_ZERO",
+          countNodePresent: true,
+          countNodeText: "",
+        }),
+        expect.objectContaining({
+          kindHint: "FAVORITE",
+          valueText: "",
+          controlClass: "collect-wrapper",
+          iconHref: "/web-static/svg-sprite.6.45.1.svg#collect",
+          evidenceStatus: "CONFIRMED_ZERO",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(result.candidates)).not.toContain("10+");
+  });
+
+  it("页面未 ready 时三个控件文本全空仍为 UNAVAILABLE，不猜成 0", async () => {
     await page.setContent(
       currentNoteFixture({
         like: "",
@@ -264,7 +324,32 @@ describe("小红书 current note action bar 互动取证", () => {
         includeFavorite: false,
       }),
     );
-    expect(await collectXhsInteractionMetrics(page)).toMatchObject({
+    expect(await collectReadyCurrentNote()).toMatchObject({
+      likeCount: null,
+      favoriteCount: null,
+      commentCount: null,
+      totalCount: null,
+      status: "UNAVAILABLE",
+      metricStatus: {
+        LIKE: "UNAVAILABLE",
+        FAVORITE: "UNAVAILABLE",
+        COMMENT: "UNAVAILABLE",
+      },
+    });
+  });
+
+  it("页面 ready 但 LIKE wrapper 缺失时仍为 UNAVAILABLE", async () => {
+    await page.setContent(
+      currentNoteFixture({
+        includeLike: false,
+        favorite: "收藏",
+        comment: "评论",
+        commentSummary: null,
+        commentDesert: true,
+      }),
+    );
+
+    expect(await collectReadyCurrentNote()).toMatchObject({
       likeCount: null,
       favoriteCount: null,
       commentCount: null,

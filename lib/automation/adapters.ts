@@ -77,7 +77,7 @@ export class PlaywrightXiaohongshuAdapter
   implements PlaywrightExtractorAdapter
 {
   name = "playwright-xiaohongshu";
-  version = "1.8.0";
+  version = "1.9.0";
 
   canHandle(url: string) {
     try {
@@ -96,6 +96,11 @@ export class PlaywrightXiaohongshuAdapter
     const interactionMetrics = await collectXhsInteractionMetrics(
       page,
       domSnapshot.currentNoteScopeSelector,
+      {
+        extractionReady:
+          domSnapshot.pageStatus === "NORMAL" &&
+          domSnapshot.keyElementCount > 0,
+      },
     ).catch(
       (error) => ({
         likeCount: null,
