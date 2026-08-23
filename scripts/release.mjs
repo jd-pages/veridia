@@ -193,6 +193,12 @@ try {
     process.stdout.write(`\nVERIDIA ${version} 正式 FULL 已通过；未执行 Package。\n`);
     process.exitCode = 0;
   } else {
+  if (
+    releaseStage === "package" &&
+    process.env.VERIDIA_REUSE_FULL_BUILD !== "true"
+  ) {
+    run("PRODUCTION_BUILD", "构建正式 Next.js 版本", "npm.cmd", ["run", "build"]);
+  }
   run("DESKTOP_PREPARE", "准备桌面资源", "npm.cmd", ["run", "desktop:prepare"]);
   run("PREREQUISITE_WARMUP", "准备并检查 Electron 运行文件", "npm.cmd", ["run", "electron:ensure"]);
   fs.rmSync(path.join(root, "dist-installer"), {
@@ -244,7 +250,7 @@ try {
 } catch (error) {
   restoreVersionFiles();
   const result = releaseFailureResult(error, {
-    stage: "FULL",
+    stage: releaseStage === "package" ? "PACKAGE" : "FULL",
     detailLog: logsRoot,
   });
   fs.mkdirSync(workRoot, { recursive: true });

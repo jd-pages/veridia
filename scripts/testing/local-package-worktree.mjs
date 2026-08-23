@@ -34,6 +34,47 @@ export async function withLocalPackageFileRestore(root, action) {
   }
 }
 
+export function createLocalPackageAcceptance({
+  version,
+  acceptedAt,
+  commitSha,
+  sourceFingerprint,
+  fullGate,
+  artifacts,
+}) {
+  return {
+    schemaVersion: 2,
+    version,
+    acceptedAt,
+    commitSha,
+    sourceFingerprint,
+    fullGateSource: fullGate.source,
+    ...(fullGate.source === "LOCAL_ATTESTATION"
+      ? { fullGateAttestationGeneratedAt: fullGate.attestationGeneratedAt }
+      : {
+          mainCiRunId: fullGate.mainCiRunId,
+          mainCiCommitSha: fullGate.mainCiCommitSha,
+          mainCiConclusion: fullGate.mainCiConclusion,
+          mainCiUrl: fullGate.mainCiUrl,
+        }),
+    packageChecks: {
+      productionBuild: "PASSED",
+      desktopPrepare: "PASSED",
+      electronRuntime: "PASSED",
+      nsis: "PASSED",
+      installerVerify: "PASSED",
+      hashManifestVerify: "PASSED",
+      worktreeRestore: "PASSED",
+    },
+    artifacts: artifacts.map(({ name, size, sha256, sha512 }) => ({
+      name,
+      size,
+      sha256,
+      sha512,
+    })),
+  };
+}
+
 export function writeLocalPackageAcceptance({
   acceptancePath,
   acceptance,

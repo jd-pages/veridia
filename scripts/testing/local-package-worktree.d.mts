@@ -12,6 +12,26 @@ export function withLocalPackageFileRestore<T>(
   root: string,
   action: () => T | Promise<T>,
 ): Promise<T>;
+export function createLocalPackageAcceptance(options: {
+  version: string;
+  acceptedAt: string;
+  commitSha: string;
+  sourceFingerprint: string;
+  fullGate: {
+    source: "LOCAL_ATTESTATION" | "GITHUB_MAIN_CI";
+    attestationGeneratedAt?: string;
+    mainCiRunId?: number;
+    mainCiCommitSha?: string;
+    mainCiConclusion?: string;
+    mainCiUrl?: string;
+  };
+  artifacts: Array<{
+    name: string;
+    size: number;
+    sha256: string;
+    sha512: string;
+  }>;
+}): Record<string, unknown>;
 export function writeLocalPackageAcceptance(options: {
   acceptancePath: string;
   acceptance: Record<string, unknown>;

@@ -44,7 +44,7 @@ describe("本地打包发布门禁", () => {
     expect(source).toContain('VERIDIA_DISABLE_ATTESTATION_WRITE: "true"');
   });
 
-  it("本地和远端各只有一个 FULL Build，Package 不重复 Next Build", () => {
+  it("正式 FULL 各执行一次 Build，而凭证复用的本地 Package 显式重建 Next", () => {
     const local = fs.readFileSync(
       path.resolve(process.cwd(), "scripts", "release.mjs"),
       "utf8",
@@ -54,13 +54,30 @@ describe("本地打包发布门禁", () => {
       "utf8",
     );
     expect(local.match(/npm\.cmd", \["run", "verify:full"\]/gu)).toHaveLength(1);
-    expect(local).not.toContain('run("PRODUCTION_BUILD"');
+    expect(local).toContain('releaseStage === "package" &&');
+    expect(local).toContain('run("PRODUCTION_BUILD", "构建正式 Next.js 版本"');
+    expect(local).toContain('process.env.VERIDIA_REUSE_FULL_BUILD !== "true"');
+    const orchestrator = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts/software-publish-orchestrator.mjs"),
+      "utf8",
+    );
+    expect(orchestrator).toContain('VERIDIA_REUSE_FULL_BUILD: "true"');
     expect(local).not.toContain('run("SENSITIVE_SCAN"');
     expect(local).toContain('releaseStage === "full"');
     expect(local).toContain('["all", "full", "package"].includes(releaseStage)');
     expect(remote.match(/npm run verify:full/gu)).toHaveLength(1);
     expect(remote).not.toContain("构建正式 Next.js 版本");
     expect(remote.match(/electron-builder --win nsis/gu)).toHaveLength(1);
+  });
+
+  it("Package 失败保持 PACKAGE 语义，不把可信 FULL 标记为失败", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts", "release.mjs"),
+      "utf8",
+    );
+    expect(source).toContain(
+      'stage: releaseStage === "package" ? "PACKAGE" : "FULL"',
+    );
   });
 
   it("只有明确标记的只读网络命令进入有限 Retry，Push 与 Release 写入不重试", () => {

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -9,9 +8,16 @@ import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { resolveFormalDataRoot } from "./formal-data-root.mjs";
 import {
+  createLocalPackageAcceptance,
   withLocalPackageFileRestore,
   writeLocalPackageAcceptance,
 } from "./testing/local-package-worktree.mjs";
+import {
+  PACKAGE_FULL_GATE_SOURCES,
+  resolvePackageFullGate,
+} from "./package-full-gate.mjs";
+import { validateSoftwareReleaseArtifacts } from "./software-release-artifacts.mjs";
+import { collectSourceFingerprint } from "./source-fingerprint.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const command = process.argv[2];
@@ -117,29 +123,10 @@ function assertSoftwarePublishGitState() {
 }
 
 function sourceFingerprint() {
-  const files = git([
-    "-c",
-    "core.quotepath=false",
-    "ls-files",
-    "-co",
-    "--exclude-standard",
-  ]).stdout
-    .split(/\r?\n/u)
-    .filter(Boolean)
-    .sort();
-  const hash = createHash("sha256");
-  for (const relative of files) {
-    const absolute = path.join(root, relative);
-    if (!fs.existsSync(absolute) || fs.statSync(absolute).isDirectory()) continue;
-    hash.update(relative.replaceAll("\\", "/"));
-    hash.update("\0");
-    hash.update(fs.readFileSync(absolute));
-    hash.update("\0");
-  }
-  return hash.digest("hex");
+  return collectSourceFingerprint(root);
 }
 
-function remoteTagExists(version) {
+function remoteTagExists(version, { allowUnavailable = false } = {}) {
   if (git(["tag", "-l", `v${version}`]).stdout === `v${version}`) return true;
   const result = git(
     ["ls-remote", "--exit-code", "--tags", "origin", `refs/tags/v${version}`],
@@ -147,6 +134,12 @@ function remoteTagExists(version) {
   );
   if (result.status === 0) return true;
   if (result.status === 2) return false;
+  if (allowUnavailable) {
+    process.stdout.write(
+      `警告：GitHub 当前不可访问；有效本地 FULL attestation 已允许离线继续，将仅依据本地 Tag 状态确认 v${version} 未被消费。\n`,
+    );
+    return false;
+  }
   throw new Error(
     `无法安全确认远程 v${version} Tag 状态，请检查网络或 GitHub 授权后重试。`,
   );
@@ -570,61 +563,68 @@ async function preview() {
 async function localPackage() {
   ensureLocalPrerequisites();
   const info = packageInfo();
-  let releaseMode = "current";
-  if (remoteTagExists(info.version)) {
-    process.stdout.write(
-      `当前版本 v${info.version} 已存在正式 Tag，不能用本地验收包覆盖。\n`,
-    );
-    const choice = dryRun
-      ? "1"
-      : await ask(
-          "请选择下一个本地验收版本：1=patch，2=minor，3=major，其他输入取消：",
-        );
-    releaseMode = { 1: "patch", 2: "minor", 3: "major" }[choice] || "";
-    if (!releaseMode) {
-      process.stdout.write("已取消，没有修改版本或生成安装包。\n");
-      return;
-    }
-  }
   if (dryRun) {
     process.stdout.write(
       [
         "本地打包验收 dry-run 通过。",
         `当前版本：${info.version}`,
-        `计划模式：${releaseMode}`,
-        "将先升级本地候选版本，再运行 Prisma Client 检查、TypeScript、ESLint、全部单元测试、桌面健康检查、E2E、Next.js 构建、敏感扫描和 Windows 打包。",
+        "将验证当前 main、clean worktree、HEAD=origin/main，以及当前 exact HEAD 的正式 FULL 凭证。",
+        "凭证来源可为有效本地 FULL attestation 或 exact-HEAD GitHub Main CI SUCCESS。",
+        "凭证通过后将执行 Production Build、Desktop/Electron 准备、Windows NSIS 构建及安装包三件套 hash/manifest 验证。",
+        "不会重复运行 Unit、E2E、数据库兼容、Sensitive scan 或完整 verify:full。",
         "不会创建 Tag、Release，不会上传安装包，也不会发布规则。",
         "",
       ].join("\n"),
     );
     return;
   }
+  const fullGate = resolvePackageFullGate({ root });
+  process.stdout.write(
+    fullGate.source === PACKAGE_FULL_GATE_SOURCES.LOCAL_ATTESTATION
+      ? `FULL 凭证验证通过：LOCAL_ATTESTATION，HEAD ${fullGate.commitSha}\n`
+      : `FULL 凭证验证通过：GITHUB_MAIN_CI Run ${fullGate.mainCiRunId}，HEAD ${fullGate.commitSha}\n`,
+  );
+  if (
+    remoteTagExists(info.version, {
+      allowUnavailable:
+        fullGate.source === PACKAGE_FULL_GATE_SOURCES.LOCAL_ATTESTATION,
+    })
+  ) {
+    throw new Error(
+      `当前版本 v${info.version} 已存在正式 Tag，不能生成覆盖该版本的本地验收包。`,
+    );
+  }
   const version = await withLocalPackageFileRestore(root, () => {
-    run("node", [path.join(root, "scripts", "release.mjs"), releaseMode], {
-      env: { VERIDIA_ALLOW_FULL_ATTESTATION_REUSE: "true" },
-    });
-    run("node", [path.join(root, "scripts", "finalize-release.mjs"), "summary"]);
+    run("node", [
+      path.join(root, "scripts", "release.mjs"),
+      "current",
+      "--stage=package",
+    ]);
     return packageInfo().version;
+  });
+  const restoredSourceFingerprint = sourceFingerprint();
+  if (restoredSourceFingerprint !== fullGate.sourceFingerprint) {
+    throw new Error(
+      "本地 Package 完成后源码 fingerprint 与 FULL 凭证不一致，已停止生成验收记录。",
+    );
+  }
+  const artifactValidation = validateSoftwareReleaseArtifacts({
+    projectRoot: root,
+    version,
+    directory: path.join(root, "release", version),
+  });
+  const acceptance = createLocalPackageAcceptance({
+    version,
+    acceptedAt: new Date().toISOString(),
+    commitSha: fullGate.commitSha,
+    sourceFingerprint: restoredSourceFingerprint,
+    fullGate,
+    artifacts: artifactValidation.files,
   });
   writeLocalPackageAcceptance({
     acceptancePath,
     worktreeStatus: git(["status", "--porcelain"]).stdout,
-    acceptance: {
-      version,
-      acceptedAt: new Date().toISOString(),
-      sourceFingerprint: sourceFingerprint(),
-      checks: [
-        "Prisma Client",
-        "TypeScript",
-        "ESLint",
-        "单元测试",
-        "桌面健康检查",
-        "E2E",
-        "Next.js生产构建",
-        "敏感信息扫描",
-        "Windows安装包构建",
-      ],
-    },
+    acceptance,
   });
   process.stdout.write(
     [
@@ -771,6 +771,15 @@ try {
   else if (command === "publish") await publish();
   else throw new Error("命令必须为 preview、package 或 publish。");
 } catch (error) {
+  if (error && typeof error === "object" && "code" in error) {
+    process.stderr.write(
+      `FULL_GATE_RESULT=${JSON.stringify({
+        code: error.code,
+        message: error instanceof Error ? error.message : String(error),
+        details: "details" in error ? error.details : undefined,
+      })}\n`,
+    );
+  }
   process.stderr.write(
     `\n操作失败：${error instanceof Error ? error.message : String(error)}\n`,
   );

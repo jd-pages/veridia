@@ -1562,6 +1562,7 @@ function runLocalPackage(plan, logger) {
       env: {
         VERIDIA_APP_VERSION: plan.targetVersion,
         VERIDIA_BUILD_DATE: plan.buildTimestamp,
+        VERIDIA_REUSE_FULL_BUILD: "true",
       },
     });
     command("node", [path.join(projectRoot, "scripts", "validate-software-release.mjs")], {

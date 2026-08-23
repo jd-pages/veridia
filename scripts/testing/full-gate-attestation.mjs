@@ -8,8 +8,9 @@ import {
   canonicalizeProjectPath,
   sameProjectPath,
 } from "./project-path.mjs";
+import { collectSourceFingerprint } from "../source-fingerprint.mjs";
 
-export const ATTESTATION_SCHEMA_VERSION = 4;
+export const ATTESTATION_SCHEMA_VERSION = 5;
 export const ATTESTATION_RELATIVE_PATH = ".release-work/verification/full-gate-attestation.json";
 
 function git(root, args) {
@@ -69,6 +70,7 @@ export function collectAttestationState(root = process.cwd()) {
     gitHead: git(root, ["rev-parse", "HEAD"]),
     gitBranch: git(root, ["branch", "--show-current"]),
     workingTreeClean: status.length === 0,
+    sourceFingerprint: collectSourceFingerprint(root),
     packageLockHash: hashFiles(root, ["package-lock.json"]),
     packageJsonHash: hashFiles(root, ["package.json"]),
     playwrightConfigHash: hashFiles(root, ["playwright.config.ts"]),
@@ -159,6 +161,7 @@ export function validateFullGateAttestation(root = process.cwd()) {
     gitHead: "Git HEAD",
     gitBranch: "当前分支",
     workingTreeClean: "工作区干净状态",
+    sourceFingerprint: "源码 fingerprint",
     packageLockHash: "package-lock.json",
     packageJsonHash: "package.json",
     playwrightConfigHash: "Playwright 配置",

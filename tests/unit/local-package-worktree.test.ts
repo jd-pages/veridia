@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createLocalPackageAcceptance,
   LOCAL_PACKAGE_RESTORE_FILES,
   withLocalPackageFileRestore,
   writeLocalPackageAcceptance,
@@ -95,6 +96,57 @@ describe("本地打包工作区恢复", () => {
 
     expect(JSON.parse(fs.readFileSync(acceptancePath, "utf8"))).toEqual({
       version: "1.1.17",
+    });
+  });
+
+  it("acceptance 记录 FULL 来源、exact HEAD、package checks 与安装包 hashes", () => {
+    const acceptance = createLocalPackageAcceptance({
+      version: "1.1.17",
+      acceptedAt: "2026-08-23T10:00:00.000Z",
+      commitSha: "a".repeat(40),
+      sourceFingerprint: "source-fingerprint",
+      fullGate: {
+        source: "GITHUB_MAIN_CI",
+        mainCiRunId: 12345,
+        mainCiCommitSha: "a".repeat(40),
+        mainCiConclusion: "success",
+        mainCiUrl: "https://github.com/jd-pages/veridia/actions/runs/12345",
+      },
+      artifacts: [
+        {
+          name: "VERIDIA-Setup-1.1.17.exe",
+          size: 1024,
+          sha256: "sha256",
+          sha512: "sha512",
+        },
+      ],
+    });
+
+    expect(acceptance).toMatchObject({
+      schemaVersion: 2,
+      version: "1.1.17",
+      commitSha: "a".repeat(40),
+      fullGateSource: "GITHUB_MAIN_CI",
+      mainCiRunId: 12345,
+      mainCiCommitSha: "a".repeat(40),
+      mainCiConclusion: "success",
+      packageChecks: {
+        productionBuild: "PASSED",
+        desktopPrepare: "PASSED",
+        electronRuntime: "PASSED",
+        nsis: "PASSED",
+        installerVerify: "PASSED",
+        hashManifestVerify: "PASSED",
+        worktreeRestore: "PASSED",
+      },
+      artifacts: [
+        {
+          name: "VERIDIA-Setup-1.1.17.exe",
+          size: 1024,
+          sha256: "sha256",
+          sha512: "sha512",
+        },
+      ],
     });
   });
 });
