@@ -57,6 +57,94 @@ describe("小红书互动数解析", () => {
     });
   });
 
+  it("只接受显式 CONFIRMED_ZERO，不把普通空文本或动作标签猜成 0", () => {
+    expect(
+      resolveInteractionMetrics([
+        {
+          kindHint: "LIKE",
+          valueText: "1",
+          source: "DOM_CURRENT_NOTE_ACTION_BAR:SEMANTIC_CLASS",
+        },
+        {
+          kindHint: "FAVORITE",
+          valueText: "收藏",
+          source: "DOM_CURRENT_NOTE_ACTION_BAR:SEMANTIC_CLASS",
+          evidenceStatus: "CONFIRMED_ZERO",
+        },
+        {
+          kindHint: "COMMENT",
+          valueText: "评论",
+          source: "DOM_CURRENT_NOTE_ACTION_BAR:SEMANTIC_CLASS",
+          evidenceStatus: "CONFIRMED_ZERO",
+        },
+      ]),
+    ).toMatchObject({
+      likeCount: 1,
+      favoriteCount: 0,
+      commentCount: 0,
+      totalCount: 1,
+      status: "SUCCESS",
+      metricStatus: {
+        LIKE: "VALUE",
+        FAVORITE: "CONFIRMED_ZERO",
+        COMMENT: "CONFIRMED_ZERO",
+      },
+    });
+
+    expect(
+      resolveInteractionMetrics([
+        {
+          kindHint: "LIKE",
+          valueText: "1",
+          source: "DOM_CURRENT_NOTE_ACTION_BAR:SEMANTIC_CLASS",
+        },
+        {
+          kindHint: "FAVORITE",
+          valueText: "收藏",
+          source: "DOM_CURRENT_NOTE_ACTION_BAR:SEMANTIC_CLASS",
+        },
+        {
+          kindHint: "COMMENT",
+          valueText: "评论",
+          source: "DOM_CURRENT_NOTE_ACTION_BAR:SEMANTIC_CLASS",
+        },
+      ]),
+    ).toMatchObject({
+      favoriteCount: null,
+      commentCount: null,
+      totalCount: null,
+      status: "UNAVAILABLE",
+    });
+  });
+
+  it("CONFIRMED_ZERO 与同控件冲突数值并存时标记 CONFLICT", () => {
+    expect(
+      resolveInteractionMetrics([
+        {
+          kindHint: "LIKE",
+          valueText: "0",
+          source: "DOM_CURRENT_NOTE_ACTION_BAR:SEMANTIC_CLASS",
+        },
+        {
+          kindHint: "LIKE",
+          valueText: "1",
+          source: "DOM_CURRENT_NOTE_ACTION_BAR:SVG_ICON",
+        },
+        { kindHint: "FAVORITE", valueText: "0" },
+        { kindHint: "COMMENT", valueText: "0" },
+      ]),
+    ).toMatchObject({
+      totalCount: null,
+      status: "UNAVAILABLE",
+      conflictCode: "INTERACTION_COUNT_CONFLICT",
+      metricStatus: {
+        LIKE: "CONFLICT",
+        FAVORITE: "CONFIRMED_ZERO",
+        COMMENT: "CONFIRMED_ZERO",
+      },
+    });
+  });
+
   it("当前作品评论控件与评论总数冲突时拒绝静默选值", () => {
     expect(
       resolveInteractionMetrics([

@@ -159,6 +159,99 @@ describe("小红书 current note action bar 互动取证", () => {
       commentCount: 10,
       totalCount: 22,
       status: "SUCCESS",
+      metricStatus: {
+        LIKE: "VALUE",
+        FAVORITE: "VALUE",
+        COMMENT: "VALUE",
+      },
+    });
+  });
+
+  it("真实零值 DOM 1/收藏/评论确认为 1/0/0 并计算合计", async () => {
+    await page.setContent(
+      currentNoteFixture({
+        like: "1",
+        favorite: "收藏",
+        comment: "评论",
+        commentSummary: null,
+      }),
+    );
+    const result = await collectXhsInteractionMetrics(page);
+
+    expect(result).toMatchObject({
+      likeCount: 1,
+      favoriteCount: 0,
+      commentCount: 0,
+      totalCount: 1,
+      status: "SUCCESS",
+      conflictCode: null,
+      metricStatus: {
+        LIKE: "VALUE",
+        FAVORITE: "CONFIRMED_ZERO",
+        COMMENT: "CONFIRMED_ZERO",
+      },
+    });
+    expect(result.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kindHint: "FAVORITE",
+          valueText: "收藏",
+          evidenceStatus: "CONFIRMED_ZERO",
+        }),
+        expect.objectContaining({
+          kindHint: "COMMENT",
+          valueText: "评论",
+          evidenceStatus: "CONFIRMED_ZERO",
+        }),
+      ]),
+    );
+  });
+
+  it("三个已验证语义控件均使用零值标签时确认为 0/0/0", async () => {
+    await page.setContent(
+      currentNoteFixture({
+        like: "点赞",
+        favorite: "收藏",
+        comment: "评论",
+        commentSummary: null,
+      }),
+    );
+
+    expect(await collectXhsInteractionMetrics(page)).toMatchObject({
+      likeCount: 0,
+      favoriteCount: 0,
+      commentCount: 0,
+      totalCount: 0,
+      status: "SUCCESS",
+      metricStatus: {
+        LIKE: "CONFIRMED_ZERO",
+        FAVORITE: "CONFIRMED_ZERO",
+        COMMENT: "CONFIRMED_ZERO",
+      },
+    });
+  });
+
+  it("三个控件存在但文本全空时仍为 UNAVAILABLE，不猜成 0", async () => {
+    await page.setContent(
+      currentNoteFixture({
+        like: "",
+        favorite: "",
+        comment: "",
+        commentSummary: null,
+      }),
+    );
+
+    expect(await collectXhsInteractionMetrics(page)).toMatchObject({
+      likeCount: null,
+      favoriteCount: null,
+      commentCount: null,
+      totalCount: null,
+      status: "UNAVAILABLE",
+      metricStatus: {
+        LIKE: "UNAVAILABLE",
+        FAVORITE: "UNAVAILABLE",
+        COMMENT: "UNAVAILABLE",
+      },
     });
   });
 
@@ -177,6 +270,11 @@ describe("小红书 current note action bar 互动取证", () => {
       commentCount: null,
       totalCount: null,
       status: "UNAVAILABLE",
+      metricStatus: {
+        LIKE: "UNAVAILABLE",
+        FAVORITE: "UNAVAILABLE",
+        COMMENT: "UNAVAILABLE",
+      },
     });
   });
 

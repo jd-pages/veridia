@@ -4,6 +4,12 @@ export const BASIC_REWARD_MIN_INTERACTIONS = 10;
 
 export type InteractionMetricKind = "LIKE" | "FAVORITE" | "COMMENT";
 
+export type InteractionMetricEvidenceStatus =
+  | "VALUE"
+  | "CONFIRMED_ZERO"
+  | "UNAVAILABLE"
+  | "CONFLICT";
+
 export interface InteractionMetricCandidate {
   kindHint?: InteractionMetricKind | null;
   valueText: string;
@@ -12,6 +18,7 @@ export interface InteractionMetricCandidate {
   controlClass?: string | null;
   iconHref?: string | null;
   slot?: number | null;
+  evidenceStatus?: Exclude<InteractionMetricEvidenceStatus, "CONFLICT">;
 }
 
 export interface InteractionMetrics {
@@ -22,6 +29,7 @@ export interface InteractionMetrics {
   status: "SUCCESS" | "UNAVAILABLE";
   technicalMessage: string | null;
   conflictCode: "INTERACTION_COUNT_CONFLICT" | null;
+  metricStatus: Record<InteractionMetricKind, InteractionMetricEvidenceStatus>;
   candidates: InteractionMetricCandidate[];
 }
 
@@ -69,11 +77,14 @@ export function resolveInteractionMetrics(
     const context = `${candidate.contextText || ""} ${candidate.valueText}`.trim();
     const kind = candidate.kindHint || inferMetricKind(context);
     if (!kind) continue;
+    const parsedValue = parseInteractionCount(candidate.valueText);
     const count =
-      parseInteractionCount(candidate.valueText) ??
-      (candidate.source?.startsWith("DOM_CURRENT_NOTE_ACTION_BAR")
-        ? null
-        : parseInteractionCount(candidate.contextText));
+      parsedValue ??
+      (candidate.evidenceStatus === "CONFIRMED_ZERO"
+        ? 0
+        : candidate.source?.startsWith("DOM_CURRENT_NOTE_ACTION_BAR")
+          ? null
+          : parseInteractionCount(candidate.contextText));
     if (count !== null) {
       resolvedCandidates[kind].push({ value: count, candidate });
     }
@@ -102,6 +113,8 @@ export function resolveInteractionMetrics(
     commentSummaryValues.size > 0 &&
     [...commentActionValues].some((value) => !commentSummaryValues.has(value));
   const hasConflict = actionConflicts.length > 0 || commentSummaryConflict;
+  const conflictKinds = new Set<InteractionMetricKind>(actionConflicts);
+  if (commentSummaryConflict) conflictKinds.add("COMMENT");
 
   const likeCount = selectedValue("LIKE");
   const favoriteCount = selectedValue("FAVORITE");
@@ -114,6 +127,12 @@ export function resolveInteractionMetrics(
     favoriteCount === null ? "收藏数" : null,
     commentCount === null ? "评论数" : null,
   ].filter(Boolean);
+  const metricStatus = (kind: InteractionMetricKind) => {
+    if (conflictKinds.has(kind)) return "CONFLICT" as const;
+    const value = selectedValue(kind);
+    if (value === null) return "UNAVAILABLE" as const;
+    return value === 0 ? "CONFIRMED_ZERO" as const : "VALUE" as const;
+  };
 
   return {
     likeCount,
@@ -129,6 +148,11 @@ export function resolveInteractionMetrics(
         ? null
         : `无法完整读取${missing.join("、")}`,
     conflictCode: hasConflict ? "INTERACTION_COUNT_CONFLICT" : null,
+    metricStatus: {
+      LIKE: metricStatus("LIKE"),
+      FAVORITE: metricStatus("FAVORITE"),
+      COMMENT: metricStatus("COMMENT"),
+    },
     candidates: [...candidates].slice(0, 50),
   };
 }
@@ -216,7 +240,7 @@ export async function collectXhsInteractionMetrics(
       const allowSlotFallback = controls.length === 3;
       const slotKinds: InteractionMetricKind[] = ["LIKE", "FAVORITE", "COMMENT"];
 
-      controls.forEach((element, slot) => {
+      const controlEvidence = controls.map((element, slot) => {
         const svg = element.querySelector("svg");
         const use = svg?.querySelector("use");
         const iconHref =
@@ -247,7 +271,7 @@ export async function collectXhsInteractionMetrics(
           classKind ||
           iconKind ||
           (allowSlotFallback ? slotKinds[slot] || null : null);
-        if (!kindHint) return;
+        if (!kindHint) return null;
         const evidenceKind = attributeKind
           ? "SEMANTIC_ATTRIBUTE"
           : classKind
@@ -255,26 +279,68 @@ export async function collectXhsInteractionMetrics(
             : iconKind
               ? "SVG_ICON"
               : "VERIFIED_SLOT";
+        return {
+          element,
+          kindHint,
+          semanticKind: attributeKind || classKind || iconKind,
+          attributeEvidence,
+          classEvidence,
+          iconHref,
+          evidenceKind,
+          slot,
+        };
+      });
+      const semanticKinds = controlEvidence
+        .map((item) => item?.semanticKind)
+        .filter((kind): kind is InteractionMetricKind => Boolean(kind));
+      const isCanonicalMetricSet =
+        controls.length === 3 &&
+        semanticKinds.length === 3 &&
+        new Set(semanticKinds).size === 3 &&
+        slotKinds.every((kind) => semanticKinds.includes(kind));
+      const zeroLabelPattern: Record<InteractionMetricKind, RegExp> = {
+        LIKE: /^点赞$/u,
+        FAVORITE: /^收藏$/u,
+        COMMENT: /^评论$/u,
+      };
+
+      controlEvidence.forEach((item) => {
+        if (!item) return;
         const countElement =
-          element.querySelector(":scope > .count") ||
-          element.querySelector(":scope > [class*='count']");
+          item.element.querySelector(":scope > .count") ||
+          item.element.querySelector(":scope > [class*='count']");
         const valueText = (
-          countElement?.textContent || element.textContent || ""
+          countElement?.textContent || item.element.textContent || ""
         )
           .replace(/\s+/gu, " ")
           .trim()
           .slice(0, 120);
+        const hasNumericValue = /[0-9０-９]/u.test(valueText);
+        const confirmedZero =
+          isCanonicalMetricSet &&
+          Boolean(item.semanticKind) &&
+          !hasNumericValue &&
+          zeroLabelPattern[item.kindHint].test(valueText);
         output.push({
-          kindHint,
+          kindHint: item.kindHint,
           valueText,
-          contextText: [attributeEvidence, classEvidence, iconHref]
+          contextText: [
+            item.attributeEvidence,
+            item.classEvidence,
+            item.iconHref,
+          ]
             .filter(Boolean)
             .join(" ")
             .slice(0, 240),
-          source: `DOM_CURRENT_NOTE_ACTION_BAR:${evidenceKind}`,
-          controlClass: className(element) || null,
-          iconHref: iconHref || null,
-          slot,
+          source: `DOM_CURRENT_NOTE_ACTION_BAR:${item.evidenceKind}`,
+          controlClass: className(item.element) || null,
+          iconHref: item.iconHref || null,
+          slot: item.slot,
+          evidenceStatus: hasNumericValue
+            ? "VALUE"
+            : confirmedZero
+              ? "CONFIRMED_ZERO"
+              : "UNAVAILABLE",
         });
       });
     }

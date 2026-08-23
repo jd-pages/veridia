@@ -700,6 +700,37 @@ describe("audit engine", () => {
       "基础奖励未达成：互动合计 9",
     );
 
+    const confirmedZeroReward = structuredClone(compliantNote);
+    confirmedZeroReward.likeCount = 1;
+    confirmedZeroReward.favoriteCount = 0;
+    confirmedZeroReward.commentCount = 0;
+    const confirmedZeroResult = evaluateAudit(
+      confirmedZeroReward,
+      kabritaContext,
+    );
+    expect(confirmedZeroResult).toMatchObject({
+      autoStatus: "FAILED",
+      failureReasons: ["基础奖励未达成：互动合计 1"],
+    });
+    expect(
+      confirmedZeroResult.ruleResults.find(
+        (rule) => rule.ruleKey === "KABRITA_BASIC_REWARD",
+      ),
+    ).toMatchObject({
+      passed: false,
+      actualValue: "点赞 1 + 收藏 0 + 评论 0 = 1",
+      failureReason: "基础奖励未达成：互动合计 1",
+    });
+
+    const allZeroReward = structuredClone(compliantNote);
+    allZeroReward.likeCount = 0;
+    allZeroReward.favoriteCount = 0;
+    allZeroReward.commentCount = 0;
+    expect(evaluateAudit(allZeroReward, kabritaContext)).toMatchObject({
+      autoStatus: "FAILED",
+      failureReasons: ["基础奖励未达成：互动合计 0"],
+    });
+
     const thresholdReward = structuredClone(compliantNote);
     thresholdReward.likeCount = 5;
     thresholdReward.favoriteCount = 4;
