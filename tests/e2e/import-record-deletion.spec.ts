@@ -39,6 +39,7 @@ async function createImportGraph(
     taskCount: number;
     resultCount: number;
     fileName?: string;
+    activityName?: string;
     status?: string;
   },
 ) {
@@ -56,8 +57,8 @@ async function createImportGraph(
         activities: [
           {
             activityId: campaign.id,
-            importedName: "删除联动验收活动",
-            officialName: campaign.name,
+            importedName: input.activityName || "删除联动验收活动",
+            officialName: input.activityName || campaign.name,
           },
         ],
       }),
@@ -201,6 +202,141 @@ async function createImportGraph(
     resultIds,
   };
 }
+
+test("导入记录表格在桌面窄窗口保持列宽、横向滚动和固定操作列", async ({
+  page,
+}) => {
+  await loginAsAdmin(page);
+  const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
+  const suffix = `${Date.now()}-layout`;
+  const fileName = `这是一份用于验证导入记录表格文件名省略与横向滚动布局的超长文件-${suffix}.xlsx`;
+  const activityName = "佳贝艾特超长正式活动名称用于验证活动列不会逐字换行";
+  const graph = await createImportGraph(prisma, {
+    suffix,
+    taskCount: 1,
+    resultCount: 1,
+    fileName,
+    activityName,
+  });
+
+  try {
+    await page.goto("/imports");
+    for (const width of [1920, 1440, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      const row = page.getByRole("row").filter({ hasText: fileName });
+      await expect(row).toBeVisible();
+
+      const layout = await page.locator(".ant-table-content").evaluate((scroller, recordId) => {
+        const table = scroller.querySelector("table");
+        const headers = [...table!.querySelectorAll<HTMLElement>("thead th")];
+        const recordRow = table!.querySelector<HTMLElement>(
+          `tbody tr[data-row-key="${recordId}"]`,
+        );
+        const cells = [...recordRow!.querySelectorAll<HTMLElement>("td")];
+        const headerByText = (text: string) =>
+          headers.find((header) => header.textContent?.trim() === text)!;
+        const actionCell = cells[cells.length - 1];
+        return {
+          clientWidth: scroller.clientWidth,
+          scrollWidth: scroller.scrollWidth,
+          tableWidth: table!.getBoundingClientRect().width,
+          headerWhiteSpace: [
+            "文件名",
+            "活动名称",
+            "导入类型",
+            "总行数",
+            "有效",
+            "异常",
+            "跳过",
+            "审核进度",
+            "状态",
+            "导入时间",
+            "导入人",
+            "操作",
+          ].map((text) => getComputedStyle(headerByText(text)).whiteSpace),
+          fileCell: {
+            width: cells[1].getBoundingClientRect().width,
+            whiteSpace: getComputedStyle(cells[1]).whiteSpace,
+            textOverflow: getComputedStyle(cells[1]).textOverflow,
+          },
+          activityCell: {
+            width: cells[2].getBoundingClientRect().width,
+            whiteSpace: getComputedStyle(cells[2]).whiteSpace,
+            textOverflow: getComputedStyle(cells[2]).textOverflow,
+          },
+          progressCell: {
+            width: cells[8].getBoundingClientRect().width,
+            whiteSpace: getComputedStyle(cells[8]).whiteSpace,
+            text: cells[8].textContent?.trim(),
+          },
+          actionCell: {
+            width: actionCell.getBoundingClientRect().width,
+            whiteSpace: getComputedStyle(actionCell).whiteSpace,
+            position: getComputedStyle(actionCell).position,
+          },
+        };
+      }, graph.importRecord.id);
+
+      expect(layout.scrollWidth).toBeGreaterThan(layout.clientWidth);
+      expect(layout.tableWidth).toBeGreaterThanOrEqual(1918);
+      expect(layout.headerWhiteSpace).toEqual(Array(12).fill("nowrap"));
+      expect(layout.fileCell).toMatchObject({
+        whiteSpace: "nowrap",
+        textOverflow: "ellipsis",
+      });
+      expect(layout.fileCell.width).toBeCloseTo(280, 0);
+      expect(layout.activityCell).toMatchObject({
+        whiteSpace: "nowrap",
+        textOverflow: "ellipsis",
+      });
+      expect(layout.activityCell.width).toBeCloseTo(260, 0);
+      expect(layout.progressCell).toMatchObject({
+        whiteSpace: "nowrap",
+        text: "结果 1 条 / 未完成 0 条",
+      });
+      expect(layout.progressCell.width).toBeCloseTo(180, 0);
+      expect(layout.actionCell).toMatchObject({
+        whiteSpace: "nowrap",
+        position: "sticky",
+      });
+      expect(layout.actionCell.width).toBeCloseTo(220, 0);
+      await expect(row.locator('input[type="checkbox"]')).toBeVisible();
+      const resultLink = row.getByRole("link", { name: "查看审核结果", exact: true });
+      const deleteButton = row.getByRole("button", { name: "删除", exact: true });
+      await expect(resultLink).toBeVisible();
+      await expect(deleteButton).toBeVisible();
+      const [resultBox, deleteBox] = await Promise.all([
+        resultLink.boundingBox(),
+        deleteButton.boundingBox(),
+      ]);
+      expect(Math.abs(resultBox!.y - deleteBox!.y)).toBeLessThan(1);
+
+      const scroller = page.locator(".ant-table-content");
+      await scroller.evaluate((element) => {
+        element.scrollLeft = element.scrollWidth;
+      });
+      await expect.poll(() => scroller.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+      await expect(row.getByRole("button", { name: "删除", exact: true })).toBeVisible();
+    }
+
+    const row = page.getByRole("row").filter({ hasText: fileName });
+    await row.locator("td").nth(1).hover();
+    await expect(page.getByRole("tooltip", { name: fileName })).toBeVisible();
+    await row.locator("td").nth(2).hover();
+    await expect(page.getByRole("tooltip", { name: activityName })).toBeVisible();
+  } finally {
+    const admin = await prisma.user.findFirstOrThrow({ where: { role: "ADMIN" } });
+    await prisma.$transaction((tx) =>
+      deleteImportRecordsInTransaction(tx, {
+        ids: [graph.importRecord.id],
+        userId: admin.id,
+        mode: "SINGLE",
+      }),
+    );
+    await prisma.noteRecord.deleteMany({ where: { id: { in: graph.noteIds } } });
+    await prisma.$disconnect();
+  }
+});
 
 test("单条删除联动两个平台批次、13 个任务及全版本结果，并释放重复占用", async ({
   page,

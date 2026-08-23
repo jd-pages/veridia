@@ -2,7 +2,17 @@
 
 import type { Key } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { App, Button, Card, Empty, Space, Table, Tag, Typography } from "antd";
+import {
+  App,
+  Button,
+  Card,
+  Empty,
+  Space,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
 import PageHeader from "@/components/PageHeader";
 import StatusTag from "@/components/StatusTag";
 import { apiFetch } from "@/lib/client";
@@ -29,6 +39,9 @@ interface ImportRecord {
 }
 
 const IMPORT_PAGE_SIZE = 12;
+const IMPORT_TABLE_SCROLL_WIDTH = 1920;
+const IMPORT_TABLE_SELECTION_WIDTH = 48;
+const noWrapCell = () => ({ style: { whiteSpace: "nowrap" as const } });
 
 export default function ImportsPage() {
   const { message, modal } = App.useApp();
@@ -187,30 +200,81 @@ export default function ImportsPage() {
                 ? {
                     selectedRowKeys,
                     onChange: setSelectedRowKeys,
+                    columnWidth: IMPORT_TABLE_SELECTION_WIDTH,
                   }
                 : undefined
             }
             columns={[
-              { title: "文件名", dataIndex: "fileName", width: 280 },
+              {
+                title: "文件名",
+                dataIndex: "fileName",
+                width: 280,
+                ellipsis: { showTitle: false },
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
+                render: (value: string) => (
+                  <Tooltip title={value}>
+                    <span>{value}</span>
+                  </Tooltip>
+                ),
+              },
               {
                 title: "活动名称",
                 dataIndex: "activityNames",
                 width: 260,
-                render: (values: string[]) => values?.join("、") || "-",
+                ellipsis: { showTitle: false },
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
+                render: (values: string[]) => {
+                  const label = values?.join("、") || "-";
+                  return (
+                    <Tooltip title={label}>
+                      <span>{label}</span>
+                    </Tooltip>
+                  );
+                },
               },
               {
                 title: "导入类型",
                 dataIndex: "importType",
                 width: 140,
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
                 render: (value) => <Tag>{businessImportTypeLabel(value)}</Tag>,
               },
-              { title: "总行数", dataIndex: "totalCount", width: 100 },
-              { title: "有效", dataIndex: "validCount", width: 90 },
-              { title: "异常", dataIndex: "invalidCount", width: 90 },
-              { title: "跳过", dataIndex: "skippedCount", width: 90 },
+              {
+                title: "总行数",
+                dataIndex: "totalCount",
+                width: 100,
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
+              },
+              {
+                title: "有效",
+                dataIndex: "validCount",
+                width: 90,
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
+              },
+              {
+                title: "异常",
+                dataIndex: "invalidCount",
+                width: 90,
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
+              },
+              {
+                title: "跳过",
+                dataIndex: "skippedCount",
+                width: 90,
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
+              },
               {
                 title: "审核进度",
                 width: 180,
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
                 render: (_, row) =>
                   row.importType === "AUDIT_TASK"
                     ? `结果 ${row.resultCount} 条 / 未完成 ${Math.max(row.taskCount - row.resultCount, 0)} 条`
@@ -220,24 +284,32 @@ export default function ImportsPage() {
                 title: "状态",
                 dataIndex: "status",
                 width: 120,
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
                 render: (value) => <StatusTag value={value} />,
               },
               {
                 title: "导入时间",
                 dataIndex: "createdAt",
                 width: 180,
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
                 render: (value: string) => new Date(value).toLocaleString("zh-CN"),
               },
               {
                 title: "导入人",
                 dataIndex: "creatorDisplayName",
                 width: 120,
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
                 render: (value: string | null) => value || "-",
               },
               {
                 title: "操作",
                 fixed: "right",
                 width: 220,
+                onHeaderCell: noWrapCell,
+                onCell: noWrapCell,
                 render: (_, row) => (
                   <Space>
                     {row.importType === "AUDIT_TASK" &&
@@ -264,6 +336,7 @@ export default function ImportsPage() {
                 ),
               },
             ]}
+            scroll={{ x: IMPORT_TABLE_SCROLL_WIDTH }}
             pagination={{
               pageSize: IMPORT_PAGE_SIZE,
               current: currentPage,
