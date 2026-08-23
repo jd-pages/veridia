@@ -54,6 +54,7 @@ export interface XhsPageCandidates {
 }
 
 export interface DomPageSnapshot extends XhsPageCandidates {
+  currentNoteScopeSelector: string | null;
   finalUrl: string;
   pageTitle: string;
   visibleTextPreview: string;
@@ -121,6 +122,15 @@ export function resolveXhsMediaDecision(
       imageExtractionStatus: "SUCCESS",
       imageCount,
       reason: "IMAGE_CAROUSEL",
+    };
+  }
+
+  if (evidence.hasLivePhotoMarker && imageCount > 0) {
+    return {
+      noteType: "IMAGE_TEXT",
+      imageExtractionStatus: "SUCCESS",
+      imageCount,
+      reason: "IMAGE_MEDIA",
     };
   }
 
@@ -664,7 +674,6 @@ export async function collectDomPageSnapshot(
   page: Page,
 ): Promise<DomPageSnapshot> {
   const snapshot = await page.evaluate(() => {
-    const text = document.body?.innerText || "";
     const html = document.documentElement?.outerHTML || "";
     const excluded = [
       "header",
@@ -680,6 +689,7 @@ export async function collectDomPageSnapshot(
       "[data-testid='note-detail']",
       ".note-detail-mask",
       "[class*='note-detail']",
+      "main",
       "article",
       ".note-content",
       "[class*='note-content']",
@@ -687,11 +697,15 @@ export async function collectDomPageSnapshot(
     const roots = rootSelectors.flatMap((selector) => [
       ...document.querySelectorAll(selector),
     ]);
-    const uniqueElements = (selectors: string[]) => {
+    const uniqueElements = (selectors: string[], scope: ParentNode = document) => {
       const seen = new Set<Element>();
       const result: Element[] = [];
       for (const selector of selectors) {
-        for (const element of document.querySelectorAll(selector)) {
+        const matches = [
+          ...(scope instanceof Element && scope.matches(selector) ? [scope] : []),
+          ...scope.querySelectorAll(selector),
+        ];
+        for (const element of matches) {
           if (!seen.has(element) && !element.closest(excluded)) {
             seen.add(element);
             result.push(element);
@@ -728,8 +742,27 @@ export async function collectDomPageSnapshot(
         return value;
       }
     };
+    const rootScore = (root: Element) =>
+      (root.id === "noteContainer" ? 100 : 0) +
+      (root.matches("[data-testid='note-detail'],.note-detail-mask") ? 50 : 0) +
+      (root.querySelector("#detail-title,[data-testid='note-title'],[class^='note-title-'],[class*=' note-title-']") ? 20 : 0) +
+      (root.querySelector("#detail-desc,[data-testid='note-content'],[data-testid='note-desc'],[class^='note-desc-'],[class*=' note-desc-']") ? 20 : 0) +
+      (root.querySelector("[data-testid='note-action-bar'],.interactions.engage-bar") ? 10 : 0) +
+      (root.querySelector("[data-testid='note-media'],[class*='swiper'],[class*='carousel'],video") ? 10 : 0);
+    const mainNoteRoot = roots
+      .filter(visible)
+      .sort((left, right) => rootScore(right) - rootScore(left))[0] || null;
+    document
+      .querySelectorAll("[data-veridia-current-note-scope]")
+      .forEach((element) => element.removeAttribute("data-veridia-current-note-scope"));
+    mainNoteRoot?.setAttribute("data-veridia-current-note-scope", "true");
+    const currentNoteScopeSelector = mainNoteRoot
+      ? "[data-veridia-current-note-scope='true']"
+      : null;
+    const scopedElements = (selectors: string[]) =>
+      mainNoteRoot ? uniqueElements(selectors, mainNoteRoot) : [];
     const textCandidates = (selectors: string[], source: string) =>
-      uniqueElements(selectors)
+      scopedElements(selectors)
         .filter(visible)
         .map((element) => ({
           value: (element.textContent || "").trim(),
@@ -741,9 +774,10 @@ export async function collectDomPageSnapshot(
       [
         "#detail-title",
         "[data-testid='note-title']",
-        "[class*='note-title']",
-        "[class*='note-content'] [class*='title']",
-        "[class*='note-detail'] [class*='title']",
+        "[data-xhs-note-title]",
+        "[class~='note-title']",
+        "[class^='note-title-']",
+        "[class*=' note-title-']",
       ],
       "DOM",
     );
@@ -752,15 +786,15 @@ export async function collectDomPageSnapshot(
         "#detail-desc",
         "[data-testid='note-content']",
         "[data-testid='note-desc']",
-        "[class*='note-desc']",
-        "[class*='note-content'] [class*='desc']",
-        "[class*='note-detail'] [class*='desc']",
-        "article [class*='content']",
+        "[data-xhs-note-desc]",
+        "[class~='note-desc']",
+        "[class~='desc']",
+        "[class^='note-desc-']",
+        "[class*=' note-desc-']",
       ],
       "DOM",
     );
 
-    const mainNoteRoot = roots.find(visible) || null;
     const publicationPattern = /^(?:(?:编辑于|发布于)\s*)?(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?|昨天\s*\d{1,2}:\d{2}(?::\d{2})?|\d{1,4}天前|\d{1,6}小时前|\d{1,6}分钟前)(?:\s+(?:IP属地[：:]?\s*)?[\p{Script=Han}]{2,12})?$/u;
     const descriptionElement = mainNoteRoot?.querySelector(
       "#detail-desc,[data-testid='note-content'],[data-testid='note-desc'],[class*='note-desc'],[class*='note-content'] [class*='desc']",
@@ -822,49 +856,6 @@ export async function collectDomPageSnapshot(
               candidate.raw === item.raw && candidate.source === item.source,
           ) === index,
       );
-
-    for (const root of roots.filter(visible)) {
-      const candidates = [...root.querySelectorAll("p,div,span")]
-        .filter((element) => !element.closest(excluded) && visible(element))
-        .map((element) => ({
-          value: (element.textContent || "").trim(),
-          source: `DOM_FALLBACK:${elementPath(element)}`,
-        }))
-        .filter((item) => item.value.length >= 20 && item.value.length <= 10_000)
-        .sort((left, right) => right.value.length - left.value.length);
-      if (candidates[0]) bodyCandidates.push(candidates[0]);
-    }
-
-    const metaTitle =
-      document.querySelector<HTMLMetaElement>("meta[property='og:title']")
-        ?.content || "";
-    const metaDescription =
-      document.querySelector<HTMLMetaElement>(
-        "meta[property='og:description'],meta[name='description']",
-      )?.content || "";
-    if (metaTitle && !/^小红书\s*[-·]/u.test(metaTitle)) {
-      titleCandidates.push({ value: metaTitle, source: "META" });
-    }
-    if (metaDescription && !/^小红书/u.test(metaDescription)) {
-      bodyCandidates.push({ value: metaDescription, source: "META" });
-    }
-    const detailLikePage =
-      roots.length > 0 ||
-      /\/(?:explore|discovery\/item)\/[a-z0-9]+/iu.test(location.pathname);
-    if (!bodyCandidates.length && detailLikePage) {
-      const fallbackLine = text
-        .split(/\n+/)
-        .map((item) => item.trim())
-        .filter(
-          (item) =>
-            item.length >= 20 &&
-            !/ICP备|营业执照|用户协议|隐私政策|创作中心|业务合作/u.test(item),
-        )
-        .sort((left, right) => right.length - left.length)[0];
-      if (fallbackLine) {
-        bodyCandidates.push({ value: fallbackLine, source: "VISIBLE_TEXT_FALLBACK" });
-      }
-    }
 
     const scopedTopicElements = (selectors: string[]) => {
       if (!mainNoteRoot) return [] as Element[];
@@ -1022,7 +1013,7 @@ export async function collectDomPageSnapshot(
       });
     }
 
-    const mediaRoots = uniqueElements([
+    const mediaRoots = scopedElements([
       "[data-testid='note-media']",
       "[class*='note-slider']",
       "[class*='carousel']",
@@ -1218,6 +1209,33 @@ export async function collectDomPageSnapshot(
         domPath: elementPath(element),
       });
     }
+    if (hasLivePhotoMarker) {
+      for (const video of videoElements) {
+        const slide = video.closest(
+          "[data-swiper-slide-index],[data-index],[class*='swiper-slide'],[class*='carousel-item'],[class*='slide-item']",
+        );
+        const liveWrapper = video.closest(
+          "[class*='live'],[data-testid*='live'],[data-live-photo]",
+        );
+        if (!slide && !liveWrapper) continue;
+        const poster = video.getAttribute("poster") || "";
+        const groupKey = slide
+          ? `slide:${
+              slide.getAttribute("data-swiper-slide-index") ||
+              slide.getAttribute("data-index") ||
+              elementPath(slide)
+            }`
+          : `live-photo:${elementPath(liveWrapper || video)}`;
+        if (!imageCandidates.some((candidate) => candidate.groupKey === groupKey)) {
+          imageCandidates.push({
+            source: "DOM_MEDIA",
+            groupKey,
+            url: poster ? absoluteUrl(poster) : null,
+            domPath: elementPath(liveWrapper || video),
+          });
+        }
+      }
+    }
 
     const jsonPayloads: unknown[] = [];
     for (const script of [...document.scripts]) {
@@ -1244,6 +1262,21 @@ export async function collectDomPageSnapshot(
       }
     }
 
+    const explicitStatusText = uniqueElements([
+      "[data-xhs-page-status]",
+      "[data-page-status]",
+      "[data-testid*='not-found']",
+      "[class*='not-found']",
+      "[data-testid*='login']",
+      "[class*='login-container']",
+      "[class*='security-check']",
+    ])
+      .map((element) => element.textContent || "")
+      .join("\n");
+    const text = [mainNoteRoot?.textContent || "", explicitStatusText]
+      .filter(Boolean)
+      .join("\n")
+      .trim();
     const loginEvidence: string[] = [];
     if (/登录后推荐|请先登录|登录以继续|手机号登录|扫码登录/u.test(text)) {
       loginEvidence.push("页面显示登录提示");
@@ -1266,6 +1299,7 @@ export async function collectDomPageSnapshot(
     }
 
     return {
+      currentNoteScopeSelector,
       finalUrl: location.href,
       pageTitle: document.title,
       visibleTextPreview: text.slice(0, 1_000),
@@ -1288,7 +1322,7 @@ export async function collectDomPageSnapshot(
       loginEvidence,
       jsonPayloads,
       publishedAtTextCandidates,
-      keyElementCount: uniqueElements([
+      keyElementCount: scopedElements([
         "#detail-title",
         "#detail-desc",
         "[data-testid='note-content']",
@@ -1297,7 +1331,7 @@ export async function collectDomPageSnapshot(
         "[class*='swiper']",
         "a[href*='/search_result']",
       ]).length,
-      domSummary: uniqueElements([
+      domSummary: scopedElements([
         "main",
         "article",
         "[role='main']",
@@ -1352,6 +1386,7 @@ export async function collectDomPageSnapshot(
 
   return {
     ...merged,
+    currentNoteScopeSelector: snapshot.currentNoteScopeSelector,
     finalUrl: snapshot.finalUrl,
     pageTitle: snapshot.pageTitle,
     visibleTextPreview: snapshot.visibleTextPreview,

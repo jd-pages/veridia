@@ -83,6 +83,41 @@ test("删除当前审核结果后同日重新导入立即释放单条重复占�
   expect((await blocked.json()).data).toMatchObject({ created: [], errors: [expect.objectContaining({ url })] });
 
   expect((await page.request.delete(`/api/results/${result.id}`)).ok()).toBeTruthy();
+  const templateResponse = await page.request.get("/api/import/template");
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(
+    (await templateResponse.body()) as unknown as ExcelJS.Buffer,
+  );
+  workbook.worksheets[0].getRow(2).values = [
+    "京东",
+    "京东健康官方进口超市",
+    "删除释放客户",
+    product.name,
+    "2段",
+    "IFFO",
+    `DELETE-RELEASE-${suffix}`,
+    "小红书",
+    url,
+    "2026-08-23 10:00:00",
+    campaign.name,
+  ];
+  const precheck = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: `delete-release-${suffix}.xlsx`,
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
+      },
+      commit: "false",
+    },
+  });
+  expect(precheck.ok()).toBeTruthy();
+  expect((await precheck.json()).data).toMatchObject({
+    duplicateWarningCount: 0,
+    pendingDuplicateCount: 0,
+    validCount: 1,
+  });
   const allowed = await page.request.post("/api/tasks", {
     data: { urls: url, productId: product.id, campaignId: campaign.id, productStage: "IFFO" },
   });

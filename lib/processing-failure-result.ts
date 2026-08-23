@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { getAuditContext } from "@/lib/audit-service";
 import { safePageLogUrl } from "@/lib/automation/page-classification";
 import {
-  pageStatusForProcessingFailure,
+  processingFailurePageFacts,
   processingFailureReason,
   processingFailureResultExcludedCodes,
   processingFailureTaskStatuses,
@@ -18,6 +18,7 @@ import {
   lockValidExecutionLease,
   type AutomaticExecutionLease,
 } from "@/lib/automation/execution-lease";
+import { processingFailureStoreTopicStatus } from "@/lib/processing-failure";
 
 const globalForFailureBackfill = globalThis as typeof globalThis & {
   processingFailureBackfill?: Promise<number>;
@@ -96,6 +97,10 @@ export async function recordProcessingFailureResult(input: {
     });
     if (!task) throw new Error("审核任务不存在");
     if (task.status === "CANCELLED") return null;
+    const pageFacts = processingFailurePageFacts(
+      input.failureCode,
+      task.failureEvidence,
+    );
 
     await tx.auditTask.update({
       where: { id: task.id },
@@ -135,8 +140,13 @@ export async function recordProcessingFailureResult(input: {
             publishedAt: null,
             publishedAtRaw: null,
             publishedAtSource: null,
-            pageStatus: pageStatusForProcessingFailure(input.failureCode),
-            isPublic: noteNotFound ? null : undefined,
+            pageStatus: pageFacts.pageStatus,
+            isPublic:
+              pageFacts.publicStatus === "PUBLIC"
+                ? true
+                : noteNotFound
+                  ? null
+                  : undefined,
             noteType: task.pageType || "UNKNOWN",
             imageExtractionStatus: "NOT_CHECKED",
             imageCount: 0,
@@ -152,7 +162,8 @@ export async function recordProcessingFailureResult(input: {
             publishedAt: null,
             publishedAtRaw: null,
             publishedAtSource: null,
-            pageStatus: pageStatusForProcessingFailure(input.failureCode),
+            pageStatus: pageFacts.pageStatus,
+            isPublic: pageFacts.publicStatus === "PUBLIC" ? true : null,
             noteType: task.pageType || "UNKNOWN",
             imageExtractionStatus: "NOT_CHECKED",
             imageCount: 0,
@@ -171,7 +182,7 @@ export async function recordProcessingFailureResult(input: {
             noteId: note.id,
             adapterName: "playwright-page-evidence",
             adapterVersion: "1.0.0",
-            pageStatus: pageStatusForProcessingFailure(input.failureCode),
+            pageStatus: pageFacts.pageStatus,
             rawData: task.failureEvidence,
             extractedAt: finishedAt,
           },
@@ -209,7 +220,7 @@ export async function recordProcessingFailureResult(input: {
       softwareVersion: task.softwareVersion || "unknown",
       rulePackageVersion: currentContext.rulePackageVersion,
       ruleSnapshot: snapshot,
-      pageStatus: pageStatusForProcessingFailure(input.failureCode),
+      pageStatus: pageFacts.pageStatus,
       bodyStatus: "UNKNOWN",
       effectiveBodyLength: 0,
       bodyCompliant: true,
@@ -220,14 +231,18 @@ export async function recordProcessingFailureResult(input: {
       imageCompliant: true,
       topicsCompliant: true,
       clickableCompliant: true,
-      storeTopicStatus: "NOT_CHECKED",
-      expectedStoreTopic: null,
+      storeTopicStatus: processingFailureStoreTopicStatus(task),
+      expectedStoreTopic: task.expectedStoreTopic,
       matchedStoreTopic: null,
+      expectedStoreTopics: task.expectedStoreTopics,
+      requiredStoreTopics: task.requiredStoreTopics,
+      matchedStoreTopics: "[]",
+      matchedRequiredStoreTopics: "[]",
       storeTopicFailureReason: null,
       missingTopics: "[]",
       forbiddenTopics: "[]",
       autoStatus: noteNotFound ? "NOTE_NOT_FOUND" : "NEEDS_REVIEW",
-      publicStatus: "UNKNOWN",
+      publicStatus: pageFacts.publicStatus,
       retentionStatus: noteNotFound ? "NOT_REQUIRED" : "PENDING",
       visualReviewStatus: "NOT_REQUIRED",
       visualReviewDetails: "{}",

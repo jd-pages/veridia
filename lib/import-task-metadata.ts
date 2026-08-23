@@ -114,6 +114,20 @@ export function importedTemplateMetadataFromNotes(
 export function duplicateReauditMetadataFromNotes(
   notes: unknown,
 ): DuplicateReauditMetadata | null {
+  return parseDuplicateReauditMetadata(notes, false);
+}
+
+export function legacyZeroHistoryDuplicateMetadataFromNotes(
+  notes: unknown,
+): DuplicateReauditMetadata | null {
+  const metadata = parseDuplicateReauditMetadata(notes, true);
+  return metadata?.historicalCount === 0 ? metadata : null;
+}
+
+function parseDuplicateReauditMetadata(
+  notes: unknown,
+  allowZeroHistory: boolean,
+): DuplicateReauditMetadata | null {
   const line = String(notes ?? "")
     .split(/\r?\n/gu)
     .find((candidate) =>
@@ -127,7 +141,7 @@ export function duplicateReauditMetadataFromNotes(
     if (
       !parsed.identity?.trim() ||
       !Number.isInteger(parsed.historicalCount) ||
-      Number(parsed.historicalCount) < 0 ||
+      Number(parsed.historicalCount) < (allowZeroHistory ? 0 : 1) ||
       !parsed.confirmedAt ||
       !parsed.confirmedByUserId ||
       !Array.isArray(parsed.sourceTaskIds)
@@ -154,6 +168,9 @@ export function withDuplicateReauditMetadata(
   notes: unknown,
   metadata: DuplicateReauditMetadata,
 ) {
+  if (!Number.isInteger(metadata.historicalCount) || metadata.historicalCount < 1) {
+    throw new Error("重复重审必须至少存在 1 条有效历史审核结果");
+  }
   const retained = String(notes ?? "")
     .split(/\r?\n/gu)
     .filter(

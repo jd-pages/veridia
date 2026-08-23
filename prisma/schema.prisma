@@ -689,6 +689,7 @@ model RulePackageBackup {
 
 model ImportRecord {
   id                  String       @id @default(cuid())
+  requestKey          String?      @unique
   fileName            String
   importType          String
   totalCount          Int

@@ -1677,6 +1677,7 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     commit: boolean,
     duplicateOverrides = "[]",
     buffer = excel,
+    requestKey?: string,
   ) => ({
     file: {
       name: `duplicate-reaudit-${suffix}.xlsx`,
@@ -1687,10 +1688,11 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     commit: String(commit),
     skipDuplicates: "true",
     duplicateOverrides,
+    ...(requestKey ? { requestKey } : {}),
   });
 
   const initialImport = await page.request.post("/api/import/notes", {
-    multipart: multipart(true, "[]", initialExcel),
+    multipart: multipart(true, "[]", initialExcel, `initial-${suffix}`),
   });
   expect(initialImport.ok()).toBeTruthy();
   const initial = (await initialImport.json()).data as {
@@ -1781,11 +1783,12 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     "2026-08-15 12:00:00",
     currentCampaign.name,
   ];
+  const repeatedExcel = Buffer.from(await repeatedWorkbook.xlsx.writeBuffer());
   const repeatedResponse = await page.request.post("/api/import/notes", {
     multipart: multipart(
       false,
       "[]",
-      Buffer.from(await repeatedWorkbook.xlsx.writeBuffer()),
+      repeatedExcel,
     ),
   });
   const repeated = (await repeatedResponse.json()).data as {
@@ -1825,6 +1828,32 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     expect(invalid.rows[0].errors).toContain("活动名称不能为空");
     expect(invalid.rows[0].duplicateWarning.identity).toBe(identity);
   }
+  const tasksBeforeInvalidBulkConfirm = (
+    (await (await page.request.get("/api/tasks")).json()).data as Array<{
+      id: string;
+    }>
+  ).map((item) => item.id);
+  const invalidBulkCommit = await page.request.post("/api/import/notes", {
+    multipart: {
+      ...multipart(
+        true,
+        "[]",
+        invalidExcel,
+        `invalid-bulk-${suffix}`,
+      ),
+      confirmAllDuplicateReaudits: "true",
+    },
+  });
+  expect(invalidBulkCommit.ok()).toBeTruthy();
+  expect((await invalidBulkCommit.json()).data).toMatchObject({
+    imported: 0,
+    invalidCount: 1,
+  });
+  expect(
+    ((await (await page.request.get("/api/tasks")).json()).data as Array<{
+      id: string;
+    }>).map((item) => item.id),
+  ).toEqual(tasksBeforeInvalidBulkConfirm);
 
   const tasksBeforeUnconfirmedCommit = (
     (await (await page.request.get("/api/tasks")).json()).data as Array<{
@@ -1832,7 +1861,7 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     }>
   ).map((item) => item.id);
   const unconfirmedCommit = await page.request.post("/api/import/notes", {
-    multipart: multipart(true),
+    multipart: multipart(true, "[]", excel, `unconfirmed-${suffix}`),
   });
   expect(unconfirmedCommit.ok()).toBeTruthy();
   expect((await unconfirmedCommit.json()).data.imported).toBe(0);
@@ -1879,10 +1908,13 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
   await expect(secondPage.getByText("历史重复 · 已审核 1 次")).toBeVisible();
   await secondContext.close();
 
+  const committedRequestKey = `confirmed-${suffix}`;
   const committedResponse = await page.request.post("/api/import/notes", {
     multipart: multipart(
       true,
       JSON.stringify([{ rowNumber: 2, identity }]),
+      excel,
+      committedRequestKey,
     ),
   });
   expect(committedResponse.ok()).toBeTruthy();
@@ -1892,6 +1924,23 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
   };
   expect(committed.imported).toBe(1);
   duplicateReauditCleanupBatchIds.push(committed.batchId);
+  const repeatedCommitResponse = await page.request.post("/api/import/notes", {
+    multipart: multipart(
+      true,
+      JSON.stringify([{ rowNumber: 2, identity }]),
+      excel,
+      committedRequestKey,
+    ),
+  });
+  expect(repeatedCommitResponse.ok()).toBeTruthy();
+  expect((await repeatedCommitResponse.json()).data).toMatchObject({
+    batchId: committed.batchId,
+    alreadyCommitted: true,
+  });
+  const idempotentBatch = (await (
+    await page.request.get(`/api/automation/batches?batchId=${committed.batchId}`)
+  ).json()).data[0] as { tasks: Array<{ id: string }> };
+  expect(idempotentBatch.tasks).toHaveLength(1);
   // This case verifies duplicate precheck/commit semantics, not the unrelated
   // fire-and-forget queue kick. Synchronize the already-created batch through
   // the public lifecycle control so a resource-starved shared Next dev server
@@ -1954,6 +2003,45 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
   expect(future.duplicateWarningCount).toBe(1);
   expect(future.pendingDuplicateCount).toBe(1);
   expect(future.rows[0].duplicateWarning.historicalCount).toBe(2);
+
+  const bulkCommitResponse = await page.request.post("/api/import/notes", {
+    multipart: {
+      ...multipart(true, "[]", repeatedExcel, `bulk-${suffix}`),
+      confirmAllDuplicateReaudits: "true",
+    },
+  });
+  expect(bulkCommitResponse.ok()).toBeTruthy();
+  const bulkCommit = (await bulkCommitResponse.json()).data as {
+    imported: number;
+    batchId: string;
+  };
+  expect(bulkCommit.imported).toBe(2);
+  duplicateReauditCleanupBatchIds.push(bulkCommit.batchId);
+  await synchronizeQueuedBatch(page, bulkCommit.batchId);
+  const bulkBatch = await waitForBatch(page, bulkCommit.batchId, ["COMPLETED"]);
+  expect(bulkBatch.tasks).toHaveLength(2);
+  const bulkResultId = (bulkBatch.tasks[0] as {
+    auditResults: Array<{ id: string }>;
+  }).auditResults[0].id;
+  const bulkDetail = (await (
+    await page.request.get(`/api/results/${bulkResultId}`)
+  ).json()).data as {
+    operationLogs: Array<{
+      action: string;
+      metadata: string;
+    }>;
+  };
+  const bulkLog = bulkDetail.operationLogs.find(
+    (item) => item.action === "BULK_DUPLICATE_REAUDIT_CONFIRM",
+  );
+  expect(bulkLog).toBeTruthy();
+  expect(JSON.parse(bulkLog!.metadata)).toMatchObject({
+    confirmationCount: 2,
+    confirmations: [
+      expect.objectContaining({ historicalCount: 2 }),
+      expect.objectContaining({ historicalCount: 2 }),
+    ],
+  });
 });
 
 test("重复历史批量查询在 10 到 1000 行保持固定查询形态", async ({ page }) => {
@@ -2068,6 +2156,109 @@ test("重复历史批量查询在 10 到 1000 行保持固定查询形态", asyn
   const pageStartedAt = performance.now();
   await page.getByRole("button", { name: "开始预检查" }).click();
   await expect(page.getByText(/重复待确认 500 条/u)).toBeVisible();
+  const duplicateRows = page.locator(".ant-table-tbody tr.ant-table-row");
+  await duplicateRows.nth(0).locator(".ant-checkbox").click();
+  await duplicateRows.nth(1).locator(".ant-checkbox").click();
+  await page
+    .getByRole("button", { name: "批量确认重复并重审（2）" })
+    .click();
+  const selectedConfirmModal = page.locator(".ant-modal-confirm:visible");
+  await expect(
+    page.locator(".ant-modal-confirm-title", {
+      hasText: "确认选中的 2 条重复项并重审？",
+    }).last(),
+  ).toBeVisible();
+  await selectedConfirmModal
+    .getByRole("button", { name: "确认批量重审" })
+    .last()
+    .click();
+  await expect(page.getByText(/重复待确认 498 条/u)).toBeVisible();
+  await page
+    .getByRole("button", { name: "确认全部重复项并继续（498）" })
+    .click();
+  const allConfirmModal = page.locator(".ant-modal-confirm:visible");
+  await expect(
+    page.locator(".ant-modal-confirm-title", {
+      hasText: "确认全部 498 条重复项并继续？",
+    }).last(),
+  ).toBeVisible();
+  await allConfirmModal
+    .getByRole("button", { name: "确认批量重审" })
+    .last()
+    .click();
+  await expect(page.getByText(/重复待确认 0 条/u)).toBeVisible();
+  await expect(page.getByText("全部 500 条历史重复已确认重审")).toBeVisible();
+  const hundredRows = await buildWorkbook(100, 30);
+  const hundredCommitResponse = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: `dedup-bulk-100-30-${suffix}.xlsx`,
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: hundredRows,
+      },
+      commit: "true",
+      confirmAllDuplicateReaudits: "true",
+      requestKey: `dedup-bulk-100-30-${suffix}`,
+    },
+  });
+  expect(hundredCommitResponse.ok()).toBeTruthy();
+  const hundredCommit = (await hundredCommitResponse.json()).data as {
+    imported: number;
+    batchId: string;
+  };
+  expect(hundredCommit.imported).toBe(100);
+  duplicateReauditCleanupBatchIds.push(hundredCommit.batchId);
+  const hundredBatch = (
+    (await (await page.request.get("/api/automation/batches")).json())
+      .data as Array<{
+        id: string;
+        tasks: Array<{ notes: string | null }>;
+      }>
+  ).find((item) => item.id === hundredCommit.batchId)!;
+  expect(hundredBatch.tasks).toHaveLength(100);
+  expect(
+    hundredBatch.tasks.filter((task) =>
+      task.notes?.includes("VERIDIA_DUPLICATE_REAUDIT_JSON"),
+    ),
+  ).toHaveLength(30);
+  const invalidBulkWorkbook = new ExcelJS.Workbook();
+  await invalidBulkWorkbook.xlsx.load(
+    hundredRows as unknown as ExcelJS.Buffer,
+  );
+  invalidBulkWorkbook.worksheets[0].getRow(2).getCell(2).value =
+    `未映射店铺-A-${suffix}`;
+  invalidBulkWorkbook.worksheets[0].getRow(3).getCell(2).value =
+    `未映射店铺-B-${suffix}`;
+  const invalidBulkPrecheck = await page.request.post("/api/import/notes", {
+    multipart: {
+      file: {
+        name: `dedup-bulk-invalid-100-30-${suffix}.xlsx`,
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer: Buffer.from(await invalidBulkWorkbook.xlsx.writeBuffer()),
+      },
+      commit: "false",
+      confirmAllDuplicateReaudits: "true",
+    },
+  });
+  expect(invalidBulkPrecheck.ok()).toBeTruthy();
+  const invalidBulkPreview = (await invalidBulkPrecheck.json()).data as {
+    invalidCount: number;
+    importableCount: number;
+    rows: Array<{ errors: string[] }>;
+  };
+  expect(invalidBulkPreview.invalidCount).toBe(2);
+  expect(invalidBulkPreview.importableCount).toBe(98);
+  expect(
+    invalidBulkPreview.rows.slice(0, 2).every((row) =>
+      row.errors.some((error) => error.includes("店铺")),
+    ),
+  ).toBe(true);
+  await page.request.post(
+    `/api/automation/batches/${hundredCommit.batchId}/control`,
+    { data: { action: "CANCEL" } },
+  );
   console.log(
     `[DUPLICATE_PRECHECK_PAGE_PERF] rows=1000 historicalRows=500 waitMs=${Math.round((performance.now() - pageStartedAt) * 100) / 100}`,
   );

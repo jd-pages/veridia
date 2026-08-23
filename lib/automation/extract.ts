@@ -44,6 +44,10 @@ import {
   safeEvidenceUrl,
   type XhsPageCandidates,
 } from "./xhs-page-evidence";
+import {
+  waitForXhsExtractionKeyElements,
+  waitForXhsPageReadiness,
+} from "./xhs-readiness";
 
 export interface AutomaticExtractionOutcome {
   note: ExtractedNote;
@@ -58,24 +62,6 @@ interface PageIdentity {
   httpStatus: number | null;
   notFoundDomMarker: string | null;
 }
-
-const KEY_ELEMENT_SELECTOR = [
-  "#detail-title",
-  "#detail-desc",
-  "[data-testid='note-title']",
-  "[data-testid='note-content']",
-  "[data-testid='note-desc']",
-  ".note-content",
-  "[class*='note-content']",
-  "[class*='note-detail']",
-  "[class*='note-slider']",
-  "[class*='swiper']",
-  "[class*='carousel']",
-  "a#hash-tag",
-  "a[href*='/search_result']",
-  "a[href*='/topic']",
-  "script[type='application/ld+json']",
-].join(",");
 
 function isMockUrl(value: string) {
   try {
@@ -112,7 +98,10 @@ async function readPageIdentity(
   const [pageTitle, visibleText, notFoundDomMarker] = await Promise.all([
     page.title().catch(() => ""),
     page
-      .locator("body")
+      .locator(
+        "#noteContainer,[data-testid='note-detail'],.note-detail-mask,[data-xhs-page-status],[data-page-status],[data-testid*='not-found'],[class*='not-found'],[data-testid*='login'],[class*='login-container'],[class*='security-check']",
+      )
+      .first()
       .innerText({ timeout: 2_000 })
       .catch(() => ""),
     page
@@ -141,7 +130,6 @@ async function readPageIdentity(
 
 async function waitForPageReadiness(
   page: Page,
-  originalUrl: string,
   redirectChain: string[],
 ) {
   const timeout = Number(
@@ -149,57 +137,7 @@ async function waitForPageReadiness(
       process.env.AUTOMATION_KEY_ELEMENT_TIMEOUT_MS ||
       15_000,
   );
-  const startedAt = Date.now();
-  const deadline = Date.now() + timeout;
-  let previousUrl = "";
-  let stableChecks = 0;
-  let observedNoteDetail = isXiaohongshuNoteDetailUrl(originalUrl);
-  while (Date.now() < deadline) {
-    const currentUrl = page.url();
-    redirectChain.push(currentUrl);
-    observedNoteDetail ||= isXiaohongshuNoteDetailUrl(currentUrl);
-    if (currentUrl === previousUrl) stableChecks += 1;
-    else {
-      previousUrl = currentUrl;
-      stableChecks = 0;
-    }
-
-    const identity = await readPageIdentity(page);
-    if (
-      ["LOGIN", "SECURITY_CHECK", "APP_LAUNCH", "ERROR_PAGE"].includes(
-        identity.pageType,
-      )
-    ) {
-      return;
-    }
-    const keyElementCount = await page
-      .locator(KEY_ELEMENT_SELECTOR)
-      .count()
-      .catch(() => 0);
-    if (keyElementCount > 0) {
-      await page
-        .waitForLoadState("networkidle", { timeout: 2_500 })
-        .catch(() => undefined);
-      await page.waitForTimeout(600);
-      return;
-    }
-    if (
-      observedNoteDetail &&
-      stableChecks >= 6 &&
-      Date.now() - startedAt >= 3_000
-    ) {
-      return;
-    }
-    await page.waitForTimeout(250);
-  }
-}
-
-async function waitForExtractionKeyElements(page: Page) {
-  await page
-    .locator(KEY_ELEMENT_SELECTOR)
-    .first()
-    .waitFor({ state: "attached", timeout: 2_000 })
-    .catch(() => undefined);
+  await waitForXhsPageReadiness({ page, redirectChain, timeoutMs: timeout });
 }
 
 async function captureFailureEvidence(
@@ -404,7 +342,7 @@ export async function extractAuditTaskAutomatically(
       responseUrl = response?.url() || "";
       if (responseUrl) redirectChain.push(responseUrl);
       if (!mock) {
-        await waitForPageReadiness(page, task.url, redirectChain);
+        await waitForPageReadiness(page, redirectChain);
       }
     } catch (error) {
       if (error instanceof AutomaticExtractionError) throw error;
@@ -529,9 +467,7 @@ export async function extractAuditTaskAutomatically(
     }
 
     if (!mock && isXiaohongshuNoteDetailUrl(identity.finalUrl)) {
-      try {
-        await waitForExtractionKeyElements(page);
-      } catch {
+      if (!(await waitForXhsExtractionKeyElements(page))) {
         throw new AutomaticExtractionError(
           "STRUCTURE_MISMATCH",
           "笔记详情页未出现正文或话题区域",

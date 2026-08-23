@@ -12,7 +12,10 @@ import { isUnavailableNoteResult } from "@/lib/result-display";
 import { resultDetailLinks } from "@/lib/result-links";
 import { parseStoredStringArray } from "@/lib/stored-json";
 import { formatPlatformPublishedAt } from "@/lib/platform-published-at";
-import { duplicateReauditMetadataFromNotes } from "@/lib/import-task-metadata";
+import {
+  duplicateReauditMetadataFromNotes,
+  legacyZeroHistoryDuplicateMetadataFromNotes,
+} from "@/lib/import-task-metadata";
 import {
   formatOriginalPublishedAt,
 } from "@/lib/xhs-original-published-at";
@@ -80,10 +83,16 @@ export default function AuditDecisionSummary({
   row: ResultRow;
   detail?: ResultDetail | null;
 }) {
-  const unavailable = isUnavailableNoteResult(row);
-  const conclusion = auditConclusionCardLabel(row);
-  const conclusionTone = auditConclusionCardTone(row);
-  const failureReasons = auditConclusionFailureReasons(row);
+  const legacyZeroHistory = legacyZeroHistoryDuplicateMetadataFromNotes(
+    row.task.notes,
+  );
+  const displayRow = legacyZeroHistory?.automaticResult
+    ? { ...row, autoStatus: legacyZeroHistory.automaticResult }
+    : row;
+  const unavailable = isUnavailableNoteResult(displayRow);
+  const conclusion = auditConclusionCardLabel(displayRow);
+  const conclusionTone = auditConclusionCardTone(displayRow);
+  const failureReasons = auditConclusionFailureReasons(displayRow);
   const topicSummary = getTopicAuditSummary(row);
   const expectedTopicCount = topicSummary.expectedCount;
   const matchedTopicCount = topicSummary.matchedCount;
@@ -131,6 +140,11 @@ export default function AuditDecisionSummary({
   const matchedRequiredStoreTopics = parseStoredStringArray(
     row.matchedRequiredStoreTopics,
   );
+  const storeTopicNotRequired =
+    row.storeTopicStatus === "NOT_REQUIRED" ||
+    (row.task.storeMappingStatus === "MATCHED" &&
+      expectedStoreTopics.length === 0 &&
+      requiredStoreTopics.length === 0);
 
   return (
     <div className={styles.decisionLayout}>
@@ -351,9 +365,7 @@ export default function AuditDecisionSummary({
 
           <article className={styles.auditDetailCard}>
             <h4>店铺话题审核</h4>
-            {unavailable || row.storeTopicStatus === "NOT_CHECKED" ? (
-              <strong>未审核</strong>
-            ) : row.storeTopicStatus === "NOT_REQUIRED" ? (
+            {storeTopicNotRequired ? (
               <div className={styles.auditDetailList}>
                 <div>
                   <span>导入店铺</span>
@@ -372,6 +384,8 @@ export default function AuditDecisionSummary({
                   <strong>不要求</strong>
                 </div>
               </div>
+            ) : unavailable || row.storeTopicStatus === "NOT_CHECKED" ? (
+              <strong>未审核</strong>
             ) : (
               <div className={styles.auditDetailList}>
                 <div>

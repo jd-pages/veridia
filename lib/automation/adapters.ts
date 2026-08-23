@@ -93,7 +93,10 @@ export class PlaywrightXiaohongshuAdapter
     context: PlaywrightExtractionContext = {},
   ): Promise<ExtractedNote> {
     const domSnapshot = await collectDomPageSnapshot(page);
-    const interactionMetrics = await collectXhsInteractionMetrics(page).catch(
+    const interactionMetrics = await collectXhsInteractionMetrics(
+      page,
+      domSnapshot.currentNoteScopeSelector,
+    ).catch(
       (error) => ({
         likeCount: null,
         favoriteCount: null,
@@ -239,6 +242,9 @@ export class PlaywrightXiaohongshuAdapter
         originalUrl: safeEvidenceUrl(originalUrl),
         finalUrl: safeEvidenceUrl(domSnapshot.finalUrl),
         pageTitle: domSnapshot.pageTitle,
+        currentNoteScopeSelector: domSnapshot.currentNoteScopeSelector,
+        pageStatus: domSnapshot.pageStatus,
+        isPublic: domSnapshot.pageStatus === "NORMAL",
         visibleTextPreview: domSnapshot.visibleTextPreview,
         visibleTextLength: domSnapshot.visibleTextLength,
         htmlLength: domSnapshot.htmlLength,
@@ -307,6 +313,9 @@ export class PlaywrightXiaohongshuAdapter
     }
 
     const extracted = await page.evaluate(() => {
+      const currentNoteRoot = document.querySelector(
+        "#noteContainer,[data-testid='note-detail'],.note-detail-mask,[class*='note-detail'],article",
+      );
       const selectors = {
         title: [
           "#detail-title",
@@ -348,17 +357,19 @@ export class PlaywrightXiaohongshuAdapter
       };
 
       const firstText = (items: string[]) => {
+        if (!currentNoteRoot) return "";
         for (const selector of items) {
-          const value = document.querySelector(selector)?.textContent?.trim();
+          const value = currentNoteRoot.querySelector(selector)?.textContent?.trim();
           if (value) return value;
         }
         return "";
       };
       const all = (items: string[]) => {
+        if (!currentNoteRoot) return [];
         const seen = new Set<Element>();
         const elements: Element[] = [];
         for (const selector of items) {
-          for (const element of document.querySelectorAll(selector)) {
+          for (const element of currentNoteRoot.querySelectorAll(selector)) {
             if (!seen.has(element)) {
               seen.add(element);
               elements.push(element);
@@ -377,7 +388,7 @@ export class PlaywrightXiaohongshuAdapter
         return `${tag}${classes}`;
       };
 
-      const visibleText = document.body?.innerText || "";
+      const visibleText = currentNoteRoot?.textContent || "";
       let pageStatus: PageStatus = "NORMAL";
       if (/登录后查看|请先登录|登录已过期|登录以继续/.test(visibleText)) {
         pageStatus = "LOGIN_EXPIRED";

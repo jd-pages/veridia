@@ -7,7 +7,10 @@ import {
 } from "@/lib/audit-detail-visibility";
 import { auditConclusionFailureReasons } from "@/lib/result-detail-presentation";
 import { auditResultListDisplay } from "@/lib/result-display";
-import { duplicateReauditMetadataFromNotes } from "@/lib/import-task-metadata";
+import {
+  duplicateReauditMetadataFromNotes,
+  legacyZeroHistoryDuplicateMetadataFromNotes,
+} from "@/lib/import-task-metadata";
 import AuditStatusTag from "./AuditStatusTag";
 import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
@@ -32,6 +35,9 @@ export default function AuditConclusionCell({
   detailView?: boolean;
 }) {
   const duplicateReaudit = duplicateReauditMetadataFromNotes(row.task.notes);
+  const legacyZeroHistory = legacyZeroHistoryDuplicateMetadataFromNotes(
+    row.task.notes,
+  );
   const unavailableDisplay = auditResultListDisplay(row);
   if (unavailableDisplay) {
     const reasons = auditConclusionFailureReasons(row);
@@ -64,14 +70,17 @@ export default function AuditConclusionCell({
 
   const reasons = auditConclusionFailureReasons(row);
   const manual = row.manualReviews[0];
-  const automaticResult = duplicateReaudit?.automaticResult || row.autoStatus;
+  const automaticResult =
+    duplicateReaudit?.automaticResult ||
+    legacyZeroHistory?.automaticResult ||
+    row.autoStatus;
   const autoMeta = resultMeta[automaticResult] || {
     className: styles.dotInfo,
     label: detailView
       ? auditDetailStatusLabel(automaticResult, "audit")
       : auditResultLabels[automaticResult] || "暂无结论",
   };
-  const mainValue = manual?.result || row.autoStatus;
+  const mainValue = manual?.result || automaticResult;
   const processingFailed = [
     "FAILED",
     "READ_FAILED",

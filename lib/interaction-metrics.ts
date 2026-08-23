@@ -135,8 +135,9 @@ export function resolveInteractionMetrics(
 
 export async function collectXhsInteractionMetrics(
   page: Page,
+  currentNoteScopeSelector?: string | null,
 ): Promise<InteractionMetrics> {
-  const candidates = await page.evaluate(() => {
+  const candidates = await page.evaluate((scopeSelector) => {
     type BrowserCandidate = InteractionMetricCandidate;
     const output: BrowserCandidate[] = [];
     const excluded = "[class*='comment'],[class*='recommend'],[class*='related']";
@@ -197,7 +198,11 @@ export async function collectXhsInteractionMetrics(
       }
       return null;
     };
-    const mainNoteRoot = roots.find((root) => findActionBar(root)) || roots[0] || null;
+    const scopedRoot = scopeSelector
+      ? document.querySelector(scopeSelector)
+      : null;
+    const mainNoteRoot =
+      scopedRoot || roots.find((root) => findActionBar(root)) || roots[0] || null;
     const actionBar = mainNoteRoot ? findActionBar(mainNoteRoot) : null;
 
     if (actionBar) {
@@ -294,6 +299,6 @@ export async function collectXhsInteractionMetrics(
       }
     }
     return output;
-  });
+  }, currentNoteScopeSelector || null);
   return resolveInteractionMetrics(candidates);
 }

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   pageStatusForProcessingFailure,
+  processingFailurePageFacts,
   processingFailureReason,
   processingFailureResultExcludedCodes,
+  processingFailureStoreTopicStatus,
   processingFailureTaskStatuses,
 } from "@/lib/processing-failure";
 import {
@@ -12,6 +14,35 @@ import {
 } from "@/lib/result-query";
 
 describe("处理失败结果口径", () => {
+  it("页面异常不能覆盖佳贝艾特已匹配店铺的不要求话题事实", () => {
+    expect(
+      processingFailureStoreTopicStatus({
+        storeMappingStatus: "MATCHED",
+        expectedStoreTopics: "[]",
+        requiredStoreTopics: "[]",
+      }),
+    ).toBe("NOT_REQUIRED");
+    expect(
+      processingFailureStoreTopicStatus({
+        storeMappingStatus: "MATCHED",
+        expectedStoreTopics: '["#爱他美官方旗舰店"]',
+        requiredStoreTopics: "[]",
+      }),
+    ).toBe("NOT_CHECKED");
+  });
+
+  it("正文取证失败时仍保留当前作品已公开的独立页面证据", () => {
+    expect(
+      processingFailurePageFacts(
+        "STRUCTURE_MISMATCH",
+        JSON.stringify({ pageStatus: "NORMAL", isPublic: true }),
+      ),
+    ).toEqual({ pageStatus: "NORMAL", publicStatus: "PUBLIC" });
+    expect(processingFailurePageFacts("STRUCTURE_MISMATCH", null)).toEqual({
+      pageStatus: "READ_FAILED",
+      publicStatus: "UNKNOWN",
+    });
+  });
   it("does not turn configuration failures into formal audit results", () => {
     expect(processingFailureResultExcludedCodes).toContain("CONFIG_ERROR");
   });

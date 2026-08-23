@@ -43,6 +43,11 @@ export interface AuditDuplicateHistorySummary {
   histories: AuditDuplicateHistoryEntry[];
 }
 
+/** Only current formal results occupy historical duplicate slots. */
+export const effectiveHistoricalAuditResultWhere = {
+  supersededAt: null,
+} satisfies Prisma.AuditResultWhereInput;
+
 export function localNaturalDayRange(now = new Date()) {
   const start = new Date(
     now.getFullYear(),
@@ -228,6 +233,7 @@ function duplicateLookupWhere(urls: string[]): Prisma.AuditTaskWhereInput {
             {
               auditResults: {
                 some: {
+                  ...effectiveHistoricalAuditResultWhere,
                   note: { platformNoteId: { in: platformNoteIds } },
                 },
               },
@@ -245,7 +251,12 @@ export async function findAuditTaskDuplicateHistories(input: {
   const urls = [...new Set(input.urls.filter((url) => url.trim()))];
   if (!urls.length) return matches;
   const candidates = await prisma.auditTask.findMany({
-    where: duplicateLookupWhere(urls),
+    where: {
+      AND: [
+        duplicateLookupWhere(urls),
+        { auditResults: { some: effectiveHistoricalAuditResultWhere } },
+      ],
+    },
     select: {
       id: true,
       status: true,
@@ -261,6 +272,7 @@ export async function findAuditTaskDuplicateHistories(input: {
       campaign: { select: { name: true } },
       batch: { select: { name: true } },
       auditResults: {
+        where: effectiveHistoricalAuditResultWhere,
         select: {
           id: true,
           auditedAt: true,
@@ -330,18 +342,17 @@ export async function findAuditTaskDuplicateHistories(input: {
       )
       .flatMap<AuditDuplicateHistoryEntry>((task) => {
         const duplicateReaudit = duplicateReauditMetadataFromNotes(task.notes);
-        const results = task.auditResults.length ? task.auditResults : [null];
-        return results.map((result) => {
-          const manual = result?.manualReviews[0];
+        return task.auditResults.map((result) => {
+          const manual = result.manualReviews[0];
           return {
             taskId: task.id,
             batchId: task.batchId,
             batchName: task.batch?.name || "",
             taskStatus: task.status,
             createdAt: task.createdAt.toISOString(),
-            auditedAt: result?.auditedAt.toISOString() || null,
+            auditedAt: result.auditedAt.toISOString(),
             autoStatus:
-              duplicateReaudit?.automaticResult || result?.autoStatus || null,
+              duplicateReaudit?.automaticResult || result.autoStatus,
             manualResult: manual?.result || null,
             manualReviewedAt: manual?.createdAt.toISOString() || null,
             productName: task.product.name,
@@ -361,7 +372,7 @@ export async function findAuditTaskDuplicateHistories(input: {
     if (!histories.length) continue;
     matches.set(url, {
       identity: inputIdentity,
-      historicalCount: histories.filter((history) => history.auditedAt).length,
+      historicalCount: histories.length,
       sourceTaskIds: [...new Set(histories.map((history) => history.taskId))],
       latest: histories[0],
       histories,

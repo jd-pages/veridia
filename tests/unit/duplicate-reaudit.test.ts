@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   duplicateReauditMetadataFromNotes,
+  legacyZeroHistoryDuplicateMetadataFromNotes,
   resolveDuplicateReauditAutomaticOutcome,
   withDuplicateReauditMetadata,
 } from "@/lib/import-task-metadata";
@@ -47,6 +48,21 @@ describe("重复重审任务元数据与自动结论", () => {
       isDuplicateReaudit: false,
       persistedAutoStatus: "PASSED",
       notes: "普通任务",
+    });
+  });
+
+  it("禁止写入或展示 duplicate=true + historyCount=0", () => {
+    expect(() =>
+      withDuplicateReauditMetadata("旧备注", { ...metadata, historicalCount: 0 }),
+    ).toThrow("至少存在 1 条有效历史审核结果");
+    const legacy = withDuplicateReauditMetadata("旧备注", {
+      ...metadata,
+      automaticResult: "PASSED",
+    }).replace('"historicalCount":2', '"historicalCount":0');
+    expect(duplicateReauditMetadataFromNotes(legacy)).toBeNull();
+    expect(legacyZeroHistoryDuplicateMetadataFromNotes(legacy)).toMatchObject({
+      historicalCount: 0,
+      automaticResult: "PASSED",
     });
   });
 });

@@ -214,11 +214,15 @@ interface ImportPreview {
   duplicateWarningCount: number;
   pendingDuplicateCount: number;
   confirmedDuplicateCount: number;
+  historicalDuplicateCount: number;
+  pendingHistoricalDuplicateCount: number;
+  confirmableHistoricalDuplicateCount: number;
   importableCount: number;
   batchId?: string | null;
   batchIds?: string[];
   auditBatchId?: string | null;
   importRecordId?: string | null;
+  alreadyCommitted?: boolean;
   fileName?: string;
   importedAt?: string | null;
   importedCount?: number;
@@ -265,9 +269,13 @@ interface ImportPreview {
     errors: string[];
     duplicateWarning?: {
       status: "DUPLICATE_WARNING";
+      kind: "HISTORICAL" | "CURRENT_FILE";
       identity: string;
       batchDuplicateOfRow: number | null;
       historicalCount: number;
+      isDuplicate: boolean;
+      isReaudit: boolean;
+      requiresDuplicateConfirmation: boolean;
       sourceTaskIds: string[];
       latestHistory: DuplicateHistoryEntry | null;
       confirmed: boolean;
@@ -500,6 +508,12 @@ export default function TasksPage() {
   const [duplicateOverrides, setDuplicateOverrides] = useState<Set<string>>(
     () => new Set(),
   );
+  const [selectedDuplicateRows, setSelectedDuplicateRows] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const [confirmAllDuplicateReaudits, setConfirmAllDuplicateReaudits] =
+    useState(false);
+  const importRequestKey = useRef(crypto.randomUUID());
   const [duplicateHistory, setDuplicateHistory] = useState<{
     open: boolean;
     loading: boolean;
@@ -512,20 +526,80 @@ export default function TasksPage() {
   );
   const canOperate = canAccessBusiness(currentRole);
   const locallyConfirmedDuplicateCount = useMemo(
-    () =>
-      (preview?.rows || []).filter(
+    () => {
+      const locallyConfirmedRows = (preview?.rows || []).filter(
         (row) =>
           row.errors.length === 0 &&
           row.duplicateWarning &&
           duplicateOverrides.has(duplicateOverrideKey(row)),
-      ).length,
-    [duplicateOverrides, preview],
+      );
+      if (!confirmAllDuplicateReaudits) return locallyConfirmedRows.length;
+      const currentFileConfirmed = locallyConfirmedRows.filter(
+        (row) => row.duplicateWarning?.kind === "CURRENT_FILE",
+      ).length;
+      return (
+        (preview?.confirmableHistoricalDuplicateCount || 0) +
+        currentFileConfirmed
+      );
+    },
+    [confirmAllDuplicateReaudits, duplicateOverrides, preview],
   );
   const previewImportableCount =
     (preview?.validCount || 0) + locallyConfirmedDuplicateCount;
+  const locallyResolvedDuplicateCount = useMemo(() => {
+    const currentFileResolved = (preview?.rows || []).filter(
+      (row) =>
+        row.duplicateWarning?.kind === "CURRENT_FILE" &&
+        duplicateOverrides.has(duplicateOverrideKey(row)),
+    ).length;
+    if (confirmAllDuplicateReaudits) {
+      return (
+        (preview?.pendingHistoricalDuplicateCount || 0) +
+        currentFileResolved
+      );
+    }
+    return (preview?.rows || []).filter(
+      (row) =>
+        row.duplicateWarning &&
+        duplicateOverrides.has(duplicateOverrideKey(row)),
+    ).length;
+  }, [confirmAllDuplicateReaudits, duplicateOverrides, preview]);
   const previewPendingDuplicateCount = Math.max(
     0,
-    (preview?.pendingDuplicateCount || 0) - locallyConfirmedDuplicateCount,
+    (preview?.pendingDuplicateCount || 0) - locallyResolvedDuplicateCount,
+  );
+  const pendingHistoricalDuplicateRows = useMemo(
+    () =>
+      (preview?.rows || []).filter(
+        (row) =>
+          row.duplicateWarning?.kind === "HISTORICAL" &&
+          !confirmAllDuplicateReaudits &&
+          !duplicateOverrides.has(duplicateOverrideKey(row)),
+      ),
+    [confirmAllDuplicateReaudits, duplicateOverrides, preview],
+  );
+  const locallyConfirmedHistoricalDuplicateCount = useMemo(
+    () =>
+      (preview?.rows || []).filter(
+        (row) =>
+          row.duplicateWarning?.kind === "HISTORICAL" &&
+          duplicateOverrides.has(duplicateOverrideKey(row)),
+      ).length,
+    [duplicateOverrides, preview],
+  );
+  const previewPendingHistoricalDuplicateCount = confirmAllDuplicateReaudits
+    ? 0
+    : Math.max(
+        0,
+        (preview?.pendingHistoricalDuplicateCount || 0) -
+          locallyConfirmedHistoricalDuplicateCount,
+      );
+  const selectedHistoricalDuplicateRows = useMemo(
+    () =>
+      pendingHistoricalDuplicateRows.filter((row) =>
+        selectedDuplicateRows.has(row.rowNumber),
+      ),
+    [pendingHistoricalDuplicateRows, selectedDuplicateRows],
   );
 
   const loadTasksForBatches = useCallback(
@@ -1033,6 +1107,11 @@ export default function TasksPage() {
       const data = new FormData();
       data.append("file", file);
       data.append("commit", String(commit));
+      data.append("requestKey", importRequestKey.current);
+      data.append(
+        "confirmAllDuplicateReaudits",
+        String(confirmAllDuplicateReaudits),
+      );
       data.append("skipDuplicates", "true");
       data.append(
         "duplicateOverrides",
@@ -1051,6 +1130,8 @@ export default function TasksPage() {
       });
       setPreview(result);
       setDuplicateOverrides(new Set());
+      setSelectedDuplicateRows(new Set());
+      setConfirmAllDuplicateReaudits(false);
       setPreviewView("ERRORS");
       setPreviewPage(1);
       if (commit) {
@@ -1066,7 +1147,9 @@ export default function TasksPage() {
         setSelectedBatchId(ALL_CURRENT_BATCHES);
         setTaskPage(1);
         message.success(
-          `已导入 ${result.imported} 条，已按内容平台拆分为 ${committedBatchIds.length} 个串行批次`,
+          result.alreadyCommitted
+            ? "本次导入已提交，已返回原有批次（未重复创建任务）"
+            : `已导入 ${result.imported} 条，已按内容平台拆分为 ${committedBatchIds.length} 个串行批次`,
         );
         await load(
           true,
@@ -1158,6 +1241,39 @@ export default function TasksPage() {
           next.add(duplicateOverrideKey(row));
           return next;
         });
+      },
+    });
+  };
+
+  const confirmDuplicateReauditBatch = (
+    rows: ImportPreview["rows"],
+    scope: "SELECTED" | "ALL",
+  ) => {
+    const confirmationCount =
+      scope === "ALL"
+        ? previewPendingHistoricalDuplicateCount
+        : rows.length;
+    if (!confirmationCount) return;
+    modal.confirm({
+      title:
+        scope === "ALL"
+          ? `确认全部 ${confirmationCount} 条重复项并继续？`
+          : `确认选中的 ${confirmationCount} 条重复项并重审？`,
+      content: `本次共有 ${confirmationCount} 条存在有效历史审核结果。确认后将全部作为重复重审继续审核；其他预检错误仍会继续阻断。`,
+      okText: "确认批量重审",
+      cancelText: "取消",
+      onOk: () => {
+        if (scope === "ALL") {
+          setConfirmAllDuplicateReaudits(true);
+          setSelectedDuplicateRows(new Set());
+          return;
+        }
+        setDuplicateOverrides((current) => {
+          const next = new Set(current);
+          for (const row of rows) next.add(duplicateOverrideKey(row));
+          return next;
+        });
+        setSelectedDuplicateRows(new Set());
       },
     });
   };
@@ -1816,8 +1932,11 @@ export default function TasksPage() {
                     }}
                     onChange={({ fileList: next }) => {
                       setFileList(next.slice(-1));
+                      importRequestKey.current = crypto.randomUUID();
                       setPreview(null);
                       setDuplicateOverrides(new Set());
+                      setSelectedDuplicateRows(new Set());
+                      setConfirmAllDuplicateReaudits(false);
                       setPreviewView("ERRORS");
                       setPreviewPage(1);
                     }}
@@ -1970,6 +2089,41 @@ export default function TasksPage() {
                       </Space>
                       {previewView === "ALL" || preview.errorRows.length ? (
                       <div className={styles.previewTableShell}>
+                        {previewPendingHistoricalDuplicateCount > 0 &&
+                        !confirmAllDuplicateReaudits ? (
+                          <Space wrap className={styles.previewBulkActions}>
+                            <Button
+                              disabled={
+                                !canOperate ||
+                                !selectedHistoricalDuplicateRows.length
+                              }
+                              onClick={() =>
+                                confirmDuplicateReauditBatch(
+                                  selectedHistoricalDuplicateRows,
+                                  "SELECTED",
+                                )
+                              }
+                            >
+                              批量确认重复并重审（{selectedHistoricalDuplicateRows.length}）
+                            </Button>
+                            <Button
+                              type="primary"
+                              disabled={!canOperate}
+                              onClick={() =>
+                                confirmDuplicateReauditBatch(
+                                  pendingHistoricalDuplicateRows,
+                                  "ALL",
+                                )
+                              }
+                            >
+                              确认全部重复项并继续（{previewPendingHistoricalDuplicateCount}）
+                            </Button>
+                          </Space>
+                        ) : confirmAllDuplicateReaudits ? (
+                          <Tag color="blue">
+                            全部 {preview.historicalDuplicateCount} 条历史重复已确认重审
+                          </Tag>
+                        ) : null}
                         <Table<ImportPreview["rows"][number]>
                           className={styles.enterpriseTable}
                           rowKey="rowNumber"
@@ -1979,6 +2133,20 @@ export default function TasksPage() {
                               ? preview.errorRows
                               : preview.rows
                           }
+                          rowSelection={{
+                            selectedRowKeys: [...selectedDuplicateRows],
+                            preserveSelectedRowKeys: true,
+                            onChange: (keys) =>
+                              setSelectedDuplicateRows(
+                                new Set(keys.map((key) => Number(key))),
+                              ),
+                            getCheckboxProps: (row) => ({
+                              disabled:
+                                !canOperate ||
+                                row.duplicateWarning?.kind !== "HISTORICAL" ||
+                                duplicateOverrides.has(duplicateOverrideKey(row)),
+                            }),
+                          }}
                           tableLayout="fixed"
                           scroll={{ x: 1500 }}
                         columns={[
@@ -2141,12 +2309,10 @@ export default function TasksPage() {
                                 </span>
                               ) : row.duplicateWarning ? (
                                 <Space direction="vertical" size={6}>
-                                  {row.duplicateWarning.historicalCount ? (
+                                  {row.duplicateWarning.kind === "HISTORICAL" ? (
                                     <Tag color="orange">
                                       历史重复 · 已审核 {row.duplicateWarning.historicalCount} 次
                                     </Tag>
-                                  ) : row.duplicateWarning.sourceTaskIds.length ? (
-                                    <Tag color="orange">历史任务重复 · 尚未完成审核</Tag>
                                   ) : null}
                                   {row.duplicateWarning.batchDuplicateOfRow ? (
                                     <Tag color="orange">
@@ -2167,7 +2333,9 @@ export default function TasksPage() {
                                       查看历史审核
                                     </Button>
                                   ) : null}
-                                  {duplicateOverrides.has(duplicateOverrideKey(row)) ? (
+                                  {(confirmAllDuplicateReaudits &&
+                                    row.duplicateWarning.kind === "HISTORICAL") ||
+                                  duplicateOverrides.has(duplicateOverrideKey(row)) ? (
                                     <Tag color="blue">已确认重新审核</Tag>
                                   ) : (
                                     <Button

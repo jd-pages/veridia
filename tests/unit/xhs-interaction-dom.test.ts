@@ -149,6 +149,19 @@ describe("小红书 current note action bar 互动取证", () => {
     });
   });
 
+  it("真实样本 8/4/10 合计 22", async () => {
+    await page.setContent(
+      currentNoteFixture({ like: "8", favorite: "4", comment: "10", commentSummary: "10" }),
+    );
+    expect(await collectXhsInteractionMetrics(page)).toMatchObject({
+      likeCount: 8,
+      favoriteCount: 4,
+      commentCount: 10,
+      totalCount: 22,
+      status: "SUCCESS",
+    });
+  });
+
   it("缺少收藏证据时不估算且图标无数字不当作 0", async () => {
     await page.setContent(
       currentNoteFixture({

@@ -1,3 +1,5 @@
+import { parseStoredStringArray } from "@/lib/stored-json";
+
 export const processingFailureTaskStatuses = [
   "FAILED",
   "READ_FAILED",
@@ -10,6 +12,43 @@ export type ProcessingFailureStatus =
 // Configuration failures are terminal task diagnostics, not page-reading
 // outcomes. They must never be backfilled into formal audit results.
 export const processingFailureResultExcludedCodes = ["CONFIG_ERROR"] as const;
+
+export function processingFailureStoreTopicStatus(task: {
+  storeMappingStatus?: string | null;
+  expectedStoreTopics?: string | null;
+  requiredStoreTopics?: string | null;
+}) {
+  return task.storeMappingStatus === "MATCHED" &&
+    parseStoredStringArray(task.expectedStoreTopics).length === 0 &&
+    parseStoredStringArray(task.requiredStoreTopics).length === 0
+    ? "NOT_REQUIRED"
+    : "NOT_CHECKED";
+}
+
+export function processingFailurePageFacts(
+  failureCode: string | null,
+  failureEvidence: string | null | undefined,
+) {
+  const fallbackPageStatus = pageStatusForProcessingFailure(failureCode);
+  if (
+    ["NOTE_NOT_FOUND", "PAGE_NOT_FOUND", "NOTE_DELETED", "NO_PERMISSION"]
+      .includes(failureCode || "")
+  ) {
+    return { pageStatus: fallbackPageStatus, publicStatus: "UNKNOWN" };
+  }
+  try {
+    const evidence = JSON.parse(failureEvidence || "{}") as {
+      pageStatus?: unknown;
+      isPublic?: unknown;
+    };
+    if (evidence.pageStatus === "NORMAL" && evidence.isPublic === true) {
+      return { pageStatus: "NORMAL", publicStatus: "PUBLIC" };
+    }
+  } catch {
+    // Invalid diagnostic evidence must not fabricate a public conclusion.
+  }
+  return { pageStatus: fallbackPageStatus, publicStatus: "UNKNOWN" };
+}
 
 export function pageStatusForProcessingFailure(code: string | null) {
   if (["NOTE_NOT_FOUND", "PAGE_NOT_FOUND", "NOTE_DELETED"].includes(code || "")) {

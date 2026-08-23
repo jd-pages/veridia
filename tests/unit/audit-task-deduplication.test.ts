@@ -111,7 +111,7 @@ describe("历史重复检测稳定性", () => {
       .toEqual(new Set(["xhs-note:66abc"]));
   });
 
-  it("完成任务和全部历史结果始终进入历史重复集合", async () => {
+  it("完成任务只有当前正式结果进入历史重复集合", async () => {
     mocks.findMany.mockResolvedValueOnce([historyTask]);
     const input = "https://www.xiaohongshu.com/explore/66abc?source=new";
     const histories = await findAuditTaskDuplicateHistories({ urls: [input] });
@@ -127,8 +127,20 @@ describe("历史重复检测稳定性", () => {
     expect(histories.get(input)?.histories).toHaveLength(2);
     const where = JSON.stringify(mocks.findMany.mock.calls[0][0].where);
     expect(where).not.toContain("createdAt");
-    expect(where).not.toContain("supersededAt");
+    expect(where).toContain('"supersededAt":null');
     expect(where).not.toContain('"status":"PENDING"');
+  });
+
+  it("没有当前正式结果的旧任务不构造历史 0 次重复", async () => {
+    mocks.findMany.mockResolvedValueOnce([
+      { ...historyTask, auditResults: [] },
+    ]);
+    const input = "https://www.xiaohongshu.com/explore/66abc";
+    const histories = await findAuditTaskDuplicateHistories({ urls: [input] });
+    expect(histories.has(input)).toBe(false);
+    expect(JSON.stringify(mocks.findMany.mock.calls[0][0])).toContain(
+      '"auditResults":{"some":{"supersededAt":null}}',
+    );
   });
 
   it("连续查询十次均返回同一重复身份且每次仅执行一次批量查询", async () => {

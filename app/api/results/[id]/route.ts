@@ -67,6 +67,9 @@ export async function GET(
         { entityId: result.id },
         { entityId: result.task.id },
         { entityId: result.note.id },
+        ...(result.task.importRecordId
+          ? [{ entityId: result.task.importRecordId }]
+          : []),
       ],
     },
     include: { user: { select: { displayName: true } } },

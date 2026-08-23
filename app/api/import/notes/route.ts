@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import {
   resolveImportedNoteLink,
@@ -64,6 +65,7 @@ import {
   type StoreMappingStatus,
 } from "@/lib/store-topic-config";
 import { loadActiveStoreTopicRules } from "@/lib/store-topic-rule-service";
+import { Prisma } from "@prisma/client";
 
 interface CheckedRow {
   rowNumber: number;
@@ -107,9 +109,13 @@ interface CheckedRow {
   errors: string[];
   duplicateWarning?: {
     status: "DUPLICATE_WARNING";
+    kind: "HISTORICAL" | "CURRENT_FILE";
     identity: string;
     batchDuplicateOfRow: number | null;
     historicalCount: number;
+    isDuplicate: boolean;
+    isReaudit: boolean;
+    requiresDuplicateConfirmation: boolean;
     sourceTaskIds: string[];
     latestHistory: AuditDuplicateHistoryEntry | null;
     confirmed: boolean;
@@ -240,7 +246,14 @@ export async function POST(request: Request) {
   perf.formDataMs = performance.now() - formDataStarted;
   const file = form.get("file");
   const commit = form.get("commit") === "true";
+  const suppliedRequestKey = String(form.get("requestKey") || "").trim();
+  if (suppliedRequestKey && !/^[A-Za-z0-9_-]{8,128}$/u.test(suppliedRequestKey)) {
+    return fail("导入请求标识无效，请重新选择文件后再试");
+  }
+  const requestKey = suppliedRequestKey || randomUUID();
   const skipDuplicates = form.get("skipDuplicates") !== "false";
+  const confirmAllDuplicateReaudits =
+    form.get("confirmAllDuplicateReaudits") === "true";
   const duplicateOverrideKeys = new Set<string>();
   try {
     const raw = String(form.get("duplicateOverrides") || "[]");
@@ -528,9 +541,13 @@ export async function POST(request: Request) {
         if (firstRow) {
           checked.duplicateWarning = {
             status: "DUPLICATE_WARNING",
+            kind: "CURRENT_FILE",
             identity,
             batchDuplicateOfRow: firstRow,
             historicalCount: 0,
+            isDuplicate: false,
+            isReaudit: false,
+            requiresDuplicateConfirmation: false,
             sourceTaskIds: [],
             latestHistory: null,
             confirmed: false,
@@ -744,17 +761,24 @@ export async function POST(request: Request) {
       : new Map<string, never>();
     for (const row of rows) {
       const history = duplicateHistories.get(row.url);
-      if (history || row.duplicateWarning) {
+      if ((history && history.historicalCount > 0) || row.duplicateWarning) {
         const identity = history?.identity || row.duplicateWarning!.identity;
-        const confirmed = duplicateOverrideKeys.has(
-          `${row.rowNumber}\u0000${identity}`,
-        );
+        const historicalCount = history?.historicalCount || 0;
+        const isHistoricalDuplicate = historicalCount > 0;
+        const confirmed =
+          (isHistoricalDuplicate && confirmAllDuplicateReaudits) ||
+          duplicateOverrideKeys.has(`${row.rowNumber}\u0000${identity}`);
         row.duplicateWarning = {
           status: "DUPLICATE_WARNING",
+          kind: isHistoricalDuplicate ? "HISTORICAL" : "CURRENT_FILE",
           identity,
           batchDuplicateOfRow:
             row.duplicateWarning?.batchDuplicateOfRow || null,
-          historicalCount: history?.historicalCount || 0,
+          historicalCount,
+          isDuplicate: isHistoricalDuplicate,
+          isReaudit: isHistoricalDuplicate && confirmed,
+          requiresDuplicateConfirmation:
+            isHistoricalDuplicate && !confirmed,
           sourceTaskIds: history?.sourceTaskIds || [],
           latestHistory: history?.latest || null,
           confirmed,
@@ -765,6 +789,12 @@ export async function POST(request: Request) {
 
     const failedRows = rows.filter((row) => row.errors.length > 0);
     const duplicateRows = rows.filter((row) => row.duplicateWarning);
+    const historicalDuplicateRows = duplicateRows.filter(
+      (row) => row.duplicateWarning?.kind === "HISTORICAL",
+    );
+    const confirmableHistoricalDuplicateRows = historicalDuplicateRows.filter(
+      (row) => row.errors.length === 0,
+    );
     const pendingDuplicateRows = duplicateRows.filter(
       (row) => !row.duplicateWarning?.confirmed,
     );
@@ -781,6 +811,7 @@ export async function POST(request: Request) {
     let batchIds: string[] = [];
     let importRecordId: string | null = null;
     let importedAt: Date | null = null;
+    let alreadyCommitted = false;
     if (commit) {
       const channelDistribution = Object.fromEntries(
         (["XIAOHONGSHU", "DOUYIN"] as const).map((channel) => [
@@ -792,11 +823,25 @@ export async function POST(request: Request) {
         where: { id: "active" },
         select: { currentVersion: true },
       });
-      const committed = await prisma.$transaction(
+      const commitImport = () => prisma.$transaction(
         async (tx) => {
+          const existingImport = await tx.importRecord.findUnique({
+            where: { requestKey },
+            include: {
+              auditBatches: { orderBy: [{ queueOrder: "asc" }, { createdAt: "asc" }] },
+            },
+          });
+          if (existingImport) {
+            return {
+              batches: existingImport.auditBatches,
+              importRecord: existingImport,
+              alreadyCommitted: true,
+            };
+          }
           const skippedCount = pendingDuplicateRows.length;
           const importRecord = await tx.importRecord.create({
             data: {
+              requestKey,
               fileName: file.name,
               importType: "AUDIT_TASK",
               totalCount: rows.length,
@@ -840,7 +885,7 @@ export async function POST(request: Request) {
             productStage: row.productStage,
             milkType: row.milkType,
             source: "EXCEL",
-            notes: row.duplicateWarning
+            notes: row.duplicateWarning?.historicalCount
               ? withDuplicateReauditMetadata(row.notes, {
                   identity: row.duplicateWarning.identity,
                   historicalCount: row.duplicateWarning.historicalCount,
@@ -909,36 +954,87 @@ export async function POST(request: Request) {
             where: { importRecordId: importRecord.id },
             select: { id: true, notes: true },
           });
-          const duplicateLogs = duplicateReauditTasks.flatMap((task) => {
+          const duplicateConfirmations = duplicateReauditTasks.flatMap((task) => {
             const metadata = duplicateReauditMetadataFromNotes(task.notes);
             return metadata
-              ? [{
-                  userId: user.id,
-                  action: "ALLOW_DUPLICATE_REAUDIT",
-                  entityType: "AUDIT_TASK",
-                  entityId: task.id,
-                  summary: `允许重复笔记重新审核，历史 ${metadata.historicalCount} 次`,
-                  metadata: JSON.stringify({
-                    identity: metadata.identity,
-                    historicalCount: metadata.historicalCount,
-                    sourceTaskIds: metadata.sourceTaskIds,
-                  }),
-                }]
+              ? [{ taskId: task.id, ...metadata }]
               : [];
           });
-          if (duplicateLogs.length) {
-            await tx.operationLog.createMany({ data: duplicateLogs });
+          if (duplicateConfirmations.length === 1) {
+            const confirmation = duplicateConfirmations[0];
+            await tx.operationLog.create({
+              data: {
+                userId: user.id,
+                action: "ALLOW_DUPLICATE_REAUDIT",
+                entityType: "AUDIT_TASK",
+                entityId: confirmation.taskId,
+                summary: `允许重复笔记重新审核，历史 ${confirmation.historicalCount} 次`,
+                metadata: JSON.stringify({
+                  identity: confirmation.identity,
+                  historicalCount: confirmation.historicalCount,
+                  sourceTaskIds: confirmation.sourceTaskIds,
+                }),
+              },
+            });
+          } else if (duplicateConfirmations.length > 1) {
+            await tx.operationLog.create({
+              data: {
+                userId: user.id,
+                action: "BULK_DUPLICATE_REAUDIT_CONFIRM",
+                entityType: "IMPORT_RECORD",
+                entityId: importRecord.id,
+                summary: `批量确认 ${duplicateConfirmations.length} 条历史重复笔记重新审核`,
+                metadata: JSON.stringify({
+                  importRecordId: importRecord.id,
+                  batchIds: batches.map((batch) => batch.id),
+                  confirmationCount: duplicateConfirmations.length,
+                  confirmations: duplicateConfirmations.map((item) => ({
+                    taskId: item.taskId,
+                    identity: item.identity,
+                    historicalCount: item.historicalCount,
+                    sourceTaskIds: item.sourceTaskIds,
+                  })),
+                }),
+              },
+            });
           }
-          return { batches, importRecord };
+          return { batches, importRecord, alreadyCommitted: false };
         },
         { timeout: 60_000 },
       );
+      let committed: Awaited<ReturnType<typeof commitImport>>;
+      try {
+        committed = await commitImport();
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          const existingImport = await prisma.importRecord.findUnique({
+            where: { requestKey },
+            include: {
+              auditBatches: { orderBy: [{ queueOrder: "asc" }, { createdAt: "asc" }] },
+            },
+          });
+          if (!existingImport) throw error;
+          committed = {
+            batches: existingImport.auditBatches,
+            importRecord: existingImport,
+            alreadyCommitted: true,
+          };
+        } else {
+          throw error;
+        }
+      }
       batchIds = committed.batches.map((batch) => batch.id);
       batchId = batchIds[0] || null;
       importRecordId = committed.importRecord.id;
       importedAt = committed.importRecord.createdAt;
+      alreadyCommitted = committed.alreadyCommitted;
       imported = validRows.length;
-      if (committed.batches.length) kickAutomaticAuditQueue();
+      if (!committed.alreadyCommitted && committed.batches.length) {
+        kickAutomaticAuditQueue();
+      }
     }
 
     const previewSelection = selectImportPreviewRows(
@@ -960,12 +1056,19 @@ export async function POST(request: Request) {
       duplicateWarningCount: duplicateRows.length,
       pendingDuplicateCount: pendingDuplicateRows.length,
       confirmedDuplicateCount: confirmedDuplicateRows.length,
+      historicalDuplicateCount: historicalDuplicateRows.length,
+      pendingHistoricalDuplicateCount: historicalDuplicateRows.filter(
+        (row) => !row.duplicateWarning?.confirmed,
+      ).length,
+      confirmableHistoricalDuplicateCount:
+        confirmableHistoricalDuplicateRows.length,
       importableCount: validRows.length,
       imported,
       batchId,
       batchIds,
       auditBatchId: batchId,
       importRecordId,
+      alreadyCommitted,
       fileName: file.name,
       importedAt,
       importedCount: imported,

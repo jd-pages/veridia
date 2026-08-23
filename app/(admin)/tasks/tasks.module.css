@@ -796,3 +796,6 @@
     grid-template-columns: 1fr;
   }
 }
+.previewBulkActions {
+  margin-bottom: 12px;
+}
