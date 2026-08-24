@@ -10,6 +10,13 @@ import {
   validateManifest,
 } from "../../scripts/testing/test-matrix.mjs";
 import {
+  PROTECTED_BEHAVIORS,
+  PROTECTED_BEHAVIOR_GROUPS,
+  PROTECTED_EXPECTATION_CHANGE_POLICY,
+  selectProtectedBehaviors,
+  validateProtectedBehaviorRegistry,
+} from "../../scripts/testing/protected-behaviors.mjs";
+import {
   captureFile,
   cleanupKnownTestNextGeneratedTypes,
   cleanupTestNextGeneratedTypes,
@@ -77,6 +84,67 @@ describe("分层测试门禁", () => {
     expect(infrastructure.e2eFiles).toHaveLength(Object.keys(E2E_MANIFEST).length);
   });
 
+  it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
+    expect(validateProtectedBehaviorRegistry()).toMatchObject({
+      behaviorCount: 15,
+      groupCount: 5,
+    });
+    expect(new Set(PROTECTED_BEHAVIORS.map((item) => item.key)).size)
+      .toBe(PROTECTED_BEHAVIORS.length);
+    expect(PROTECTED_BEHAVIORS.every((item) =>
+      item.protectedExpectation &&
+      item.expectationChangePolicy === PROTECTED_EXPECTATION_CHANGE_POLICY
+    )).toBe(true);
+    expect(fs.readFileSync(path.resolve("tests/regression/README.md"), "utf8"))
+      .toContain("用户明确批准");
+  });
+
+  it("XHS 共享底层改动自动加入完整兄弟回归，不只选择当前 Bug", () => {
+    const selection = selectTestScope(["lib/automation/xhs-readiness.ts"]);
+    expect(selection.protectedGroups).toContain("XHS_REGRESSION_ALL");
+    expect(selection.protectedBehaviorKeys).toEqual(
+      [...PROTECTED_BEHAVIOR_GROUPS.XHS_REGRESSION_ALL].sort(),
+    );
+    expect(selection.protectedUnitTests).toEqual(expect.arrayContaining([
+      "tests/unit/xhs-readiness.test.ts",
+      "tests/unit/xhs-live-photo-current-note.test.ts",
+      "tests/unit/xhs-interaction-dom.test.ts",
+      "tests/unit/xhs-published-at-dom.test.ts",
+    ]));
+    expect(selection.e2eFiles).toEqual(expect.arrayContaining([
+      "tests/e2e/audit-flow.spec.ts",
+      "tests/e2e/platform-published-at.spec.ts",
+    ]));
+  });
+
+  it.each([
+    ["lib/audit-task-deduplication.ts", "DUPLICATE_REGRESSION_ALL"],
+    ["lib/store-topic-config.ts", "STORE_MAPPING_AND_TOPIC_ALL"],
+    ["lib/import-record-deletion.ts", "IMPORT_DELETE_AND_DUPLICATE_ALL"],
+    ["lib/import-export.ts", "TEMPLATE_ISOLATION_ALL"],
+  ])("Change Impact Map: %s 触发 %s", (file, expectedGroup) => {
+    const selection = selectProtectedBehaviors([file]);
+    expect(selection.groups).toContain(expectedGroup);
+    expect(selection.behaviorKeys).toEqual(
+      expect.arrayContaining([...PROTECTED_BEHAVIOR_GROUPS[expectedGroup]]),
+    );
+  });
+
+  it("行为自身 triggerFiles 即使不命中组规则也不会漏掉对应保护", () => {
+    expect(selectProtectedBehaviors(["lib/audit-engine.ts"]).behaviorKeys)
+      .toContain("XHS_NOTE_NOT_FOUND");
+  });
+
+  it("FULL 永久声明并阻断 PROTECTED_REGRESSION，不能按 changed files 跳过", () => {
+    const all = selectProtectedBehaviors(["docs/unrelated.md"], { full: true });
+    expect(all.behaviorKeys).toHaveLength(PROTECTED_BEHAVIORS.length);
+    const verify = fs.readFileSync(path.resolve("scripts/testing/verify.mjs"), "utf8");
+    const attestation = fs.readFileSync(path.resolve("scripts/testing/full-gate-attestation.mjs"), "utf8");
+    expect(verify).toContain('selectProtectedBehaviors(changes, { full: true })');
+    expect(verify).toContain("PROTECTED_BEHAVIOR_REGRESSION=");
+    expect(attestation).toContain('results?.protectedRegression === "PASSED"');
+  });
+
   it("高风险组使用独立运行组，只有全部只读安全文件才允许双 worker", () => {
     const groups = groupE2eFiles(Object.keys(E2E_MANIFEST));
     expect(groups.map((group) => group.name).sort()).toEqual(["AUTH_ADMIN", "AUTOMATION", "DATA_RULES", "RESULTS_UI"]);
@@ -104,6 +172,9 @@ describe("分层测试门禁", () => {
     expect(runner).toContain("E2E 隔离 Profile 清理失败");
     expect(runner).toContain("cleanupTestNextGeneratedTypes");
     expect(runner).toContain("restoreFile");
+    expect(runner).toContain("waitForCompiledJsonRoute");
+    expect(runner).toContain("__e2e_route_warmup__");
+    expect(runner).toContain('contentType.includes("application/json")');
     expect(runner).toContain('await cleanup("outer-timeout")');
     expect(runner).toContain('await cleanup("infrastructure-error")');
     expect(runner).not.toContain("Get-Process | Stop-Process");

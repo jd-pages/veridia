@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { selectProtectedBehaviors } from "./protected-behaviors.mjs";
 
 export const TEST_CATEGORIES = Object.freeze([
   "AUTH",
@@ -116,16 +117,21 @@ export function selectTestScope(changedFiles, mode = "fast") {
   if (conservativeFallback || infrastructureChanged) {
     TEST_CATEGORIES.forEach((category) => categories.add(category));
   }
+  const protectedSelection = selectProtectedBehaviors(normalized, {
+    conservative: conservativeFallback || infrastructureChanged,
+  });
   if (mode === "regression") {
     for (const file of CROSS_MODULE_E2E) {
       E2E_MANIFEST[file].categories.forEach((category) => categories.add(category));
     }
     reasons.push("REGRESSION 固定加入跨模块回归样本");
   }
-  const e2eFiles = Object.entries(E2E_MANIFEST)
+  const e2eFiles = [...new Set([
+    ...Object.entries(E2E_MANIFEST)
     .filter(([, metadata]) => metadata.categories.some((category) => categories.has(category)))
-    .map(([file]) => file)
-    .sort();
+    .map(([file]) => file),
+    ...protectedSelection.e2eTests,
+  ])].sort();
   const parallelSafe = e2eFiles.length > 0 && e2eFiles.every((file) => E2E_MANIFEST[file].parallelSafe);
   return {
     changedFiles: normalized,
@@ -136,6 +142,10 @@ export function selectTestScope(changedFiles, mode = "fast") {
     minimumMode: infrastructureChanged ? "regression" : mode,
     conservativeFallback,
     workers: parallelSafe ? 2 : 1,
+    protectedBehaviorKeys: protectedSelection.behaviorKeys,
+    protectedGroups: protectedSelection.groups,
+    protectedUnitTests: protectedSelection.unitTests,
+    protectedReasons: protectedSelection.reasons,
   };
 }
 

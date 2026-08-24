@@ -10,7 +10,7 @@ import {
 } from "./project-path.mjs";
 import { collectSourceFingerprint } from "../source-fingerprint.mjs";
 
-export const ATTESTATION_SCHEMA_VERSION = 5;
+export const ATTESTATION_SCHEMA_VERSION = 6;
 export const ATTESTATION_RELATIVE_PATH = ".release-work/verification/full-gate-attestation.json";
 
 function git(root, args) {
@@ -112,6 +112,7 @@ export function writeFullGateAttestation(results, root = process.cwd()) {
     results?.mode === "FULL",
     results?.lint === "PASSED",
     results?.typecheck === "PASSED",
+    results?.protectedRegression === "PASSED",
     results?.unitTests?.total > 0 && results?.unitTests?.passed === results?.unitTests?.total,
     results?.e2eTotal > 0 && results?.e2ePassed === results?.e2eTotal,
     results?.productionBuild === "PASSED",

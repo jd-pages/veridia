@@ -17,6 +17,7 @@ const passedResults = {
   passed: true,
   lint: "PASSED",
   typecheck: "PASSED",
+  protectedRegression: "PASSED",
   unitTests: { passed: 579, total: 579 },
   e2ePassed: 59,
   e2eTotal: 59,
@@ -180,6 +181,15 @@ describe("FULL 门禁验收凭证", { timeout: 15_000 }, () => {
     writeFullGateAttestation(passedResults, root);
     expect(() => writeFullGateAttestation({ ...passedResults, sensitiveScan: "FAILED", passed: false }, root)).toThrow();
     expect(fs.existsSync(attestationPath(root))).toBe(false);
+  });
+
+  it("Protected Regression 不是 PASSED 时拒绝生成 FULL 凭证", () => {
+    const root = fixture();
+    expect(() => writeFullGateAttestation({
+      ...passedResults,
+      protectedRegression: "FAILED",
+      passed: false,
+    }, root)).toThrow();
   });
 
   it("日常本地 package 可复用凭证，但方案 A 正式发布始终执行 FULL", () => {

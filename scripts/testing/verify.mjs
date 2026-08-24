@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { groupE2eFiles, selectTestScope, validateManifest } from "./test-matrix.mjs";
 import { invalidateFullGateAttestation, writeFullGateAttestation } from "./full-gate-attestation.mjs";
+import { selectProtectedBehaviors } from "./protected-behaviors.mjs";
 import {
   classifyReleaseFailure,
   redactReleaseText,
@@ -103,6 +104,15 @@ if (selection?.minimumMode === "regression" && mode === "fast") {
   selection = selectTestScope(changes, "regression");
 }
 const selectedFiles = mode === "full" ? formalFiles : selection.e2eFiles;
+const protectedSelection = mode === "full"
+  ? selectProtectedBehaviors(changes, { full: true })
+  : {
+      behaviorKeys: selection.protectedBehaviorKeys,
+      groups: selection.protectedGroups,
+      unitTests: selection.protectedUnitTests,
+      e2eTests: selectedFiles.filter((file) => selection.e2eFiles.includes(file)),
+      reasons: selection.protectedReasons,
+    };
 process.stdout.write([
   "========================================",
   `VERIDIA ${mode.toUpperCase()} 验证门禁`,
@@ -110,13 +120,17 @@ process.stdout.write([
   `检测到的变更：${changes.length ? changes.join(", ") : "无（保守回退）"}`,
   `选择分类：${mode === "full" ? "全部正式分类" : selection.categories.join(", ")}`,
   `E2E 文件（${selectedFiles.length}/${formalFiles.length}）：${selectedFiles.join(", ")}`,
+  `PROTECTED_REGRESSION 组：${protectedSelection.groups.join(", ") || "无"}`,
+  `PROTECTED_REGRESSION 行为（${protectedSelection.behaviorKeys.length}）：${protectedSelection.behaviorKeys.join(", ") || "无"}`,
   ...(selection ? selection.reasons.map((reason) => `选择原因：${reason}`) : ["选择原因：FULL 明确执行全部正式 E2E；不使用变更选择器"]),
+  ...protectedSelection.reasons.map((reason) => `Protected 选择原因：${reason}`),
   mode === "full" ? "执行策略：完整报告，单个业务失败不阻断其余独立门禁" : `执行策略：${mode === "fast" ? "fail-fast" : "受影响模块全量 + 跨模块回归"}`,
   "",
 ].join("\n"));
 
 if (mode === "full") invalidateFullGateAttestation(root);
 
+record(command("Protected behavior registry", process.execPath, [path.join(root, "scripts", "testing", "protected-behaviors.mjs")]));
 record(npm("Prisma Client", ["run", "db:generate"]));
 record(npm("Prisma Client assert", ["run", "prisma:assert"]));
 record(npm("Lint", ["run", "lint"]));
@@ -131,6 +145,11 @@ if (mode === "fast") {
     ? npm(unitCommandName, ["exec", "--", "vitest", "related", ...related, "--run", "--passWithNoTests"])
     : npm(unitCommandName, ["test"]));
   unitTotal = passedTestCount(unit.output);
+  if (protectedSelection.unitTests.length) {
+    record(npm("Protected regression unit", [
+      "exec", "--", "vitest", "run", ...protectedSelection.unitTests,
+    ]));
+  }
 } else {
   const unit = record(npm(unitCommandName, ["test"]));
   unitTotal = passedTestCount(unit.output);
@@ -170,6 +189,20 @@ if (mode === "full") {
 record(command("git diff --check", "git", ["diff", "--check"]));
 record(command("git diff --cached --check", "git", ["diff", "--cached", "--check"]));
 
+const protectedFailed = failures.includes("Protected behavior registry")
+  || failures.includes(unitCommandName)
+  || failures.includes("Protected regression unit")
+  || failures.some((name) => name.startsWith("E2E "));
+const protectedRegression = protectedSelection.behaviorKeys.length === 0
+  ? "NOT_APPLICABLE"
+  : protectedFailed
+    ? "FAILED"
+    : "PASSED";
+const protectedBehaviors = protectedSelection.behaviorKeys.map((key) => ({
+  key,
+  status: protectedRegression,
+}));
+
 const summary = {
   mode: mode.toUpperCase(),
   requestedMode: requestedMode.toUpperCase(),
@@ -195,6 +228,9 @@ const summary = {
   gitDiffCheck: !failures.some((name) => name.startsWith("git diff")) ? "PASSED" : "FAILED",
   lint: failures.includes("Lint") ? "FAILED" : "PASSED",
   typecheck: failures.includes("Typecheck") ? "FAILED" : "PASSED",
+  protectedRegression,
+  protectedGroups: protectedSelection.groups,
+  protectedBehaviors,
   timings,
 };
 
@@ -210,4 +246,5 @@ if (mode === "full" && summary.passed && process.env.VERIDIA_DISABLE_ATTESTATION
 fs.mkdirSync(path.join(root, ".playwright"), { recursive: true });
 fs.writeFileSync(path.join(root, ".playwright", `verification-${mode}.json`), `${JSON.stringify(summary, null, 2)}\n`, "utf8");
 process.stdout.write(`\nVERIDIA_VERIFY_RESULT=${JSON.stringify(summary)}\n`);
+process.stdout.write(`PROTECTED_BEHAVIOR_REGRESSION=${protectedRegression} ${protectedBehaviors.map((item) => `${item.key}:${item.status}`).join(" ")}\n`);
 if (!summary.passed) process.exitCode = 1;

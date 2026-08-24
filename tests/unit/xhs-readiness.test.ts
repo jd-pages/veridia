@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
 import { collectDomPageSnapshot } from "@/lib/automation/xhs-page-evidence";
 import {
@@ -8,6 +10,10 @@ import {
 
 const noteUrl =
   "https://www.xiaohongshu.com/explore/6a798984000000000f039c00";
+const fixture = (name: string) => fs.readFileSync(
+  path.resolve("tests", "regression", "fixtures", "xhs", name),
+  "utf8",
+);
 
 describe("小红书页面 hydration 就绪门禁", () => {
   let browser: Browser | undefined;
@@ -55,18 +61,14 @@ describe("小红书页面 hydration 就绪门禁", () => {
         await route.fulfill({
           status: 200,
           contentType: "text/html; charset=utf-8",
-          body: `<!doctype html><title>小红书 - 你访问的页面不见了</title><body><main>你访问的页面不见了<br>3秒后将自动返回首页</main></body>`,
+          body: fixture("note-not-found.html"),
         });
         return;
       }
       await route.fulfill({
         status: 200,
         contentType: "text/html; charset=utf-8",
-        body: `<!doctype html><title>小红书</title><body>
-          <script type="application/ld+json">{"title":"想了解些什么?","description":"想了解些什么?"}</script>
-          <main><h1>想了解些什么?</h1></main>
-          <script>setTimeout(() => location.href = '/404?source=note&noteId=6a798984000000000f039c00&errorCode=-510001', 150)</script>
-        </body>`,
+        body: fixture("generic-shell-delayed-404.html"),
       });
     });
     await page.goto(noteUrl, { waitUntil: "domcontentloaded" });
@@ -75,7 +77,7 @@ describe("小红书页面 hydration 就绪门禁", () => {
       waitForXhsPageReadiness({
         page,
         redirectChain: redirects,
-        timeoutMs: 2_000,
+        timeoutMs: 2_500,
         pollMs: 25,
         httpStatus: 200,
       }),

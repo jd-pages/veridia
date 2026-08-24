@@ -203,6 +203,34 @@ async function waitForHealth(baseURL) {
   throw new Error(`Next.js 健康检查超时: ${lastError}`);
 }
 
+async function waitForCompiledJsonRoute(input) {
+  const startedAt = Date.now();
+  const timeoutMs = 15_000;
+  let attempts = 0;
+  while (Date.now() - startedAt <= timeoutMs) {
+    attempts += 1;
+    const response = await input.request();
+    const contentType = response.headers()["content-type"] || "";
+    if (
+      [400, 404].includes(response.status()) &&
+      contentType.includes("application/json")
+    ) {
+      return { attempts, elapsedMs: Date.now() - startedAt };
+    }
+    if (response.status() !== 404) {
+      throw new Error(
+        `${input.label} 预编译失败: HTTP ${response.status()} ${contentType || "无 Content-Type"}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new StartupRouteReadinessError(
+    input.label,
+    attempts,
+    Date.now() - startedAt,
+  );
+}
+
 async function warmup(baseURL, executablePath) {
   warmupBrowser = await chromium.launch(executablePath ? { executablePath } : {});
   const privateProcess = warmupBrowser?._connection?._transport?._proc;
@@ -236,12 +264,30 @@ async function warmup(baseURL, executablePath) {
       data: { username: "admin", password: "Admin123!" },
     }),
   });
+  // Turbopack compiles dynamic Route Handlers on first use. Compile the two
+  // lifecycle endpoints before heavyweight automation begins and require a
+  // VERIDIA JSON error for a nonexistent id; a Next HTML 404 is not ready.
+  const controlRouteReady = await waitForCompiledJsonRoute({
+    label: "预热 dynamic batch control API",
+    request: () => context.request.post(
+      "/api/automation/batches/__e2e_route_warmup__/control",
+      { data: { action: "CANCEL" } },
+    ),
+  });
+  const clearRouteReady = await waitForCompiledJsonRoute({
+    label: "预热 dynamic batch clear API",
+    request: () => context.request.post(
+      "/api/automation/batches/__e2e_route_warmup__/clear",
+    ),
+  });
   writeMetadata({
     readiness: {
       health: "READY",
       loginPageAttempts: loginPageReady.attempts,
       authStatusAttempts: authStatusReady.attempts,
       authLoginAttempts: authenticationReady.attempts,
+      controlRouteAttempts: controlRouteReady.attempts,
+      clearRouteAttempts: clearRouteReady.attempts,
     },
   });
   for (const route of ["/tasks", "/results", "/campaigns", "/rules"]) {

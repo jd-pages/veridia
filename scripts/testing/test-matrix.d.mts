@@ -18,6 +18,10 @@ export interface TestSelection {
   minimumMode: string;
   conservativeFallback: boolean;
   workers: number;
+  protectedBehaviorKeys: string[];
+  protectedGroups: string[];
+  protectedUnitTests: string[];
+  protectedReasons: string[];
 }
 
 export const TEST_CATEGORIES: readonly TestCategory[];
