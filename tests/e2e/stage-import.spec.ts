@@ -320,10 +320,10 @@ test("Excel按保留的产品阶段话题分组，旧模板额外字段被忽略
     errors: [],
   });
   expect(preview.rows[5].errors).toContain(
-    "段位仅支持 IFFO 或 GUM",
+    "阶段仅支持 IFFO 或 GUM",
   );
   expect(preview.rows[6].errors).toContain(
-    "段位不能为空",
+    "阶段不能为空",
   );
   const tasksAfterPreview = (
     await (await page.request.get("/api/tasks")).json()
@@ -573,8 +573,8 @@ test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", as
     "店铺名称（必填）",
     "客户名（必填）",
     "产品系列（必填）",
-    "阶段（必填）",
     "段位（必填）",
+    "阶段（必填）",
     "订单编号（必填）",
     "内容渠道（必填）",
     "链接（必填）",
@@ -588,10 +588,27 @@ test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", as
     product.name,
   ];
   const suffix = Date.now();
+  const validStageCases = [
+    ["P段", "IFFO", "IFFO_P1", "IFFO 新生儿组（P段/1段）"],
+    ["1段", "IFFO", "IFFO_P1", "IFFO 新生儿组（P段/1段）"],
+    ["2段", "IFFO", "IFFO_2", "IFFO 二段组（2段）"],
+    ["3段", "GUM", "GUM_3_4_1PLUS_2PLUS", "GUM 成长组（3段/4段/1+段/2+段）"],
+    ["4段", "GUM", "GUM_3_4_1PLUS_2PLUS", "GUM 成长组（3段/4段/1+段/2+段）"],
+    ["1+", "GUM", "GUM_3_4_1PLUS_2PLUS", "GUM 成长组（3段/4段/1+段/2+段）"],
+    ["2+", "GUM", "GUM_3_4_1PLUS_2PLUS", "GUM 成长组（3段/4段/1+段/2+段）"],
+  ] as const;
   const rows = [
-    [...base, "2段", "IFFO", "AUG-2", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-2`, "2026-08-05", campaign.name],
-    [...base, "P段", "IFFO", "AUG-P", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-p`, "2026-08-05", campaign.name],
-    [...base, "2段", "GUM", "AUG-CONFLICT", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-conflict`, "2026-08-05", campaign.name],
+    ...validStageCases.map(([segment, phase], index) => [
+      ...base,
+      segment,
+      phase,
+      `AUG-${index + 1}`,
+      "小红书",
+      `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-${index + 1}`,
+      "2026-08-05",
+      campaign.name,
+    ]),
+    [...base, "IFFO", "1段", "AUG-CONFLICT", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-conflict`, "2026-08-05", campaign.name],
   ];
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("达能客户导入");
@@ -615,19 +632,15 @@ test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", as
     invalidCount: number;
     rows: Array<{ productStage: string; stageGroup: string; errors: string[] }>;
   };
-  expect(preview.validCount).toBe(2);
+  expect(preview.validCount).toBe(7);
   expect(preview.invalidCount).toBe(1);
-  expect(preview.rows[0]).toMatchObject({
-    productStage: "IFFO_2",
-    stageGroup: "IFFO 二段组（2段）",
-    errors: [],
+  validStageCases.forEach(([, , productStage, stageGroup], index) => {
+    expect(preview.rows[index]).toMatchObject({ productStage, stageGroup, errors: [] });
   });
-  expect(preview.rows[1]).toMatchObject({
-    productStage: "IFFO_P1",
-    stageGroup: "IFFO 新生儿组（P段/1段）",
-    errors: [],
-  });
-  expect(preview.rows[2].errors.join("；")).toContain("阶段与段位不匹配");
+  expect(preview.rows[7].errors.join("；")).toContain("阶段仅支持 IFFO 或 GUM");
+  expect(preview.rows[7].errors.join("；")).toContain(
+    "段位仅支持 P段、1段、2段、3段、4段、1+或2+",
+  );
 });
 
 test("达能代发模板从产品名末尾识别段数并保存模板来源", async ({ page }) => {
@@ -649,7 +662,7 @@ test("达能代发模板从产品名末尾识别段数并保存模板来源", as
     const sheet = workbook.addWorksheet("达能代发导入");
     sheet.addRow([
       "平台（必填）", "店铺名称（必填）", "客户名（必填）",
-      "产品系列（必填）", "段位（必填）", "订单编号（必填）",
+      "产品系列（必填）", "阶段（必填）", "订单编号（必填）",
       "内容渠道（必填）", "链接（必填）", "发布时间（必填）",
       "活动名称（必填）",
     ]);
@@ -659,7 +672,7 @@ test("达能代发模板从产品名末尾识别段数并保存模板来源", as
     return Buffer.from(await workbook.xlsx.writeBuffer());
   };
   const previewBuffer = await makeAgencyWorkbook([
-    ["抖音电商", "ROCKCHECK海外专营店", "ALG", "澳白2", "IFFO", `AGENCY-2-${suffix}`, "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&agency=${suffix}-2-ok`, "2026-07-26", campaign.name],
+    ["抖音电商", "爱他美RC奶粉直播间", "ALG", "澳白2", "IFFO", `AGENCY-2-${suffix}`, "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&agency=${suffix}-2-ok`, "2026-07-26", campaign.name],
     ["抖音电商", "ROCKCHECK海外专营店", "ALG", "澳白2", "GUM", `AGENCY-2-BAD-${suffix}`, "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&agency=${suffix}-2-bad`, "2026-07-26", campaign.name],
     ["抖音电商", "ROCKCHECK海外专营店", "ALG", "澳白3", "GUM", `AGENCY-3-${suffix}`, "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&agency=${suffix}-3-ok`, "2026-07-26", campaign.name],
     ["抖音电商", "ROCKCHECK海外专营店", "ALG", "澳白3", "IFFO", `AGENCY-3-BAD-${suffix}`, "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&agency=${suffix}-3-bad`, "2026-07-26", campaign.name],
@@ -679,21 +692,31 @@ test("达能代发模板从产品名末尾识别段数并保存模板来源", as
     templateType: string;
     validCount: number;
     invalidCount: number;
-    rows: Array<{ productStage: string; errors: string[] }>;
+    rows: Array<{
+      productStage: string;
+      errors: string[];
+      storeMappingStatus: string;
+      matchedStoreName: string;
+    }>;
   };
   expect(preview).toMatchObject({
     templateType: "DANONE_AGENCY",
     validCount: 2,
     invalidCount: 2,
   });
-  expect(preview.rows[0]).toMatchObject({ productStage: "IFFO_2", errors: [] });
-  expect(preview.rows[1].errors).toContain("产品段数与段位不匹配，2段应属于IFFO");
+  expect(preview.rows[0]).toMatchObject({
+    productStage: "IFFO_2",
+    errors: [],
+    storeMappingStatus: "MATCHED",
+    matchedStoreName: "ROCKCHECK海外专营店",
+  });
+  expect(preview.rows[1].errors).toContain("产品段数与阶段不匹配，2段应属于IFFO");
   expect(preview.rows[2]).toMatchObject({ productStage: "GUM_3_4_1PLUS_2PLUS", errors: [] });
-  expect(preview.rows[3].errors).toContain("产品段数与段位不匹配，3段应属于GUM");
+  expect(preview.rows[3].errors).toContain("产品段数与阶段不匹配，3段应属于GUM");
 
   const auditUrl = `${E2E_ORIGIN}/mock/xhs?case=aptamil-stage2-rockcheck-store-passed&agency-audit=${suffix}`;
   const commitBuffer = await makeAgencyWorkbook([[
-    "抖音电商", "ROCKCHECK海外专营店", "ALG", "澳白2", "IFFO",
+    "抖音电商", "爱他美RC奶粉直播间", "ALG", "澳白2", "IFFO",
     `AGENCY-AUDIT-${suffix}`, "小红书", auditUrl, "2026-07-26", campaign.name,
   ]]);
   const commitResponse = await page.request.post("/api/import/notes", {
@@ -718,10 +741,14 @@ test("达能代发模板从产品名末尾识别段数并保存模板来源", as
     productStage: string;
     campaignId: string;
     notes: string;
+    storeMappingStatus: string;
+    matchedStoreName: string;
   }>).find((item) => item.url === auditUrl);
   expect(task).toMatchObject({
     productStage: "IFFO_2",
     campaignId: campaign.id,
+    storeMappingStatus: "MATCHED",
+    matchedStoreName: "ROCKCHECK海外专营店",
   });
   expect(task?.notes).toContain('"templateType":"DANONE_AGENCY"');
   expect(task?.notes).toContain('"productName":"澳白2"');

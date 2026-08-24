@@ -286,9 +286,13 @@ function assertFinalIdentity(
           SELECT "topicType", "enabled", "deletedAt"
           FROM "store_topic_entries"
           WHERE "storeTopicRuleId" = ? AND "normalizedTopic" = ?
+          ORDER BY "topicType"
         `)
-        .get(CANONICAL_RULE_ID, OLD_NORMALIZED_STORE_NAME),
-    ).toMatchObject({ topicType: "ACCEPTED_ALIAS", enabled: 1, deletedAt: null });
+        .all(CANONICAL_RULE_ID, OLD_NORMALIZED_STORE_NAME),
+    ).toEqual([
+      { topicType: "ACCEPTED_ALIAS", enabled: 1, deletedAt: null },
+      { topicType: "STORE_ALIAS", enabled: 1, deletedAt: null },
+    ]);
     if (options.customTopic) {
       expect(
         database

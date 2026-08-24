@@ -280,9 +280,9 @@ function detectTemplateType(
   if (metadataType) return metadataType;
   if (isKabritaTemplateHeader(header)) return "KABRITA";
   const normalized = new Set(header.map(normalizeTemplateHeader));
-  const hasStage = normalized.has(normalizeTemplateHeader("阶段")) ||
-    normalized.has(normalizeTemplateHeader("阶段（必填）"));
-  return hasStage ? "DANONE_CUSTOMER" : "DANONE_AGENCY";
+  const hasSegment = normalized.has(normalizeTemplateHeader("段位")) ||
+    normalized.has(normalizeTemplateHeader("段位（必填）"));
+  return hasSegment ? "DANONE_CUSTOMER" : "DANONE_AGENCY";
 }
 
 function templateField(
@@ -293,15 +293,15 @@ function templateField(
   const normalized = normalizeTemplateHeader(rawHeader);
   if (templateType === "DANONE_CUSTOMER") {
     if (["阶段", "阶段（必填）"].map(normalizeTemplateHeader).includes(normalized)) {
-      return "productStageDetail" as const;
+      return "productStage" as const;
     }
     if (["段位", "段位（必填）"].map(normalizeTemplateHeader).includes(normalized)) {
-      return "productStage" as const;
+      return "productStageDetail" as const;
     }
   }
   if (
     templateType === "DANONE_AGENCY" &&
-    ["段位", "段位（必填）"].map(normalizeTemplateHeader).includes(normalized)
+    ["阶段", "阶段（必填）"].map(normalizeTemplateHeader).includes(normalized)
   ) {
     return "productStage" as const;
   }
@@ -393,20 +393,6 @@ export async function parseTabularPreview(input: {
       displayName: displayName(templates, field, kabritaTemplate),
     });
   });
-  if (
-    !parsedMatrix.templateType &&
-    !occupied.has("productStage") &&
-    occupied.has("productStageDetail")
-  ) {
-    const legacyMatch = recognizedFields.find(
-      (match) => match.field === "productStageDetail",
-    );
-    if (legacyMatch) {
-      legacyMatch.field = "productStage";
-      occupied.set("productStage", legacyMatch.header);
-      occupied.delete("productStageDetail");
-    }
-  }
   const legacyLayout = !kabritaTemplate && !["customerName", "publishTime"].some(
     (field) => occupied.has(field as StandardField),
   );
@@ -466,9 +452,9 @@ export async function parseTabularPreview(input: {
           field === "activityName"
             ? "活动名称不能为空"
             : field === "productStage"
-              ? "段位不能为空"
+              ? "阶段不能为空"
               : field === "productStageDetail"
-                ? "阶段不能为空"
+                ? "段位不能为空"
             : `缺少必填字段：${displayName(templates, field, kabritaTemplate)}`,
         );
       }

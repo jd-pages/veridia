@@ -904,8 +904,8 @@ export async function buildImportTemplateWorkbook(
         allowBlank: false,
         formulae: ['"IFFO,GUM"'],
         showErrorMessage: true,
-        errorTitle: "段位无效",
-        error: "段位仅支持 IFFO 或 GUM",
+        errorTitle: "阶段无效",
+        error: "阶段仅支持 IFFO 或 GUM",
       },
     );
   }
@@ -936,8 +936,8 @@ export async function buildImportTemplateWorkbook(
         allowBlank: false,
         formulae: ['"P段,1段,2段,3段,4段,1+段,2+段"'],
         showErrorMessage: true,
-        errorTitle: "阶段无效",
-        error: "阶段请填写 P段、1段、2段、3段、4段、1+或2+。",
+        errorTitle: "段位无效",
+        error: "段位请填写 P段、1段、2段、3段、4段、1+或2+。",
       },
     );
   }

@@ -43,6 +43,13 @@ const kabritaStoreAliasMigration = readFileSync(
   ),
   "utf8",
 );
+const semanticAliasMigration = readFileSync(
+  path.join(
+    root,
+    "prisma/migrations/202608240001_store_alias_semantic_separation/migration.sql",
+  ),
+  "utf8",
+);
 const sqliteSchema = readFileSync(path.join(root, "prisma/schema.prisma"), "utf8");
 const postgresSchema = readFileSync(
   path.join(root, "prisma/schema.postgresql.prisma"),
@@ -77,7 +84,7 @@ describe("店铺话题规则数据模型与迁移", () => {
       expect(schema).toContain("topicEntries");
       expect(schema).toContain("topicType");
       expect(schema).toContain(
-        "@@unique([storeTopicRuleId, normalizedTopic])",
+        "@@unique([storeTopicRuleId, normalizedTopic, topicType])",
       );
       expect(schema).toContain("normalizedStoreName String");
       expect(schema).toContain("@@unique([commercePlatform, normalizedStoreName])");
@@ -129,8 +136,18 @@ describe("店铺话题规则数据模型与迁移", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it("7 条佳贝艾特输入别名严格绑定到同平台既有 Canonical identity", () => {
+  it("9 条明确输入别名严格绑定到同平台既有 Canonical identity", () => {
     expect(storeNameAliasSeeds).toEqual([
+      {
+        commercePlatform: "DOUYIN_ECOMMERCE",
+        alias: "爱他美RC奶粉直播间",
+        canonicalStoreName: "ROCKCHECK海外专营店",
+      },
+      {
+        commercePlatform: "JD",
+        alias: "爱他美优选海外专卖店",
+        canonicalStoreName: "Aptamil爱他美海外优选进口超市",
+      },
       {
         commercePlatform: "TMALL",
         alias: "天猫佳贝艾特海外旗舰店",
@@ -283,6 +300,20 @@ describe("店铺话题规则数据模型与迁移", () => {
     expect(rockcheckTopicMigration).toContain("'ACCEPTED'");
     expect(rockcheckTopicMigration).not.toMatch(
       /^\s*(?:DELETE|DROP|TRUNCATE|UPDATE)\b/imu,
+    );
+  });
+
+  it("同文本 STORE_ALIAS 与页面话题按类型分域并幂等补齐两条确认映射", () => {
+    expect(semanticAliasMigration).toContain(
+      '"storeTopicRuleId", "normalizedTopic", "topicType"',
+    );
+    expect(semanticAliasMigration).toContain("'store-alias-rockcheck-rc-live-room'");
+    expect(semanticAliasMigration).toContain(
+      "'store-alias-aptamil-overseas-preferred-legacy'",
+    );
+    expect(semanticAliasMigration).toContain("'STORE_ALIAS'");
+    expect(semanticAliasMigration).not.toMatch(
+      /\bUPDATE\s+"?(?:audit_results|audit_tasks|import_records)"?/iu,
     );
   });
 

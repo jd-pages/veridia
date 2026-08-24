@@ -656,20 +656,20 @@ export async function POST(request: Request) {
             : productStageTopicLabel(importedStage))
         : "";
       if (!isKabritaTemplate && !checked.stageInput.trim()) {
-        checked.errors.push("段位不能为空");
+        checked.errors.push("阶段不能为空");
       } else if (!isKabritaTemplate && !importedPhase) {
-        checked.errors.push("段位仅支持 IFFO 或 GUM");
+        checked.errors.push("阶段仅支持 IFFO 或 GUM");
       }
       if (
         tabular.templateType === "DANONE_CUSTOMER" &&
         !checked.stageDetailInput.trim()
       ) {
-        checked.errors.push("阶段不能为空");
+        checked.errors.push("段位不能为空");
       } else if (
         tabular.templateType === "DANONE_CUSTOMER" &&
         !importedDetailedStage
       ) {
-        checked.errors.push("阶段仅支持 P段、1段、2段、3段、4段、1+或2+");
+        checked.errors.push("段位仅支持 P段、1段、2段、3段、4段、1+或2+");
       }
       if (
         importedPhase &&
@@ -678,7 +678,7 @@ export async function POST(request: Request) {
       ) {
         checked.errors.push(
           isDanoneAgencyTemplate && agencyProductStage?.inferredStage
-            ? `产品段数与段位不匹配，${agencyProductStage.inferredStage}应属于${agencyProductStage.inferredGroup}`
+            ? `产品段数与阶段不匹配，${agencyProductStage.inferredStage}应属于${agencyProductStage.inferredGroup}`
             : "阶段与段位不匹配",
         );
       }

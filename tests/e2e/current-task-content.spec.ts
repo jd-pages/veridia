@@ -376,6 +376,11 @@ test("自动审核进度卡片按执行状态和人工复核状态筛选", async
   expect(response.ok()).toBeTruthy();
   const batchId = (await response.json()).data.batchId as string;
   cleanupBatchIds.push(batchId);
+  const startResponse = await page.request.post(
+    `/api/automation/batches/${batchId}/control`,
+    { data: { action: "CONTINUE" } },
+  );
+  expect(startResponse.ok()).toBeTruthy();
 
   await expect
     .poll(

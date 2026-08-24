@@ -444,7 +444,7 @@ test("用户可在页面用 STORE_ALIAS 闭环修复 STORE_NOT_MAPPED", async ({
   }
 });
 
-test("STORE_ALIAS collision 仅在同平台阻断且包含历史 ACCEPTED_ALIAS", async ({
+test("STORE_ALIAS collision 仅在同平台 Canonical / STORE_ALIAS 间阻断", async ({
   page,
 }) => {
   expect((await page.request.post("/api/auth/login", {
@@ -519,7 +519,7 @@ test("STORE_ALIAS collision 仅在同平台阻断且包含历史 ACCEPTED_ALIAS"
   }
 });
 
-test("ACCEPTED_ALIAS 保留历史名称和页面话题语义且不进入 storeAliases", async ({
+test("同文本 ACCEPTED_ALIAS 页面话题与 STORE_ALIAS 导入身份独立共存", async ({
   page,
 }) => {
   expect((await page.request.post("/api/auth/login", {
@@ -545,7 +545,7 @@ test("ACCEPTED_ALIAS 保留历史名称和页面话题语义且不进入 storeAl
   };
 
   const before = await getRule();
-  expect(before.storeAliases).toEqual([]);
+  expect(before.storeAliases.map((alias) => alias.alias)).toContain(historicalAlias);
   expect(before.aliases.map((alias) => alias.alias)).toContain(historicalAlias);
   expect(before.acceptedTopics.map((topic) => topic.topic)).toContain(
     `#${historicalAlias}`,
@@ -557,14 +557,17 @@ test("ACCEPTED_ALIAS 保留历史名称和页面话题语义且不进入 storeAl
         commercePlatform: "JD",
         storeName: canonicalName,
         enabled: before.enabled,
-        storeAliases: [{ alias: temporaryStoreAlias }],
+        storeAliases: [
+          ...before.storeAliases.map((alias) => ({ alias: alias.alias })),
+          { alias: temporaryStoreAlias },
+        ],
       },
     });
     expect(addStoreAlias.ok(), JSON.stringify(await addStoreAlias.json())).toBeTruthy();
     const afterAdd = await getRule();
-    expect(afterAdd.storeAliases.map((alias) => alias.alias)).toEqual([
-      temporaryStoreAlias,
-    ]);
+    expect(afterAdd.storeAliases.map((alias) => alias.alias)).toEqual(
+      expect.arrayContaining([historicalAlias, temporaryStoreAlias]),
+    );
     expect(afterAdd.aliases.map((alias) => alias.alias)).toContain(historicalAlias);
     expect(afterAdd.acceptedTopics.map((topic) => topic.topic)).toContain(
       `#${historicalAlias}`,
@@ -580,7 +583,7 @@ test("ACCEPTED_ALIAS 保留历史名称和页面话题语义且不进入 storeAl
           commercePlatform: "JD",
           storeName: canonicalName,
           enabled: before.enabled,
-          storeAliases: [],
+          storeAliases: before.storeAliases.map((alias) => ({ alias: alias.alias })),
         },
       },
     );
@@ -588,7 +591,7 @@ test("ACCEPTED_ALIAS 保留历史名称和页面话题语义且不进入 storeAl
   }
 
   const afterClear = await getRule();
-  expect(afterClear.storeAliases).toEqual([]);
+  expect(afterClear.storeAliases.map((alias) => alias.alias)).toEqual([historicalAlias]);
   expect(afterClear.aliases.map((alias) => alias.alias)).toContain(historicalAlias);
   expect(afterClear.acceptedTopics.map((topic) => topic.topic)).toContain(
     `#${historicalAlias}`,

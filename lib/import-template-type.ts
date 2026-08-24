@@ -84,8 +84,8 @@ export function danoneTemplateFieldDisplayName(
     shopName: `店铺名称${required}`,
     customerName: `客户名${required}`,
     productName: `产品系列${required}`,
-    productStage: `段位${required}`,
-    productStageDetail: `阶段${required}`,
+    productStage: `阶段${required}`,
+    productStageDetail: `段位${required}`,
     orderNumber: `订单编号${required}`,
     contentChannel: `内容渠道${required}`,
     noteUrl: `链接${required}`,
@@ -97,7 +97,7 @@ export function danoneTemplateFieldDisplayName(
     selfReview: "自审",
   };
   if (templateType === "DANONE_AGENCY" && field === "productStageDetail") {
-    return "阶段";
+    return "段位";
   }
   return shared[field] || field;
 }

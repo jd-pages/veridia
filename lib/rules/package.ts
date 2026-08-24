@@ -238,13 +238,14 @@ export function validateRulePayload(input: unknown): RulePackagePayload {
             throw new Error(`${label}格式不规范：${value}`);
           }
         }
-        const existing = entryNames.get(normalized);
+        const semanticKey = `${kind}\u001f${normalized}`;
+        const existing = entryNames.get(semanticKey);
         if (existing) {
           throw new Error(
             `店铺“${rule.storeName}”存在规范化 Entry 冲突：${existing} / ${label}`,
           );
         }
-        entryNames.set(normalized, label);
+        entryNames.set(semanticKey, label);
         return normalized;
       };
 
@@ -255,21 +256,10 @@ export function validateRulePayload(input: unknown): RulePackagePayload {
         assertEntry(item.value, `附加必需话题“${item.value}”`, "TOPIC");
       }
       for (const item of rule.acceptedAliases) {
-        const normalized = assertEntry(
+        assertEntry(
           item.value,
           `历史兼容别名“${item.value}”`,
           "TOPIC",
-        );
-        const identity = `${rule.commercePlatform}\u001f${normalized}`;
-        const occupied = resolvingNames.get(identity);
-        if (occupied) {
-          throw new Error(
-            `STORE_ALIAS_COLLISION：${rule.commercePlatform} / ${item.value} 已被${occupied}占用`,
-          );
-        }
-        resolvingNames.set(
-          identity,
-          `店铺“${rule.storeName}”的 ACCEPTED_ALIAS`,
         );
       }
       for (const item of rule.storeAliases) {
@@ -725,26 +715,14 @@ export async function applyRulePayload(
             normalizedTopic: normalizeStoreTopicForMatch(entry.value),
           })),
         ];
-        await tx.storeTopicEntry.updateMany({
-          where: {
-            storeTopicRuleId: rule.id,
-            deletedAt: null,
-            ...(entries.length
-              ? {
-                  normalizedTopic: {
-                    notIn: entries.map((entry) => entry.normalizedTopic),
-                  },
-                }
-              : {}),
-          },
-          data: { enabled: false, deletedAt: appliedAt },
-        });
+        const retainedEntryIds: string[] = [];
         for (const entry of entries) {
-          await tx.storeTopicEntry.upsert({
+          const stored = await tx.storeTopicEntry.upsert({
             where: {
-              storeTopicRuleId_normalizedTopic: {
+              storeTopicRuleId_normalizedTopic_topicType: {
                 storeTopicRuleId: rule.id,
                 normalizedTopic: entry.normalizedTopic,
+                topicType: entry.topicType,
               },
             },
             create: {
@@ -763,7 +741,18 @@ export async function applyRulePayload(
               deletedAt: null,
             },
           });
+          retainedEntryIds.push(stored.id);
         }
+        await tx.storeTopicEntry.updateMany({
+          where: {
+            storeTopicRuleId: rule.id,
+            deletedAt: null,
+            ...(retainedEntryIds.length
+              ? { id: { notIn: retainedEntryIds } }
+              : {}),
+          },
+          data: { enabled: false, deletedAt: appliedAt },
+        });
       }
     }
 

@@ -86,7 +86,7 @@ model StoreTopicEntry {
   updatedAt        DateTime       @updatedAt
   storeTopicRule   StoreTopicRule @relation(fields: [storeTopicRuleId], references: [id], onDelete: Cascade)
 
-  @@unique([storeTopicRuleId, normalizedTopic])
+  @@unique([storeTopicRuleId, normalizedTopic, topicType])
   @@index([storeTopicRuleId, topicType, enabled, deletedAt, sortOrder])
   @@map("store_topic_entries")
 }

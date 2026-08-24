@@ -91,6 +91,16 @@ export const storeAcceptedTopicSeeds: readonly StoreAcceptedTopicSeed[] = [
 
 export const storeNameAliasSeeds: readonly StoreNameAliasSeed[] = [
   {
+    commercePlatform: "DOUYIN_ECOMMERCE",
+    alias: "爱他美RC奶粉直播间",
+    canonicalStoreName: "ROCKCHECK海外专营店",
+  },
+  {
+    commercePlatform: "JD",
+    alias: "爱他美优选海外专卖店",
+    canonicalStoreName: "Aptamil爱他美海外优选进口超市",
+  },
+  {
     commercePlatform: "TMALL",
     alias: "天猫佳贝艾特海外旗舰店",
     canonicalStoreName: "kabrita海外旗舰店",

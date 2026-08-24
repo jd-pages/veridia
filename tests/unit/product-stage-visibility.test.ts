@@ -63,7 +63,7 @@ describe("产品阶段话题用户可见口径", () => {
     const importRoute = source("app/api/import/notes/route.ts");
     const exportSource = source("lib/import-export-templates/export.ts");
     expect(importRoute).toContain("normalizeImportedProductStageTopicValue");
-    expect(importRoute).toContain("段位仅支持 IFFO 或 GUM");
+    expect(importRoute).toContain("阶段仅支持 IFFO 或 GUM");
     expect(exportSource).toContain("productStageTopicLabel(row.task.productStage)");
     expect(exportSource).toContain('formulae: [\'"IFFO,GUM"\']');
   });

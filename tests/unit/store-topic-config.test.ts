@@ -42,20 +42,6 @@ const storeTopicConfigs = storeTopicRuleSeeds.map((seed) => ({
       normalizedAlias: normalizeStoreNameForMatch(seed.storeName),
       enabled: true,
     },
-    ...storeAcceptedTopicSeeds
-      .filter(
-        (accepted) =>
-          accepted.isStoreAlias &&
-          accepted.commercePlatform === seed.commercePlatform &&
-          normalizeStoreNameForMatch(accepted.storeName) ===
-            normalizeStoreNameForMatch(seed.storeName),
-      )
-      .map((accepted, index) => ({
-        id: `${seed.id}-alias-${index + 1}`,
-        alias: accepted.topic.replace(/^#/u, ""),
-        normalizedAlias: normalizeStoreTopicForMatch(accepted.topic),
-        enabled: true,
-      })),
     ...storeNameAliasSeeds
       .filter(
         (alias) =>
@@ -179,6 +165,17 @@ describe("店铺话题配置与精确审核", () => {
       canonicalName,
       oldName,
     ]);
+  });
+
+  it("RC 上游直播间名称只通过 STORE_ALIAS 映射并保留独立页面话题", () => {
+    expect(resolve({
+      commercePlatform: "抖音电商",
+      storeName: "爱他美RC奶粉直播间",
+    })).toMatchObject({
+      status: "MATCHED",
+      matchedStoreName: "ROCKCHECK海外专营店",
+      expectedTopics: ["#ROCKCHECK海外专营店", "#爱他美RC奶粉直播间"],
+    });
   });
 
   it.each([

@@ -162,14 +162,23 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
 
   const douyinRules = (await (
     await page.request.get("/api/rules?contentChannel=DOUYIN")
-  ).json()).data as Array<{ id: string; topic: string; contentChannel: string }>;
-  expect(douyinRules).toHaveLength(26);
+  ).json()).data as Array<{
+    id: string;
+    topic: string;
+    contentChannel: string;
+    brandName: string | null;
+    topicCategory: string;
+  }>;
+  expect(douyinRules).toHaveLength(23);
   expect(douyinRules.every((item) => item.contentChannel === "DOUYIN")).toBe(
     true,
   );
   expect(douyinRules.map((item) => item.topic)).not.toContain(
     "#爱他美新手爸妈日记",
   );
+  expect(douyinRules.filter(
+    (item) => item.brandName === "佳贝艾特" && item.topicCategory === "PRODUCT_STAGE",
+  )).toHaveLength(0);
 
   await page.goto("/rules?channel=DOUYIN");
   await expect(page.locator(".ant-segmented-item-selected")).toContainText("抖音");
@@ -247,7 +256,7 @@ test("混合 Excel 只创建一个导入记录并拆分为两个串行平台批�
   const sheet = workbook.addWorksheet("达能代发导入");
   sheet.addRow([
     "平台（必填）", "店铺名称（必填）", "客户名（必填）",
-    "产品系列（必填）", "段位（必填）", "订单编号（必填）",
+    "产品系列（必填）", "阶段（必填）", "订单编号（必填）",
     "内容渠道（必填）", "链接（必填）", "发布时间（必填）",
     "活动名称（必填）",
   ]);
@@ -470,7 +479,7 @@ test("抖音复用店铺映射但仅审核 ACCEPTED，小红书继续审核 REQU
     "店铺名称（必填）",
     "客户名（必填）",
     "产品系列（必填）",
-    "段位（必填）",
+    "阶段（必填）",
     "订单编号（必填）",
     "内容渠道（必填）",
     "链接（必填）",
@@ -755,8 +764,8 @@ test("抖音图文正文、真实话题、店铺话题和公开免审共同产�
     "店铺名称（必填）",
     "客户名（必填）",
     "产品系列（必填）",
-    "阶段（必填）",
     "段位（必填）",
+    "阶段（必填）",
     "订单编号（必填）",
     "内容渠道（必填）",
     "链接（必填）",

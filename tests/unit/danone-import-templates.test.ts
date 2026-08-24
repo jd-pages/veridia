@@ -18,8 +18,8 @@ const customerHeaders = [
   "店铺名称（必填）",
   "客户名（必填）",
   "产品系列（必填）",
-  "阶段（必填）",
   "段位（必填）",
+  "阶段（必填）",
   "订单编号（必填）",
   "内容渠道（必填）",
   "链接（必填）",
@@ -27,7 +27,7 @@ const customerHeaders = [
   "活动名称（必填）",
 ];
 
-const agencyHeaders = customerHeaders.filter((header) => header !== "阶段（必填）");
+const agencyHeaders = customerHeaders.filter((header) => header !== "段位（必填）");
 
 const templateBytes = new Map<string, Promise<ExcelJS.Buffer>>();
 
@@ -55,7 +55,7 @@ describe("达能客户与代发 Excel 模板", () => {
     expect((customer.workbook.worksheets[0].getRow(1).values as unknown[]).slice(1)).toEqual(
       customerHeaders,
     );
-    expect(agencyHeaders).not.toContain("阶段（必填）");
+    expect(agencyHeaders).not.toContain("段位（必填）");
     expect(customer.workbook.getWorksheet("VERIDIA模板信息")?.getCell("B1").text).toBe(
       "DANONE_CUSTOMER",
     );
@@ -63,7 +63,7 @@ describe("达能客户与代发 Excel 模板", () => {
     expect(DANONE_AGENCY_IMPORT_FIELDS.at(-1)).toBe("activityName");
   });
 
-  it("按元数据识别模板且严格校验客户阶段与代发段位", async () => {
+  it("按元数据识别模板且严格校验客户段位与代发阶段", async () => {
     const compactWorkbook = async (
       type: "DANONE_CUSTOMER" | "DANONE_AGENCY",
       headers: string[],
@@ -121,7 +121,7 @@ describe("达能客户与代发 Excel 模板", () => {
       sourceType: "EXCEL_XLSX",
       templates: BUILTIN_IMPORT_EXPORT_TEMPLATES,
     });
-    expect(invalidAgency.rows[0].errors).toContain("段位不能为空");
+    expect(invalidAgency.rows[0].errors).toContain("阶段不能为空");
   });
 
   it.each([
@@ -180,12 +180,12 @@ describe("达能客户与代发 Excel 模板", () => {
       "达能代发",
       "达能客户",
     ]);
-    expect(workbook.getWorksheet("达能代发")?.getRow(1).values).not.toContain("阶段");
+    expect(workbook.getWorksheet("达能代发")?.getRow(1).values).not.toContain("段位");
     expect(workbook.getWorksheet("达能客户")?.getRow(1).values).toEqual(
       expect.arrayContaining(["阶段", "段位"]),
     );
     const summary = workbook.getWorksheet("审核结果汇总")!;
-    const stageColumn = (summary.getRow(1).values as unknown[]).indexOf("阶段");
+    const stageColumn = (summary.getRow(1).values as unknown[]).indexOf("段位");
     expect(summary.getRow(2).getCell(stageColumn).text).toBe("");
     expect(summary.getRow(3).getCell(stageColumn).text).toBe("3段");
   });
@@ -215,8 +215,8 @@ describe("达能客户与代发 Excel 模板", () => {
     await customer.xlsx.load(customerBytes);
     const agencyHeaders = agency.worksheets[0].getRow(1).values as unknown[];
     const customerHeaders = customer.worksheets[0].getRow(1).values as unknown[];
-    expect(agencyHeaders).not.toContain("阶段");
-    expect(agencyHeaders).toContain("段位");
+    expect(agencyHeaders).not.toContain("段位");
+    expect(agencyHeaders).toContain("阶段");
     expect(customerHeaders).toEqual(expect.arrayContaining(["阶段", "段位"]));
   });
 });

@@ -116,8 +116,7 @@ function activeStoreAliases(input: {
     ...input.topicEntries
       .filter(
         (topic) =>
-          ["ACCEPTED_ALIAS", "STORE_ALIAS"].includes(topic.topicType) &&
-          topic.deletedAt === null,
+          topic.topicType === "STORE_ALIAS" && topic.deletedAt === null,
       )
       .sort((left, right) => left.sortOrder - right.sortOrder)
       .map((topic) => ({
@@ -346,9 +345,10 @@ export async function ensureStoreTopicRuleSeeds() {
       for (const [sortOrder, topic] of acceptedTopics.entries()) {
         await tx.storeTopicEntry.upsert({
           where: {
-            storeTopicRuleId_normalizedTopic: {
+            storeTopicRuleId_normalizedTopic_topicType: {
               storeTopicRuleId: rule.id,
               normalizedTopic: normalizeStoreTopicForMatch(topic),
+              topicType: "ACCEPTED",
             },
           },
           create: {
@@ -382,9 +382,10 @@ export async function ensureStoreTopicRuleSeeds() {
       const normalizedTopic = normalizeStoreTopicForMatch(seed.topic);
       await tx.storeTopicEntry.upsert({
         where: {
-          storeTopicRuleId_normalizedTopic: {
+          storeTopicRuleId_normalizedTopic_topicType: {
             storeTopicRuleId: rule.id,
             normalizedTopic,
+            topicType: seed.isStoreAlias ? "ACCEPTED_ALIAS" : "ACCEPTED",
           },
         },
         create: {
@@ -430,7 +431,7 @@ export async function ensureStoreTopicRuleSeeds() {
       const aliasCollision = await tx.storeTopicEntry.findFirst({
         where: {
           normalizedTopic: normalizedAlias,
-          topicType: { in: ["ACCEPTED_ALIAS", "STORE_ALIAS"] },
+          topicType: "STORE_ALIAS",
           enabled: true,
           deletedAt: null,
           storeTopicRuleId: { not: rule.id },
@@ -446,24 +447,12 @@ export async function ensureStoreTopicRuleSeeds() {
           `STORE_ALIAS_COLLISION：${seed.commercePlatform} / ${seed.alias}`,
         );
       }
-      const occupiedEntry = await tx.storeTopicEntry.findUnique({
-        where: {
-          storeTopicRuleId_normalizedTopic: {
-            storeTopicRuleId: rule.id,
-            normalizedTopic: normalizedAlias,
-          },
-        },
-      });
-      if (occupiedEntry && occupiedEntry.topicType !== "STORE_ALIAS") {
-        throw new Error(
-          `STORE_ALIAS_COLLISION：${seed.commercePlatform} / ${seed.alias}`,
-        );
-      }
       await tx.storeTopicEntry.upsert({
         where: {
-          storeTopicRuleId_normalizedTopic: {
+          storeTopicRuleId_normalizedTopic_topicType: {
             storeTopicRuleId: rule.id,
             normalizedTopic: normalizedAlias,
+            topicType: "STORE_ALIAS",
           },
         },
         create: {
@@ -495,9 +484,10 @@ export async function ensureStoreTopicRuleSeeds() {
       const normalizedTopic = normalizeStoreTopicForMatch(seed.topic);
       await tx.storeTopicEntry.upsert({
         where: {
-          storeTopicRuleId_normalizedTopic: {
+          storeTopicRuleId_normalizedTopic_topicType: {
             storeTopicRuleId: rule.id,
             normalizedTopic,
+            topicType: "REQUIRED",
           },
         },
         create: {
@@ -725,22 +715,6 @@ async function assertStoreAliasesAvailable(
 ) {
   if (input.aliases.length === 0) return;
   const normalizedAliases = input.aliases.map((alias) => alias.normalizedAlias);
-  const currentRuleTopicCollision = await tx.storeTopicEntry.findFirst({
-    where: {
-      storeTopicRuleId: input.storeTopicRuleId,
-      normalizedTopic: { in: normalizedAliases },
-      topicType: { not: "STORE_ALIAS" },
-      deletedAt: null,
-    },
-  });
-  if (currentRuleTopicCollision) {
-    const alias = input.aliases.find(
-      (item) => item.normalizedAlias === currentRuleTopicCollision.normalizedTopic,
-    )!;
-    throw new Error(
-      `STORE_ALIAS_COLLISION：该导入别名已由当前店铺的话题或历史兼容名称使用：${alias.alias}。`,
-    );
-  }
   const canonicalCollision = await tx.storeTopicRule.findFirst({
     where: {
       commercePlatform: input.commercePlatform,
@@ -760,7 +734,7 @@ async function assertStoreAliasesAvailable(
   const aliasCollision = await tx.storeTopicEntry.findFirst({
     where: {
       normalizedTopic: { in: normalizedAliases },
-      topicType: { in: ["STORE_ALIAS", "ACCEPTED_ALIAS"] },
+      topicType: "STORE_ALIAS",
       deletedAt: null,
       storeTopicRuleId: { not: input.storeTopicRuleId },
       storeTopicRule: {

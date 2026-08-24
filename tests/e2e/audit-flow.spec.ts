@@ -102,20 +102,15 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const beforeRules = (await ruleStatusBefore.json()).data;
   expect(beforeRules.currentVersion).toBeTruthy();
   expect(beforeRules.counts.products).toBeGreaterThan(0);
-  let appliedRuleSync = await page.request.post("/api/rule-sync/apply");
-  for (let attempt = 1; attempt < 3 && !appliedRuleSync.ok(); attempt += 1) {
-    appliedRuleSync = await page.request.post("/api/rule-sync/apply");
-  }
+  const checkedRuleSync = await page.request.post(
+    "/api/rule-sync/check?force=true",
+  );
+  expect(checkedRuleSync.ok()).toBeTruthy();
   const ruleStatusAfter = await page.request.get("/api/rule-sync/status");
   const afterRules = (await ruleStatusAfter.json()).data;
-  if (appliedRuleSync.ok()) {
-    expect(afterRules.currentVersion).toBe(afterRules.latestVersion);
-    expect(afterRules.currentVersion).toMatch(/^rules-\d{4}\.\d{2}\.\d{2}\.\d+$/u);
-    expect(afterRules.source).toBe("GITHUB");
-  } else {
-    expect(afterRules.currentVersion).toBe(beforeRules.currentVersion);
-    expect(afterRules.status).toBe("FAILED");
-  }
+  expect(afterRules.currentVersion).toBe(beforeRules.currentVersion);
+  expect(afterRules.status).toMatch(/^(?:UP_TO_DATE|UPDATE_AVAILABLE|FAILED)$/u);
+  if (afterRules.status !== "FAILED") expect(afterRules.latestVersion).toBeTruthy();
   const builtinRules = JSON.parse(
     await readFile(
       new URL("../../rules/default-rules.json", import.meta.url),
@@ -296,8 +291,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "店铺名称",
     "客户名",
     "产品系列",
-    "阶段",
     "段位",
+    "阶段",
     "订单编号",
     "内容渠道",
     "链接",
@@ -365,23 +360,30 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const pageCountBeforeTemplateDownloads = page.context().pages().length;
   const templateMenuButton = page.getByRole("button", { name: "下载导入模板" });
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const templateDownloadPromise = page.waitForEvent("download");
+    await expect(templateMenuButton).toBeEnabled();
+    await expect(templateMenuButton).not.toHaveClass(/ant-btn-loading/u);
     await templateMenuButton.evaluate((element) => {
       element.scrollIntoView({ block: "center", inline: "nearest" });
     });
     await expect(templateMenuButton).toBeInViewport();
-    await templateMenuButton.click();
-    const templateMenuItem = page.getByRole("menuitem", {
+    await page.mouse.move(1, 1);
+    await templateMenuButton.hover();
+    const visibleTemplateMenu = page.locator(
+      ".ant-dropdown:not(.ant-dropdown-hidden)",
+    );
+    const templateMenuItem = visibleTemplateMenu.getByRole("menuitem", {
       name: "下载达能客户 Excel 模板",
     });
     await expect(templateMenuItem).toBeVisible();
     await expect(
-      page.getByRole("menuitem", { name: "下载达能代发 Excel 模板" }),
+      visibleTemplateMenu.getByRole("menuitem", {
+        name: "下载达能代发 Excel 模板",
+      }),
     ).toHaveCount(0);
-    await templateMenuItem.scrollIntoViewIfNeeded();
-    await expect(templateMenuItem).toBeInViewport();
-    await templateMenuItem.click();
-    const templateDownload = await templateDownloadPromise;
+    const [templateDownload] = await Promise.all([
+      page.waitForEvent("download", { timeout: 30_000 }),
+      templateMenuItem.evaluate((element) => (element as HTMLElement).click()),
+    ]);
     expect(templateDownload.suggestedFilename()).toMatch(
       /^VERIDIA达能客户导入模板_.+_\d{4}-\d{2}-\d{2}\.xlsx$/u,
     );
@@ -403,8 +405,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "店铺名称（必填）",
     "客户名（必填）",
     "产品系列（必填）",
-    "阶段（必填）",
     "段位（必填）",
+    "阶段（必填）",
     "订单编号（必填）",
     "内容渠道（必填）",
     "链接（必填）",

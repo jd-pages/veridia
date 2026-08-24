@@ -118,9 +118,7 @@ async function activeConfigs(client: PrismaClient): Promise<StoreTopicConfig[]> 
         enabled: rule.enabled,
       },
       ...rule.topicEntries
-        .filter((entry) =>
-          ["STORE_ALIAS", "ACCEPTED_ALIAS"].includes(entry.topicType),
-        )
+        .filter((entry) => entry.topicType === "STORE_ALIAS")
         .map((entry) => ({
           id: entry.id,
           alias: entry.topic.replace(/^#/u, ""),
@@ -224,7 +222,7 @@ describe.sequential("店铺规则包 Source A → Client B", () => {
     });
   }, 30_000);
 
-  it("导出 7 条 Kabrita STORE_ALIAS 并在 Client B 事务应用", async () => {
+  it("导出 9 条明确 STORE_ALIAS 并在 Client B 事务应用", async () => {
     for (const seed of storeNameAliasSeeds) {
       await createStoreRule(sourceClient, {
         commercePlatform: seed.commercePlatform,
@@ -259,6 +257,11 @@ describe.sequential("店铺规则包 Source A → Client B", () => {
         expect.objectContaining({ value: "#历史可接受店铺别名" }),
       ]),
     );
+    expect(await resolve(
+      sourceClient,
+      "JD",
+      "历史可接受店铺别名",
+    )).toMatchObject({ status: "STORE_NOT_MAPPED" });
 
     const historicalTasks = await targetClient.auditTask.findMany({
       orderBy: { id: "asc" },
@@ -333,9 +336,13 @@ describe.sequential("店铺规则包 Source A → Client B", () => {
       "JD",
       "历史可接受店铺别名",
     );
-    expect(acceptedAlias.status).toBe("MATCHED");
-    expect(acceptedAlias.expectedTopics).toContain("#历史可接受店铺别名");
-    expect(acceptedAlias.requiredTopics).toContain("#京东");
+    expect(acceptedAlias.status).toBe("STORE_NOT_MAPPED");
+    const historicalRule = payload.storeTopicRules?.find(
+      (rule) => rule.storeName === "历史兼容标准店",
+    );
+    expect(historicalRule?.acceptedAliases).toContainEqual(
+      expect.objectContaining({ value: "#历史可接受店铺别名" }),
+    );
   }, 30_000);
 
   it("第二、第三份权威快照传播 Alias 修改与删除", async () => {
@@ -497,11 +504,14 @@ describe("店铺规则 Payload 冲突门禁", () => {
     storeTopicRules: rules,
   });
 
-  it("拒绝同平台 Alias、Canonical 和 Entry normalized collision", () => {
+  it("Alias 只与同平台 Alias/Canonical 冲突并允许同文本页面话题", () => {
     const first = baseRule("JD", "标准店甲");
     const second = baseRule("JD", "标准店乙");
     first.storeAliases.push({ value: "共享别名", enabled: true, sortOrder: 0 });
     second.acceptedAliases.push({ value: "#共享别名", enabled: true, sortOrder: 0 });
+    expect(() => validateRulePayload(payloadWith(first, second))).not.toThrow();
+
+    second.storeAliases.push({ value: "共享别名", enabled: true, sortOrder: 0 });
     expect(() => validateRulePayload(payloadWith(first, second))).toThrow(
       /STORE_ALIAS_COLLISION/u,
     );

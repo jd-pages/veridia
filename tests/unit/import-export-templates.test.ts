@@ -607,7 +607,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
         index === 10
           ? "活动名称不能为空"
           : index === 4
-            ? "段位不能为空"
+            ? "阶段不能为空"
             : `缺少必填字段：${displayName}`,
       );
     }
@@ -723,8 +723,8 @@ describe("模板驱动导出", () => {
       "店铺名称（必填）",
       "客户名（必填）",
       "产品系列（必填）",
-      "阶段（必填）",
       "段位（必填）",
+      "阶段（必填）",
       "订单编号（必填）",
       "内容渠道（必填）",
       "链接（必填）",
@@ -735,7 +735,7 @@ describe("模板驱动导出", () => {
     expect(stageCell?.dataValidation).toMatchObject({
       type: "list",
       formulae: ['"IFFO,GUM"'],
-      error: "段位仅支持 IFFO 或 GUM",
+      error: "阶段仅支持 IFFO 或 GUM",
     });
     expect(workbook.getWorksheet("达能客户导入")?.getCell("E2").dataValidation)
       .toMatchObject({
@@ -814,8 +814,8 @@ describe("模板驱动导出", () => {
       "店铺名称（必填）",
       "客户名（必填）",
       "产品系列（必填）",
-      "阶段（必填）",
       "段位（必填）",
+      "阶段（必填）",
       "订单编号（必填）",
       "内容渠道（必填）",
       "链接（必填）",
