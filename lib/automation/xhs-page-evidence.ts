@@ -742,15 +742,67 @@ export async function collectDomPageSnapshot(
         return value;
       }
     };
-    const rootScore = (root: Element) =>
-      (root.id === "noteContainer" ? 100 : 0) +
-      (root.matches("[data-testid='note-detail'],.note-detail-mask") ? 50 : 0) +
-      (root.querySelector("#detail-title,[data-testid='note-title'],[class^='note-title-'],[class*=' note-title-']") ? 20 : 0) +
-      (root.querySelector("#detail-desc,[data-testid='note-content'],[data-testid='note-desc'],[class^='note-desc-'],[class*=' note-desc-']") ? 20 : 0) +
-      (root.querySelector("[data-testid='note-action-bar'],.interactions.engage-bar") ? 10 : 0) +
-      (root.querySelector("[data-testid='note-media'],[class*='swiper'],[class*='carousel'],video") ? 10 : 0);
+    const rootSignals = (root: Element) => {
+      const explicitIdentity =
+        root.id === "noteContainer" ||
+        root.hasAttribute("data-xhs-note-id") ||
+        root.matches(
+          "[data-testid='note-detail'],.note-detail-mask,[class^='note-detail-'],[class*=' note-detail-']",
+        );
+      const hasTitle = Boolean(
+        root.querySelector(
+          "#detail-title,[data-testid='note-title'],[data-xhs-note-title],[class~='note-title'],[class^='note-title-'],[class*=' note-title-']",
+        ),
+      );
+      const hasDescription = Boolean(
+        root.querySelector(
+          "#detail-desc,[data-testid='note-content'],[data-testid='note-desc'],[data-xhs-note-desc],[class~='note-desc'],[class^='note-desc-'],[class*=' note-desc-']",
+        ),
+      );
+      const hasActionBar = Boolean(
+        root.querySelector(
+          "[data-testid='note-action-bar'],.interactions.engage-bar,.engage-bar-container",
+        ),
+      );
+      const hasMedia = Boolean(
+        root.querySelector(
+          "[data-testid='note-media'],[class*='swiper'],[class*='carousel'],[class*='media-container'],video",
+        ),
+      );
+      const corroboratingSignalCount = [
+        hasTitle,
+        hasDescription,
+        hasActionBar,
+        hasMedia,
+      ].filter(Boolean).length;
+      return {
+        explicitIdentity,
+        hasTitle,
+        hasDescription,
+        hasActionBar,
+        hasMedia,
+        corroboratingSignalCount,
+      };
+    };
+    const isStrongCurrentNoteRoot = (root: Element) => {
+      const signals = rootSignals(root);
+      // A generic main/article/note-content element is only a search scope
+      // when at least two independent current-note signals corroborate it.
+      return signals.explicitIdentity || signals.corroboratingSignalCount >= 2;
+    };
+    const rootScore = (root: Element) => {
+      const signals = rootSignals(root);
+      return (
+        (root.id === "noteContainer" ? 100 : 0) +
+        (signals.explicitIdentity ? 50 : 0) +
+        (signals.hasTitle ? 20 : 0) +
+        (signals.hasDescription ? 20 : 0) +
+        (signals.hasActionBar ? 10 : 0) +
+        (signals.hasMedia ? 10 : 0)
+      );
+    };
     const mainNoteRoot = roots
-      .filter(visible)
+      .filter((root) => visible(root) && isStrongCurrentNoteRoot(root))
       .sort((left, right) => rootScore(right) - rootScore(left))[0] || null;
     document
       .querySelectorAll("[data-veridia-current-note-scope]")
@@ -1277,6 +1329,11 @@ export async function collectDomPageSnapshot(
       .filter(Boolean)
       .join("\n")
       .trim();
+    const terminalPageText = (
+      document.body?.innerText ||
+      document.body?.textContent ||
+      ""
+    ).slice(0, 50_000);
     const loginEvidence: string[] = [];
     if (/登录后推荐|请先登录|登录以继续|手机号登录|扫码登录/u.test(text)) {
       loginEvidence.push("页面显示登录提示");
@@ -1302,6 +1359,7 @@ export async function collectDomPageSnapshot(
       currentNoteScopeSelector,
       finalUrl: location.href,
       pageTitle: document.title,
+      terminalPageText,
       visibleTextPreview: text.slice(0, 1_000),
       visibleTextLength: text.length,
       htmlLength: html.length,
@@ -1381,7 +1439,7 @@ export async function collectDomPageSnapshot(
   const unavailablePage = detectUnavailableXhsPage({
     url: snapshot.finalUrl,
     title: snapshot.pageTitle,
-    visibleText: snapshot.visibleTextPreview,
+    visibleText: snapshot.terminalPageText,
   });
 
   return {
@@ -1389,8 +1447,12 @@ export async function collectDomPageSnapshot(
     currentNoteScopeSelector: snapshot.currentNoteScopeSelector,
     finalUrl: snapshot.finalUrl,
     pageTitle: snapshot.pageTitle,
-    visibleTextPreview: snapshot.visibleTextPreview,
-    visibleTextLength: snapshot.visibleTextLength,
+    visibleTextPreview: unavailablePage
+      ? snapshot.terminalPageText.slice(0, 1_000)
+      : snapshot.visibleTextPreview,
+    visibleTextLength: unavailablePage
+      ? snapshot.terminalPageText.length
+      : snapshot.visibleTextLength,
     htmlLength: snapshot.htmlLength,
     pageStatus: unavailablePage?.status || snapshot.pageStatus,
     keyElementCount: snapshot.keyElementCount,

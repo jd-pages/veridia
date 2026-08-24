@@ -22,7 +22,6 @@ import {
   failureCodeForPageStatus,
 } from "./classification";
 import {
-  classifyAutomaticPage,
   detectUnavailableXhsPage,
   isShortXiaohongshuUrl,
   isXiaohongshuNoteDetailUrl,
@@ -45,6 +44,7 @@ import {
   type XhsPageCandidates,
 } from "./xhs-page-evidence";
 import {
+  readXhsReadinessPageEvidence,
   waitForXhsExtractionKeyElements,
   waitForXhsPageReadiness,
 } from "./xhs-readiness";
@@ -94,50 +94,85 @@ async function readPageIdentity(
   page: Page,
   httpStatus: number | null = null,
 ): Promise<PageIdentity> {
-  const finalUrl = page.url();
-  const [pageTitle, visibleText, notFoundDomMarker] = await Promise.all([
-    page.title().catch(() => ""),
-    page
-      .locator(
-        "#noteContainer,[data-testid='note-detail'],.note-detail-mask,[data-xhs-page-status],[data-page-status],[data-testid*='not-found'],[class*='not-found'],[data-testid*='login'],[class*='login-container'],[class*='security-check']",
-      )
-      .first()
-      .innerText({ timeout: 2_000 })
-      .catch(() => ""),
-    page
-      .locator(
-        "[data-xhs-page-status='NOTE_NOT_FOUND'], [data-xhs-page-status='NOT_FOUND'], [data-page-status='404'], [data-testid*='not-found'], [class*='not-found']",
-      )
-      .first()
-      .innerText({ timeout: 500 })
-      .catch(() => ""),
-  ]);
+  let evidence: Awaited<ReturnType<typeof readXhsReadinessPageEvidence>> | null =
+    null;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      evidence = await readXhsReadinessPageEvidence(page, httpStatus);
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await page.waitForTimeout(100);
+    }
+  }
+  if (!evidence) throw lastError;
   return {
-    finalUrl,
-    pageTitle,
-    pageType: classifyAutomaticPage({
-      url: finalUrl,
-      title: pageTitle,
-      visibleText,
-      httpStatus,
-      notFoundDomMarker,
-    }),
-    visibleText,
+    finalUrl: evidence.finalUrl,
+    pageTitle: evidence.pageTitle,
+    pageType: evidence.pageType,
+    visibleText: evidence.visibleText,
     httpStatus,
-    notFoundDomMarker: notFoundDomMarker || null,
+    notFoundDomMarker: evidence.notFoundDomMarker,
   };
 }
 
 async function waitForPageReadiness(
   page: Page,
   redirectChain: string[],
+  httpStatus: number | null,
 ) {
   const timeout = Number(
     process.env.AUTOMATION_REDIRECT_TIMEOUT_MS ||
       process.env.AUTOMATION_KEY_ELEMENT_TIMEOUT_MS ||
       15_000,
   );
-  await waitForXhsPageReadiness({ page, redirectChain, timeoutMs: timeout });
+  await waitForXhsPageReadiness({
+    page,
+    redirectChain,
+    timeoutMs: timeout,
+    httpStatus,
+  });
+}
+
+function unavailableExtractionError(
+  task: AuditTask,
+  identity: PageIdentity,
+) {
+  const unavailablePage = detectUnavailableXhsPage({
+    url: identity.finalUrl,
+    title: identity.pageTitle,
+    visibleText: identity.visibleText,
+    httpStatus: identity.httpStatus,
+    notFoundDomMarker: identity.notFoundDomMarker,
+  });
+  if (!unavailablePage) return null;
+  console.info(
+    "[自动审核] 笔记不存在",
+    JSON.stringify({
+      taskId: task.id,
+      originalUrl: safePageLogUrl(task.url),
+      finalUrl: safePageLogUrl(identity.finalUrl),
+      pageTitle: identity.pageTitle,
+      matchedCondition: unavailablePage.source,
+      matchedText: unavailablePage.matchedText,
+      errorCode: unavailablePage.errorCode || null,
+      detectedAt: new Date().toISOString(),
+      status: "NOTE_NOT_FOUND",
+    }),
+  );
+  return new AutomaticExtractionError(
+    "NOTE_NOT_FOUND",
+    unavailablePageFailureMessage(unavailablePage),
+    {
+      unavailablePage: {
+        status: unavailablePage.status,
+        matchedText: unavailablePage.matchedText,
+        source: unavailablePage.source,
+        errorCode: unavailablePage.errorCode || null,
+      },
+    },
+  );
 }
 
 async function captureFailureEvidence(
@@ -342,7 +377,11 @@ export async function extractAuditTaskAutomatically(
       responseUrl = response?.url() || "";
       if (responseUrl) redirectChain.push(responseUrl);
       if (!mock) {
-        await waitForPageReadiness(page, redirectChain);
+        await waitForPageReadiness(
+          page,
+          redirectChain,
+          navigationHttpStatus,
+        );
       }
     } catch (error) {
       if (error instanceof AutomaticExtractionError) throw error;
@@ -397,6 +436,10 @@ export async function extractAuditTaskAutomatically(
     redirectChain.push(identity.finalUrl);
     logPageIdentity(task, identity);
 
+    // A definitive unavailable-page signal has priority over shell-level login
+    // text or stale response evidence from the page that preceded the redirect.
+    const initialUnavailableError = unavailableExtractionError(task, identity);
+    if (initialUnavailableError) throw initialUnavailableError;
     if (identity.pageType === "LOGIN") {
       await showXhsManualIntervention(page, "LOGIN_REQUIRED");
       throw new AutomaticExtractionError(
@@ -409,41 +452,6 @@ export async function extractAuditTaskAutomatically(
       throw new AutomaticExtractionError(
         "SECURITY_CHECK",
         `页面要求安全验证：${identity.pageTitle || "无标题"}`,
-      );
-    }
-    const unavailablePage = detectUnavailableXhsPage({
-      url: identity.finalUrl,
-      title: identity.pageTitle,
-      visibleText: identity.visibleText,
-      httpStatus: identity.httpStatus,
-      notFoundDomMarker: identity.notFoundDomMarker,
-    });
-    if (unavailablePage) {
-      console.info(
-        "[自动审核] 笔记不存在",
-        JSON.stringify({
-          taskId: task.id,
-          originalUrl: safePageLogUrl(task.url),
-          finalUrl: safePageLogUrl(identity.finalUrl),
-          pageTitle: identity.pageTitle,
-          matchedCondition: unavailablePage.source,
-          matchedText: unavailablePage.matchedText,
-          errorCode: unavailablePage.errorCode || null,
-          detectedAt: new Date().toISOString(),
-          status: "NOTE_NOT_FOUND",
-        }),
-      );
-      throw new AutomaticExtractionError(
-        "NOTE_NOT_FOUND",
-        unavailablePageFailureMessage(unavailablePage),
-        {
-          unavailablePage: {
-            status: unavailablePage.status,
-            matchedText: unavailablePage.matchedText,
-            source: unavailablePage.source,
-            errorCode: unavailablePage.errorCode || null,
-          },
-        },
       );
     }
     const reachedNoteDetail = [task.url, identity.finalUrl, ...redirectChain].some(
@@ -488,6 +496,20 @@ export async function extractAuditTaskAutomatically(
       redirectChain: uniqueUrls(redirectChain),
       responseCandidates,
     });
+    // The page can transition after readiness (or while the adapter is taking
+    // its DOM snapshot). Re-read the final URL/title/body and discard the
+    // normal-looking snapshot if the live page has reached a terminal state.
+    const postExtractionIdentity = await readPageIdentity(page);
+    redirectChain.push(postExtractionIdentity.finalUrl);
+    const postExtractionUnavailableError = unavailableExtractionError(
+      task,
+      postExtractionIdentity,
+    );
+    if (postExtractionUnavailableError) {
+      identity = postExtractionIdentity;
+      throw postExtractionUnavailableError;
+    }
+    identity = postExtractionIdentity;
     note.finalUrl = identity.finalUrl;
     note.pageTitle = identity.pageTitle;
     note.pageType = identity.pageType;

@@ -1,4 +1,10 @@
 import type { Page } from "playwright";
+import {
+  classifyAutomaticPage,
+  detectUnavailableXhsPage,
+  type AutomaticPageType,
+  type UnavailablePageEvidence,
+} from "./page-classification";
 
 export const XHS_EXTRACTION_KEY_SELECTOR = [
   "#detail-title",
@@ -11,18 +17,77 @@ export const XHS_EXTRACTION_KEY_SELECTOR = [
   "#noteContainer [class*='carousel']",
   "#noteContainer a#hash-tag",
   "#noteContainer a[href*='/search_result']",
-  "script[type='application/ld+json']",
 ].join(",");
 
 const TERMINAL_PAGE_SELECTOR = [
-  "[data-xhs-page-status]",
-  "[data-page-status]",
+  "[data-xhs-page-status='NOTE_NOT_FOUND']",
+  "[data-xhs-page-status='NOT_FOUND']",
+  "[data-xhs-page-status='LOGIN_EXPIRED']",
+  "[data-xhs-page-status='SECURITY_VERIFICATION']",
+  "[data-page-status='404']",
   "[data-testid*='not-found']",
   "[class*='not-found']",
   "[data-testid*='login']",
   "[class*='login-container']",
   "[class*='security-check']",
 ].join(",");
+
+interface XhsReadinessPageEvidence {
+  finalUrl: string;
+  pageTitle: string;
+  visibleText: string;
+  notFoundDomMarker: string | null;
+  pageType: AutomaticPageType;
+  unavailablePage: UnavailablePageEvidence | null;
+}
+
+/**
+ * Read terminal evidence from the whole rendered page. This deliberately does
+ * not use a current-note scope: a redirect/error shell can replace that scope
+ * while an earlier hydration snapshot is still in flight.
+ */
+export async function readXhsReadinessPageEvidence(
+  page: Page,
+  httpStatus: number | null = null,
+): Promise<XhsReadinessPageEvidence> {
+  const snapshot = await page.evaluate(() => {
+    const marker = document.querySelector(
+      "[data-xhs-page-status='NOTE_NOT_FOUND'],[data-xhs-page-status='NOT_FOUND'],[data-page-status='404'],[data-testid*='not-found'],[class*='not-found']",
+    );
+    return {
+      finalUrl: location.href,
+      pageTitle: document.title || "",
+      visibleText: (document.body?.innerText || document.body?.textContent || "")
+        .slice(0, 50_000),
+      notFoundDomMarker: (marker?.textContent || "").trim() || null,
+    };
+  });
+  const unavailablePage = detectUnavailableXhsPage({
+    url: snapshot.finalUrl,
+    title: snapshot.pageTitle,
+    visibleText: snapshot.visibleText,
+    httpStatus,
+    notFoundDomMarker: snapshot.notFoundDomMarker,
+  });
+  return {
+    ...snapshot,
+    pageType: classifyAutomaticPage({
+      url: snapshot.finalUrl,
+      title: snapshot.pageTitle,
+      visibleText: snapshot.visibleText,
+      httpStatus,
+      notFoundDomMarker: snapshot.notFoundDomMarker,
+    }),
+    unavailablePage,
+  };
+}
+
+function isTerminalEvidence(evidence: XhsReadinessPageEvidence) {
+  return Boolean(evidence.unavailablePage) ||
+    ["LOGIN", "SECURITY_CHECK", "APP_LAUNCH", "ERROR_PAGE"].includes(
+      evidence.pageType,
+    );
+}
 
 async function isEmptyDocumentShell(page: Page) {
   return page.evaluate(() => {
@@ -43,6 +108,7 @@ export async function waitForXhsPageReadiness(input: {
   redirectChain: string[];
   timeoutMs: number;
   pollMs?: number;
+  httpStatus?: number | null;
 }) {
   const { page, redirectChain } = input;
   const deadline = Date.now() + Math.max(250, input.timeoutMs);
@@ -51,16 +117,30 @@ export async function waitForXhsPageReadiness(input: {
 
   while (Date.now() < deadline) {
     redirectChain.push(page.url());
+    // Terminal URL/title/body/DOM evidence always wins over an earlier shell
+    // or hydration signal from the same polling turn.
+    const terminalEvidence = await readXhsReadinessPageEvidence(
+      page,
+      input.httpStatus ?? null,
+    ).catch(() => null);
+    if (terminalEvidence && isTerminalEvidence(terminalEvidence)) {
+      return true;
+    }
     const [keyElementCount, terminalElementCount] = await Promise.all([
       page.locator(XHS_EXTRACTION_KEY_SELECTOR).count().catch(() => 0),
       page.locator(TERMINAL_PAGE_SELECTOR).count().catch(() => 0),
     ]);
-    if (keyElementCount > 0 || terminalElementCount > 0) {
-      if (keyElementCount > 0) {
-        await page
-          .waitForLoadState("networkidle", { timeout: 2_500 })
-          .catch(() => undefined);
-        await page.waitForTimeout(600);
+    if (terminalElementCount > 0) return true;
+    if (keyElementCount > 0) {
+      await page
+        .waitForLoadState("networkidle", { timeout: 2_500 })
+        .catch(() => undefined);
+      await page.waitForTimeout(600);
+      const stabilizedEvidence = await readXhsReadinessPageEvidence(
+        page,
+      ).catch(() => null);
+      if (stabilizedEvidence && isTerminalEvidence(stabilizedEvidence)) {
+        redirectChain.push(stabilizedEvidence.finalUrl);
       }
       return true;
     }

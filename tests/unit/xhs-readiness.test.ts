@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
-import { waitForXhsPageReadiness } from "@/lib/automation/xhs-readiness";
+import { collectDomPageSnapshot } from "@/lib/automation/xhs-page-evidence";
+import {
+  readXhsReadinessPageEvidence,
+  waitForXhsPageReadiness,
+} from "@/lib/automation/xhs-readiness";
+
+const noteUrl =
+  "https://www.xiaohongshu.com/explore/6a798984000000000f039c00";
 
 describe("小红书页面 hydration 就绪门禁", () => {
   let browser: Browser | undefined;
@@ -14,6 +21,92 @@ describe("小红书页面 hydration 就绪门禁", () => {
   afterAll(async () => {
     await browser?.close();
   }, 30_000);
+
+  it("站点壳层的全局 JSON-LD 和 generic main 不能独立成为 current-note", async () => {
+    await page.setContent(`
+      <script type="application/ld+json">
+        {"title":"想了解些什么?","description":"想了解些什么?"}
+      </script>
+      <main><h1>想了解些什么?</h1><article>搜索推荐内容</article></main>
+    `);
+
+    await expect(
+      waitForXhsPageReadiness({
+        page,
+        redirectChain: [],
+        timeoutMs: 300,
+        pollMs: 25,
+      }),
+    ).resolves.toBe(false);
+    const snapshot = await collectDomPageSnapshot(page);
+    expect(snapshot.currentNoteScopeSelector).toBeNull();
+    expect(snapshot.keyElementCount).toBe(0);
+    expect(snapshot.titleCandidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ value: "想了解些什么?", source: "PAGE_JSON" }),
+      ]),
+    );
+  });
+
+  it("壳层与 JSON-LD 后跳转真实 404 时终态优先于普通提取", async () => {
+    await page.route("https://www.xiaohongshu.com/**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === "/404") {
+        await route.fulfill({
+          status: 200,
+          contentType: "text/html; charset=utf-8",
+          body: `<!doctype html><title>小红书 - 你访问的页面不见了</title><body><main>你访问的页面不见了<br>3秒后将自动返回首页</main></body>`,
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html; charset=utf-8",
+        body: `<!doctype html><title>小红书</title><body>
+          <script type="application/ld+json">{"title":"想了解些什么?","description":"想了解些什么?"}</script>
+          <main><h1>想了解些什么?</h1></main>
+          <script>setTimeout(() => location.href = '/404?source=note&noteId=6a798984000000000f039c00&errorCode=-510001', 150)</script>
+        </body>`,
+      });
+    });
+    await page.goto(noteUrl, { waitUntil: "domcontentloaded" });
+    const redirects: string[] = [];
+    await expect(
+      waitForXhsPageReadiness({
+        page,
+        redirectChain: redirects,
+        timeoutMs: 2_000,
+        pollMs: 25,
+        httpStatus: 200,
+      }),
+    ).resolves.toBe(true);
+    const evidence = await readXhsReadinessPageEvidence(page);
+    expect(evidence.unavailablePage).toMatchObject({
+      status: "NOTE_NOT_FOUND",
+      errorCode: "-510001",
+    });
+    expect(evidence.finalUrl).toContain("/404?");
+    expect(evidence.visibleText).toContain("你访问的页面不见了");
+    await page.unrouteAll({ behavior: "wait" });
+  });
+
+  it("HTTP 200 且原作品 URL 未变时仍以不存在正文判定终态", async () => {
+    await page.route(noteUrl, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html; charset=utf-8",
+        body: `<!doctype html><title>小红书</title><body><main>笔记不存在</main></body>`,
+      });
+    });
+    const response = await page.goto(noteUrl, { waitUntil: "domcontentloaded" });
+    await expect(
+      readXhsReadinessPageEvidence(page, response?.status() ?? null),
+    ).resolves.toMatchObject({
+      finalUrl: noteUrl,
+      unavailablePage: { status: "NOTE_NOT_FOUND", source: "BODY" },
+    });
+    await page.unrouteAll({ behavior: "wait" });
+  });
 
   it("稳定 URL 但尚未 hydration 时继续等待 current-note 证据", async () => {
     await page.setContent(`
@@ -33,6 +126,30 @@ describe("小红书页面 hydration 就绪门禁", () => {
       }),
     ).resolves.toBe(true);
     expect(await page.locator("#detail-title").textContent()).toBe("延迟标题");
+  });
+
+  it("generic main 先出现时不提前提取，等待慢速 current-note 容器", async () => {
+    await page.setContent(`
+      <main><h1>想了解些什么?</h1></main>
+      <script>
+        setTimeout(() => {
+          document.body.innerHTML += '<section id="noteContainer"><h1 id="detail-title">真正笔记标题</h1><div id="detail-desc">真正笔记正文</div></section>';
+        }, 350);
+      </script>
+    `);
+    const startedAt = Date.now();
+    await expect(
+      waitForXhsPageReadiness({
+        page,
+        redirectChain: [],
+        timeoutMs: 1_500,
+        pollMs: 25,
+      }),
+    ).resolves.toBe(true);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(300);
+    expect(await page.locator("#detail-title").textContent()).toBe(
+      "真正笔记标题",
+    );
   });
 
   it("空白稳定页面不能被当作已就绪", async () => {
