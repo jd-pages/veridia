@@ -103,6 +103,33 @@ test("未登录但公开可访问的抖音作品保持 NORMAL 并继续提取", 
   ).toBeTruthy();
 });
 
+test("Protected DOUYIN_PUBLIC_IMAGE_TEXT_DETAIL：公开图文未登录仍为 NORMAL", async ({ page }) => {
+  await login(page);
+  const batchId = await createDouyinBatchForUrl(
+    page,
+    `${E2E_ORIGIN}/mock/douyin?case=public-image-text-detail&raw=true&dy=${Date.now()}`,
+  );
+  await waitForTerminalBatch(page, batchId);
+  const batch = (await (
+    await page.request.get(`/api/automation/batches?batchId=${batchId}`)
+  ).json()).data[0];
+  expect(batch.tasks[0].failureCode || "").not.toMatch(
+    /STRUCTURE_MISMATCH|LOGIN_REQUIRED/u,
+  );
+  const result = (await (
+    await page.request.get(`/api/results?batchId=${batchId}&pageSize=10`)
+  ).json()).data.items[0];
+  expect(result).toMatchObject({
+    pageStatus: "NORMAL",
+    noteType: "IMAGE_TEXT",
+    imageCount: 2,
+    publicStatus: "NOT_REQUIRED",
+  });
+  expect(
+    (await page.request.post(`/api/automation/batches/${batchId}/clear`)).ok(),
+  ).toBeTruthy();
+});
+
 test("page.goto 超时但抖音作品 DOM 已出现时继续提取", async ({ page }) => {
   await login(page);
   const batchId = await createDouyinBatchForUrl(

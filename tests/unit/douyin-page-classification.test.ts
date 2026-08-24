@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyDouyinPage, isDouyinContentDetailUrl, isDouyinShortUrl, safeDouyinDiagnosticUrl, toWellFormedBrowserText } from "@/lib/automation/douyin-page-classification";
+import { classifyDouyinPage, douyinContentIdentityFromUrl, isDouyinContentDetailUrl, isDouyinShortUrl, safeDouyinDiagnosticUrl, toWellFormedBrowserText } from "@/lib/automation/douyin-page-classification";
 
 describe("抖音页面分类", () => {
   it("仅接受作品详情与短链接", () => {
@@ -7,6 +7,17 @@ describe("抖音页面分类", () => {
     expect(isDouyinContentDetailUrl("https://www.douyin.com/note/456")).toBe(true);
     expect(isDouyinShortUrl("https://v.douyin.com/abcdef/")).toBe(true);
     expect(isDouyinContentDetailUrl("https://www.douyin.com/user/123")).toBe(false);
+  });
+
+  it("短链接跳转后的 /note/ 保留 contentId 与图文类型", () => {
+    expect(isDouyinShortUrl("https://v.douyin.com/abc123/")).toBe(true);
+    expect(douyinContentIdentityFromUrl(
+      "https://www.douyin.com/note/7672632017595986041?previous_page=web_code_link",
+    )).toEqual({
+      contentId: "7672632017595986041",
+      noteType: "IMAGE_TEXT",
+      canonicalUrl: "https://www.douyin.com/note/7672632017595986041",
+    });
   });
 
   it.each([
@@ -18,10 +29,10 @@ describe("抖音页面分类", () => {
     expect(classifyDouyinPage({ url: "https://www.douyin.com/video/123", visibleText }).state).toBe(expected);
   });
 
-  it("区分超时、网络异常和正常空内容", () => {
+  it("区分超时、网络异常且禁止只凭详情 URL 判正常", () => {
     expect(classifyDouyinPage({ url: "https://www.douyin.com/video/123", timedOut: true }).state).toBe("PAGE_LOAD_TIMEOUT");
     expect(classifyDouyinPage({ url: "https://www.douyin.com/video/123", networkError: true }).state).toBe("NETWORK_ERROR");
-    expect(classifyDouyinPage({ url: "https://www.douyin.com/video/123", visibleText: "" }).state).toBe("NORMAL");
+    expect(classifyDouyinPage({ url: "https://www.douyin.com/video/123", visibleText: "" }).state).toBe("UNKNOWN");
   });
 
   it("公开作品主体已渲染时不把评论区登录提示判为登录墙", () => {
@@ -62,6 +73,7 @@ describe("抖音页面分类", () => {
       classifyDouyinPage({
         url: "https://www.douyin.com/video/123",
         visibleText: "作品正文",
+        hasContentEvidence: true,
       }).state,
     ).toBe("NORMAL");
   });
@@ -90,10 +102,12 @@ describe("抖音页面分类", () => {
     expect(classifyDouyinPage({
       url: "https://www.douyin.com/video/123",
       visibleText: "图文作品",
+      hasContentEvidence: true,
     }).pageType).toBe("VIDEO_DETAIL");
     expect(classifyDouyinPage({
       url: "https://www.douyin.com/note/456",
       visibleText: "页面中包含 video 元素",
+      hasContentEvidence: true,
     }).pageType).toBe("IMAGE_TEXT_DETAIL");
   });
 });

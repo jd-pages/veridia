@@ -1,4 +1,8 @@
 import type { Page } from "playwright";
+import {
+  readDouyinCurrentContentEvidence,
+  type DouyinCurrentContentEvidence,
+} from "./douyin-current-content-evidence";
 
 export type DouyinPageState =
   | "NORMAL"
@@ -157,7 +161,7 @@ export function classifyDouyinPage(input: {
   if (isDouyinShortUrl(input.url)) return { state: "UNKNOWN", pageType: "SHORT_LINK", matchedCondition: null };
   if (
     isDouyinContentDetailUrl(input.url) &&
-    input.hasContentEvidence !== false
+    input.hasContentEvidence === true
   ) {
     const identity = douyinContentIdentityFromUrl(input.url);
     return {
@@ -174,69 +178,30 @@ export async function readDouyinPageIdentity(
   httpStatus?: number | null,
   canonicalUrl?: string | null,
   expectedContentId?: string | null,
+  currentContentEvidence?: DouyinCurrentContentEvidence | null,
 ) {
   const currentUrl = page.url();
-  const snapshot = await page.evaluate((contentId) => {
+  const snapshot = await page.evaluate(() => {
     const body = document.body;
     const visibleText = body?.innerText || "";
     const html = body?.innerHTML || "";
-    const detailRoot = document.querySelector("[data-e2e='note-detail']");
-    const detailScope = detailRoot || document;
-    const description = detailScope.querySelector(
-      [
-        "[data-e2e='video-desc']",
-        "[data-e2e='aweme-desc']",
-        "[data-e2e='video-title']",
-        "[data-e2e='detail-desc']",
-        "[data-testid='douyin-description']",
-      ].join(", "),
-    )?.textContent?.trim() || "";
-    const mediaCount = detailScope.querySelectorAll(
-      "video, [class*='dySwiperSlide'] img, [data-e2e='slide'] img, [data-testid='douyin-image']",
-    ).length;
-    const structuredScripts = Array.from(document.querySelectorAll(
-      "script[type='application/json'], script#__RENDER_DATA__, script#RENDER_DATA",
-    )).map((script) => script.textContent || "");
-    const hasStructuredCurrentContent = Boolean(
-      contentId && structuredScripts.some((value) => value.includes(contentId)),
-    );
     return {
       title: document.title,
       readyState: document.readyState,
       visibleText,
       visibleTextLength: visibleText.length,
       bodyLength: html.length,
-      hasDetailRoot: Boolean(detailRoot),
-      descriptionLength: description.length,
-      mediaCount,
-      hasStructuredCurrentContent,
-      contentIdInDocument: Boolean(contentId && html.includes(contentId)),
     };
-  }, expectedContentId || null).catch(() => ({
+  }).catch(() => ({
     title: "",
     readyState: "unknown",
     visibleText: "",
     visibleTextLength: 0,
     bodyLength: 0,
-    hasDetailRoot: false,
-    descriptionLength: 0,
-    mediaCount: 0,
-    hasStructuredCurrentContent: false,
-    contentIdInDocument: false,
   }));
-  const currentIdentity = douyinContentIdentityFromUrl(currentUrl);
-  const contentIdMatches = !expectedContentId ||
-    currentIdentity?.contentId === expectedContentId ||
-    snapshot.contentIdInDocument ||
-    snapshot.hasStructuredCurrentContent;
-  const hasContentEvidence = Boolean(
-    contentIdMatches &&
-      (
-        snapshot.hasStructuredCurrentContent ||
-        (snapshot.hasDetailRoot &&
-          (snapshot.descriptionLength > 0 || snapshot.mediaCount > 0))
-      ),
-  );
+  const evidence = currentContentEvidence ||
+    await readDouyinCurrentContentEvidence(page, expectedContentId);
+  const hasContentEvidence = evidence.hasContentEvidence;
   const title = toWellFormedBrowserText(snapshot.title);
   const visibleText = toWellFormedBrowserText(snapshot.visibleText);
   const finalUrl = canonicalUrl || currentUrl;
@@ -255,13 +220,14 @@ export async function readDouyinPageIdentity(
     visibleTextLength: visibleText.length,
     bodyLength: snapshot.bodyLength,
     documentReadyState: snapshot.readyState,
-    hasDetailRoot: snapshot.hasDetailRoot,
-    descriptionLength: snapshot.descriptionLength,
-    mediaCount: snapshot.mediaCount,
-    hasStructuredCurrentContent: snapshot.hasStructuredCurrentContent,
-    contentIdInDocument: snapshot.contentIdInDocument,
-    contentIdMatches,
+    hasDetailRoot: evidence.hasExplicitRoot,
+    descriptionLength: evidence.descriptionLength,
+    mediaCount: evidence.imageCount + evidence.videoCount,
+    hasStructuredCurrentContent: evidence.hasStructuredCurrentContent,
+    contentIdInDocument: evidence.contentIdInDocument,
+    contentIdMatches: evidence.contentIdMatches,
     hasContentEvidence,
+    currentContentEvidence: evidence,
     httpStatus: httpStatus || null,
     ...classified,
   };

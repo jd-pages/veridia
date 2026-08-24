@@ -20,6 +20,10 @@ import {
   toWellFormedBrowserText,
 } from "./douyin-page-classification";
 import {
+  readDouyinCurrentContentEvidence,
+  waitForDouyinCurrentContentEvidence,
+} from "./douyin-current-content-evidence";
+import {
   findDouyinAwemeItem,
   playwrightDouyinAdapter,
   type DouyinStructuredEvidence,
@@ -202,25 +206,6 @@ function lastContentIdentity(values: string[]) {
   return null;
 }
 
-async function waitForDouyinPageEvidence(page: Page, timeoutMs: number) {
-  await Promise.race([
-    page.waitForSelector(
-      "[data-e2e='note-detail'], [data-testid='douyin-note-detail'], [class*='dySwiper'], [data-testid='douyin-image-carousel'], video",
-      {
-      state: "attached",
-      timeout: timeoutMs,
-      },
-    ),
-    page.waitForFunction(
-      () => /你要观看的(?:图文|视频|作品|内容)不存在|安全验证|扫码登录|登录后继续/u.test(
-        document.body?.innerText || "",
-      ),
-      undefined,
-      { timeout: timeoutMs },
-    ),
-  ]).catch(() => undefined);
-}
-
 async function saveDouyinPageMetadata(input: {
   taskId: string;
   finalUrl: string | null;
@@ -335,13 +320,17 @@ export async function extractDouyinAuditTaskAutomatically(
       }
     }
 
-    await waitForDouyinPageEvidence(page, mock ? 2_000 : 10_000);
-    httpStatus = httpStatus ?? responseCollector.mainDocuments.at(-1)?.status ?? null;
     contentIdentity = contentIdentity || lastContentIdentity([
       task.url,
       ...redirectChain,
       page.url(),
     ]);
+    await waitForDouyinCurrentContentEvidence(
+      page,
+      contentIdentity?.contentId || null,
+      mock ? 2_000 : 10_000,
+    );
+    httpStatus = httpStatus ?? responseCollector.mainDocuments.at(-1)?.status ?? null;
     if (contentIdentity) {
       canonicalUrl = contentIdentity.canonicalUrl;
       structured = await responseCollector.waitFor(
@@ -349,12 +338,17 @@ export async function extractDouyinAuditTaskAutomatically(
         mock ? 300 : 10_000,
       );
     }
+    const identityEvidence = await readDouyinCurrentContentEvidence(
+      page,
+      contentIdentity?.contentId || null,
+    );
 
     const identity = await readDouyinPageIdentity(
       page,
       httpStatus,
       canonicalUrl,
       contentIdentity?.contentId || null,
+      identityEvidence,
     );
     identitySnapshot = identity;
     pageTitle = identity.title;
@@ -371,6 +365,9 @@ export async function extractDouyinAuditTaskAutomatically(
       bodyLength: identity.bodyLength,
       visibleTextLength: identity.visibleTextLength,
       hasContentEvidence: identity.hasContentEvidence,
+      currentContentScope: identity.currentContentEvidence.scopeKind,
+      currentCarouselMarkers: identity.currentContentEvidence.carouselMarkerCount,
+      currentActionBarControls: identity.currentContentEvidence.actionBarControlCount,
       redirectCount: uniqueValues(redirectChain).length,
       structuredEvidence: Boolean(structured),
       navigationAttempts,
@@ -421,6 +418,7 @@ export async function extractDouyinAuditTaskAutomatically(
       canonicalUrl,
       contentId: contentIdentity?.contentId || null,
       structured,
+      currentContentEvidence: identity.currentContentEvidence,
     });
     const note = sanitizeDouyinBrowserValue(extractedNote) as typeof extractedNote;
     note.redirectChain = uniqueValues(redirectChain).map(safeDouyinDiagnosticUrl);
@@ -449,6 +447,7 @@ export async function extractDouyinAuditTaskAutomatically(
       bodyLength: identity.bodyLength,
       visibleTextLength: identity.visibleTextLength,
       pageStatus: identity.state,
+      currentContentEvidence: identity.currentContentEvidence,
       navigationError: navigationAttempts.findLast((item) => !item.ok) || null,
     };
     note.pageEvidence = evidence;

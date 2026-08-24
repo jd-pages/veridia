@@ -6,6 +6,10 @@ import {
   safeDouyinDiagnosticUrl,
 } from "./douyin-page-classification";
 import {
+  readDouyinCurrentContentEvidence,
+  type DouyinCurrentContentEvidence,
+} from "./douyin-current-content-evidence";
+import {
   douyinTopicMatchKey,
   normalizeDouyinTopicName,
 } from "@/lib/douyin-topic";
@@ -22,6 +26,7 @@ export interface DouyinExtractionOptions {
   canonicalUrl?: string | null;
   contentId?: string | null;
   structured?: DouyinStructuredEvidence | null;
+  currentContentEvidence?: DouyinCurrentContentEvidence | null;
 }
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -348,10 +353,17 @@ export function extractDouyinStructuredPublishedAt(
   return null;
 }
 
-export async function collectDouyinEvidence(page: Page) {
-  return page.evaluate(() => {
-    const detailRoot = document.querySelector("[data-e2e='note-detail']");
-    const scope = detailRoot || document;
+export async function collectDouyinEvidence(
+  page: Page,
+  currentContentEvidence?: DouyinCurrentContentEvidence | null,
+) {
+  const scopeReference = currentContentEvidence ||
+    await readDouyinCurrentContentEvidence(page, null);
+  return page.evaluate((scopeInput) => {
+    const resolvedScope = scopeInput.scopeSelector && scopeInput.scopeIndex >= 0
+      ? document.querySelectorAll(scopeInput.scopeSelector).item(scopeInput.scopeIndex)
+      : null;
+    const scope = resolvedScope || document.createElement("div");
     const selectors = [
       "[data-e2e='video-desc']",
       "[data-e2e='aweme-desc']",
@@ -473,7 +485,7 @@ export async function collectDouyinEvidence(page: Page) {
       "[data-testid='douyin-image-carousel']",
       "[data-testid='douyin-image']",
     ].join(", ")));
-    if (!carouselRoots.length && detailRoot) carouselRoots.push(detailRoot);
+    if (!carouselRoots.length && resolvedScope) carouselRoots.push(scope);
     const excludedSelector = [
       "[class*='avatar']",
       "[data-e2e*='avatar']",
@@ -546,8 +558,8 @@ export async function collectDouyinEvidence(page: Page) {
         carouselTotal = Math.max(carouselTotal, Number(value) || 0);
       }
     }
-    const publishedTimeElement = detailRoot
-      ? [...detailRoot.querySelectorAll(
+    const publishedTimeElement = scope
+      ? [...scope.querySelectorAll(
           "[data-e2e='video-publish-time'],[data-testid='douyin-publish-time'],time[datetime]",
         )].find((element) =>
           !element.closest("[class*='comment'],[data-e2e*='comment'],[class*='recommend'],[data-e2e*='recommend']") &&
@@ -579,12 +591,16 @@ export async function collectDouyinEvidence(page: Page) {
       structuredPayloads: scripts,
       visibleText: document.body?.innerText?.slice(0, 20_000) || "",
     };
+  }, {
+    scopeSelector: scopeReference.scopeSelector,
+    scopeIndex: scopeReference.scopeIndex,
   });
 }
 
 async function collectStableDouyinImageEvidence(
   page: Page,
   initial: Awaited<ReturnType<typeof collectDouyinEvidence>>,
+  currentContentEvidence: DouyinCurrentContentEvidence,
 ) {
   if (typeof page.waitForTimeout !== "function") return initial;
   const deadline = Date.now() + 4_000;
@@ -605,7 +621,7 @@ async function collectStableDouyinImageEvidence(
       previousSignature = signature;
     }
     await page.waitForTimeout(150);
-    latest = await collectDouyinEvidence(page);
+    latest = await collectDouyinEvidence(page, currentContentEvidence);
   }
   return latest;
 }
@@ -642,10 +658,15 @@ export class PlaywrightDouyinAdapter {
       };
     }
 
-    let evidence = await collectDouyinEvidence(page);
     const finalUrl = options.canonicalUrl || page.url();
     const urlIdentity = douyinContentIdentityFromUrl(finalUrl) ||
       douyinContentIdentityFromUrl(originalUrl);
+    const currentContentEvidence = options.currentContentEvidence ||
+      await readDouyinCurrentContentEvidence(
+        page,
+        options.contentId || urlIdentity?.contentId || null,
+      );
+    let evidence = await collectDouyinEvidence(page, currentContentEvidence);
     const embeddedStructuredItem = options.contentId
       ? findDouyinAwemeItemFromSerializedPayloads(
           evidence.structuredPayloads,
@@ -694,7 +715,11 @@ export class PlaywrightDouyinAdapter {
           ? "VIDEO" as const
           : "UNKNOWN" as const);
     if (noteType === "IMAGE_TEXT" && structuredImages.count === 0) {
-      evidence = await collectStableDouyinImageEvidence(page, evidence);
+      evidence = await collectStableDouyinImageEvidence(
+        page,
+        evidence,
+        currentContentEvidence,
+      );
     }
     const imageCount = noteType === "IMAGE_TEXT"
       ? structuredImages.count || evidence.imageCount
@@ -765,6 +790,7 @@ export class PlaywrightDouyinAdapter {
             ? "PAGE_STRUCTURED_DATA"
             : "NETWORK_STRUCTURED_DATA"
           : "DOM",
+        currentContentEvidence,
         bodySource,
         titleSource: evidence.titleSource,
         structuredEvidenceSource: structuredEvidence?.source || null,

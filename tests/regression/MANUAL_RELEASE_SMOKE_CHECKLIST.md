@@ -10,6 +10,12 @@
 - [ ] 0 互动：0/0/0，总数 0
 - [ ] 高互动：8/4/10，总数 22
 
+## DOUYIN_REGRESSION_ALL
+
+- [ ] 公开 `/note/{id}` 图文：未登录仍为 NORMAL / IMAGE_TEXT_DETAIL，轮播、正文与 contentId 属于当前作品
+- [ ] 不存在、安全验证：继续分别为 NOTE_NOT_FOUND / SECURITY_RESTRICTED
+- [ ] 只有评论区或推荐作品媒体时：不得误判为当前作品 NORMAL
+
 ## STORE_MAPPING_AND_TOPIC_ALL
 
 - [ ] Kabrita：Store Mapping=MATCHED、Store Topic=NOT_REQUIRED、PRODUCT_STAGE=NONE

@@ -2,7 +2,7 @@ import type { ExtractedNote } from "@/lib/types";
 import { redirect } from "next/navigation";
 /* eslint-disable @next/next/no-img-element -- local mock must expose native image DOM to the extractor */
 
-type MockCase = "video" | "image-text" | "business-pass" | "public-logged-out" | "topics" | "unclickable" | "not-found" | "logged-out" | "security" | "no-permission" | "app-launch" | "empty" | "multi-image" | "network-error" | "load-timeout";
+type MockCase = "video" | "image-text" | "business-pass" | "public-logged-out" | "public-image-text-detail" | "topics" | "unclickable" | "not-found" | "logged-out" | "security" | "no-permission" | "app-launch" | "empty" | "multi-image" | "network-error" | "load-timeout";
 
 function noteFor(caseName: MockCase): ExtractedNote {
   const base: ExtractedNote = {
@@ -49,7 +49,7 @@ function noteFor(caseName: MockCase): ExtractedNote {
       })),
     };
   }
-  if (caseName === "image-text" || caseName === "multi-image") return { ...base, noteType: "IMAGE_TEXT", imageExtractionStatus: "SUCCESS", imageCount: caseName === "multi-image" ? 5 : 3 };
+  if (caseName === "image-text" || caseName === "multi-image" || caseName === "public-image-text-detail") return { ...base, noteType: "IMAGE_TEXT", imageExtractionStatus: "SUCCESS", imageCount: caseName === "multi-image" ? 5 : caseName === "public-image-text-detail" ? 2 : 3 };
   if (caseName === "unclickable") return { ...base, topics: base.topics.map((topic) => ({ ...topic, isLinkElement: false, hasHref: false, href: null })) };
   if (caseName === "empty") return { ...base, body: "", topics: [], technicalWarnings: ["BODY_NOT_RECOGNIZED", "TOPICS_NOT_RECOGNIZED"] };
   const statuses: Partial<Record<MockCase, ExtractedNote["pageStatus"]>> = { "not-found": "NOTE_NOT_FOUND", "logged-out": "LOGIN_EXPIRED", security: "SECURITY_VERIFICATION", "no-permission": "NO_PERMISSION" };
@@ -63,7 +63,7 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
   if (requested === "short-link") {
     redirect("/mock/douyin?case=video&redirectedFrom=short-link");
   }
-  const allowed: MockCase[] = ["video", "image-text", "business-pass", "public-logged-out", "topics", "unclickable", "not-found", "logged-out", "security", "no-permission", "app-launch", "empty", "multi-image", "network-error", "load-timeout"];
+  const allowed: MockCase[] = ["video", "image-text", "business-pass", "public-logged-out", "public-image-text-detail", "topics", "unclickable", "not-found", "logged-out", "security", "no-permission", "app-launch", "empty", "multi-image", "network-error", "load-timeout"];
   const caseName = (allowed.includes(requested as MockCase) ? requested : "video") as MockCase;
   const rawExtraction = params.raw === "true";
   const baseNote = noteFor(caseName);
@@ -89,10 +89,13 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
         ],
       }
     : baseNote;
-  const statusText: Record<MockCase, string | undefined> = { video: undefined, "image-text": undefined, "business-pass": undefined, "public-logged-out": undefined, topics: undefined, unclickable: undefined, empty: undefined, "multi-image": undefined, "not-found": "作品不存在，该作品已删除", "logged-out": "登录后继续，请扫码登录", security: "访问频繁，需要安全验证", "no-permission": "私密作品，暂无权限查看", "app-launch": "打开抖音 App 查看", "network-error": "模拟临时网络连接中断", "load-timeout": "模拟页面加载超时" };
+  const statusText: Record<MockCase, string | undefined> = { video: undefined, "image-text": undefined, "business-pass": undefined, "public-logged-out": undefined, "public-image-text-detail": undefined, topics: undefined, unclickable: undefined, empty: undefined, "multi-image": undefined, "not-found": "作品不存在，该作品已删除", "logged-out": "登录后继续，请扫码登录", security: "访问频繁，需要安全验证", "no-permission": "私密作品，暂无权限查看", "app-launch": "打开抖音 App 查看", "network-error": "模拟临时网络连接中断", "load-timeout": "模拟页面加载超时" };
   return (
     <main data-douyin-page-status={caseName} style={{ padding: 48 }}>
-      <article data-e2e="note-detail">
+      <article
+        data-e2e={caseName === "public-image-text-detail" ? undefined : "note-detail"}
+        data-testid={caseName === "public-image-text-detail" ? "douyin-note-detail" : undefined}
+      >
         <h1>{note.title}</h1>
         {statusText[caseName] ? <p>{statusText[caseName]}</p> : <>
           <div data-testid="douyin-author">{note.authorName}</div>
@@ -109,7 +112,11 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
               <button type="button">展开</button>
             </div>
           ) : <p data-e2e="video-desc" data-testid="douyin-description">{note.body}</p>}
-          {note.noteType === "VIDEO" ? <video aria-label="抖音模拟视频" /> : Array.from({ length: note.imageCount || 0 }, (_, index) => <img data-testid="douyin-image" src={`/mock-media/douyin/${index + 1}.jpg`} alt={`模拟图片${index + 1}`} key={index} />)}
+          {note.noteType === "VIDEO" ? <video aria-label="抖音模拟视频" /> : (
+            <div className={caseName === "public-image-text-detail" ? "dySwiper" : undefined}>
+              {Array.from({ length: note.imageCount || 0 }, (_, index) => <img data-testid="douyin-image" src={`/mock-media/douyin/${index + 1}.jpg`} alt={`模拟图片${index + 1}`} key={index} />)}
+            </div>
+          )}
           {rawExtraction && caseName === "business-pass" ? null : <div>{note.topics.map((topic) => topic.isLinkElement ? <a data-douyin-topic href={topic.href || "#"} key={topic.displayText}>{topic.displayText}{params.trailingHash === "true" ? "#" : ""}</a> : <span key={topic.displayText}>{topic.displayText}</span>)}</div>}
           {rawExtraction ? (
             <div data-e2e="video-publish-time">
@@ -118,7 +125,7 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
           ) : null}
         </>}
       </article>
-      {caseName === "public-logged-out" ? (
+      {caseName === "public-logged-out" || caseName === "public-image-text-detail" ? (
         <aside data-testid="douyin-comment-login">
           登录后查看更多评论，请扫码登录
         </aside>
