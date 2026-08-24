@@ -18,6 +18,7 @@ import {
   StartupRouteReadinessError,
   waitForStartupRoute,
 } from "./e2e-readiness.mjs";
+import { readPlaywrightCaseEvidence } from "./protected-evidence.mjs";
 
 const root = process.cwd();
 const args = process.argv.slice(2);
@@ -29,6 +30,7 @@ const isolationGroup = args.find((arg) => arg.startsWith("--group="))?.split("="
 const runId = `${new Date().toISOString().replace(/[:.]/gu, "-")}-${isolationGroup}-${randomUUID().slice(0, 8)}`;
 const runDirectory = path.join(root, ".playwright", "e2e-runs", runId);
 const metadataPath = path.join(runDirectory, "run.json");
+const jsonReportPath = path.join(runDirectory, "playwright-results.json");
 let serverProcess;
 let testProcess;
 let warmupBrowser;
@@ -346,6 +348,7 @@ async function main() {
     DOUYIN_PROFILE_PATH: douyinProfilePath,
     E2E_HTML_REPORT_DIR: path.join(root, "playwright-report", isolationGroup),
     E2E_TEST_RESULTS_DIR: path.join(root, "test-results", isolationGroup),
+    PLAYWRIGHT_JSON_OUTPUT_FILE: jsonReportPath,
     VERIDIA_ACCOUNT_SIGNING_PUBLIC_KEY_PATH: publicKeyPath,
     VERIDIA_ACCOUNT_SIGNING_PRIVATE_KEY_PATH: privateKeyPath,
     VERIDIA_NEXT_DIST_DIR: nextDistDir,
@@ -410,8 +413,10 @@ async function main() {
     testProcess.on("error", reject);
     testProcess.on("exit", (code) => resolve(code ?? 1));
   });
-  writeMetadata({ testProcessPid: testProcess.pid, total, passed: status === 0 ? total : null, status: status === 0 ? "PASSED" : "FAILED" });
-  process.stdout.write(`VERIDIA_E2E_RESULT=${JSON.stringify({ group: isolationGroup, total, passed: status === 0 ? total : 0 })}\n`);
+  const cases = readPlaywrightCaseEvidence(jsonReportPath, root);
+  const passed = cases.filter((item) => item.status === "PASSED").length;
+  writeMetadata({ testProcessPid: testProcess.pid, total, passed, status: status === 0 ? "PASSED" : "FAILED", cases });
+  process.stdout.write(`VERIDIA_E2E_RESULT=${JSON.stringify({ group: isolationGroup, total, passed, cases })}\n`);
   await cleanup(status === 0 ? "completed" : "failed");
   process.exitCode = status;
 }

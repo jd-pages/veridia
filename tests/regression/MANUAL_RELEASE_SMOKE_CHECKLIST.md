@@ -24,3 +24,7 @@
 
 - [ ] Danone 模板：阶段 IFFO/GUM，段位 P/1/2/3/4/1+/2+，反向输入失败
 - [ ] Kabrita 模板：仍按独立格式解析，不受 Danone 语义影响
+
+## AUTOMATION_RUNNER_LIFECYCLE_ALL
+
+- [ ] PROCESSING 中 PAUSE 后立即 CONTINUE：有限时间重新 RUNNING、旧结果写入被拒绝、后续 Batch 不饥饿

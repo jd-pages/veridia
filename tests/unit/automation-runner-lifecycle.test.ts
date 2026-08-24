@@ -2,11 +2,17 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  AutomaticExtractionHandoffCancelledError,
   runWithExtractionDeadline,
 } from "@/lib/automation/extraction-deadline";
 import {
   taskStatusForPersistedResult,
 } from "@/lib/automation/execution-lease";
+import {
+  claimRunnerWake,
+  completeRunnerWake,
+  requestRunnerWake,
+} from "@/lib/automation/runner-handoff";
 
 const root = process.cwd();
 
@@ -46,6 +52,53 @@ describe("Pause / Resume runner epoch", () => {
       }),
     ).resolves.toBe("done");
     expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("PAUSE 能立即中断等待中的 extraction 而不等待底层 Promise 退出", async () => {
+    const controller = new AbortController();
+    const pending = runWithExtractionDeadline({
+      operation: new Promise<never>(() => undefined),
+      cancel: vi.fn(async () => undefined),
+      deadlineMs: 60_000,
+      batchId: "batch-handoff",
+      taskId: "task-handoff",
+      runEpoch: 4,
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    await expect(pending).rejects.toBeInstanceOf(
+      AutomaticExtractionHandoffCancelledError,
+    );
+  });
+
+  it("多次 CONTINUE 使用 generation latch 合并唤醒且不产生双 runner", () => {
+    const state: { wakeGeneration?: number; runnerGeneration?: number } = {};
+    requestRunnerWake(state);
+    const firstRunner = claimRunnerWake(state);
+    expect(firstRunner).toBe(1);
+    expect(claimRunnerWake(state)).toBeNull();
+
+    requestRunnerWake(state);
+    requestRunnerWake(state);
+    requestRunnerWake(state);
+    expect(claimRunnerWake(state)).toBeNull();
+    expect(completeRunnerWake(state, firstRunner!)).toBe(true);
+
+    const nextRunner = claimRunnerWake(state);
+    expect(nextRunner).toBe(4);
+    expect(completeRunnerWake(state, nextRunner!)).toBe(false);
+  });
+
+  it("XHS context close 与下一代 launch 通过 closePromise 串行", () => {
+    const browser = readFileSync(
+      path.join(root, "lib/automation/browser.ts"),
+      "utf8",
+    );
+    expect(browser).toContain("closePromise?: Promise<void>");
+    expect(browser).toContain("if (state.closePromise) await state.closePromise");
+    expect(browser).toContain("await launching?.catch(() => undefined)");
   });
 
   it("Schema 与 Migration 只新增兼容 epoch 字段", () => {

@@ -4,7 +4,11 @@ import path from "node:path";
 import process from "node:process";
 import { groupE2eFiles, selectTestScope, validateManifest } from "./test-matrix.mjs";
 import { invalidateFullGateAttestation, writeFullGateAttestation } from "./full-gate-attestation.mjs";
-import { selectProtectedBehaviors } from "./protected-behaviors.mjs";
+import { PROTECTED_BEHAVIORS, selectProtectedBehaviors } from "./protected-behaviors.mjs";
+import {
+  aggregateProtectedBehaviorEvidence,
+  readVitestCaseEvidence,
+} from "./protected-evidence.mjs";
 import {
   classifyReleaseFailure,
   redactReleaseText,
@@ -60,6 +64,20 @@ function command(name, executable, args, options = {}) {
 
 function npm(name, args, options) {
   return command(name, process.platform === "win32" ? "npm.cmd" : "npm", args, options);
+}
+
+const unitEvidence = [];
+function runVitest(name, args, reportName) {
+  const reportFile = path.join(root, ".playwright", `vitest-${mode}-${reportName}.json`);
+  fs.mkdirSync(path.dirname(reportFile), { recursive: true });
+  fs.rmSync(reportFile, { force: true });
+  const result = npm(name, [
+    "exec", "--", "vitest", ...args,
+    "--reporter=default", "--reporter=json",
+    `--outputFile.json=${reportFile}`,
+  ]);
+  unitEvidence.push(...readVitestCaseEvidence(reportFile, root));
+  return result;
 }
 
 function passedTestCount(output) {
@@ -130,7 +148,7 @@ process.stdout.write([
 
 if (mode === "full") invalidateFullGateAttestation(root);
 
-record(command("Protected behavior registry", process.execPath, [path.join(root, "scripts", "testing", "protected-behaviors.mjs")]));
+const protectedRegistry = record(command("Protected behavior registry", process.execPath, [path.join(root, "scripts", "testing", "protected-behaviors.mjs")]));
 record(npm("Prisma Client", ["run", "db:generate"]));
 record(npm("Prisma Client assert", ["run", "prisma:assert"]));
 record(npm("Lint", ["run", "lint"]));
@@ -142,21 +160,22 @@ if (mode === "fast") {
   const related = changes.filter((file) => /\.(?:ts|tsx|js|mjs|json)$/u.test(file));
   unitCommandName = related.length ? "Affected unit tests" : "All unit tests (conservative fallback)";
   const unit = record(related.length
-    ? npm(unitCommandName, ["exec", "--", "vitest", "related", ...related, "--run", "--passWithNoTests"])
-    : npm(unitCommandName, ["test"]));
+    ? runVitest(unitCommandName, ["related", ...related, "--run", "--passWithNoTests"], "affected")
+    : runVitest(unitCommandName, ["run"], "all"));
   unitTotal = passedTestCount(unit.output);
   if (protectedSelection.unitTests.length) {
-    record(npm("Protected regression unit", [
-      "exec", "--", "vitest", "run", ...protectedSelection.unitTests,
-    ]));
+    record(runVitest("Protected regression unit", [
+      "run", ...protectedSelection.unitTests,
+    ], "protected"));
   }
 } else {
-  const unit = record(npm(unitCommandName, ["test"]));
+  const unit = record(runVitest(unitCommandName, ["run"], "all"));
   unitTotal = passedTestCount(unit.output);
 }
 
 let e2eTotal = 0;
 let e2ePassed = 0;
+const e2eEvidence = [];
 const groups = groupE2eFiles(selectedFiles);
 for (const group of groups) {
   const result = record(command(`E2E ${group.name}`, process.execPath, [
@@ -171,6 +190,7 @@ for (const group of groups) {
     const summary = JSON.parse(marker[1]);
     e2eTotal += summary.total;
     e2ePassed += summary.passed;
+    e2eEvidence.push(...(summary.cases || []));
   }
   if (!result.passed && mode === "fast") break;
 }
@@ -189,24 +209,21 @@ if (mode === "full") {
 record(command("git diff --check", "git", ["diff", "--check"]));
 record(command("git diff --cached --check", "git", ["diff", "--cached", "--check"]));
 
-const protectedFailed = failures.includes("Protected behavior registry")
-  || failures.includes(unitCommandName)
-  || failures.includes("Protected regression unit")
-  || failures.some((name) => name.startsWith("E2E "));
-const protectedRegression = protectedSelection.behaviorKeys.length === 0
-  ? "NOT_APPLICABLE"
-  : protectedFailed
-    ? "FAILED"
-    : "PASSED";
-const protectedBehaviors = protectedSelection.behaviorKeys.map((key) => ({
-  key,
-  status: protectedRegression,
-}));
+const protectedEvidence = aggregateProtectedBehaviorEvidence({
+  root,
+  behaviorKeys: protectedSelection.behaviorKeys,
+  behaviors: PROTECTED_BEHAVIORS,
+  unitEvidence,
+  e2eEvidence,
+  registryPassed: protectedRegistry.passed,
+});
+const protectedRegression = protectedEvidence.status;
+const protectedBehaviors = protectedEvidence.behaviors;
 
 const summary = {
   mode: mode.toUpperCase(),
   requestedMode: requestedMode.toUpperCase(),
-  passed: failures.length === 0,
+  passed: failures.length === 0 && !["FAILED"].includes(protectedRegression),
   failures,
   firstFailure: failureDetails[0] || null,
   failureDetails,
@@ -246,5 +263,7 @@ if (mode === "full" && summary.passed && process.env.VERIDIA_DISABLE_ATTESTATION
 fs.mkdirSync(path.join(root, ".playwright"), { recursive: true });
 fs.writeFileSync(path.join(root, ".playwright", `verification-${mode}.json`), `${JSON.stringify(summary, null, 2)}\n`, "utf8");
 process.stdout.write(`\nVERIDIA_VERIFY_RESULT=${JSON.stringify(summary)}\n`);
-process.stdout.write(`PROTECTED_BEHAVIOR_REGRESSION=${protectedRegression} ${protectedBehaviors.map((item) => `${item.key}:${item.status}`).join(" ")}\n`);
+process.stdout.write(`PROTECTED_BEHAVIOR_REGRESSION=${protectedRegression}\n`);
+process.stdout.write(`PASS: ${protectedBehaviors.filter((item) => item.status === "PASSED").map((item) => item.key).join(", ") || "无"}\n`);
+process.stdout.write(`FAILED: ${protectedBehaviors.filter((item) => item.status === "FAILED").map((item) => item.key).join(", ") || "无"}\n`);
 if (!summary.passed) process.exitCode = 1;

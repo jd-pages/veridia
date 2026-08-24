@@ -81,6 +81,7 @@ type XhsBrowserState = {
   loginPage?: Page;
   interactivePage?: Page;
   launchPromise?: Promise<BrowserContext>;
+  closePromise?: Promise<void>;
   sessionState: XhsSessionState;
   lastCheckedAt?: Date;
   lastVerificationAt?: Date;
@@ -428,6 +429,7 @@ async function reconcileCurrentContextPages(
 }
 
 async function ensureBrowserContext(allowRelaunch = false) {
+  if (state.closePromise) await state.closePromise;
   if (browserControlAvailable()) {
     state.controlState = "READY";
     ensureContextPageArbiter(state.context!);
@@ -805,29 +807,39 @@ export async function getXhsAuditPageDiagnostics() {
   };
 }
 
-export async function closeXhsBrowserContext() {
-  state.pageArbiter?.dispose();
-  state.pageArbiter = undefined;
-  state.lifecycleGeneration += 1;
-  const context = state.context;
-  const closeBrowser = state.closeBrowser;
-  state.closingContext = true;
-  state.browser = undefined;
-  state.context = undefined;
-  state.closeBrowser = undefined;
-  state.browserProcessId = null;
-  state.auditPage = undefined;
-  state.auditPagePromise = undefined;
-  state.loginPage = undefined;
-  state.interactivePage = undefined;
-  try {
-    if (closeBrowser) await closeBrowser().catch(() => undefined);
-    else if (context) await context.close().catch(() => undefined);
-  } finally {
-    state.closingContext = false;
-    state.contextClosedUnexpectedly = false;
-    state.controlState = "NOT_STARTED";
-  }
+export function closeXhsBrowserContext() {
+  if (state.closePromise) return state.closePromise;
+  const closing = (async () => {
+    state.pageArbiter?.dispose();
+    state.pageArbiter = undefined;
+    state.lifecycleGeneration += 1;
+    const launching = state.launchPromise;
+    const context = state.context;
+    const closeBrowser = state.closeBrowser;
+    state.closingContext = true;
+    state.browser = undefined;
+    state.context = undefined;
+    state.closeBrowser = undefined;
+    state.browserProcessId = null;
+    state.auditPage = undefined;
+    state.auditPagePromise = undefined;
+    state.loginPage = undefined;
+    state.interactivePage = undefined;
+    try {
+      if (closeBrowser) await closeBrowser().catch(() => undefined);
+      else if (context) await context.close().catch(() => undefined);
+      await launching?.catch(() => undefined);
+    } finally {
+      state.closingContext = false;
+      state.contextClosedUnexpectedly = false;
+      state.controlState = "NOT_STARTED";
+    }
+  })();
+  const barrier = closing.finally(() => {
+    if (state.closePromise === barrier) state.closePromise = undefined;
+  });
+  state.closePromise = barrier;
+  return barrier;
 }
 
 function livingPage(page: Page | undefined) {

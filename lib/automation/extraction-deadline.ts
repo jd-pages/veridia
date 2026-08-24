@@ -2,6 +2,13 @@ import { AutomaticExtractionError } from "./failure";
 
 export const DEFAULT_AUTOMATION_EXTRACTION_DEADLINE_MS = 120_000;
 
+export class AutomaticExtractionHandoffCancelledError extends Error {
+  constructor() {
+    super("自动提取已因批次生命周期切换而取消");
+    this.name = "AutomaticExtractionHandoffCancelledError";
+  }
+}
+
 export function automationExtractionDeadlineMs() {
   const configured = Number(
     process.env.AUTOMATION_EXTRACTION_DEADLINE_MS ||
@@ -17,6 +24,7 @@ export async function runWithExtractionDeadline<T>(input: {
   batchId: string;
   taskId: string;
   runEpoch: number;
+  signal?: AbortSignal;
 }) {
   const deadlineMs = input.deadlineMs ?? automationExtractionDeadlineMs();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -42,9 +50,19 @@ export async function runWithExtractionDeadline<T>(input: {
       })();
     }, deadlineMs);
   });
+  let rejectCancelled: ((reason: AutomaticExtractionHandoffCancelledError) => void) | undefined;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    rejectCancelled = reject;
+  });
+  const cancelForHandoff = () => {
+    rejectCancelled?.(new AutomaticExtractionHandoffCancelledError());
+  };
+  if (input.signal?.aborted) cancelForHandoff();
+  else input.signal?.addEventListener("abort", cancelForHandoff, { once: true });
   try {
-    return await Promise.race([input.operation, timeout]);
+    return await Promise.race([input.operation, timeout, cancelled]);
   } finally {
     if (timer) clearTimeout(timer);
+    input.signal?.removeEventListener("abort", cancelForHandoff);
   }
 }

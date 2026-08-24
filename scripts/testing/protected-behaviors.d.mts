@@ -4,6 +4,8 @@ export interface ProtectedBehavior {
   invariant: string;
   unitTests: readonly string[];
   e2eTests: readonly string[];
+  unitCases: readonly { file: string; title: string }[];
+  e2eCases: readonly { file: string; title: string }[];
   fixtures: readonly string[];
   triggerFiles: readonly string[];
   protectedExpectation: true;

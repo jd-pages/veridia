@@ -5,7 +5,9 @@ export type AutomaticAuditQueueState = {
   recovery?: Promise<void>;
   activeBatchId?: string;
   activePlatform?: AutomationPlatform;
-  restartRequested?: boolean;
+  wakeGeneration?: number;
+  runnerGeneration?: number;
+  activeExtractionAbort?: () => void;
 };
 
 const globalForQueue = globalThis as typeof globalThis & {

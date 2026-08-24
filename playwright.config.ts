@@ -54,6 +54,7 @@ const e2eHtmlReportDir =
 const e2eTestResultsDir =
   process.env.E2E_TEST_RESULTS_DIR?.trim() ||
   path.join(process.cwd(), "test-results");
+const e2eJsonReport = process.env.PLAYWRIGHT_JSON_OUTPUT_FILE?.trim();
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -68,6 +69,9 @@ export default defineConfig({
   reporter: [
     ["list"],
     ["html", { open: "never", outputFolder: e2eHtmlReportDir }],
+    ...(e2eJsonReport
+      ? [["json", { outputFile: e2eJsonReport }] as const]
+      : []),
   ],
   outputDir: e2eTestResultsDir,
   use: {

@@ -32,6 +32,11 @@ import {
   type AutomaticExecutionLease,
 } from "./execution-lease";
 import { runWithExtractionDeadline } from "./extraction-deadline";
+import {
+  claimRunnerWake,
+  completeRunnerWake,
+  requestRunnerWake,
+} from "./runner-handoff";
 
 const LOCAL_MOCK_WAIT_CAP_MS = Math.max(
   1,
@@ -376,6 +381,9 @@ async function processBatch(batchId: string) {
       let currentTask = processingTask;
       for (let retry = 0; ; retry += 1) {
         const extractionStartedAt = Date.now();
+        const extractionController = new AbortController();
+        const abortExtraction = () => extractionController.abort();
+        queueState.activeExtractionAbort = abortExtraction;
         try {
           console.info("[自动审核] 开始读取", JSON.stringify({ batchId, taskId: task.id, retry }));
           extraction = await runWithExtractionDeadline({
@@ -384,6 +392,7 @@ async function processBatch(batchId: string) {
             batchId,
             taskId: task.id,
             runEpoch,
+            signal: extractionController.signal,
           });
           console.info("[自动审核] 读取完成", JSON.stringify({
             batchId,
@@ -443,6 +452,10 @@ async function processBatch(batchId: string) {
           currentTask = await prisma.auditTask.findUniqueOrThrow({
             where: { id: task.id },
           });
+        } finally {
+          if (queueState.activeExtractionAbort === abortExtraction) {
+            queueState.activeExtractionAbort = undefined;
+          }
         }
       }
       if (!extraction) throw new Error("自动提取未返回结果");
@@ -695,12 +708,15 @@ async function runQueue() {
 }
 
 export function kickAutomaticAuditQueue() {
-  if (queueState.runner) {
-    queueState.restartRequested = true;
-    return;
-  }
-  if (!queueState.runner) {
-    queueState.runner = runQueue()
+  requestRunnerWake(queueState);
+  startAutomaticAuditQueueRunner();
+}
+
+function startAutomaticAuditQueueRunner() {
+  if (queueState.runner) return;
+  const runnerGeneration = claimRunnerWake(queueState);
+  if (runnerGeneration === null) return;
+  const runner = runQueue()
       .catch((error) => {
         if (queueState.activePlatform) automationRuntime(queueState.activePlatform).updateLock(null);
         console.error(
@@ -709,14 +725,15 @@ export function kickAutomaticAuditQueue() {
         );
       })
       .finally(() => {
-        const restartRequested = queueState.restartRequested;
+        if (queueState.runner !== runner) return;
+        const restartRequested = completeRunnerWake(queueState, runnerGeneration);
         queueState.runner = undefined;
         queueState.activeBatchId = undefined;
         queueState.activePlatform = undefined;
-        queueState.restartRequested = false;
-        if (restartRequested) queueMicrotask(kickAutomaticAuditQueue);
+        queueState.activeExtractionAbort = undefined;
+        if (restartRequested) queueMicrotask(startAutomaticAuditQueueRunner);
       });
-  }
+  queueState.runner = runner;
 }
 
 export function clearAutomaticBatchRuntime(batchId: string) {
@@ -747,6 +764,7 @@ export async function controlAutomaticBatch(
       reason: "PAUSE",
       liveRunner: isAutomaticBatchRuntimeLive(batchId),
     });
+    queueState.activeExtractionAbort?.();
     queueState.activeBatchId = undefined;
     runtime.updateLock(null);
     void runtime.cancelActiveExtraction().catch(() => undefined);
@@ -889,6 +907,7 @@ export async function controlAutomaticBatch(
       });
     });
     queueState.activeBatchId = undefined;
+    queueState.activeExtractionAbort?.();
     runtime.updateLock(null);
     void runtime.cancelActiveExtraction().catch(() => undefined);
     return cancelled;

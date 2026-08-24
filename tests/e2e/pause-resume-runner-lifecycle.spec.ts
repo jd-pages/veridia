@@ -315,6 +315,83 @@ test("Pause 快速返回、连续三次 Resume 不遗留 PROCESSING，旧 lease 
   expect(tasks.every((task) => task.auditResults.length === 1)).toBe(true);
 });
 
+test("Protected PAUSE_CONTINUE_RUNNER_HANDOFF：旧 extraction 延迟退出仍有界接管且后续批次不饥饿", async ({
+  page,
+}) => {
+  test.setTimeout(150_000);
+  await login(page);
+  const { product, campaign } = await auditScope();
+  const suffix = Date.now();
+  const firstResponse = await page.request.post("/api/automation/batches", {
+    data: {
+      name: `Runner handoff ${suffix}`,
+      productId: product.id,
+      campaignId: campaign.id,
+      productStage: "IFFO_2",
+      intervalMs: 1,
+      urls: Array.from(
+        { length: 3 },
+        (_item, index) =>
+          `${E2E_ORIGIN}/mock/xhs?case=passed&autoDelay=12000&handoff=${suffix}-${index}`,
+      ),
+    },
+  });
+  expect(firstResponse.ok()).toBeTruthy();
+  const firstBatchId = (await firstResponse.json()).data.batchId as string;
+  cleanupBatchIds.push(firstBatchId);
+
+  await expect.poll(
+    () => prisma.auditTask.count({ where: { batchId: firstBatchId, status: "PROCESSING" } }),
+    { timeout: 30_000 },
+  ).toBe(1);
+
+  const pauseStartedAt = Date.now();
+  const pauseResponse = await page.request.post(
+    `/api/automation/batches/${firstBatchId}/control`,
+    { data: { action: "PAUSE" } },
+  );
+  expect(pauseResponse.ok()).toBeTruthy();
+  expect(Date.now() - pauseStartedAt).toBeLessThan(3_000);
+
+  const secondResponse = await page.request.post("/api/automation/batches", {
+    data: {
+      name: `Runner starvation guard ${suffix}`,
+      productId: product.id,
+      campaignId: campaign.id,
+      productStage: "IFFO_2",
+      intervalMs: 1,
+      urls: `${E2E_ORIGIN}/mock/xhs?case=passed&handoff-next=${suffix}`,
+    },
+  });
+  expect(secondResponse.ok()).toBeTruthy();
+  const secondBatchId = (await secondResponse.json()).data.batchId as string;
+  cleanupBatchIds.push(secondBatchId);
+
+  const continuedAt = Date.now();
+  for (let index = 0; index < 3; index += 1) {
+    const continueResponse = await page.request.post(
+      `/api/automation/batches/${firstBatchId}/control`,
+      { data: { action: "CONTINUE" } },
+    );
+    expect(continueResponse.ok()).toBeTruthy();
+  }
+  await expect.poll(
+    async () => (await prisma.auditBatch.findUniqueOrThrow({ where: { id: firstBatchId } })).status,
+    { timeout: 15_000 },
+  ).toBe("RUNNING");
+  expect(Date.now() - continuedAt).toBeLessThan(15_000);
+
+  const firstCompleted = await waitForBatchTerminal(firstBatchId);
+  const secondCompleted = await waitForBatchTerminal(secondBatchId);
+  expect(firstCompleted.peakProcessing).toBeLessThanOrEqual(1);
+  expect(secondCompleted.peakProcessing).toBeLessThanOrEqual(1);
+  expect(
+    await prisma.auditResult.count({
+      where: { task: { batchId: { in: [firstBatchId, secondBatchId] } } },
+    }),
+  ).toBe(4);
+});
+
 test("PROCESSING 已有 Result 时 Resume 直接 terminalize 且不生成第二 Result", async ({
   page,
 }) => {
