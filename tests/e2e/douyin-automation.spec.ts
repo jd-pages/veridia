@@ -130,6 +130,34 @@ test("Protected DOUYIN_PUBLIC_IMAGE_TEXT_DETAIL：公开图文未登录仍为 NO
   ).toBeTruthy();
 });
 
+test("Protected DOUYIN_PUBLIC_IMAGE_TEXT_CONTENT_ACCURACY：十个媒体节点仍为三张且正文完整", async ({ page }) => {
+  await login(page);
+  const batchId = await createDouyinBatchForUrl(
+    page,
+    `${E2E_ORIGIN}/mock/douyin?case=public-image-text-accuracy&raw=true&dy=${Date.now()}`,
+  );
+  await waitForTerminalBatch(page, batchId);
+  const batch = (await (
+    await page.request.get(`/api/automation/batches?batchId=${batchId}`)
+  ).json()).data[0];
+  expect(batch.tasks[0].failureCode || "").not.toMatch(
+    /STRUCTURE_MISMATCH|BODY_NOT_RECOGNIZED|LOGIN_REQUIRED/u,
+  );
+  const result = (await (
+    await page.request.get(`/api/results?batchId=${batchId}&pageSize=10`)
+  ).json()).data.items[0];
+  expect(result).toMatchObject({
+    pageStatus: "NORMAL",
+    noteType: "IMAGE_TEXT",
+    imageCount: 3,
+    publicStatus: "NOT_REQUIRED",
+  });
+  expect(result.effectiveBodyLength).toBeGreaterThan(0);
+  expect(
+    (await page.request.post(`/api/automation/batches/${batchId}/clear`)).ok(),
+  ).toBeTruthy();
+});
+
 test("page.goto 超时但抖音作品 DOM 已出现时继续提取", async ({ page }) => {
   await login(page);
   const batchId = await createDouyinBatchForUrl(

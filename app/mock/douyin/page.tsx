@@ -2,7 +2,7 @@ import type { ExtractedNote } from "@/lib/types";
 import { redirect } from "next/navigation";
 /* eslint-disable @next/next/no-img-element -- local mock must expose native image DOM to the extractor */
 
-type MockCase = "video" | "image-text" | "business-pass" | "public-logged-out" | "public-image-text-detail" | "topics" | "unclickable" | "not-found" | "logged-out" | "security" | "no-permission" | "app-launch" | "empty" | "multi-image" | "network-error" | "load-timeout";
+type MockCase = "video" | "image-text" | "business-pass" | "public-logged-out" | "public-image-text-detail" | "public-image-text-accuracy" | "topics" | "unclickable" | "not-found" | "logged-out" | "security" | "no-permission" | "app-launch" | "empty" | "multi-image" | "network-error" | "load-timeout";
 
 function noteFor(caseName: MockCase): ExtractedNote {
   const base: ExtractedNote = {
@@ -49,6 +49,26 @@ function noteFor(caseName: MockCase): ExtractedNote {
       })),
     };
   }
+  if (caseName === "public-image-text-accuracy") {
+    return {
+      ...base,
+      body: "爱他美澳洲白金版 当前公开图文的完整正文，用于保护真实正文和逻辑图片数量。",
+      noteType: "IMAGE_TEXT",
+      imageExtractionStatus: "SUCCESS",
+      imageCount: 3,
+      topics: ["#爱他美澳洲白金版", "#三段奶粉推荐"].map(
+        (displayText, index) => ({
+          displayText,
+          isClickable: true,
+          isLinkElement: true,
+          hasHref: true,
+          href: `/hashtag/${index + 1}`,
+          styleFeature: true,
+          source: "DOM",
+        }),
+      ),
+    };
+  }
   if (caseName === "image-text" || caseName === "multi-image" || caseName === "public-image-text-detail") return { ...base, noteType: "IMAGE_TEXT", imageExtractionStatus: "SUCCESS", imageCount: caseName === "multi-image" ? 5 : caseName === "public-image-text-detail" ? 2 : 3 };
   if (caseName === "unclickable") return { ...base, topics: base.topics.map((topic) => ({ ...topic, isLinkElement: false, hasHref: false, href: null })) };
   if (caseName === "empty") return { ...base, body: "", topics: [], technicalWarnings: ["BODY_NOT_RECOGNIZED", "TOPICS_NOT_RECOGNIZED"] };
@@ -63,7 +83,7 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
   if (requested === "short-link") {
     redirect("/mock/douyin?case=video&redirectedFrom=short-link");
   }
-  const allowed: MockCase[] = ["video", "image-text", "business-pass", "public-logged-out", "public-image-text-detail", "topics", "unclickable", "not-found", "logged-out", "security", "no-permission", "app-launch", "empty", "multi-image", "network-error", "load-timeout"];
+  const allowed: MockCase[] = ["video", "image-text", "business-pass", "public-logged-out", "public-image-text-detail", "public-image-text-accuracy", "topics", "unclickable", "not-found", "logged-out", "security", "no-permission", "app-launch", "empty", "multi-image", "network-error", "load-timeout"];
   const caseName = (allowed.includes(requested as MockCase) ? requested : "video") as MockCase;
   const rawExtraction = params.raw === "true";
   const baseNote = noteFor(caseName);
@@ -89,7 +109,7 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
         ],
       }
     : baseNote;
-  const statusText: Record<MockCase, string | undefined> = { video: undefined, "image-text": undefined, "business-pass": undefined, "public-logged-out": undefined, "public-image-text-detail": undefined, topics: undefined, unclickable: undefined, empty: undefined, "multi-image": undefined, "not-found": "作品不存在，该作品已删除", "logged-out": "登录后继续，请扫码登录", security: "访问频繁，需要安全验证", "no-permission": "私密作品，暂无权限查看", "app-launch": "打开抖音 App 查看", "network-error": "模拟临时网络连接中断", "load-timeout": "模拟页面加载超时" };
+  const statusText: Record<MockCase, string | undefined> = { video: undefined, "image-text": undefined, "business-pass": undefined, "public-logged-out": undefined, "public-image-text-detail": undefined, "public-image-text-accuracy": undefined, topics: undefined, unclickable: undefined, empty: undefined, "multi-image": undefined, "not-found": "作品不存在，该作品已删除", "logged-out": "登录后继续，请扫码登录", security: "访问频繁，需要安全验证", "no-permission": "私密作品，暂无权限查看", "app-launch": "打开抖音 App 查看", "network-error": "模拟临时网络连接中断", "load-timeout": "模拟页面加载超时" };
   return (
     <main data-douyin-page-status={caseName} style={{ padding: 48 }}>
       <article
@@ -99,7 +119,18 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
         <h1>{note.title}</h1>
         {statusText[caseName] ? <p>{statusText[caseName]}</p> : <>
           <div data-testid="douyin-author">{note.authorName}</div>
-          {rawExtraction && caseName === "business-pass" ? (
+          {rawExtraction && caseName === "public-image-text-accuracy" ? (
+            <section className="video-playing-item">
+              <h3>
+                {note.body}
+                {note.topics.map((topic) => (
+                  <a data-douyin-topic href={topic.href || "#"} key={topic.displayText}>
+                    {topic.displayText}
+                  </a>
+                ))}
+              </h3>
+            </section>
+          ) : rawExtraction && caseName === "business-pass" ? (
             <div className="unstable-caption-container">
               <span>
                 {note.body}
@@ -112,7 +143,20 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
               <button type="button">展开</button>
             </div>
           ) : <p data-e2e="video-desc" data-testid="douyin-description">{note.body}</p>}
-          {note.noteType === "VIDEO" ? <video aria-label="抖音模拟视频" /> : (
+          {note.noteType === "VIDEO" ? <video aria-label="抖音模拟视频" /> : caseName === "public-image-text-accuracy" ? (
+            <>
+              {Array.from({ length: 3 }, (_, index) => (
+                <div className="dySwiperSlide" key={index}>
+                  <img src={`/mock-media/douyin/${index + 1}.jpg`} alt={`逻辑图片${index + 1}`} />
+                  <img src={`/mock-media/douyin/${index + 1}-clone.jpg`} alt={`逻辑图片${index + 1} clone`} />
+                  <video hidden>
+                    <source src={`/mock-media/douyin/${index + 1}.mp4`} type="video/mp4" />
+                  </video>
+                </div>
+              ))}
+              <div data-testid="douyin-carousel-pager">3/3</div>
+            </>
+          ) : (
             <div className={caseName === "public-image-text-detail" ? "dySwiper" : undefined}>
               {Array.from({ length: note.imageCount || 0 }, (_, index) => <img data-testid="douyin-image" src={`/mock-media/douyin/${index + 1}.jpg`} alt={`模拟图片${index + 1}`} key={index} />)}
             </div>
@@ -125,9 +169,16 @@ export default async function MockDouyinPage({ searchParams }: { searchParams: P
           ) : null}
         </>}
       </article>
-      {caseName === "public-logged-out" || caseName === "public-image-text-detail" ? (
+      {caseName === "public-logged-out" || caseName === "public-image-text-detail" || caseName === "public-image-text-accuracy" ? (
         <aside data-testid="douyin-comment-login">
           登录后查看更多评论，请扫码登录
+          {caseName === "public-image-text-accuracy" ? <img src="/mock-media/douyin/comment.jpg" alt="评论区图片" /> : null}
+        </aside>
+      ) : null}
+      {caseName === "public-image-text-accuracy" ? (
+        <aside className="recommend-list">
+          推荐作品正文不得进入当前作品
+          <div className="dySwiperSlide"><img src="/mock-media/douyin/recommend.jpg" alt="推荐作品图片" /></div>
         </aside>
       ) : null}
       {rawExtraction && params.recommendedTime ? (

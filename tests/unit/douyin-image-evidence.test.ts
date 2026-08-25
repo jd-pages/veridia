@@ -105,4 +105,90 @@ describe("抖音图文图片证据稳定性", () => {
     }
     expect(counts).toEqual([2, 2]);
   });
+
+  it("Protected DOUYIN_PUBLIC_IMAGE_TEXT_CONTENT_ACCURACY：真实三张轮播不被十个 clone/preload img/source 放大且正文同源", async () => {
+    await page.setContent(`
+      <main data-e2e="note-detail">
+        <section class="video-playing-item">
+          <h3>爱他美澳洲白金版 当前作品完整正文
+            <a data-douyin-topic href="/hashtag/1">#爱他美澳洲白金版</a>
+            <a data-douyin-topic href="/hashtag/2">#三段奶粉推荐</a>
+          </h3>
+        </section>
+        <div class="dySwiperSlide">
+          <img src="https://cdn.example/1.webp"><img src="https://cdn.example/1-alt.webp">
+          <video><source src="https://cdn.example/1-a.mp4"><source src="https://cdn.example/1-b.mp4"></video>
+        </div>
+        <div class="dySwiperSlide">
+          <img src="https://cdn.example/2.webp"><img src="https://cdn.example/2-alt.webp">
+          <video><source src="https://cdn.example/2.mp4"></video>
+        </div>
+        <div class="dySwiperSlide">
+          <img src="https://cdn.example/3.webp"><img src="https://cdn.example/3-alt.webp">
+          <video><source src="https://cdn.example/3.mp4"></video>
+        </div>
+        <div data-testid="douyin-carousel-pager">3/3</div>
+        <section class="comment-list"><img src="https://cdn.example/comment.jpg">评论图片</section>
+        <aside class="recommend-list"><div class="dySwiperSlide"><img src="https://cdn.example/recommend.jpg"></div>推荐正文</aside>
+      </main>
+    `);
+    const note = await extract();
+    expect(note).toMatchObject({
+      imageCount: 3,
+      body: expect.stringContaining("当前作品完整正文"),
+    });
+    expect(note.topics.map((topic) => topic.displayText)).toEqual([
+      "#爱他美澳洲白金版",
+      "#三段奶粉推荐",
+    ]);
+    expect(note.pageEvidence).toMatchObject({
+      domImageCount: 3,
+      domImageCountSource: "CAROUSEL_PAGER",
+      domCarouselTotal: 3,
+      logicalSlideCount: 3,
+      finalImageCountSource: "CAROUSEL_PAGER",
+    });
+  });
+
+  it("React Flight current detail 优先于十个 DOM 媒体节点并恢复结构化正文", async () => {
+    const body = "只存在于 current React Flight detail 的完整正文 #当前话题";
+    const detail = {
+      awemeId: contentId,
+      groupId: contentId,
+      desc: body,
+      images: [
+        { uri: "structured-1" },
+        { uri: "structured-2" },
+        { uri: "structured-3" },
+      ],
+      textExtra: [{ hashtagName: "当前话题", hashtagId: "topic-1" }],
+    };
+    const flightValue = ["$", "$L9", null, {
+      awemeId: contentId,
+      aweme: { statusCode: 0, detail },
+    }];
+    const flightScript = `self.__pace_f.push(${JSON.stringify([
+      1,
+      `7:${JSON.stringify(flightValue)}`,
+    ])})`;
+    await page.setContent(`
+      <main data-e2e="note-detail">
+        <div class="dySwiperSlide"><img src="https://cdn.example/1.webp"><img src="https://cdn.example/1-alt.webp"><video><source src="https://cdn.example/1.mp4"></video></div>
+        <div class="dySwiperSlide"><img src="https://cdn.example/2.webp"><img src="https://cdn.example/2-alt.webp"><video><source src="https://cdn.example/2.mp4"></video></div>
+        <div class="dySwiperSlide"><img src="https://cdn.example/3.webp"><img src="https://cdn.example/3-alt.webp"><video><source src="https://cdn.example/3.mp4"></video></div>
+        <aside class="recommend-list">推荐作品正文不得进入当前作品</aside>
+      </main>
+      <script>self.__pace_f = { push() {} };</script>
+      <script>${flightScript}</script>
+    `);
+    const note = await extract();
+    expect(note).toMatchObject({ body, imageCount: 3 });
+    expect(note.pageEvidence).toMatchObject({
+      source: "PAGE_STRUCTURED_DATA",
+      structuredImageCount: 3,
+      structuredImageSource: "aweme.images",
+      finalImageCountSource: "STRUCTURED_IMAGE_LIST",
+      bodySource: "STRUCTURED_DESC",
+    });
+  });
 });

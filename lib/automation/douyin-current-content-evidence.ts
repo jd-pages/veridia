@@ -90,6 +90,7 @@ export async function readDouyinCurrentContentEvidence(
       "[data-e2e='video-title']",
       "[data-e2e='detail-desc']",
       "[data-testid='douyin-description']",
+      "[class~='video-playing-item'] h3",
       "[class*='video-info'] [class*='desc']",
       "[class*='note-detail'] [class*='desc']",
     ].join(", ");

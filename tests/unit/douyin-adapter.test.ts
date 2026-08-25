@@ -7,6 +7,7 @@ import {
   findDouyinAwemeItem,
   findDouyinAwemeItemFromSerializedPayloads,
   playwrightDouyinAdapter,
+  resolveDouyinLogicalImageEvidence,
 } from "@/lib/automation/douyin-adapter";
 
 describe("抖音结构化作品证据", () => {
@@ -162,6 +163,62 @@ describe("抖音结构化作品证据", () => {
       aweme_id: "7663387047995111417",
       desc: expect.stringContaining("真实图文作品正文"),
     });
+  });
+
+  it("从绑定 current contentId 的 React Flight detail 恢复完整正文和三张结构化图片", () => {
+    const contentId = "7675180943578001893";
+    const detail = {
+      awemeId: contentId,
+      groupId: contentId,
+      desc: "当前真实图文完整正文 #爱他美澳洲白金版 #三段奶粉推荐",
+      caption: "当前真实图文完整正文",
+      images: [
+        { uri: "image-1" },
+        { uri: "image-2" },
+        { uri: "image-3" },
+      ],
+    };
+    const flightValue = ["$", "$L9", null, {
+      awemeId: contentId,
+      aweme: { statusCode: 0, detail },
+    }];
+    const serialized = `self.__pace_f.push(${JSON.stringify([
+      1,
+      `7:${JSON.stringify(flightValue)}`,
+    ])})`;
+
+    const item = findDouyinAwemeItemFromSerializedPayloads(
+      [serialized],
+      contentId,
+    );
+    expect(item).toMatchObject({
+      awemeId: contentId,
+      desc: expect.stringContaining("当前真实图文完整正文"),
+    });
+    expect(extractDouyinStructuredImageEvidence(item!)).toMatchObject({
+      count: 3,
+      source: "aweme.images",
+    });
+  });
+
+  it("图片计数严格遵循 structured、pager、logical slide、raw fallback 优先级", () => {
+    expect(resolveDouyinLogicalImageEvidence({
+      structuredCount: 3,
+      carouselTotal: 3,
+      logicalSlideCount: 3,
+      rawImageCount: 10,
+    })).toEqual({ count: 3, source: "STRUCTURED_IMAGE_LIST" });
+    expect(resolveDouyinLogicalImageEvidence({
+      carouselTotal: 3,
+      logicalSlideCount: 3,
+      rawImageCount: 10,
+    })).toEqual({ count: 3, source: "CAROUSEL_PAGER" });
+    expect(resolveDouyinLogicalImageEvidence({
+      logicalSlideCount: 3,
+      rawImageCount: 10,
+    })).toEqual({ count: 3, source: "LOGICAL_SLIDES" });
+    expect(resolveDouyinLogicalImageEvidence({ rawImageCount: 2 }))
+      .toEqual({ count: 2, source: "RAW_IMAGE_FALLBACK" });
   });
 
   it("只接受结构化 hashtag/challenge 实体，不从正文中的井号文字猜话题", () => {

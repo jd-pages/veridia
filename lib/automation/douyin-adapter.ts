@@ -43,6 +43,22 @@ function asArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
+function hasDouyinContentPayload(record: JsonRecord) {
+  return [
+    "desc",
+    "caption",
+    "description",
+    "images",
+    "image_post_info",
+    "imagePostInfo",
+    "video",
+    "create_time",
+    "createTime",
+    "text_extra",
+    "textExtra",
+  ].some((key) => Object.prototype.hasOwnProperty.call(record, key));
+}
+
 function extractDouyinBodyTextHashtagCandidates(body: string) {
   const candidates = new Map<string, ExtractedTopic>();
   for (const match of body.matchAll(/[#＃]+[^\s#＃]+/gu)) {
@@ -68,6 +84,7 @@ function extractDouyinBodyTextHashtagCandidates(body: string) {
 
 export function findDouyinAwemeItem(payload: unknown, contentId: string) {
   const queue: unknown[] = [payload];
+  let identityOnlyMatch: JsonRecord | null = null;
   let inspected = 0;
   while (queue.length && inspected < 20_000) {
     inspected += 1;
@@ -78,7 +95,7 @@ export function findDouyinAwemeItem(payload: unknown, contentId: string) {
     }
     const record = asRecord(current);
     if (!record) continue;
-    if (
+    const matchesContentId =
       String(
         record.aweme_id ||
           record.awemeId ||
@@ -87,16 +104,28 @@ export function findDouyinAwemeItem(payload: unknown, contentId: string) {
           record.group_id ||
           record.groupId ||
           "",
-      ) === contentId
-    ) {
-      return record;
+      ) === contentId;
+    if (matchesContentId) {
+      if (hasDouyinContentPayload(record)) return record;
+      identityOnlyMatch ||= record;
     }
     queue.push(...Object.values(record));
   }
-  return null;
+  return identityOnlyMatch;
 }
 
-function parseSerializedPayload(value: string) {
+function parseJsonCandidate(value: string) {
+  if (!value) return null;
+  try {
+    let parsed: unknown = JSON.parse(value);
+    if (typeof parsed === "string") parsed = JSON.parse(parsed);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function serializedJsonCandidates(value: string) {
   const candidates = [value.trim()];
   if (/%(?:[0-9a-f]{2})/iu.test(value)) {
     try {
@@ -105,30 +134,68 @@ function parseSerializedPayload(value: string) {
       // Ignore malformed URL-encoded script data and continue with raw JSON.
     }
   }
+  return [...new Set(candidates.filter(Boolean))];
+}
+
+function parseSerializedPayloads(value: string) {
+  const parsedPayloads: unknown[] = [];
+  const candidates = serializedJsonCandidates(value);
   for (const candidate of candidates) {
-    if (!candidate) continue;
-    try {
-      let parsed: unknown = JSON.parse(candidate);
-      if (typeof parsed === "string") parsed = JSON.parse(parsed);
-      return parsed;
-    } catch {
-      // A page can contain unrelated application/json scripts.
+    const parsed = parseJsonCandidate(candidate);
+    if (parsed) parsedPayloads.push(parsed);
+
+    const paceMatch = candidate.match(
+      /^self\.__pace_f\.push\(([\s\S]+)\);?$/u,
+    );
+    if (!paceMatch) continue;
+    const paceArguments = parseJsonCandidate(paceMatch[1]);
+    if (!Array.isArray(paceArguments)) continue;
+    for (const chunk of paceArguments) {
+      if (typeof chunk !== "string") continue;
+      for (const serializedChunk of serializedJsonCandidates(chunk)) {
+        const chunkValue = serializedChunk.replace(/^\d+:/u, "");
+        const parsedChunk = parseJsonCandidate(chunkValue);
+        if (parsedChunk) parsedPayloads.push(parsedChunk);
+      }
     }
   }
-  return null;
+  return parsedPayloads;
 }
 
 export function findDouyinAwemeItemFromSerializedPayloads(
   payloads: readonly string[],
   contentId: string,
 ) {
+  let identityOnlyMatch: JsonRecord | null = null;
   for (const serialized of payloads) {
-    const parsed = parseSerializedPayload(serialized);
-    if (!parsed) continue;
-    const item = findDouyinAwemeItem(parsed, contentId);
-    if (item) return item;
+    for (const parsed of parseSerializedPayloads(serialized)) {
+      const item = findDouyinAwemeItem(parsed, contentId);
+      if (!item) continue;
+      if (hasDouyinContentPayload(item)) return item;
+      identityOnlyMatch ||= item;
+    }
   }
-  return null;
+  return identityOnlyMatch;
+}
+
+export function resolveDouyinLogicalImageEvidence(input: {
+  structuredCount?: number | null;
+  carouselTotal?: number | null;
+  logicalSlideCount?: number | null;
+  rawImageCount?: number | null;
+}) {
+  const candidates = [
+    ["STRUCTURED_IMAGE_LIST", input.structuredCount],
+    ["CAROUSEL_PAGER", input.carouselTotal],
+    ["LOGICAL_SLIDES", input.logicalSlideCount],
+    ["RAW_IMAGE_FALLBACK", input.rawImageCount],
+  ] as const;
+  for (const [source, value] of candidates) {
+    if (Number.isInteger(value) && Number(value) > 0) {
+      return { count: Number(value), source };
+    }
+  }
+  return { count: 0, source: null };
 }
 
 function structuredCaption(item: JsonRecord) {
@@ -356,6 +423,7 @@ export function extractDouyinStructuredPublishedAt(
 export async function collectDouyinEvidence(
   page: Page,
   currentContentEvidence?: DouyinCurrentContentEvidence | null,
+  expectedContentId?: string | null,
 ) {
   const scopeReference = currentContentEvidence ||
     await readDouyinCurrentContentEvidence(page, null);
@@ -364,7 +432,14 @@ export async function collectDouyinEvidence(
       ? document.querySelectorAll(scopeInput.scopeSelector).item(scopeInput.scopeIndex)
       : null;
     const scope = resolvedScope || document.createElement("div");
+    const currentPlayingItems = Array.from(scope.querySelectorAll(
+      "[class~='video-playing-item']",
+    ));
+    const textScope = currentPlayingItems.length === 1
+      ? currentPlayingItems[0]
+      : scope;
     const selectors = [
+      "[class~='video-playing-item'] h3",
       "[data-e2e='video-desc']",
       "[data-e2e='aweme-desc']",
       "[data-e2e='video-title']",
@@ -377,7 +452,10 @@ export async function collectDouyinEvidence(
     let description = "";
     let descriptionSource: string | null = null;
     for (const selector of selectors) {
-      const value = scope.querySelector(selector)?.textContent?.trim() || "";
+      const localNode = textScope.querySelector(selector);
+      const fallbackNode = textScope === scope ? null : scope.querySelector(selector);
+      const node = localNode || fallbackNode;
+      const value = node?.textContent?.trim() || "";
       if (!value) continue;
       description = value;
       descriptionSource = `DOM:${selector}`;
@@ -392,7 +470,7 @@ export async function collectDouyinEvidence(
       "[data-e2e*='related']",
       "[class*='search-suggest']",
     ].join(", ");
-    const topicNodes = Array.from(scope.querySelectorAll(
+    const topicNodes = Array.from(textScope.querySelectorAll(
       [
         "a[href*='/search/']",
         "a[href*='/hashtag/']",
@@ -472,11 +550,26 @@ export async function collectDouyinEvidence(
       };
     });
     const scripts = Array.from(document.querySelectorAll(
-      "script[type='application/json'], script#__RENDER_DATA__, script#RENDER_DATA",
+      "script[type='application/json'], script#__RENDER_DATA__, script#RENDER_DATA, script:not([type])",
     ))
-      .map((script) => script.textContent || "")
-      .filter(Boolean)
-      .slice(0, 10);
+      .map((script) => ({
+        isStandardJson: script.matches(
+          "script[type='application/json'], script#__RENDER_DATA__, script#RENDER_DATA",
+        ),
+        text: script.textContent || "",
+      }))
+      .filter(({ isStandardJson, text }) =>
+        Boolean(text) && (
+          isStandardJson ||
+          Boolean(scopeInput.expectedContentId && text.includes(scopeInput.expectedContentId))
+        )
+      )
+      .sort((left, right) =>
+        Number(Boolean(scopeInput.expectedContentId && right.text.includes(scopeInput.expectedContentId))) -
+        Number(Boolean(scopeInput.expectedContentId && left.text.includes(scopeInput.expectedContentId)))
+      )
+      .map(({ text }) => text)
+      .slice(0, 20);
     const carouselRoots = Array.from(scope.querySelectorAll([
       "[class*='dySwiper']",
       "[class*='swiper']",
@@ -510,13 +603,39 @@ export async function collectDouyinEvidence(
         return raw.split("?")[0];
       }
     };
+    const slideSelector = [
+      "[class*='dySwiperSlide']",
+      "[data-swiper-slide-index]",
+      "[data-e2e='slide']",
+    ].join(", ");
+    const logicalSlideElements = Array.from(scope.querySelectorAll(
+      slideSelector,
+    )).filter((element) =>
+      !element.closest(excludedSelector) &&
+      Boolean(element.querySelector("img, picture source, source"))
+    );
+    const logicalSlideKeys = new Set<string>();
+    for (const [index, slide] of logicalSlideElements.entries()) {
+      const stableIndex =
+        slide.getAttribute("data-swiper-slide-index") ||
+        slide.getAttribute("data-index") ||
+        slide.getAttribute("data-key") ||
+        slide.getAttribute("aria-posinset") ||
+        "";
+      logicalSlideKeys.add(
+        stableIndex ? `slide:${stableIndex}` : `dom-slide:${index}`,
+      );
+    }
     const imageKeys = new Set<string>();
+    const inspectedMediaNodes = new Set<Element>();
     for (const root of carouselRoots) {
       const mediaNodes = [
         ...(root.matches("img, source") ? [root] : []),
         ...Array.from(root.querySelectorAll("img, source")),
       ];
       for (const node of mediaNodes) {
+        if (inspectedMediaNodes.has(node)) continue;
+        inspectedMediaNodes.add(node);
         const element = node as HTMLElement;
         if (element.closest(excludedSelector)) continue;
         const media = element as HTMLImageElement;
@@ -529,11 +648,21 @@ export async function collectDouyinEvidence(
           media.src ||
           media.getAttribute("srcset") ||
           "";
+        if (
+          element.tagName.toLowerCase() === "source" &&
+          element.closest("video")
+        ) continue;
+        if (
+          element.tagName.toLowerCase() === "source" &&
+          !element.closest("picture") &&
+          !/^image\//iu.test(element.getAttribute("type") || "") &&
+          !/\.(?:avif|gif|jpe?g|png|webp)(?:[?#\s]|$)/iu.test(rawSource)
+        ) continue;
         if (/avatar|logo|qrcode|loading|placeholder|comment|recommend/iu.test(rawSource)) {
           continue;
         }
         const slide = element.closest(
-          "[data-swiper-slide-index],[data-index],[data-key],[data-e2e='slide']",
+          slideSelector,
         );
         const stableIndex =
           slide?.getAttribute("data-swiper-slide-index") ||
@@ -541,12 +670,24 @@ export async function collectDouyinEvidence(
           slide?.getAttribute("data-key") ||
           "";
         const normalizedSource = normalizeMediaUrl(rawSource);
-        const key = stableIndex ? `slide:${stableIndex}` : normalizedSource;
+        const logicalPosition = slide
+          ? logicalSlideElements.indexOf(slide)
+          : -1;
+        const key = stableIndex
+          ? `slide:${stableIndex}`
+          : logicalPosition >= 0
+            ? `dom-slide:${logicalPosition}`
+            : normalizedSource;
         if (key) imageKeys.add(key);
       }
     }
     let carouselTotal = 0;
-    for (const root of carouselRoots) {
+    const pagerCandidates = Array.from(scope.querySelectorAll("*")).filter(
+      (element) =>
+        !element.closest(excludedSelector) &&
+        /^\s*\d+\s*[\/／]\s*\d+\s*$/u.test(element.textContent || ""),
+    );
+    for (const root of [...carouselRoots, ...pagerCandidates]) {
       const text = root.textContent || "";
       for (const match of text.matchAll(/\b\d+\s*[\/／]\s*(\d+)\b/gu)) {
         carouselTotal = Math.max(carouselTotal, Number(match[1]) || 0);
@@ -558,6 +699,13 @@ export async function collectDouyinEvidence(
         carouselTotal = Math.max(carouselTotal, Number(value) || 0);
       }
     }
+    const domImageEvidence = carouselTotal > 0
+      ? { count: carouselTotal, source: "CAROUSEL_PAGER" }
+      : logicalSlideKeys.size > 0
+        ? { count: logicalSlideKeys.size, source: "LOGICAL_SLIDES" }
+        : imageKeys.size > 0
+          ? { count: imageKeys.size, source: "RAW_IMAGE_FALLBACK" }
+          : { count: 0, source: null };
     const publishedTimeElement = scope
       ? [...scope.querySelectorAll(
           "[data-e2e='video-publish-time'],[data-testid='douyin-publish-time'],time[datetime]",
@@ -574,8 +722,11 @@ export async function collectDouyinEvidence(
       descriptionSource,
       topics,
       hasVideo: Boolean(scope.querySelector("video")),
-      imageCount: Math.max(imageKeys.size, carouselTotal),
+      imageCount: domImageEvidence.count,
+      imageCountSource: domImageEvidence.source,
       imageKeys: [...imageKeys].sort(),
+      logicalSlideKeys: [...logicalSlideKeys].sort(),
+      logicalSlideCount: logicalSlideKeys.size,
       carouselReady: carouselRoots.length > 0,
       carouselTotal,
       authorName: scope.querySelector(
@@ -594,6 +745,7 @@ export async function collectDouyinEvidence(
   }, {
     scopeSelector: scopeReference.scopeSelector,
     scopeIndex: scopeReference.scopeIndex,
+    expectedContentId: expectedContentId || null,
   });
 }
 
@@ -601,6 +753,7 @@ async function collectStableDouyinImageEvidence(
   page: Page,
   initial: Awaited<ReturnType<typeof collectDouyinEvidence>>,
   currentContentEvidence: DouyinCurrentContentEvidence,
+  contentId?: string | null,
 ) {
   if (typeof page.waitForTimeout !== "function") return initial;
   const deadline = Date.now() + 4_000;
@@ -621,7 +774,11 @@ async function collectStableDouyinImageEvidence(
       previousSignature = signature;
     }
     await page.waitForTimeout(150);
-    latest = await collectDouyinEvidence(page, currentContentEvidence);
+    latest = await collectDouyinEvidence(
+      page,
+      currentContentEvidence,
+      contentId,
+    );
   }
   return latest;
 }
@@ -629,7 +786,7 @@ async function collectStableDouyinImageEvidence(
 export class PlaywrightDouyinAdapter {
   readonly platform = "DOUYIN" as const;
   readonly name = "playwright-douyin";
-  readonly version = "1.3.0";
+  readonly version = "1.4.0";
 
   canHandle(value: string) {
     try {
@@ -666,11 +823,16 @@ export class PlaywrightDouyinAdapter {
         page,
         options.contentId || urlIdentity?.contentId || null,
       );
-    let evidence = await collectDouyinEvidence(page, currentContentEvidence);
-    const embeddedStructuredItem = options.contentId
+    const contentId = options.contentId || urlIdentity?.contentId || null;
+    let evidence = await collectDouyinEvidence(
+      page,
+      currentContentEvidence,
+      contentId,
+    );
+    const embeddedStructuredItem = contentId
       ? findDouyinAwemeItemFromSerializedPayloads(
           evidence.structuredPayloads,
-          options.contentId,
+          contentId,
         )
       : null;
     const structuredEvidence = options.structured ||
@@ -719,11 +881,16 @@ export class PlaywrightDouyinAdapter {
         page,
         evidence,
         currentContentEvidence,
+        contentId,
       );
     }
-    const imageCount = noteType === "IMAGE_TEXT"
-      ? structuredImages.count || evidence.imageCount
-      : 0;
+    const imageEvidence = resolveDouyinLogicalImageEvidence({
+      structuredCount: structuredImages.count,
+      carouselTotal: evidence.carouselTotal,
+      logicalSlideCount: evidence.logicalSlideCount,
+      rawImageCount: evidence.imageKeys?.length,
+    });
+    const imageCount = noteType === "IMAGE_TEXT" ? imageEvidence.count : 0;
     const structuredBody = structuredItem
       ? structuredCaption(structuredItem)
       : { body: "", source: null };
@@ -741,7 +908,6 @@ export class PlaywrightDouyinAdapter {
         : null;
     const author = structuredItem ? asRecord(structuredItem.author) : null;
     const authorName = asString(author?.nickname || author?.name) || evidence.authorName;
-    const contentId = options.contentId || urlIdentity?.contentId || null;
     const structuredPublishedAt = structuredItem && contentId
       ? extractDouyinStructuredPublishedAt(structuredItem, contentId)
       : null;
@@ -799,6 +965,10 @@ export class PlaywrightDouyinAdapter {
           : null,
         hasVideoElement: evidence.hasVideo,
         domImageCount: evidence.imageCount,
+        domImageCountSource: evidence.imageCountSource,
+        logicalSlideCount: evidence.logicalSlideCount,
+        logicalSlideKeys: evidence.logicalSlideKeys,
+        finalImageCountSource: imageEvidence.source,
         structuredImageCount: structuredImages.count,
         structuredImageSource: structuredImages.source,
         structuredImageIdentities: structuredImages.identities,
