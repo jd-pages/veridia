@@ -999,6 +999,53 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(failedEvidence.verifiedPlatformTopics).toBeInstanceOf(Array);
   expect(failedEvidence.imageCandidates).toBeInstanceOf(Array);
 
+  // Protected XHS_PUBLIC_LOGGED_OUT_NOTE_DETAIL: shell-level login/App CTAs
+  // cannot override an explicitly identified, readable current note.
+  const publicLoggedOutUrl = `${E2E_ORIGIN}/mock/xhs?case=passed&publicLoggedOut=1&e2e=${suffix}`;
+  const publicLoggedOutBatchResponse = await page.request.post(
+    "/api/automation/batches",
+    {
+      data: {
+        name: "E2E XHS 公开未登录详情页",
+        productId: product.id,
+        campaignId: campaign.id,
+        productStage: "IFFO_2",
+        urls: [publicLoggedOutUrl],
+      },
+    },
+  );
+  expect(publicLoggedOutBatchResponse.ok()).toBeTruthy();
+  const publicLoggedOutBatchId = (await publicLoggedOutBatchResponse.json()).data
+    .batchId as string;
+  await waitForBatch(page, publicLoggedOutBatchId, ["COMPLETED"]);
+  const publicLoggedOutResultResponse = await page.request.get(
+    `/api/results?batchId=${publicLoggedOutBatchId}`,
+  );
+  expect(publicLoggedOutResultResponse.ok()).toBeTruthy();
+  const publicLoggedOutResult = (await publicLoggedOutResultResponse.json()).data
+    .items[0] as {
+      pageStatus: string;
+      publicStatus: string;
+      imageCount: number;
+      note: {
+        body: string | null;
+        topics: Array<{ displayText: string }>;
+      };
+      task: { status: string; failureCode: string | null; pageType: string | null };
+    };
+  expect(publicLoggedOutResult).toMatchObject({
+    pageStatus: "NORMAL",
+    publicStatus: "PUBLIC",
+    task: {
+      status: "COMPLETED",
+      failureCode: null,
+      pageType: "NOTE_DETAIL",
+    },
+  });
+  expect(publicLoggedOutResult.note.body?.length).toBeGreaterThan(0);
+  expect(publicLoggedOutResult.imageCount).toBeGreaterThan(0);
+  expect(publicLoggedOutResult.note.topics.length).toBeGreaterThan(0);
+
   const unavailableSuffix = `${suffix}-page-unavailable`;
   const unavailableBatchResponse = await page.request.post(
     "/api/automation/batches",

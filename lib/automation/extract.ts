@@ -47,6 +47,7 @@ import {
   readXhsReadinessPageEvidence,
   waitForXhsExtractionKeyElements,
   waitForXhsPageReadiness,
+  type XhsReadinessCurrentNoteEvidence,
 } from "./xhs-readiness";
 
 export interface AutomaticExtractionOutcome {
@@ -61,6 +62,7 @@ interface PageIdentity {
   visibleText: string;
   httpStatus: number | null;
   notFoundDomMarker: string | null;
+  currentNoteEvidence: XhsReadinessCurrentNoteEvidence | null;
 }
 
 function isMockUrl(value: string) {
@@ -114,6 +116,7 @@ async function readPageIdentity(
     visibleText: evidence.visibleText,
     httpStatus,
     notFoundDomMarker: evidence.notFoundDomMarker,
+    currentNoteEvidence: evidence.currentNoteEvidence,
   };
 }
 
@@ -216,6 +219,7 @@ async function captureFailureEvidence(
     finalUrl: safeEvidenceUrl(identity.finalUrl),
     pageTitle: identity.pageTitle,
     pageType: identity.pageType,
+    readinessCurrentNoteEvidence: identity.currentNoteEvidence,
     redirectChain: uniqueUrls(redirectChain).map(safeEvidenceUrl),
     screenshotPath: screenshotSaved
       ? path.relative(process.cwd(), screenshotPath)
@@ -349,6 +353,7 @@ export async function extractAuditTaskAutomatically(
     visibleText: "",
     httpStatus: null,
     notFoundDomMarker: null,
+    currentNoteEvidence: null,
   };
 
   const recordNavigation = (frame: Frame) => {

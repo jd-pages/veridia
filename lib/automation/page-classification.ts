@@ -22,6 +22,17 @@ export interface PageClassificationInput {
   visibleText: string;
   httpStatus?: number | null;
   notFoundDomMarker?: string | null;
+  currentNoteEvidence?: {
+    rootLocated: boolean;
+    explicitIdentity: boolean;
+    hasTitle: boolean;
+    hasDescription: boolean;
+    hasActionBar: boolean;
+    hasMedia: boolean;
+    corroboratingSignalCount: number;
+    isReadable: boolean;
+    rootPath: string | null;
+  } | null;
 }
 
 export interface UnavailablePageEvidence {
@@ -148,11 +159,10 @@ export function isXiaohongshuNoteDetailUrl(value: string) {
   }
 }
 
-export function classifyAutomaticPage({
-  url,
-  title,
-  visibleText,
-}: PageClassificationInput): AutomaticPageType {
+export function classifyAutomaticPage(
+  input: PageClassificationInput,
+): AutomaticPageType {
+  const { url, title, visibleText, currentNoteEvidence } = input;
   const combined = `${title}\n${visibleText}`;
   let parsed: URL | null = null;
   try {
@@ -161,9 +171,26 @@ export function classifyAutomaticPage({
     return "UNKNOWN";
   }
 
+  if (detectUnavailableXhsPage(input)) return "ERROR_PAGE";
   if (
-    /安全限制|IP存在风险|安全验证|访问验证|完成验证/u.test(combined) ||
-    /\/website-login\/error(?:\/|$)/iu.test(parsed.pathname)
+    /\/website-login\/(?:error|captcha)(?:\/|$)/iu.test(parsed.pathname) ||
+    /captcha|verification|security-check/iu.test(parsed.pathname)
+  ) {
+    return "SECURITY_CHECK";
+  }
+
+  // A public note can render login/App CTAs in the surrounding shell while
+  // its current-note title, body and media remain fully readable. A visible,
+  // explicitly identified current-note root is stronger evidence than those
+  // unrelated shell strings.
+  if (
+    currentNoteEvidence?.isReadable &&
+    currentNoteEvidence.explicitIdentity
+  ) {
+    return "NOTE_DETAIL";
+  }
+  if (
+    /安全限制|IP存在风险|安全验证|访问验证|完成验证/u.test(combined)
   ) {
     return "SECURITY_CHECK";
   }
@@ -176,8 +203,7 @@ export function classifyAutomaticPage({
   if (
     /验证码|安全验证|完成验证|滑块验证|访问验证|异常访问|网络环境存在风险/u.test(
       combined,
-    ) ||
-    /captcha|verification|security-check/iu.test(parsed.pathname)
+    )
   ) {
     return "SECURITY_CHECK";
   }
@@ -196,9 +222,6 @@ export function classifyAutomaticPage({
     /openapp|app-launch|deeplink/iu.test(parsed.pathname)
   ) {
     return "APP_LAUNCH";
-  }
-  if (detectUnavailableXhsPage({ url, title, visibleText })) {
-    return "ERROR_PAGE";
   }
   if (isXiaohongshuNoteDetailUrl(url)) return "NOTE_DETAIL";
   if (isShortXiaohongshuUrl(url)) return "SHORT_LINK";

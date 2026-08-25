@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>混合喂养的神：德爱白金Pro - 小红书</title>
+    <style>
+      #noteContainer { display: flex; width: 1000px; min-height: 680px; }
+      .media-container { width: 600px; min-height: 600px; }
+      .note-slider, .swiper-wrapper { display: flex; width: 600px; min-height: 500px; }
+      .swiper-slide { width: 200px; min-height: 300px; }
+      .swiper-slide img { width: 180px; height: 280px; }
+      .interaction-container { width: 400px; min-height: 600px; }
+      .engage-bar-container { min-height: 40px; }
+    </style>
+  </head>
+  <body>
+    <aside class="login-container" data-testid="login-dialog">
+      <div>登录后推荐更懂你的笔记</div>
+      <div>手机号登录</div>
+      <button>打开小红书App</button>
+    </aside>
+    <div class="note-detail-mask undertake-ssr">
+      <section id="noteContainer" class="note-container" data-type="normal">
+        <div class="media-container">
+          <span class="swiper-pagination">1/3</span>
+          <div class="swiper note-slider">
+            <div class="swiper-wrapper">
+              <div class="swiper-slide" data-index="0" data-swiper-slide-index="0">
+                <img src="https://sns-webpic-qc.xhscdn.com/public-note/slide-0.webp" alt="当前笔记图片 1" />
+              </div>
+              <div class="swiper-slide" data-index="1" data-swiper-slide-index="1">
+                <img src="https://sns-webpic-qc.xhscdn.com/public-note/slide-1.webp" alt="当前笔记图片 2" />
+              </div>
+              <div class="swiper-slide" data-index="2" data-swiper-slide-index="2">
+                <img src="https://sns-webpic-qc.xhscdn.com/public-note/slide-2.webp" alt="当前笔记图片 3" />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="interaction-container">
+          <div class="note-content">
+            <h1 id="detail-title" class="title">混合喂养的神：德爱白金Pro</h1>
+            <div id="detail-desc" class="desc">
+              当前公开笔记正文完整可见，内容来自目标作品。
+              <a id="hash-tag" class="tag" href="/search_result?keyword=爱他美德国白金版">#爱他美德国白金版</a>
+              <a id="hash-tag" class="tag" href="/search_result?keyword=爱他美新手爸妈日记">#爱他美新手爸妈日记</a>
+            </div>
+            <div class="bottom-container">
+              <div class="bottom-left"><span class="date">7天前 吉林</span></div>
+            </div>
+          </div>
+          <div class="engage-bar-container" data-testid="note-action-bar">
+            <span class="like-wrapper">赞</span>
+            <span class="collect-wrapper">收藏</span>
+            <span class="chat-wrapper">评论</span>
+          </div>
+        </div>
+      </section>
+    </div>
+    <section class="recommend-list">
+      <article><h2>推荐作品标题</h2><img src="https://example.invalid/recommend.jpg" alt="推荐作品" /></article>
+    </section>
+  </body>
+</html>

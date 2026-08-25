@@ -221,6 +221,32 @@ describe("小红书页面与短链接分类", () => {
     expect(logged).toContain("%5Bredacted%5D");
   });
 
+  it("公开详情的强 current-note 证据优先于外围登录和 App 唤起文案", () => {
+    const currentNoteEvidence = {
+      rootLocated: true,
+      explicitIdentity: true,
+      hasTitle: true,
+      hasDescription: true,
+      hasActionBar: true,
+      hasMedia: true,
+      corroboratingSignalCount: 4,
+      isReadable: true,
+      rootPath: "#noteContainer",
+    };
+    expect(classifyAutomaticPage({
+      url: "https://www.xiaohongshu.com/explore/6a83a232000000002800120b",
+      title: "混合喂养的神：德爱白金Pro - 小红书",
+      visibleText: "手机号登录 打开小红书App 当前作品正文与图片可读",
+      currentNoteEvidence,
+    })).toBe("NOTE_DETAIL");
+    expect(classifyAutomaticPage({
+      url: "https://www.xiaohongshu.com/404",
+      title: "小红书 - 你访问的页面不见了",
+      visibleText: "页面不存在",
+      currentNoteEvidence,
+    })).toBe("ERROR_PAGE");
+  });
+
   it.each([
     {
       expected: "NOTE_DETAIL",

@@ -9,6 +9,7 @@ export default async function MockXhsPage({
     commentTime?: string;
     recommendedTime?: string;
     bodyTime?: string;
+    publicLoggedOut?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -54,14 +55,22 @@ export default async function MockXhsPage({
   }
 
   return (
-    <main
-      className="mock-page"
-      data-xhs-page-status="NORMAL"
-      data-xhs-note-id={note.noteId || ""}
-      data-xhs-author={note.authorName || ""}
-      data-xhs-published-at={note.publishedAt || ""}
-      data-xhs-public={String(note.isPublic === true)}
-    >
+    <>
+      {params.publicLoggedOut === "1" ? (
+        <aside className="login-container" data-testid="login-dialog">
+          <span>登录后推荐更懂你的笔记</span>
+          <span>手机号登录</span>
+          <span>打开小红书App</span>
+        </aside>
+      ) : null}
+      <main
+        className="mock-page"
+        data-xhs-page-status="NORMAL"
+        data-xhs-note-id={note.noteId || ""}
+        data-xhs-author={note.authorName || ""}
+        data-xhs-published-at={note.publishedAt || ""}
+        data-xhs-public={String(note.isPublic === true)}
+      >
       <div className="mock-hero">模拟笔记正文与话题审核</div>
       <article className="mock-body">
         {note.noteType === "VIDEO_NOTE" ? (
@@ -147,6 +156,7 @@ export default async function MockXhsPage({
         type="application/json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(extractionNote).replace(/</g, "\\u003c") }}
       />
-    </main>
+      </main>
+    </>
   );
 }

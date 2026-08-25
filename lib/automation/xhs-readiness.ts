@@ -2,7 +2,9 @@ import type { Page } from "playwright";
 import {
   classifyAutomaticPage,
   detectUnavailableXhsPage,
+  isXiaohongshuNoteDetailUrl,
   type AutomaticPageType,
+  type PageClassificationInput,
   type UnavailablePageEvidence,
 } from "./page-classification";
 
@@ -32,11 +34,16 @@ const TERMINAL_PAGE_SELECTOR = [
   "[class*='security-check']",
 ].join(",");
 
+export type XhsReadinessCurrentNoteEvidence = NonNullable<
+  PageClassificationInput["currentNoteEvidence"]
+>;
+
 interface XhsReadinessPageEvidence {
   finalUrl: string;
   pageTitle: string;
   visibleText: string;
   notFoundDomMarker: string | null;
+  currentNoteEvidence: XhsReadinessCurrentNoteEvidence;
   pageType: AutomaticPageType;
   unavailablePage: UnavailablePageEvidence | null;
 }
@@ -54,12 +61,123 @@ export async function readXhsReadinessPageEvidence(
     const marker = document.querySelector(
       "[data-xhs-page-status='NOTE_NOT_FOUND'],[data-xhs-page-status='NOT_FOUND'],[data-page-status='404'],[data-testid*='not-found'],[class*='not-found']",
     );
+    const visible = (element: Element) => {
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+    const rootSignals = (root: Element) => {
+      const explicitIdentity =
+        root.id === "noteContainer" ||
+        root.hasAttribute("data-xhs-note-id") ||
+        root.matches(
+          "[data-testid='note-detail'],.note-detail-mask,[class^='note-detail-'],[class*=' note-detail-']",
+        );
+      const hasTitle = Boolean(
+        root.querySelector(
+          "#detail-title,[data-testid='note-title'],[data-xhs-note-title],[data-xhs-title],[class~='note-title'],[class^='note-title-'],[class*=' note-title-']",
+        ),
+      );
+      const hasDescription = Boolean(
+        root.querySelector(
+          "#detail-desc,[data-testid='note-content'],[data-testid='note-desc'],[data-xhs-note-desc],[data-xhs-body],[class~='note-desc'],[class^='note-desc-'],[class*=' note-desc-']",
+        ),
+      );
+      const hasActionBar = Boolean(
+        root.querySelector(
+          "[data-testid='note-action-bar'],.interactions.engage-bar,.engage-bar-container",
+        ),
+      );
+      const hasMedia = Boolean(
+        root.querySelector(
+          "[data-testid='note-media'],[class*='swiper'],[class*='carousel'],[class*='media-container'],video",
+        ),
+      );
+      const corroboratingSignalCount = [
+        hasTitle,
+        hasDescription,
+        hasActionBar,
+        hasMedia,
+      ].filter(Boolean).length;
+      return {
+        explicitIdentity,
+        hasTitle,
+        hasDescription,
+        hasActionBar,
+        hasMedia,
+        corroboratingSignalCount,
+      };
+    };
+    const rootScore = (root: Element) => {
+      const signals = rootSignals(root);
+      return (
+        (root.id === "noteContainer" ? 100 : 0) +
+        (signals.explicitIdentity ? 50 : 0) +
+        (signals.hasTitle ? 20 : 0) +
+        (signals.hasDescription ? 20 : 0) +
+        (signals.hasActionBar ? 10 : 0) +
+        (signals.hasMedia ? 10 : 0)
+      );
+    };
+    const roots = [
+      ...new Set(
+        [
+          "#noteContainer",
+          "[data-xhs-note-id]",
+          "[data-testid='note-detail']",
+          ".note-detail-mask",
+          "[class*='note-detail']",
+          "main",
+          "article",
+          ".note-content",
+          "[class*='note-content']",
+        ].flatMap((selector) => [...document.querySelectorAll(selector)]),
+      ),
+    ];
+    const currentNoteRoot = roots
+      .filter(visible)
+      .sort((left, right) => rootScore(right) - rootScore(left))[0] || null;
+    const signals = currentNoteRoot
+      ? rootSignals(currentNoteRoot)
+      : {
+          explicitIdentity: false,
+          hasTitle: false,
+          hasDescription: false,
+          hasActionBar: false,
+          hasMedia: false,
+          corroboratingSignalCount: 0,
+        };
+    const rootPath = currentNoteRoot
+      ? currentNoteRoot.id
+        ? `#${CSS.escape(currentNoteRoot.id)}`
+        : `${currentNoteRoot.tagName.toLowerCase()}${[
+            ...currentNoteRoot.classList,
+          ]
+            .slice(0, 3)
+            .map((item) => `.${CSS.escape(item)}`)
+            .join("")}`
+      : null;
     return {
       finalUrl: location.href,
       pageTitle: document.title || "",
       visibleText: (document.body?.innerText || document.body?.textContent || "")
         .slice(0, 50_000),
       notFoundDomMarker: (marker?.textContent || "").trim() || null,
+      currentNoteEvidence: {
+        rootLocated: Boolean(currentNoteRoot),
+        ...signals,
+        isReadable:
+          Boolean(currentNoteRoot) &&
+          signals.explicitIdentity &&
+          (signals.hasTitle || signals.hasDescription) &&
+          signals.corroboratingSignalCount >= 2,
+        rootPath,
+      },
     };
   });
   const unavailablePage = detectUnavailableXhsPage({
@@ -77,16 +195,24 @@ export async function readXhsReadinessPageEvidence(
       visibleText: snapshot.visibleText,
       httpStatus,
       notFoundDomMarker: snapshot.notFoundDomMarker,
+      currentNoteEvidence: snapshot.currentNoteEvidence,
     }),
     unavailablePage,
   };
 }
 
 function isTerminalEvidence(evidence: XhsReadinessPageEvidence) {
-  return Boolean(evidence.unavailablePage) ||
-    ["LOGIN", "SECURITY_CHECK", "APP_LAUNCH", "ERROR_PAGE"].includes(
-      evidence.pageType,
-    );
+  if (evidence.unavailablePage) return true;
+  if (["SECURITY_CHECK", "ERROR_PAGE"].includes(evidence.pageType)) {
+    return true;
+  }
+  if (
+    ["LOGIN", "APP_LAUNCH"].includes(evidence.pageType) &&
+    !isXiaohongshuNoteDetailUrl(evidence.finalUrl)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 async function isEmptyDocumentShell(page: Page) {
@@ -130,7 +256,12 @@ export async function waitForXhsPageReadiness(input: {
       page.locator(XHS_EXTRACTION_KEY_SELECTOR).count().catch(() => 0),
       page.locator(TERMINAL_PAGE_SELECTOR).count().catch(() => 0),
     ]);
-    if (terminalElementCount > 0) return true;
+    if (
+      terminalElementCount > 0 &&
+      !isXiaohongshuNoteDetailUrl(page.url())
+    ) {
+      return true;
+    }
     if (keyElementCount > 0) {
       await page
         .waitForLoadState("networkidle", { timeout: 2_500 })

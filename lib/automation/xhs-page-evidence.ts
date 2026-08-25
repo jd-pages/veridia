@@ -1314,6 +1314,11 @@ export async function collectDomPageSnapshot(
       }
     }
 
+    // Shell-level login/App UI may surround an otherwise fully readable public
+    // note. Once a current-note root exists, only status markers inside that
+    // root may affect the extracted note status; terminal 404 evidence is still
+    // evaluated separately from the whole document below.
+    const statusScope: ParentNode = mainNoteRoot || document;
     const explicitStatusText = uniqueElements([
       "[data-xhs-page-status]",
       "[data-page-status]",
@@ -1322,7 +1327,7 @@ export async function collectDomPageSnapshot(
       "[data-testid*='login']",
       "[class*='login-container']",
       "[class*='security-check']",
-    ])
+    ], statusScope)
       .map((element) => element.textContent || "")
       .join("\n");
     const text = [mainNoteRoot?.textContent || "", explicitStatusText]

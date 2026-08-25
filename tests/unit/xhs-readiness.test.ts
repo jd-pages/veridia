@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
 import { collectDomPageSnapshot } from "@/lib/automation/xhs-page-evidence";
+import { PlaywrightXiaohongshuAdapter } from "@/lib/automation/adapters";
 import {
   readXhsReadinessPageEvidence,
   waitForXhsPageReadiness,
@@ -10,6 +11,8 @@ import {
 
 const noteUrl =
   "https://www.xiaohongshu.com/explore/6a798984000000000f039c00";
+const publicLoggedOutNoteUrl =
+  "https://www.xiaohongshu.com/explore/6a83a232000000002800120b";
 const fixture = (name: string) => fs.readFileSync(
   path.resolve("tests", "regression", "fixtures", "xhs", name),
   "utf8",
@@ -128,6 +131,82 @@ describe("小红书页面 hydration 就绪门禁", () => {
       }),
     ).resolves.toBe(true);
     expect(await page.locator("#detail-title").textContent()).toBe("延迟标题");
+  });
+
+  it("Protected XHS_PUBLIC_LOGGED_OUT_NOTE_DETAIL：外围登录与 App CTA 不覆盖可读 current-note", async () => {
+    await page.route(publicLoggedOutNoteUrl, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html; charset=utf-8",
+        body: fixture("public-logged-out-note-detail.html"),
+      });
+    });
+    await page.goto(publicLoggedOutNoteUrl, { waitUntil: "domcontentloaded" });
+
+    await expect(
+      waitForXhsPageReadiness({
+        page,
+        redirectChain: [],
+        timeoutMs: 1_500,
+        pollMs: 25,
+        httpStatus: 200,
+      }),
+    ).resolves.toBe(true);
+
+    const readiness = await readXhsReadinessPageEvidence(page, 200);
+    expect(readiness).toMatchObject({
+      pageType: "NOTE_DETAIL",
+      unavailablePage: null,
+      currentNoteEvidence: {
+        rootLocated: true,
+        explicitIdentity: true,
+        hasTitle: true,
+        hasDescription: true,
+        hasActionBar: true,
+        hasMedia: true,
+        corroboratingSignalCount: 4,
+        isReadable: true,
+        rootPath: "#noteContainer",
+      },
+    });
+
+    const snapshot = await collectDomPageSnapshot(page);
+    expect(snapshot.currentNoteScopeSelector).toBe(
+      "[data-veridia-current-note-scope='true']",
+    );
+    expect(snapshot.pageStatus).toBe("NORMAL");
+    expect(snapshot.titleCandidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        value: "混合喂养的神：德爱白金Pro",
+        source: "DOM:#detail-title",
+      }),
+    ]));
+    expect(snapshot.bodyCandidates[0]?.value.length).toBeGreaterThan(0);
+    expect(snapshot.verifiedPlatformTopics.map((item) => item.displayText)).toEqual([
+      "#爱他美德国白金版",
+      "#爱他美新手爸妈日记",
+    ]);
+    expect(snapshot.publishedAtCandidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ raw: "7天前", location: "吉林" }),
+    ]));
+
+    const note = await new PlaywrightXiaohongshuAdapter().extract(
+      page,
+      publicLoggedOutNoteUrl,
+    );
+    expect(note).toMatchObject({
+      pageStatus: "NORMAL",
+      isPublic: true,
+      title: "混合喂养的神：德爱白金Pro",
+      imageCount: 3,
+      publishedAtRaw: "7天前",
+    });
+    expect(note.body?.length).toBeGreaterThan(0);
+    expect(note.topics.map((item) => item.displayText)).toEqual([
+      "#爱他美德国白金版",
+      "#爱他美新手爸妈日记",
+    ]);
+    await page.unrouteAll({ behavior: "wait" });
   });
 
   it("generic main 先出现时不提前提取，等待慢速 current-note 容器", async () => {
