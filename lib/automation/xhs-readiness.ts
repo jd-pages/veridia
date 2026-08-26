@@ -1,5 +1,10 @@
 import type { Page } from "playwright";
 import {
+  throwIfAutomaticExtractionAborted,
+  waitForAutomaticExtractionDelay,
+  waitForAutomaticExtractionOperation,
+} from "./extraction-deadline";
+import {
   classifyAutomaticPage,
   detectUnavailableXhsPage,
   isXiaohongshuNoteDetailUrl,
@@ -235,6 +240,7 @@ export async function waitForXhsPageReadiness(input: {
   timeoutMs: number;
   pollMs?: number;
   httpStatus?: number | null;
+  signal?: AbortSignal;
 }) {
   const { page, redirectChain } = input;
   const deadline = Date.now() + Math.max(250, input.timeoutMs);
@@ -242,20 +248,28 @@ export async function waitForXhsPageReadiness(input: {
   let reloadedEmptyShell = false;
 
   while (Date.now() < deadline) {
+    throwIfAutomaticExtractionAborted(input.signal);
     redirectChain.push(page.url());
     // Terminal URL/title/body/DOM evidence always wins over an earlier shell
     // or hydration signal from the same polling turn.
-    const terminalEvidence = await readXhsReadinessPageEvidence(
-      page,
-      input.httpStatus ?? null,
-    ).catch(() => null);
+    const terminalEvidence = await waitForAutomaticExtractionOperation(
+      readXhsReadinessPageEvidence(page, input.httpStatus ?? null),
+      input.signal,
+    ).catch(() => {
+      throwIfAutomaticExtractionAborted(input.signal);
+      return null;
+    });
     if (terminalEvidence && isTerminalEvidence(terminalEvidence)) {
       return true;
     }
-    const [keyElementCount, terminalElementCount] = await Promise.all([
-      page.locator(XHS_EXTRACTION_KEY_SELECTOR).count().catch(() => 0),
-      page.locator(TERMINAL_PAGE_SELECTOR).count().catch(() => 0),
-    ]);
+    const [keyElementCount, terminalElementCount] =
+      await waitForAutomaticExtractionOperation(
+        Promise.all([
+          page.locator(XHS_EXTRACTION_KEY_SELECTOR).count().catch(() => 0),
+          page.locator(TERMINAL_PAGE_SELECTOR).count().catch(() => 0),
+        ]),
+        input.signal,
+      );
     if (
       terminalElementCount > 0 &&
       !isXiaohongshuNoteDetailUrl(page.url())
@@ -263,13 +277,20 @@ export async function waitForXhsPageReadiness(input: {
       return true;
     }
     if (keyElementCount > 0) {
-      await page
-        .waitForLoadState("networkidle", { timeout: 2_500 })
-        .catch(() => undefined);
-      await page.waitForTimeout(600);
-      const stabilizedEvidence = await readXhsReadinessPageEvidence(
-        page,
-      ).catch(() => null);
+      await waitForAutomaticExtractionOperation(
+        page.waitForLoadState("networkidle", { timeout: 2_500 }),
+        input.signal,
+      ).catch(() => {
+        throwIfAutomaticExtractionAborted(input.signal);
+      });
+      await waitForAutomaticExtractionDelay(600, input.signal);
+      const stabilizedEvidence = await waitForAutomaticExtractionOperation(
+        readXhsReadinessPageEvidence(page),
+        input.signal,
+      ).catch(() => {
+        throwIfAutomaticExtractionAborted(input.signal);
+        return null;
+      });
       if (stabilizedEvidence && isTerminalEvidence(stabilizedEvidence)) {
         redirectChain.push(stabilizedEvidence.finalUrl);
       }
@@ -283,12 +304,21 @@ export async function waitForXhsPageReadiness(input: {
       (await isEmptyDocumentShell(page).catch(() => false))
     ) {
       reloadedEmptyShell = true;
-      await page
-        .reload({ waitUntil: "domcontentloaded", timeout: Math.max(1_000, remaining) })
-        .catch(() => undefined);
+      await waitForAutomaticExtractionOperation(
+        page.reload({
+          waitUntil: "domcontentloaded",
+          timeout: Math.max(1_000, remaining),
+        }),
+        input.signal,
+      ).catch(() => {
+        throwIfAutomaticExtractionAborted(input.signal);
+      });
       continue;
     }
-    await page.waitForTimeout(Math.min(pollMs, Math.max(1, remaining)));
+    await waitForAutomaticExtractionDelay(
+      Math.min(pollMs, Math.max(1, remaining)),
+      input.signal,
+    );
   }
   return false;
 }
@@ -296,11 +326,19 @@ export async function waitForXhsPageReadiness(input: {
 export async function waitForXhsExtractionKeyElements(
   page: Page,
   timeoutMs = 2_000,
+  signal?: AbortSignal,
 ) {
-  return page
-    .locator(XHS_EXTRACTION_KEY_SELECTOR)
-    .first()
-    .waitFor({ state: "attached", timeout: timeoutMs })
-    .then(() => true)
-    .catch(() => false);
+  try {
+    await waitForAutomaticExtractionOperation(
+      page
+        .locator(XHS_EXTRACTION_KEY_SELECTOR)
+        .first()
+        .waitFor({ state: "attached", timeout: timeoutMs }),
+      signal,
+    );
+    return true;
+  } catch {
+    throwIfAutomaticExtractionAborted(signal);
+    return false;
+  }
 }

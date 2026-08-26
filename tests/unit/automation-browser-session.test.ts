@@ -311,8 +311,12 @@ describe("小红书持久会话与访问节奏", () => {
     expect(browser).toContain("getXhsAuditPage");
     expect(browser).toContain("auditPageCreateCount");
     expect(browser).toContain("auditPageReuseCount");
-    expect(extract).toContain("page = await getXhsAuditPage({");
+    expect(extract).toContain(
+      "page = await waitForAutomaticExtractionOperation(",
+    );
+    expect(extract).toContain("getXhsAuditPage({");
     expect(extract).toContain("lifecycle,");
+    expect(extract).toContain("lifecycle?.signal,");
     expect(extract).not.toContain("context.newPage()");
     expect(extract).not.toContain("page.bringToFront()");
     expect(extract).not.toContain("await page.close()");

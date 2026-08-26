@@ -53,6 +53,7 @@ import type { OwnedExtractionHandle } from "./generation-lifecycle";
 import {
   throwIfAutomaticExtractionAborted,
   waitForAutomaticExtractionDelay,
+  waitForAutomaticExtractionOperation,
 } from "./extraction-deadline";
 
 export interface AutomaticExtractionOutcome {
@@ -100,17 +101,23 @@ function throwForPageStatus(status: ExtractedNote["pageStatus"]) {
 async function readPageIdentity(
   page: Page,
   httpStatus: number | null = null,
+  signal?: AbortSignal,
 ): Promise<PageIdentity> {
   let evidence: Awaited<ReturnType<typeof readXhsReadinessPageEvidence>> | null =
     null;
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    throwIfAutomaticExtractionAborted(signal);
     try {
-      evidence = await readXhsReadinessPageEvidence(page, httpStatus);
+      evidence = await waitForAutomaticExtractionOperation(
+        readXhsReadinessPageEvidence(page, httpStatus),
+        signal,
+      );
       break;
     } catch (error) {
+      throwIfAutomaticExtractionAborted(signal);
       lastError = error;
-      if (attempt < 2) await page.waitForTimeout(100);
+      if (attempt < 2) await waitForAutomaticExtractionDelay(100, signal);
     }
   }
   if (!evidence) throw lastError;
@@ -129,6 +136,7 @@ async function waitForPageReadiness(
   page: Page,
   redirectChain: string[],
   httpStatus: number | null,
+  signal?: AbortSignal,
 ) {
   const timeout = Number(
     process.env.AUTOMATION_REDIRECT_TIMEOUT_MS ||
@@ -140,6 +148,7 @@ async function waitForPageReadiness(
     redirectChain,
     timeoutMs: timeout,
     httpStatus,
+    signal,
   });
 }
 
@@ -322,11 +331,14 @@ export async function extractAuditTaskAutomatically(
 
   let page: Page;
   try {
-    page = await getXhsAuditPage({
-      taskId: task.id,
-      url: task.url,
-      lifecycle,
-    });
+    page = await waitForAutomaticExtractionOperation(
+      getXhsAuditPage({
+        taskId: task.id,
+        url: task.url,
+        lifecycle,
+      }),
+      lifecycle?.signal,
+    );
     throwIfAutomaticExtractionAborted(lifecycle?.signal);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -339,7 +351,10 @@ export async function extractAuditTaskAutomatically(
     }
     throw error;
   }
-  const diagnosticsBefore = await getXhsAuditPageDiagnostics();
+  const diagnosticsBefore = await waitForAutomaticExtractionOperation(
+    getXhsAuditPageDiagnostics(),
+    lifecycle?.signal,
+  );
   console.info(
     "[自动审核] 审核页面导航前",
     JSON.stringify({
@@ -388,10 +403,13 @@ export async function extractAuditTaskAutomatically(
     let navigationHttpStatus: number | null = null;
     try {
       throwIfAutomaticExtractionAborted(lifecycle?.signal);
-      const response = await page.goto(pageUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: Number(process.env.AUTOMATION_PAGE_TIMEOUT_MS || 30_000),
-      });
+      const response = await waitForAutomaticExtractionOperation(
+        page.goto(pageUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: Number(process.env.AUTOMATION_PAGE_TIMEOUT_MS || 30_000),
+        }),
+        lifecycle?.signal,
+      );
       throwIfAutomaticExtractionAborted(lifecycle?.signal);
       navigationHttpStatus = response?.status() ?? null;
       responseUrl = response?.url() || "";
@@ -401,6 +419,7 @@ export async function extractAuditTaskAutomatically(
           page,
           redirectChain,
           navigationHttpStatus,
+          lifecycle?.signal,
         );
       }
     } catch (error) {
@@ -434,7 +453,10 @@ export async function extractAuditTaskAutomatically(
       );
     } finally {
       if (!lifecycle?.signal.aborted) {
-        await keepXhsAuditPageInBackground(page);
+        await waitForAutomaticExtractionOperation(
+          keepXhsAuditPageInBackground(page),
+          lifecycle?.signal,
+        );
       }
     }
 
@@ -446,9 +468,13 @@ export async function extractAuditTaskAutomatically(
       );
     }
 
-    responseCandidates = await responseCollector.snapshot();
+    responseCandidates = await responseCollector.snapshot(lifecycle?.signal);
     throwIfAutomaticExtractionAborted(lifecycle?.signal);
-    identity = await readPageIdentity(page, navigationHttpStatus);
+    identity = await readPageIdentity(
+      page,
+      navigationHttpStatus,
+      lifecycle?.signal,
+    );
     throwIfAutomaticExtractionAborted(lifecycle?.signal);
     if (
       responseCandidates.loginEvidence.some((item) =>
@@ -504,7 +530,13 @@ export async function extractAuditTaskAutomatically(
     }
 
     if (!mock && isXiaohongshuNoteDetailUrl(identity.finalUrl)) {
-      if (!(await waitForXhsExtractionKeyElements(page))) {
+      if (
+        !(await waitForXhsExtractionKeyElements(
+          page,
+          2_000,
+          lifecycle?.signal,
+        ))
+      ) {
         throw new AutomaticExtractionError(
           "STRUCTURE_MISMATCH",
           "笔记详情页未出现正文或话题区域",
@@ -522,15 +554,22 @@ export async function extractAuditTaskAutomatically(
         `最终页面没有可用 Adapter：${identity.pageType}`,
       );
     }
-    const note = await adapter.extract(page, task.url, {
-      redirectChain: uniqueUrls(redirectChain),
-      responseCandidates,
-    });
+    const note = await waitForAutomaticExtractionOperation(
+      adapter.extract(page, task.url, {
+        redirectChain: uniqueUrls(redirectChain),
+        responseCandidates,
+      }),
+      lifecycle?.signal,
+    );
     throwIfAutomaticExtractionAborted(lifecycle?.signal);
     // The page can transition after readiness (or while the adapter is taking
     // its DOM snapshot). Re-read the final URL/title/body and discard the
     // normal-looking snapshot if the live page has reached a terminal state.
-    const postExtractionIdentity = await readPageIdentity(page);
+    const postExtractionIdentity = await readPageIdentity(
+      page,
+      null,
+      lifecycle?.signal,
+    );
     redirectChain.push(postExtractionIdentity.finalUrl);
     const postExtractionUnavailableError = unavailableExtractionError(
       task,
@@ -574,9 +613,11 @@ export async function extractAuditTaskAutomatically(
   } catch (error) {
     throwIfAutomaticExtractionAborted(lifecycle?.signal);
     responseCandidates = await responseCollector
-      .snapshot()
+      .snapshot(lifecycle?.signal)
       .catch(() => responseCandidates);
-    identity = await readPageIdentity(page).catch(() => identity);
+    identity = await readPageIdentity(page, null, lifecycle?.signal).catch(
+      () => identity,
+    );
     redirectChain.push(identity.finalUrl);
     logPageIdentity(task, identity);
     const extractionError =
@@ -604,12 +645,19 @@ export async function extractAuditTaskAutomatically(
   } finally {
     responseCollector.dispose();
     page.off("framenavigated", recordNavigation);
-    const diagnosticsAfter = await getXhsAuditPageDiagnostics().catch(() => ({
-      pageCount: 0,
-      auditPageCreateCount: 0,
-      auditPageReuseCount: 0,
-      windowState: "closed",
-    }));
+    const diagnosticsAfter = lifecycle?.signal.aborted
+      ? {
+          pageCount: 0,
+          auditPageCreateCount: 0,
+          auditPageReuseCount: 0,
+          windowState: "closed",
+        }
+      : await getXhsAuditPageDiagnostics().catch(() => ({
+          pageCount: 0,
+          auditPageCreateCount: 0,
+          auditPageReuseCount: 0,
+          windowState: "closed",
+        }));
     console.info(
       "[自动审核] 审核页面导航后",
       JSON.stringify({

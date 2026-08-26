@@ -34,6 +34,31 @@ export function waitForAutomaticExtractionDelay(
   });
 }
 
+export function waitForAutomaticExtractionOperation<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+) {
+  throwIfAutomaticExtractionAborted(signal);
+  if (!signal) return operation;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(new AutomaticExtractionHandoffCancelledError());
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    void operation.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
+}
+
 export function automationExtractionDeadlineMs() {
   const configured = Number(
     process.env.AUTOMATION_EXTRACTION_DEADLINE_MS ||

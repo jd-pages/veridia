@@ -13,6 +13,7 @@ import {
   type PlatformPublishedAtEvidence,
 } from "@/lib/platform-published-at";
 import { detectUnavailableXhsPage } from "./page-classification";
+import { waitForAutomaticExtractionOperation } from "./extraction-deadline";
 
 export interface TextCandidate {
   value: string;
@@ -660,8 +661,11 @@ export function createXhsResponseCollector(page: Page) {
   };
   page.on("response", handler);
   return {
-    async snapshot() {
-      await Promise.allSettled([...pending]);
+    async snapshot(signal?: AbortSignal) {
+      await waitForAutomaticExtractionOperation(
+        Promise.allSettled([...pending]),
+        signal,
+      );
       return candidates;
     },
     dispose() {

@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import type { Page, Response } from "playwright";
+import { describe, expect, it, vi } from "vitest";
+import { AutomaticExtractionHandoffCancelledError } from "@/lib/automation/extraction-deadline";
 import {
   collectJsonCandidates,
+  createXhsResponseCollector,
   mergeCandidates,
   noteIdCandidatesFromUrls,
   safeEvidenceUrl,
@@ -8,6 +11,33 @@ import {
 } from "@/lib/automation/xhs-page-evidence";
 
 describe("小红书自动取证候选解析", () => {
+  it("PAUSE 会中断未返回的 response JSON drain 使 extraction 可以 settle", async () => {
+    let responseHandler: ((response: Response) => void) | undefined;
+    const page = {
+      on: vi.fn((event: string, handler: (response: Response) => void) => {
+        if (event === "response") responseHandler = handler;
+      }),
+      off: vi.fn(),
+    } as unknown as Page;
+    const collector = createXhsResponseCollector(page);
+    responseHandler?.({
+      url: () => "https://www.xiaohongshu.com/api/sns/web/v1/feed",
+      headers: () => ({ "content-type": "application/json" }),
+      json: () => new Promise(() => undefined),
+      status: () => 200,
+    } as unknown as Response);
+    const controller = new AbortController();
+    const snapshot = collector.snapshot(controller.signal);
+
+    controller.abort();
+
+    await expect(snapshot).rejects.toBeInstanceOf(
+      AutomaticExtractionHandoffCancelledError,
+    );
+    collector.dispose();
+    expect(page.off).toHaveBeenCalledWith("response", responseHandler);
+  });
+
   it("从 discovery、explore 和 target_note_id 中识别笔记 ID", () => {
     const candidates = noteIdCandidatesFromUrls([
       "https://www.xiaohongshu.com/discovery/item/6a5cb375000000000301c549",
