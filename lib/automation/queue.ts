@@ -38,6 +38,7 @@ import {
 import {
   claimRunnerWake,
   completeRunnerWake,
+  recoverOrphanedRunnerWake,
   requestRunnerWake,
 } from "./runner-handoff";
 import {
@@ -56,6 +57,15 @@ const LOCAL_MOCK_WAIT_CAP_MS = Math.max(
 
 function wait(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function cancelOwnedExtraction(
+  handle: OwnedExtractionHandle,
+  cleanup: Parameters<typeof requestOwnedExtractionCancellation>[1],
+) {
+  const barrier = requestOwnedExtractionCancellation(handle, cleanup);
+  void barrier.then(kickAutomaticAuditQueue, kickAutomaticAuditQueue);
+  return barrier;
 }
 
 async function waitWhileBatchRunning(
@@ -356,7 +366,7 @@ async function processBatch(batchId: string) {
       });
       const activeExtraction = queueState.activeExtraction;
       if (activeExtraction?.batchId === batchId) {
-        void requestOwnedExtractionCancellation(
+        void cancelOwnedExtraction(
           activeExtraction,
           runtime.cancelActiveExtraction,
         ).catch(() => undefined);
@@ -437,7 +447,7 @@ async function processBatch(batchId: string) {
           extraction = await runWithExtractionDeadline({
             operation,
             cancel: () =>
-              requestOwnedExtractionCancellation(
+              cancelOwnedExtraction(
                 extractionHandle,
                 runtime.cancelActiveExtraction,
               ),
@@ -787,6 +797,16 @@ export function kickAutomaticAuditQueue() {
 
 function startAutomaticAuditQueueRunner() {
   if (queueState.runner) return;
+  const orphanedGeneration = recoverOrphanedRunnerWake(queueState, false);
+  if (orphanedGeneration !== null) {
+    console.warn(
+      "[自动审核生命周期] ORPHANED_RUNNER_WAKE_RECOVERED",
+      JSON.stringify({
+        orphanedGeneration,
+        wakeGeneration: queueState.wakeGeneration ?? null,
+      }),
+    );
+  }
   const runnerGeneration = claimRunnerWake(queueState);
   if (runnerGeneration === null) return;
   const runner = runQueue()
@@ -838,7 +858,7 @@ export async function controlAutomaticBatch(
     });
     const activeExtraction = queueState.activeExtraction;
     if (activeExtraction?.batchId === batchId) {
-      void requestOwnedExtractionCancellation(
+      void cancelOwnedExtraction(
         activeExtraction,
         runtime.cancelActiveExtraction,
       ).catch(() => undefined);
@@ -986,7 +1006,7 @@ export async function controlAutomaticBatch(
     queueState.activeBatchId = undefined;
     const activeExtraction = queueState.activeExtraction;
     if (activeExtraction?.batchId === batchId) {
-      void requestOwnedExtractionCancellation(
+      void cancelOwnedExtraction(
         activeExtraction,
         runtime.cancelActiveExtraction,
       ).catch(() => undefined);

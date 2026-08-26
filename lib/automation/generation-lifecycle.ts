@@ -193,6 +193,8 @@ export function requestOwnedExtractionCancellation(
     active.state = "SETTLING";
     try {
       await cleanup(active);
+    } catch {
+      lifecycleLog("STALE_EXTRACTION_ERROR_IGNORED", active);
     } finally {
       await active.settled;
     }

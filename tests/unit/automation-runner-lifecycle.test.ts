@@ -11,6 +11,7 @@ import {
 import {
   claimRunnerWake,
   completeRunnerWake,
+  recoverOrphanedRunnerWake,
   requestRunnerWake,
 } from "@/lib/automation/runner-handoff";
 import {
@@ -105,6 +106,16 @@ describe("Pause / Resume runner epoch", () => {
     const nextRunner = claimRunnerWake(state);
     expect(nextRunner).toBe(4);
     expect(completeRunnerWake(state, nextRunner!)).toBe(false);
+  });
+
+  it("runner Promise 已消失时回收孤儿 generation claim 且不丢失后续 wake", () => {
+    const state = { wakeGeneration: 8, runnerGeneration: 7 };
+
+    expect(recoverOrphanedRunnerWake(state, true)).toBeNull();
+    expect(state.runnerGeneration).toBe(7);
+    expect(recoverOrphanedRunnerWake(state, false)).toBe(7);
+    expect(state.runnerGeneration).toBeUndefined();
+    expect(claimRunnerWake(state)).toBe(8);
   });
 
   it("XHS context close 与下一代 launch 通过 closePromise 串行", () => {
@@ -226,6 +237,47 @@ describe("Pause / Resume runner epoch", () => {
     expect(
       getGenerationLifecycleDiagnostics("XIAOHONGSHU").activeExtractionCount,
     ).toBe(0);
+  });
+
+  it("旧 generation cleanup 失败不会拒绝 barrier 或吞掉下一次 runner wake", async () => {
+    const handle = startOwnedExtraction({
+      platform: "XIAOHONGSHU",
+      batchId: "batch-cleanup-error",
+      taskId: "task-cleanup-error",
+      runEpoch: 9,
+      claimEpoch: 9,
+      wakeGeneration: 9,
+    });
+    const operation = new Promise<void>((_resolve, reject) => {
+      handle.signal.addEventListener(
+        "abort",
+        () => reject(new AutomaticExtractionHandoffCancelledError()),
+        { once: true },
+      );
+    });
+    trackOwnedExtraction(handle, operation);
+    void operation.catch(() => undefined);
+
+    await expect(
+      requestOwnedExtractionCancellation(handle, async () => {
+        throw new Error("old context already closed");
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      waitForOwnedExtractionCleanup("XIAOHONGSHU", {
+        platform: "XIAOHONGSHU",
+        batchId: "batch-next",
+        taskId: "QUEUE_HANDOFF",
+        runEpoch: 10,
+        claimEpoch: 10,
+        wakeGeneration: 10,
+      }),
+    ).resolves.toBeUndefined();
+    expect(
+      getGenerationLifecycleDiagnostics("XIAOHONGSHU").recentEvents.some(
+        (entry) => entry.event === "STALE_EXTRACTION_ERROR_IGNORED",
+      ),
+    ).toBe(true);
   });
 
   it("旧 extraction abort 后晚到错误只属于 stale generation", async () => {

@@ -23,3 +23,13 @@ export function completeRunnerWake(
   state.runnerGeneration = undefined;
   return (state.wakeGeneration ?? 0) > generation;
 }
+
+export function recoverOrphanedRunnerWake(
+  state: RunnerHandoffState,
+  runnerRegistered: boolean,
+) {
+  if (runnerRegistered || state.runnerGeneration === undefined) return null;
+  const orphanedGeneration = state.runnerGeneration;
+  state.runnerGeneration = undefined;
+  return orphanedGeneration;
+}
