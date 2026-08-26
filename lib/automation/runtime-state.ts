@@ -1,4 +1,5 @@
 import type { AutomationPlatform } from "./platform";
+import type { OwnedExtractionHandle } from "./generation-lifecycle";
 
 export type AutomaticAuditQueueState = {
   runner?: Promise<void>;
@@ -7,7 +8,7 @@ export type AutomaticAuditQueueState = {
   activePlatform?: AutomationPlatform;
   wakeGeneration?: number;
   runnerGeneration?: number;
-  activeExtractionAbort?: () => void;
+  activeExtraction?: OwnedExtractionHandle;
 };
 
 const globalForQueue = globalThis as typeof globalThis & {

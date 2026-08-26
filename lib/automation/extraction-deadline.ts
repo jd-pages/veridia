@@ -9,6 +9,31 @@ export class AutomaticExtractionHandoffCancelledError extends Error {
   }
 }
 
+export function throwIfAutomaticExtractionAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw new AutomaticExtractionHandoffCancelledError();
+  }
+}
+
+export function waitForAutomaticExtractionDelay(
+  milliseconds: number,
+  signal?: AbortSignal,
+) {
+  throwIfAutomaticExtractionAborted(signal);
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      reject(new AutomaticExtractionHandoffCancelledError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
 export function automationExtractionDeadlineMs() {
   const configured = Number(
     process.env.AUTOMATION_EXTRACTION_DEADLINE_MS ||

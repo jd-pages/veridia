@@ -31,12 +31,23 @@ import {
   taskStatusForPersistedResult,
   type AutomaticExecutionLease,
 } from "./execution-lease";
-import { runWithExtractionDeadline } from "./extraction-deadline";
+import {
+  AutomaticExtractionHandoffCancelledError,
+  runWithExtractionDeadline,
+} from "./extraction-deadline";
 import {
   claimRunnerWake,
   completeRunnerWake,
   requestRunnerWake,
 } from "./runner-handoff";
+import {
+  recordGenerationLifecycleEvent,
+  requestOwnedExtractionCancellation,
+  startOwnedExtraction,
+  trackOwnedExtraction,
+  waitForOwnedExtractionCleanup,
+  type OwnedExtractionHandle,
+} from "./generation-lifecycle";
 
 const LOCAL_MOCK_WAIT_CAP_MS = Math.max(
   1,
@@ -273,6 +284,19 @@ async function processBatch(batchId: string) {
     return;
   }
   const runtime = automationRuntime(platform);
+  const queuedBatch = await prisma.auditBatch.findUnique({
+    where: { id: batchId },
+    select: { runEpoch: true },
+  });
+  const nextRunEpoch = (queuedBatch?.runEpoch ?? 0) + 1;
+  await waitForOwnedExtractionCleanup(platform, {
+    platform,
+    batchId,
+    taskId: "QUEUE_HANDOFF",
+    runEpoch: nextRunEpoch,
+    claimEpoch: nextRunEpoch,
+    wakeGeneration: queueState.runnerGeneration ?? null,
+  });
   queueState.activeBatchId = batchId;
   queueState.activePlatform = platform;
   const pacing = await runtime.pacing();
@@ -330,7 +354,13 @@ async function processBatch(batchId: string) {
         reason: "STARTUP",
         liveRunner: false,
       });
-      void runtime.cancelActiveExtraction().catch(() => undefined);
+      const activeExtraction = queueState.activeExtraction;
+      if (activeExtraction?.batchId === batchId) {
+        void requestOwnedExtractionCancellation(
+          activeExtraction,
+          runtime.cancelActiveExtraction,
+        ).catch(() => undefined);
+      }
       queueState.activeBatchId = undefined;
       runtime.updateLock(null);
       return;
@@ -356,6 +386,7 @@ async function processBatch(batchId: string) {
     let mustPauseBatch = false;
     let sessionFailureCode = "";
     let extraction: Awaited<ReturnType<typeof runtime.extract>> | null = null;
+    let currentExtractionHandle: OwnedExtractionHandle | undefined;
     try {
       const taskPlatform = resolveTaskAutomationPlatform(processingTask);
       assertPlatformRouting({
@@ -381,18 +412,39 @@ async function processBatch(batchId: string) {
       let currentTask = processingTask;
       for (let retry = 0; ; retry += 1) {
         const extractionStartedAt = Date.now();
-        const extractionController = new AbortController();
-        const abortExtraction = () => extractionController.abort();
-        queueState.activeExtractionAbort = abortExtraction;
+        const extractionHandle = startOwnedExtraction({
+          platform,
+          batchId,
+          taskId: task.id,
+          runEpoch,
+          claimEpoch: lease.claimEpoch,
+          wakeGeneration: queueState.runnerGeneration,
+        });
+        currentExtractionHandle = extractionHandle;
+        queueState.activeExtraction = extractionHandle;
         try {
           console.info("[自动审核] 开始读取", JSON.stringify({ batchId, taskId: task.id, retry }));
+          const operation = trackOwnedExtraction(
+            extractionHandle,
+            runtime.extract(currentTask, extractionHandle),
+          );
+          const clearActiveExtraction = () => {
+            if (queueState.activeExtraction === extractionHandle) {
+              queueState.activeExtraction = undefined;
+            }
+          };
+          void operation.then(clearActiveExtraction, clearActiveExtraction);
           extraction = await runWithExtractionDeadline({
-            operation: runtime.extract(currentTask),
-            cancel: runtime.cancelActiveExtraction,
+            operation,
+            cancel: () =>
+              requestOwnedExtractionCancellation(
+                extractionHandle,
+                runtime.cancelActiveExtraction,
+              ),
             batchId,
             taskId: task.id,
             runEpoch,
-            signal: extractionController.signal,
+            signal: extractionHandle.signal,
           });
           console.info("[自动审核] 读取完成", JSON.stringify({
             batchId,
@@ -402,6 +454,12 @@ async function processBatch(batchId: string) {
           }));
           break;
         } catch (error) {
+          if (
+            error instanceof AutomaticExtractionHandoffCancelledError ||
+            extractionHandle.signal.aborted
+          ) {
+            throw error;
+          }
           const extractionError = toAutomaticExtractionError(error);
           const retryable = ["LOAD_TIMEOUT", "NETWORK_ERROR"].includes(
             extractionError.code,
@@ -453,8 +511,11 @@ async function processBatch(batchId: string) {
             where: { id: task.id },
           });
         } finally {
-          if (queueState.activeExtractionAbort === abortExtraction) {
-            queueState.activeExtractionAbort = undefined;
+          if (
+            queueState.activeExtraction === extractionHandle &&
+            extractionHandle.state === "SETTLED"
+          ) {
+            queueState.activeExtraction = undefined;
           }
         }
       }
@@ -466,6 +527,18 @@ async function processBatch(batchId: string) {
         executionLease: lease,
       });
     } catch (error) {
+      if (
+        currentExtractionHandle &&
+        (error instanceof AutomaticExtractionHandoffCancelledError ||
+          currentExtractionHandle.signal.aborted)
+      ) {
+        recordGenerationLifecycleEvent(
+          "STALE_EXTRACTION_ERROR_IGNORED",
+          currentExtractionHandle,
+        );
+        await keepProcessingOnlyWhileBatchRuns(lease);
+        return;
+      }
       if (isStaleRunnerCompletionError(error)) return;
       if (!(await keepProcessingOnlyWhileBatchRuns(lease))) {
         return;
@@ -730,7 +803,6 @@ function startAutomaticAuditQueueRunner() {
         queueState.runner = undefined;
         queueState.activeBatchId = undefined;
         queueState.activePlatform = undefined;
-        queueState.activeExtractionAbort = undefined;
         if (restartRequested) queueMicrotask(startAutomaticAuditQueueRunner);
       });
   queueState.runner = runner;
@@ -764,10 +836,15 @@ export async function controlAutomaticBatch(
       reason: "PAUSE",
       liveRunner: isAutomaticBatchRuntimeLive(batchId),
     });
-    queueState.activeExtractionAbort?.();
+    const activeExtraction = queueState.activeExtraction;
+    if (activeExtraction?.batchId === batchId) {
+      void requestOwnedExtractionCancellation(
+        activeExtraction,
+        runtime.cancelActiveExtraction,
+      ).catch(() => undefined);
+    }
     queueState.activeBatchId = undefined;
     runtime.updateLock(null);
-    void runtime.cancelActiveExtraction().catch(() => undefined);
     console.info(
       "[自动审核生命周期] RUN_EPOCH_INVALIDATED",
       JSON.stringify({
@@ -907,9 +984,14 @@ export async function controlAutomaticBatch(
       });
     });
     queueState.activeBatchId = undefined;
-    queueState.activeExtractionAbort?.();
+    const activeExtraction = queueState.activeExtraction;
+    if (activeExtraction?.batchId === batchId) {
+      void requestOwnedExtractionCancellation(
+        activeExtraction,
+        runtime.cancelActiveExtraction,
+      ).catch(() => undefined);
+    }
     runtime.updateLock(null);
-    void runtime.cancelActiveExtraction().catch(() => undefined);
     return cancelled;
   }
   if (action === "RETRY_FAILED") {

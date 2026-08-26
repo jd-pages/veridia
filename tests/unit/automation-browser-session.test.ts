@@ -311,7 +311,8 @@ describe("小红书持久会话与访问节奏", () => {
     expect(browser).toContain("getXhsAuditPage");
     expect(browser).toContain("auditPageCreateCount");
     expect(browser).toContain("auditPageReuseCount");
-    expect(extract).toContain("getXhsAuditPage({ taskId: task.id, url: task.url })");
+    expect(extract).toContain("page = await getXhsAuditPage({");
+    expect(extract).toContain("lifecycle,");
     expect(extract).not.toContain("context.newPage()");
     expect(extract).not.toContain("page.bringToFront()");
     expect(extract).not.toContain("await page.close()");
@@ -424,7 +425,8 @@ describe("抖音独立持久会话与后台审核页", () => {
     expect(browser).toContain("timeout: BROWSER_OPERATION_TIMEOUT_MS");
     expect(browser).toContain('boundedOperation("关闭抖音审核页面", page.close())');
     expect(browser).toContain("createAuditPage(context)");
-    expect(extract).toContain("getDouyinAuditPage({ taskId: task.id, url: task.url })");
+    expect(extract).toContain("const page = await getDouyinAuditPage({");
+    expect(extract).toContain("lifecycle,");
     expect(extract).not.toContain("context.newPage()");
     expect(extract).not.toContain("page.bringToFront()");
     expect(extract).not.toContain("await page.close()");

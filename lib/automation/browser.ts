@@ -24,6 +24,19 @@ import {
   XhsPageInvariantError,
   type XhsPageReconcileReason,
 } from "./xhs-page-arbiter";
+import {
+  acquireBrowserOwner,
+  authorizeBrowserCleanup,
+  getGenerationLifecycleDiagnostics,
+  releaseBrowserOwner,
+  type GenerationLifecycleIdentity,
+} from "./generation-lifecycle";
+import { automaticAuditQueueState } from "./runtime-state";
+import { throwIfAutomaticExtractionAborted } from "./extraction-deadline";
+
+type BrowserLifecycleIdentity = GenerationLifecycleIdentity & {
+  signal?: AbortSignal;
+};
 
 const SESSION_ID = "xiaohongshu";
 const DEFAULT_PROFILE_DIRECTORY = path.join(
@@ -99,6 +112,9 @@ type XhsBrowserState = {
   controlDisconnectedAt?: Date;
   automaticRecoveryCount: number;
   lifecycleGeneration: number;
+  contextOwner?: GenerationLifecycleIdentity;
+  launchOwner?: GenerationLifecycleIdentity;
+  closeOwnerGeneration?: number;
   pageArbiter?: XhsContextPageArbiter<Page>;
 };
 
@@ -428,8 +444,16 @@ async function reconcileCurrentContextPages(
   }
 }
 
-async function ensureBrowserContext(allowRelaunch = false) {
+async function ensureBrowserContext(
+  allowRelaunch = false,
+  lifecycle?: BrowserLifecycleIdentity,
+) {
   if (state.closePromise) await state.closePromise;
+  throwIfAutomaticExtractionAborted(lifecycle?.signal);
+  if (lifecycle) {
+    acquireBrowserOwner(lifecycle);
+    state.contextOwner = lifecycle;
+  }
   if (browserControlAvailable()) {
     state.controlState = "READY";
     ensureContextPageArbiter(state.context!);
@@ -438,6 +462,7 @@ async function ensureBrowserContext(allowRelaunch = false) {
   if (state.context || state.browser) {
     const staleContext = state.context;
     const staleCloseBrowser = state.closeBrowser;
+    const staleOwner = state.contextOwner;
     state.pageArbiter?.dispose();
     state.pageArbiter = undefined;
     state.lifecycleGeneration += 1;
@@ -448,6 +473,8 @@ async function ensureBrowserContext(allowRelaunch = false) {
     state.auditPagePromise = undefined;
     state.loginPage = undefined;
     state.interactivePage = undefined;
+    state.contextOwner = undefined;
+    if (staleOwner) releaseBrowserOwner(staleOwner);
     state.controlState = "DISCONNECTED";
     state.controlDisconnectedAt = new Date();
     if (staleCloseBrowser) {
@@ -461,8 +488,14 @@ async function ensureBrowserContext(allowRelaunch = false) {
     throw browserControlError();
   }
   await getAutomationSession();
+  if (lifecycle) {
+    acquireBrowserOwner(lifecycle);
+    state.contextOwner = lifecycle;
+  }
   const launchStartedAt = new Date();
   const launchGeneration = state.lifecycleGeneration;
+  const launchOwner = lifecycle;
+  state.launchOwner = launchOwner;
   state.controlState = "CONNECTING";
   console.info(
     "[小红书浏览器] 启动 Persistent Context",
@@ -511,6 +544,7 @@ async function ensureBrowserContext(allowRelaunch = false) {
         state.browser = undefined;
         state.context = undefined;
         state.closeBrowser = undefined;
+        if (launchOwner) releaseBrowserOwner(launchOwner);
         return (closeBrowser ? closeBrowser() : context.close())
           .catch(() => undefined)
           .then(() => {
@@ -521,6 +555,7 @@ async function ensureBrowserContext(allowRelaunch = false) {
           });
       }
       state.context = context;
+      state.contextOwner = launchOwner;
       createContextPageArbiter(context, launchGeneration, launchStartedAt);
       state.profileLocked = false;
       state.contextClosedUnexpectedly = false;
@@ -551,6 +586,7 @@ async function ensureBrowserContext(allowRelaunch = false) {
           state.context === context &&
           state.lifecycleGeneration === launchGeneration;
         if (currentGeneration) {
+          const closedOwner = state.contextOwner;
           state.pageArbiter?.dispose();
           state.pageArbiter = undefined;
           state.context = undefined;
@@ -561,6 +597,8 @@ async function ensureBrowserContext(allowRelaunch = false) {
           state.auditPagePromise = undefined;
           state.loginPage = undefined;
           state.interactivePage = undefined;
+          state.contextOwner = undefined;
+          if (closedOwner) releaseBrowserOwner(closedOwner);
           state.contextClosedUnexpectedly = unexpected;
           state.controlState = unexpected ? "DISCONNECTED" : "NOT_STARTED";
           state.controlDisconnectedAt = unexpected ? new Date() : undefined;
@@ -592,6 +630,9 @@ async function ensureBrowserContext(allowRelaunch = false) {
     })
     .finally(() => {
       state.launchPromise = undefined;
+      if (state.launchOwner?.ownerGeneration === launchOwner?.ownerGeneration) {
+        state.launchOwner = undefined;
+      }
     });
   return state.launchPromise;
 }
@@ -599,8 +640,14 @@ async function ensureBrowserContext(allowRelaunch = false) {
 export async function getXhsAuditPage(input?: {
   taskId?: string;
   url?: string;
+  lifecycle?: BrowserLifecycleIdentity;
 }) {
+  throwIfAutomaticExtractionAborted(input?.lifecycle?.signal);
   state.auditPageRequestCount += 1;
+  if (input?.lifecycle) {
+    acquireBrowserOwner(input.lifecycle);
+    state.contextOwner = input.lifecycle;
+  }
   const existing = livingPage(state.auditPage);
   if (existing && browserControlAvailable()) {
     const reconciled = await reconcileCurrentContextPages("AUDIT_REQUEST");
@@ -643,7 +690,11 @@ export async function getXhsAuditPage(input?: {
     let recoveryAttempt = 0;
     while (true) {
       try {
-        const context = await ensureBrowserContext(recoveryAttempt > 0);
+        throwIfAutomaticExtractionAborted(input?.lifecycle?.signal);
+        const context = await ensureBrowserContext(
+          recoveryAttempt > 0,
+          input?.lifecycle,
+        );
         const pageCountBefore = context.pages().length;
         await reconcileCurrentContextPages("CONTEXT_READY");
         const arbiter = ensureContextPageArbiter(context);
@@ -707,6 +758,7 @@ export async function getXhsAuditPage(input?: {
         );
         return page;
       } catch (error) {
+        throwIfAutomaticExtractionAborted(input?.lifecycle?.signal);
         if (error instanceof XhsPageGenerationInvalidatedError) throw error;
         const pageInvariantFailure = error instanceof XhsPageInvariantError;
         if (
@@ -728,7 +780,7 @@ export async function getXhsAuditPage(input?: {
             automaticRecoveryAttempt: recoveryAttempt,
           }),
         );
-        await closeXhsBrowserContext();
+        await closeXhsBrowserContext(input?.lifecycle);
       }
     }
   })().finally(() => {
@@ -807,8 +859,21 @@ export async function getXhsAuditPageDiagnostics() {
   };
 }
 
-export function closeXhsBrowserContext() {
+export function closeXhsBrowserContext(
+  requestedOwner?: GenerationLifecycleIdentity,
+) {
+  if (requestedOwner) {
+    const currentOwner = state.contextOwner || state.launchOwner;
+    if (
+      !authorizeBrowserCleanup(requestedOwner) ||
+      !currentOwner ||
+      currentOwner.ownerGeneration !== requestedOwner.ownerGeneration
+    ) {
+      return Promise.resolve();
+    }
+  }
   if (state.closePromise) return state.closePromise;
+  const closingOwner = state.contextOwner || state.launchOwner;
   const closing = (async () => {
     state.pageArbiter?.dispose();
     state.pageArbiter = undefined;
@@ -825,6 +890,9 @@ export function closeXhsBrowserContext() {
     state.auditPagePromise = undefined;
     state.loginPage = undefined;
     state.interactivePage = undefined;
+    state.contextOwner = undefined;
+    state.launchOwner = undefined;
+    state.closeOwnerGeneration = closingOwner?.ownerGeneration;
     try {
       if (closeBrowser) await closeBrowser().catch(() => undefined);
       else if (context) await context.close().catch(() => undefined);
@@ -833,6 +901,8 @@ export function closeXhsBrowserContext() {
       state.closingContext = false;
       state.contextClosedUnexpectedly = false;
       state.controlState = "NOT_STARTED";
+      state.closeOwnerGeneration = undefined;
+      if (closingOwner) releaseBrowserOwner(closingOwner);
     }
   })();
   const barrier = closing.finally(() => {
@@ -1086,6 +1156,14 @@ export async function getXhsSessionDiagnostics() {
     auditLock: state.auditLock || null,
     contextClosedUnexpectedly: state.contextClosedUnexpectedly,
     contextLaunchCount: state.contextLaunchCount,
+    activeBrowserOwnerGeneration:
+      state.contextOwner?.ownerGeneration ??
+      state.launchOwner?.ownerGeneration ??
+      null,
+    generationLifecycle: {
+      ...getGenerationLifecycleDiagnostics("XIAOHONGSHU"),
+      effectiveRunnerCount: automaticAuditQueueState.runner ? 1 : 0,
+    },
     ...auditPageDiagnostics,
   };
 }

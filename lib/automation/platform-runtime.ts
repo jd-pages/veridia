@@ -24,6 +24,10 @@ import {
   updateDouyinAuditLock,
 } from "./douyin-browser";
 import { getAutomationPacingSettings } from "./pacing";
+import type {
+  GenerationLifecycleIdentity,
+  OwnedExtractionHandle,
+} from "./generation-lifecycle";
 
 export interface PlatformAutomationRuntime {
   platform: AutomationPlatform;
@@ -35,10 +39,15 @@ export interface PlatformAutomationRuntime {
   classifierName: "classifyAutomaticPage" | "classifyDouyinPage";
   classifierPlatform: AutomationPlatform;
   profilePath: () => string;
-  extract: (task: AuditTask) => Promise<AutomaticExtractionOutcome>;
+  extract: (
+    task: AuditTask,
+    lifecycle: OwnedExtractionHandle,
+  ) => Promise<AutomaticExtractionOutcome>;
   pacing: () => ReturnType<typeof getAutomationPacingSettings>;
   ensureBrowserReady: () => Promise<unknown>;
-  cancelActiveExtraction: () => Promise<void>;
+  cancelActiveExtraction: (
+    lifecycle: GenerationLifecycleIdentity,
+  ) => Promise<void>;
   updateLock: typeof updateXhsAuditLock;
   heartbeatLock: typeof heartbeatXhsAuditLock;
   clearLock: typeof clearXhsAuditLockForBatch;
@@ -59,10 +68,12 @@ const runtimeRegistry: Record<
       classifierName: "classifyDouyinPage",
       classifierPlatform: "DOUYIN",
       profilePath: () => getDouyinAutomationProfilePath(),
-      extract: (task: AuditTask) => extractDouyinAuditTaskAutomatically(task),
+      extract: (task: AuditTask, lifecycle: OwnedExtractionHandle) =>
+        extractDouyinAuditTaskAutomatically(task, lifecycle),
       pacing: () => getAutomationPacingSettings("DOUYIN"),
       ensureBrowserReady: () => ensureDouyinBrowserControlReady(),
-      cancelActiveExtraction: () => cancelDouyinActiveExtraction(),
+      cancelActiveExtraction: (lifecycle: GenerationLifecycleIdentity) =>
+        cancelDouyinActiveExtraction(lifecycle),
       updateLock: updateDouyinAuditLock,
       heartbeatLock: heartbeatDouyinAuditLock,
       clearLock: clearDouyinAuditLockForBatch,
@@ -78,10 +89,12 @@ const runtimeRegistry: Record<
     classifierName: "classifyAutomaticPage",
     classifierPlatform: "XIAOHONGSHU",
     profilePath: () => getXhsAutomationProfilePath(),
-    extract: (task: AuditTask) => extractAuditTaskAutomatically(task),
+    extract: (task: AuditTask, lifecycle: OwnedExtractionHandle) =>
+      extractAuditTaskAutomatically(task, lifecycle),
     pacing: () => getAutomationPacingSettings("XIAOHONGSHU"),
     ensureBrowserReady: () => ensureXhsBrowserControlReady(true),
-    cancelActiveExtraction: () => closeXhsBrowserContext(),
+    cancelActiveExtraction: (lifecycle: GenerationLifecycleIdentity) =>
+      closeXhsBrowserContext(lifecycle),
     updateLock: updateXhsAuditLock,
     heartbeatLock: heartbeatXhsAuditLock,
     clearLock: clearXhsAuditLockForBatch,

@@ -49,6 +49,11 @@ import {
   waitForXhsPageReadiness,
   type XhsReadinessCurrentNoteEvidence,
 } from "./xhs-readiness";
+import type { OwnedExtractionHandle } from "./generation-lifecycle";
+import {
+  throwIfAutomaticExtractionAborted,
+  waitForAutomaticExtractionDelay,
+} from "./extraction-deadline";
 
 export interface AutomaticExtractionOutcome {
   note: ExtractedNote;
@@ -285,7 +290,9 @@ function logPageIdentity(task: AuditTask, identity: PageIdentity) {
 
 export async function extractAuditTaskAutomatically(
   task: AuditTask,
+  lifecycle?: OwnedExtractionHandle,
 ): Promise<AutomaticExtractionOutcome> {
+  throwIfAutomaticExtractionAborted(lifecycle?.signal);
   assertPlatformRouting({
     taskPlatform: resolveTaskAutomationPlatform(task),
     activePlatform: "XIAOHONGSHU",
@@ -296,6 +303,7 @@ export async function extractAuditTaskAutomatically(
   const mock = isMockUrl(task.url);
   if (!mock) {
     const session = await getAutomationSession();
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
     if (session.status === "LOGIN_REQUIRED") {
       await startXiaohongshuLogin();
       throw new AutomaticExtractionError(
@@ -314,7 +322,12 @@ export async function extractAuditTaskAutomatically(
 
   let page: Page;
   try {
-    page = await getXhsAuditPage({ taskId: task.id, url: task.url });
+    page = await getXhsAuditPage({
+      taskId: task.id,
+      url: task.url,
+      lifecycle,
+    });
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (/专用浏览器已关闭|context or browser has been closed/iu.test(message)) {
@@ -374,10 +387,12 @@ export async function extractAuditTaskAutomatically(
     let responseUrl = "";
     let navigationHttpStatus: number | null = null;
     try {
+      throwIfAutomaticExtractionAborted(lifecycle?.signal);
       const response = await page.goto(pageUrl, {
         waitUntil: "domcontentloaded",
         timeout: Number(process.env.AUTOMATION_PAGE_TIMEOUT_MS || 30_000),
       });
+      throwIfAutomaticExtractionAborted(lifecycle?.signal);
       navigationHttpStatus = response?.status() ?? null;
       responseUrl = response?.url() || "";
       if (responseUrl) redirectChain.push(responseUrl);
@@ -418,14 +433,23 @@ export async function extractAuditTaskAutomatically(
         error instanceof Error ? error.message : "页面网络请求失败",
       );
     } finally {
-      await keepXhsAuditPageInBackground(page);
+      if (!lifecycle?.signal.aborted) {
+        await keepXhsAuditPageInBackground(page);
+      }
     }
 
     const delay = Number(url.searchParams.get("autoDelay") || 0);
-    if (delay > 0) await page.waitForTimeout(Math.min(delay, 10_000));
+    if (delay > 0) {
+      await waitForAutomaticExtractionDelay(
+        Math.min(delay, 10_000),
+        lifecycle?.signal,
+      );
+    }
 
     responseCandidates = await responseCollector.snapshot();
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
     identity = await readPageIdentity(page, navigationHttpStatus);
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
     if (
       responseCandidates.loginEvidence.some((item) =>
         /安全|风险|验证|限制/u.test(item),
@@ -486,6 +510,7 @@ export async function extractAuditTaskAutomatically(
           "笔记详情页未出现正文或话题区域",
         );
       }
+      throwIfAutomaticExtractionAborted(lifecycle?.signal);
     }
 
     const adapter = playwrightAdapters.find((item) =>
@@ -501,6 +526,7 @@ export async function extractAuditTaskAutomatically(
       redirectChain: uniqueUrls(redirectChain),
       responseCandidates,
     });
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
     // The page can transition after readiness (or while the adapter is taking
     // its DOM snapshot). Re-read the final URL/title/body and discard the
     // normal-looking snapshot if the live page has reached a terminal state.
@@ -546,6 +572,7 @@ export async function extractAuditTaskAutomatically(
     );
     return { note, warnings };
   } catch (error) {
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
     responseCandidates = await responseCollector
       .snapshot()
       .catch(() => responseCandidates);
@@ -577,7 +604,12 @@ export async function extractAuditTaskAutomatically(
   } finally {
     responseCollector.dispose();
     page.off("framenavigated", recordNavigation);
-    const diagnosticsAfter = await getXhsAuditPageDiagnostics();
+    const diagnosticsAfter = await getXhsAuditPageDiagnostics().catch(() => ({
+      pageCount: 0,
+      auditPageCreateCount: 0,
+      auditPageReuseCount: 0,
+      windowState: "closed",
+    }));
     console.info(
       "[自动审核] 审核页面导航后",
       JSON.stringify({

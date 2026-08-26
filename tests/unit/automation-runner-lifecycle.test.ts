@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AutomaticExtractionHandoffCancelledError,
   runWithExtractionDeadline,
@@ -13,8 +13,24 @@ import {
   completeRunnerWake,
   requestRunnerWake,
 } from "@/lib/automation/runner-handoff";
+import {
+  acquireBrowserOwner,
+  authorizeBrowserCleanup,
+  getGenerationLifecycleDiagnostics,
+  isStaleExtractionCompletion,
+  requestOwnedExtractionCancellation,
+  resetGenerationLifecycleForTesting,
+  settleOwnedExtraction,
+  startOwnedExtraction,
+  trackOwnedExtraction,
+  waitForOwnedExtractionCleanup,
+} from "@/lib/automation/generation-lifecycle";
 
 const root = process.cwd();
+
+afterEach(() => {
+  resetGenerationLifecycleForTesting();
+});
 
 describe("Pause / Resume runner epoch", () => {
   it("将已有结果恢复为对应 terminal Task 状态", () => {
@@ -99,6 +115,131 @@ describe("Pause / Resume runner epoch", () => {
     expect(browser).toContain("closePromise?: Promise<void>");
     expect(browser).toContain("if (state.closePromise) await state.closePromise");
     expect(browser).toContain("await launching?.catch(() => undefined)");
+  });
+
+  it("generation 1 延迟 cleanup 无权关闭 generation 2 browser owner", () => {
+    const first = startOwnedExtraction({
+      platform: "XIAOHONGSHU",
+      batchId: "batch-1",
+      taskId: "task-1",
+      runEpoch: 1,
+      claimEpoch: 1,
+      wakeGeneration: 1,
+    });
+    const second = startOwnedExtraction({
+      platform: "XIAOHONGSHU",
+      batchId: "batch-1",
+      taskId: "task-1",
+      runEpoch: 2,
+      claimEpoch: 2,
+      wakeGeneration: 2,
+    });
+    acquireBrowserOwner(first);
+    acquireBrowserOwner(second);
+
+    expect(authorizeBrowserCleanup(first)).toBe(false);
+    expect(authorizeBrowserCleanup(second)).toBe(true);
+    expect(
+      getGenerationLifecycleDiagnostics("XIAOHONGSHU").recentEvents.some(
+        (entry) => entry.event === "STALE_BROWSER_CLEANUP_REJECTED",
+      ),
+    ).toBe(true);
+    settleOwnedExtraction(first);
+    settleOwnedExtraction(second);
+  });
+
+  it("PAUSE cleanup barrier 不阻塞控制响应但会阻止下一代 browser acquire", async () => {
+    let settleOperation: () => void = () => undefined;
+    const handle = startOwnedExtraction({
+      platform: "XIAOHONGSHU",
+      batchId: "batch-barrier",
+      taskId: "task-barrier",
+      runEpoch: 4,
+      claimEpoch: 4,
+      wakeGeneration: 4,
+    });
+    const operation = new Promise<void>((resolve) => {
+      settleOperation = resolve;
+    });
+    trackOwnedExtraction(handle, operation);
+    let finishCleanup: () => void = () => undefined;
+    const cleanup = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCleanup = resolve;
+        }),
+    );
+
+    const barrier = requestOwnedExtractionCancellation(handle, cleanup);
+    expect(handle.signal.aborted).toBe(true);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+
+    let acquired = false;
+    const waiting = waitForOwnedExtractionCleanup("XIAOHONGSHU", {
+      platform: "XIAOHONGSHU",
+      batchId: "batch-barrier",
+      taskId: "QUEUE_HANDOFF",
+      runEpoch: 5,
+      claimEpoch: 5,
+      wakeGeneration: 5,
+    }).then(() => {
+      acquired = true;
+    });
+    await Promise.resolve();
+    expect(acquired).toBe(false);
+    finishCleanup();
+    await Promise.resolve();
+    expect(acquired).toBe(false);
+    settleOperation();
+    await Promise.all([barrier, waiting]);
+    expect(acquired).toBe(true);
+    expect(
+      getGenerationLifecycleDiagnostics("XIAOHONGSHU")
+        .pendingCleanupBarrierCount,
+    ).toBe(0);
+  });
+
+  it("底层 extraction 接收 AbortSignal 后真正 settle 且 registry 归零", async () => {
+    const handle = startOwnedExtraction({
+      platform: "XIAOHONGSHU",
+      batchId: "batch-abort",
+      taskId: "task-abort",
+      runEpoch: 8,
+      claimEpoch: 8,
+      wakeGeneration: 8,
+    });
+    const operation = new Promise<void>((_resolve, reject) => {
+      handle.signal.addEventListener(
+        "abort",
+        () => reject(new AutomaticExtractionHandoffCancelledError()),
+        { once: true },
+      );
+    });
+    trackOwnedExtraction(handle, operation);
+    const observed = operation.catch((error) => error);
+    await requestOwnedExtractionCancellation(handle, async () => undefined);
+
+    expect(await observed).toBeInstanceOf(
+      AutomaticExtractionHandoffCancelledError,
+    );
+    expect(isStaleExtractionCompletion(handle)).toBe(true);
+    expect(
+      getGenerationLifecycleDiagnostics("XIAOHONGSHU").activeExtractionCount,
+    ).toBe(0);
+  });
+
+  it("旧 extraction abort 后晚到错误只属于 stale generation", async () => {
+    const handle = startOwnedExtraction({
+      platform: "XIAOHONGSHU",
+      batchId: "batch-stale-error",
+      taskId: "task-stale-error",
+      runEpoch: 11,
+      claimEpoch: 11,
+      wakeGeneration: 11,
+    });
+    handle.abort();
+    expect(isStaleExtractionCompletion(handle)).toBe(true);
+    settleOwnedExtraction(handle);
   });
 
   it("Schema 与 Migration 只新增兼容 epoch 字段", () => {

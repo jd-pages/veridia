@@ -32,6 +32,8 @@ import {
   assertPlatformRouting,
   resolveTaskAutomationPlatform,
 } from "./platform";
+import type { OwnedExtractionHandle } from "./generation-lifecycle";
+import { throwIfAutomaticExtractionAborted } from "./extraction-deadline";
 
 function uniqueValues(values: string[]) {
   return [
@@ -234,7 +236,9 @@ async function saveDouyinPageMetadata(input: {
 
 export async function extractDouyinAuditTaskAutomatically(
   task: AuditTask,
+  lifecycle?: OwnedExtractionHandle,
 ): Promise<AutomaticExtractionOutcome> {
+  throwIfAutomaticExtractionAborted(lifecycle?.signal);
   assertPlatformRouting({
     taskPlatform: resolveTaskAutomationPlatform(task),
     activePlatform: "DOUYIN",
@@ -242,7 +246,12 @@ export async function extractDouyinAuditTaskAutomatically(
     adapterPlatform: playwrightDouyinAdapter.platform,
     classifierPlatform: "DOUYIN",
   });
-  const page = await getDouyinAuditPage({ taskId: task.id, url: task.url });
+  const page = await getDouyinAuditPage({
+    taskId: task.id,
+    url: task.url,
+    lifecycle,
+  });
+  throwIfAutomaticExtractionAborted(lifecycle?.signal);
   const redirectChain: string[] = [task.url];
   const onFrame = (frame: Frame) => {
     if (frame !== page.mainFrame()) return;
@@ -294,6 +303,7 @@ export async function extractDouyinAuditTaskAutomatically(
       navigationTimeout,
       redirectChain,
     );
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
     navigationAttempts.push(navigation.attempt);
     let response = navigation.response;
     httpStatus = response?.status() ?? null;
@@ -330,6 +340,7 @@ export async function extractDouyinAuditTaskAutomatically(
       contentIdentity?.contentId || null,
       mock ? 2_000 : 10_000,
     );
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
     httpStatus = httpStatus ?? responseCollector.mainDocuments.at(-1)?.status ?? null;
     if (contentIdentity) {
       canonicalUrl = contentIdentity.canonicalUrl;
@@ -420,6 +431,7 @@ export async function extractDouyinAuditTaskAutomatically(
       structured,
       currentContentEvidence: identity.currentContentEvidence,
     });
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
     const note = sanitizeDouyinBrowserValue(extractedNote) as typeof extractedNote;
     note.redirectChain = uniqueValues(redirectChain).map(safeDouyinDiagnosticUrl);
     const evidence = {
@@ -464,6 +476,7 @@ export async function extractDouyinAuditTaskAutomatically(
       warnings: (note.technicalWarnings || []) as AutomaticFailureCode[],
     };
   } catch (error) {
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
     let normalized = toAutomaticExtractionError(error);
     if (/timeout/iu.test(normalized.message) && normalized.code === "NETWORK_ERROR") {
       normalized = new AutomaticExtractionError(

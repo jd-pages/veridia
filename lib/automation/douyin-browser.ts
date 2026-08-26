@@ -10,6 +10,17 @@ import {
   launchWindowsHiddenChromium,
 } from "./windows-hidden-chromium";
 import { AutomaticExtractionError } from "./failure";
+import {
+  acquireBrowserOwner,
+  authorizeBrowserCleanup,
+  releaseBrowserOwner,
+  type GenerationLifecycleIdentity,
+} from "./generation-lifecycle";
+import { throwIfAutomaticExtractionAborted } from "./extraction-deadline";
+
+type BrowserLifecycleIdentity = GenerationLifecycleIdentity & {
+  signal?: AbortSignal;
+};
 
 const SESSION_ID = "douyin";
 const BROWSER_OPERATION_TIMEOUT_MS = 12_000;
@@ -43,6 +54,7 @@ type State = {
   closing: boolean;
   controlError?: string;
   lifecycleGeneration: number;
+  contextOwner?: GenerationLifecycleIdentity;
 };
 const globalState = globalThis as typeof globalThis & { douyinBrowserManagerState?: State };
 const state = globalState.douyinBrowserManagerState ?? (globalState.douyinBrowserManagerState = {
@@ -139,7 +151,12 @@ export async function getDouyinAutomationSession() {
   });
 }
 
-async function launchContextNow() {
+async function launchContextNow(lifecycle?: BrowserLifecycleIdentity) {
+  throwIfAutomaticExtractionAborted(lifecycle?.signal);
+  if (lifecycle) {
+    acquireBrowserOwner(lifecycle);
+    state.contextOwner = lifecycle;
+  }
   if (state.context && state.browser?.isConnected()) return state.context;
   const launchGeneration = state.lifecycleGeneration;
   await getDouyinAutomationSession();
@@ -174,14 +191,18 @@ async function launchContextNow() {
   state.browser = launchedBrowser;
   state.closeBrowser = closeLaunchedBrowser;
   state.context = context;
+  state.contextOwner = lifecycle;
   state.launchCount += 1;
   state.controlError = undefined;
   context.once("close", () => {
     if (state.context === context) {
+      const closedOwner = state.contextOwner;
       state.context = undefined;
       state.browser = undefined;
       state.auditPage = undefined;
       state.interactivePage = undefined;
+      state.contextOwner = undefined;
+      if (closedOwner) releaseBrowserOwner(closedOwner);
       if (!state.closing) state.controlError = "抖音专用浏览器已关闭";
     }
   });
@@ -189,11 +210,18 @@ async function launchContextNow() {
   return context;
 }
 
-async function ensureContext() {
+async function ensureContext(lifecycle?: BrowserLifecycleIdentity) {
   if (state.restartPromise) await state.restartPromise;
-  if (state.context && state.browser?.isConnected()) return state.context;
+  throwIfAutomaticExtractionAborted(lifecycle?.signal);
+  if (state.context && state.browser?.isConnected()) {
+    if (lifecycle) {
+      acquireBrowserOwner(lifecycle);
+      state.contextOwner = lifecycle;
+    }
+    return state.context;
+  }
   if (state.launchPromise) return state.launchPromise;
-  const launch = serializeBrowserLifecycle(launchContextNow);
+  const launch = serializeBrowserLifecycle(() => launchContextNow(lifecycle));
   const tracked = launch.finally(() => {
     if (state.launchPromise === tracked) state.launchPromise = undefined;
   });
@@ -206,11 +234,13 @@ async function closeContextNow() {
   state.closing = true;
   const close = state.closeBrowser;
   const context = state.context;
+  const closingOwner = state.contextOwner;
   state.context = undefined;
   state.browser = undefined;
   state.auditPage = undefined;
   state.interactivePage = undefined;
   state.closeBrowser = undefined;
+  state.contextOwner = undefined;
   try {
     if (close) await close();
     else if (context) {
@@ -218,11 +248,21 @@ async function closeContextNow() {
     }
   } finally {
     state.closing = false;
+    if (closingOwner) releaseBrowserOwner(closingOwner);
   }
 }
 
-export async function getDouyinAuditPage(input?: { taskId?: string; url?: string }) {
+export async function getDouyinAuditPage(input?: {
+  taskId?: string;
+  url?: string;
+  lifecycle?: BrowserLifecycleIdentity;
+}) {
   try {
+    throwIfAutomaticExtractionAborted(input?.lifecycle?.signal);
+    if (input?.lifecycle) {
+      acquireBrowserOwner(input.lifecycle);
+      state.contextOwner = input.lifecycle;
+    }
     const existing = living(state.auditPage);
     if (existing && state.context && state.browser?.isConnected()) {
       state.auditPageReuseCount += 1;
@@ -230,7 +270,7 @@ export async function getDouyinAuditPage(input?: { taskId?: string; url?: string
     }
     if (state.auditPagePromise) return await state.auditPagePromise;
     state.auditPagePromise = (async () => {
-      const context = await ensureContext();
+      const context = await ensureContext(input?.lifecycle);
       const page = await createAuditPage(context);
       if (process.platform === "win32") await setWindowState(page, "minimized");
       state.auditPage = page;
@@ -331,16 +371,27 @@ export async function logoutDouyinSession() {
 export async function closeDouyinBrowserContext() {
   await serializeBrowserLifecycle(closeContextNow);
 }
-export async function cancelDouyinActiveExtraction() {
+export async function cancelDouyinActiveExtraction(
+  requestedOwner?: GenerationLifecycleIdentity,
+) {
+  if (
+    requestedOwner &&
+    (!authorizeBrowserCleanup(requestedOwner) ||
+      state.contextOwner?.ownerGeneration !== requestedOwner.ownerGeneration)
+  ) {
+    return;
+  }
   state.lifecycleGeneration += 1;
   state.closing = true;
   const close = state.closeBrowser;
   const context = state.context;
+  const closingOwner = state.contextOwner;
   state.context = undefined;
   state.browser = undefined;
   state.auditPage = undefined;
   state.auditPagePromise = undefined;
   state.closeBrowser = undefined;
+  state.contextOwner = undefined;
   try {
     if (close) await close().catch(() => undefined);
     else if (context) {
@@ -350,6 +401,7 @@ export async function cancelDouyinActiveExtraction() {
     }
   } finally {
     state.closing = false;
+    if (closingOwner) releaseBrowserOwner(closingOwner);
   }
 }
 export async function closeDouyinAuditPageForTesting() {

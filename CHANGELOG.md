@@ -1,5 +1,14 @@
 # VERIDIA 更新日志
 
+## 1.1.21 - 2026-08-26
+
+### Pause / Continue 浏览器生命周期稳定性
+
+- 修复 Pause / Continue 极低概率下旧 extraction cleanup 与新 runner 争用浏览器资源的问题。
+- 浏览器与 extraction 资源增加代际 ownership，旧 generation 无权关闭或释放新 generation 的 context。
+- Pause 保持快速返回；恢复后的 runner 会在获取浏览器前等待旧 extraction 的 cancellation barrier 完整收口。
+- 防止恢复后的批次被旧错误再次暂停，并避免后续排队批次 starvation。
+
 ## 1.1.20 - 2026-08-25
 
 ### 小红书公开未登录笔记兼容

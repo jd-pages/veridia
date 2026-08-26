@@ -51,6 +51,40 @@ async function waitForBatchTerminal(batchId: string, timeoutMs = 180_000) {
   throw new Error(`等待自动审核批次结束超时：${batchId}`);
 }
 
+async function waitForGenerationLifecycleIdle(page: Page) {
+  let latest:
+    | {
+        activeExtractionCount: number;
+        pendingCleanupBarrierCount: number;
+        activeBrowserOwnerGenerations: number[];
+        effectiveRunnerCount: number;
+        recentEvents: Array<{ event: string }>;
+      }
+    | undefined;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          "/api/automation/session?platform=XIAOHONGSHU",
+        );
+        expect(response.ok()).toBeTruthy();
+        latest = (await response.json()).data.generationLifecycle;
+        return {
+          activeExtractionCount: latest!.activeExtractionCount,
+          pendingCleanupBarrierCount: latest!.pendingCleanupBarrierCount,
+          effectiveRunnerCount: latest!.effectiveRunnerCount,
+        };
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual({
+      activeExtractionCount: 0,
+      pendingCleanupBarrierCount: 0,
+      effectiveRunnerCount: 0,
+    });
+  return latest!;
+}
+
 test.afterEach(async ({ page }) => {
   for (const batchId of [...new Set(cleanupBatchIds)].reverse()) {
     const batch = await prisma.auditBatch.findUnique({
@@ -313,6 +347,12 @@ test("Pause 快速返回、连续三次 Resume 不遗留 PROCESSING，旧 lease 
     include: { auditResults: { where: { supersededAt: null } } },
   });
   expect(tasks.every((task) => task.auditResults.length === 1)).toBe(true);
+  const lifecycle = await waitForGenerationLifecycleIdle(page);
+  expect(
+    lifecycle.recentEvents.some(
+      (entry) => entry.event === "CLEANUP_BARRIER_WAIT_END",
+    ),
+  ).toBe(true);
 });
 
 test("Protected PAUSE_CONTINUE_RUNNER_HANDOFF：旧 extraction 延迟退出仍有界接管且后续批次不饥饿", async ({
@@ -390,6 +430,16 @@ test("Protected PAUSE_CONTINUE_RUNNER_HANDOFF：旧 extraction 延迟退出仍�
       where: { task: { batchId: { in: [firstBatchId, secondBatchId] } } },
     }),
   ).toBe(4);
+  expect(
+    await prisma.auditBatch.findUniqueOrThrow({ where: { id: secondBatchId } }),
+  ).toMatchObject({
+    status: expect.stringMatching(/^COMPLETED/u),
+    startedAt: expect.any(Date),
+  });
+  const lifecycle = await waitForGenerationLifecycleIdle(page);
+  expect(lifecycle.activeExtractionCount).toBe(0);
+  expect(lifecycle.pendingCleanupBarrierCount).toBe(0);
+  expect(lifecycle.effectiveRunnerCount).toBe(0);
 });
 
 test("PROCESSING 已有 Result 时 Resume 直接 terminalize 且不生成第二 Result", async ({
