@@ -166,10 +166,15 @@ describe("规则发布来源", () => {
   });
 
   it("BAT 禁止项目源 fallback，发布器保持 Draft → 远端复核 → Latest", () => {
-    const bat = new TextDecoder("gbk").decode(
-      fs.readFileSync(path.join(process.cwd(), "发布规则新版.bat")),
+    const batBytes = fs.readFileSync(
+      path.join(process.cwd(), "发布规则新版.bat"),
     );
-    expect(bat).toContain("chcp 936 >nul");
+    const bat = new TextDecoder("utf-8", { fatal: true }).decode(
+      batBytes,
+    );
+    expect([...batBytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(bat).toContain("chcp 65001 >nul");
+    expect(bat).not.toContain("chcp 936 >nul");
     expect(bat).toContain('set "VERIDIA_RULE_PROJECT_SOURCE="');
     expect(bat).toContain("data-location.json");
     expect(bat).toContain("不会回退发布 rules\\default-rules.json");

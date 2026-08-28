@@ -193,7 +193,9 @@ describe("本地打包发布门禁", () => {
     const rulesBatBytes = fs.readFileSync(
       path.resolve(process.cwd(), "发布规则新版.bat"),
     );
-    const rulesBat = new TextDecoder("gbk").decode(rulesBatBytes);
+    const rulesBat = new TextDecoder("utf-8", { fatal: true }).decode(
+      rulesBatBytes,
+    );
     const workflow = fs.readFileSync(
       path.resolve(process.cwd(), "scripts", "fixed-workflow.mjs"),
       "utf8",
@@ -258,11 +260,15 @@ describe("本地打包发布门禁", () => {
     expect(binaryBatBytes.includes(Buffer.from("\r\n"))).toBe(true);
     expect(rulesBat).toContain("rules:publish");
     expect(rulesBat).not.toContain("fixed-workflow.mjs publish");
-    expect([...rulesBatBytes.subarray(0, 3)]).not.toEqual([0xef, 0xbb, 0xbf]);
-    expect(rulesBat).toContain("chcp 936 >nul");
-    expect(rulesBat).not.toContain("chcp 65001 >nul");
+    expect([...rulesBatBytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(rulesBat).toContain("chcp 65001 >nul");
+    expect(rulesBat).not.toContain("chcp 936 >nul");
+    expect(rulesBatBytes.includes(Buffer.from("\r\n"))).toBe(true);
     expect(rulesBat).toContain(
       'set "VERIDIA_RULES_REPOSITORY=jd-pages/veridia-rules"',
+    );
+    expect(rulesBat).toContain(
+      "setlocal EnableExtensions DisableDelayedExpansion",
     );
     expect(rulesBat).toContain('cd /d "%~dp0"');
     expect(rulesBat).toContain(
@@ -282,6 +288,9 @@ describe("本地打包发布门禁", () => {
     expect(rulesBat).not.toContain("rules:validate-local");
     expect(rulesBat).toContain("call npm.cmd run rules:publish");
     expect(rulesBat).toContain('set "VERIDIA_EXIT_CODE=%ERRORLEVEL%"');
+    expect(rulesBat).toContain("规则发布完成");
+    expect(rulesBat).toContain("规则发布失败，退出码 %VERIDIA_EXIT_CODE%");
+    expect(rulesBat).toContain("上一版远程规则未被覆盖");
     expect(rulesBat).toContain("pause");
     expect(rulesBat).toContain("exit /b %VERIDIA_EXIT_CODE%");
     const executableLines = rulesBat
