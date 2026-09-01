@@ -53,15 +53,14 @@ export const E2E_MANIFEST = Object.freeze({
   "tests/e2e/store-topic-rule-management.spec.ts": entry(["STORE_TOPIC", "RULES", "CAMPAIGN"], "DATA_RULES"),
 });
 
-export const CROSS_MODULE_E2E = Object.freeze([
-  "tests/e2e/audit-flow.spec.ts",
-  "tests/e2e/douyin-automation.spec.ts",
-  "tests/e2e/result-lifecycle.spec.ts",
-  "tests/e2e/stage-import.spec.ts",
-]);
-
 const RULES = [
   { match: /(?:^|\/)(?:playwright\.config\.ts|package(?:-lock)?\.json|scripts\/testing\/|tests\/e2e\/setup-|tests\/unit\/test-gates)/u, categories: TEST_CATEGORIES, infrastructure: true, reason: "测试基础设施发生变化，至少执行 REGRESSION" },
+  {
+    match: /(?:^|\/)(?:app\/\(admin\)\/rules(?:\/|$)|app\/api\/rules(?:\/|$)|lib\/topic-rule-management\.ts$|lib\/rules\/package\.ts$|tests\/(?:e2e\/rule-brand-navigation\.spec\.ts|unit\/topic-rule-management(?:-routes)?\.test\.ts)$)/u,
+    categories: ["CAMPAIGN", "RULES"],
+    exclusive: true,
+    reason: "话题规则 CRUD、规则包或对应测试发生变化，仅选择 DATA_RULES 业务分组",
+  },
   { match: /(?:douyin|抖音)/iu, categories: ["DOUYIN"], reason: "抖音导航、平台路由与对应结果路径发生变化" },
   { match: /(?:xiaohongshu|\bxhs\b|小红书)/iu, categories: ["XHS", "AUTOMATION", "RESULTS"], reason: "小红书自动化路径发生变化" },
   { match: /(?:store-topic|storeTopic)/u, categories: ["STORE_TOPIC", "RULES", "RESULTS", "XHS", "DOUYIN"], reason: "店铺话题规则或审核发生变化" },
@@ -107,7 +106,8 @@ export function selectTestScope(changedFiles, mode = "fast") {
       reasons.push(`${file}: 无精确映射，使用保守全量回退`);
       continue;
     }
-    for (const rule of matches) {
+    const exclusiveMatches = matches.filter((rule) => rule.exclusive);
+    for (const rule of exclusiveMatches.length ? exclusiveMatches : matches) {
       rule.categories.forEach((category) => categories.add(category));
       infrastructureChanged ||= Boolean(rule.infrastructure);
       reasons.push(`${file}: ${rule.reason}`);
@@ -121,10 +121,7 @@ export function selectTestScope(changedFiles, mode = "fast") {
     conservative: conservativeFallback || infrastructureChanged,
   });
   if (mode === "regression") {
-    for (const file of CROSS_MODULE_E2E) {
-      E2E_MANIFEST[file].categories.forEach((category) => categories.add(category));
-    }
-    reasons.push("REGRESSION 固定加入跨模块回归样本");
+    reasons.push("REGRESSION 仅执行受影响业务分组与受保护行为，不无条件扩张跨模块测试");
   }
   const e2eFiles = [...new Set([
     ...Object.entries(E2E_MANIFEST)

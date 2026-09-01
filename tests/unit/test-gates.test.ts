@@ -77,6 +77,29 @@ describe("分层测试门禁", () => {
     ]);
   });
 
+  it("Rule CRUD Regression 只选择 DATA_RULES，不拖入 Browser Automation 长耗时组", () => {
+    const selection = selectTestScope([
+      "app/(admin)/rules/page.tsx",
+      "app/api/rules/[id]/route.ts",
+      "app/api/rules/month/route.ts",
+      "lib/topic-rule-management.ts",
+      "lib/rules/package.ts",
+      "tests/e2e/rule-brand-navigation.spec.ts",
+    ], "regression");
+    expect(selection.categories).toEqual(["CAMPAIGN", "RULES"]);
+    expect(selection.e2eFiles).toEqual([
+      "tests/e2e/kabrita-excel-template.spec.ts",
+      "tests/e2e/product-stage-topic.spec.ts",
+      "tests/e2e/rule-brand-navigation.spec.ts",
+      "tests/e2e/stage-import.spec.ts",
+      "tests/e2e/store-topic-rule-management.spec.ts",
+    ]);
+    expect(groupE2eFiles(selection.e2eFiles).map((group) => group.name)).toEqual(["DATA_RULES"]);
+    expect(selection.e2eFiles).not.toContain("tests/e2e/douyin-automation.spec.ts");
+    expect(selection.e2eFiles).not.toContain("tests/e2e/audit-flow.spec.ts");
+    expect(selection.e2eFiles).not.toContain("tests/e2e/import-record-deletion.spec.ts");
+  });
+
   it("未知改动保守回退，测试基础设施改动至少提升到 REGRESSION", () => {
     expect(selectTestScope(["unknown/new-core-file.xyz"]).e2eFiles).toHaveLength(Object.keys(E2E_MANIFEST).length);
     const infrastructure = selectTestScope(["playwright.config.ts"], "fast");

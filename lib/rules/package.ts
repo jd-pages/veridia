@@ -775,12 +775,11 @@ export async function applyRulePayload(
         },
         data: { status: "INACTIVE" },
       }),
-      tx.topicRule.updateMany({
+      tx.topicRule.deleteMany({
         where: {
           ruleSource: { not: "LOCAL_DRAFT" },
           publishedKey: { notIn: publishedTopicKeys },
         },
-        data: { status: "INACTIVE" },
       }),
       tx.ruleStageGroup.updateMany({
         where: {

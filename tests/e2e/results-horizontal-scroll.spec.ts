@@ -34,7 +34,7 @@ async function floatingScrollbarLayout(page: Page) {
 test("审核结果表格悬浮横向滚动、固定列和重算", async ({ page }) => {
   await login(page);
   await page.setViewportSize({ width: 1366, height: 768 });
-  await page.goto("/results");
+  await page.goto("/results?startDate=2020-01-01&endDate=2099-12-31");
   await expect(
     page.getByRole("heading", { name: "审核结果", exact: true }),
   ).toBeVisible();

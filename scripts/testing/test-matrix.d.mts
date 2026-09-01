@@ -26,7 +26,6 @@ export interface TestSelection {
 
 export const TEST_CATEGORIES: readonly TestCategory[];
 export const E2E_MANIFEST: Readonly<Record<string, E2eMetadata>>;
-export const CROSS_MODULE_E2E: readonly string[];
 export function listFormalE2eFiles(root?: string): string[];
 export function validateManifest(root?: string): string[];
 export function selectTestScope(changedFiles: string[], mode?: string): TestSelection;

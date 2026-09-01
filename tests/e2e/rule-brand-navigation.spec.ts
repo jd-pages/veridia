@@ -401,3 +401,281 @@ test("达能月度规则支持空月份、复制创建、独立主键和刷新�
     error: "达能2026-09 规则已存在。",
   });
 });
+
+test("话题规则可逆启停、永久删除并按 selectedMonth 隔离批量删除", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const loginResponse = await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  });
+  expect(loginResponse.ok()).toBeTruthy();
+  const suffix = Date.now().toString(36);
+  const brandA = `E2E规则品牌A-${suffix}`;
+  const brandB = `E2E规则品牌B-${suffix}`;
+  const productA = await prisma.product.create({
+    data: {
+      id: `e2e-rule-product-a-${suffix}`,
+      code: `E2E-RULE-A-${suffix}`,
+      name: `E2E规则产品A-${suffix}`,
+      brandName: brandA,
+    },
+  });
+  const productB = await prisma.product.create({
+    data: {
+      id: `e2e-rule-product-b-${suffix}`,
+      code: `E2E-RULE-B-${suffix}`,
+      name: `E2E规则产品B-${suffix}`,
+      brandName: brandB,
+    },
+  });
+  const campaignIds = [
+    `e2e-rule-september-${suffix}`,
+    `e2e-rule-august-${suffix}`,
+    `e2e-rule-douyin-${suffix}`,
+    `e2e-rule-brand-b-${suffix}`,
+  ];
+  const createCampaign = (
+    id: string,
+    name: string,
+    month: string,
+    contentChannel: "XIAOHONGSHU" | "DOUYIN",
+    productId: string,
+    ruleVersion: number,
+  ) => prisma.campaign.create({
+    data: {
+      id,
+      name,
+      month,
+      contentChannel,
+      productId,
+      ruleVersion,
+      ruleSource: "LOCAL_DRAFT",
+      startDate: new Date(`${month}-01T00:00:00.000Z`),
+      endDate: new Date(`${month}-28T23:59:59.000Z`),
+    },
+  });
+  const [september, august, douyin, otherBrand] = await Promise.all([
+    createCampaign(
+      campaignIds[0],
+      `E2E规则九月-${suffix}`,
+      "2026-09",
+      "XIAOHONGSHU",
+      productA.id,
+      5,
+    ),
+    createCampaign(
+      campaignIds[1],
+      `E2E规则八月-${suffix}`,
+      "2026-08",
+      "XIAOHONGSHU",
+      productA.id,
+      15,
+    ),
+    createCampaign(
+      campaignIds[2],
+      `E2E规则抖音-${suffix}`,
+      "2026-09",
+      "DOUYIN",
+      productA.id,
+      25,
+    ),
+    createCampaign(
+      campaignIds[3],
+      `E2E规则品牌B-${suffix}`,
+      "2026-09",
+      "XIAOHONGSHU",
+      productB.id,
+      35,
+    ),
+  ]);
+  const topic = `#E2E可逆规则${suffix}`;
+  const original = await prisma.topicRule.create({
+    data: {
+      id: `e2e-rule-reversible-${suffix}`,
+      ruleSource: "LOCAL_DRAFT",
+      scope: "CAMPAIGN",
+      campaignId: september.id,
+      brandName: brandA,
+      contentChannel: "XIAOHONGSHU",
+      ruleType: "MUST_ALL",
+      topicCategory: "GENERAL",
+      topic,
+      version: 5,
+    },
+  });
+  const auditResultCount = await prisma.auditResult.count();
+
+  try {
+    const updateCheck = waitForRuleUpdateCheck(page);
+    await page.goto(
+      `/rules?brand=${encodeURIComponent(brandA)}&month=2026-09&channel=XIAOHONGSHU`,
+    );
+    await dismissRuleUpdateNoticeIfPresent(page, await updateCheck);
+    await expect(
+      page.getByRole("heading", { name: `${brandA}话题规则` }),
+    ).toBeVisible();
+    const ruleRow = () => page.locator(".ant-table-row").filter({
+      has: page.getByText(topic, { exact: true }),
+    });
+    await expect(ruleRow()).toHaveCount(1);
+    await expect(ruleRow().getByRole("button", { name: "编辑" })).toBeVisible();
+    await expect(ruleRow().getByRole("button", { name: "停用" })).toBeVisible();
+    await expect(ruleRow().getByRole("button", { name: "删除" })).toBeVisible();
+
+    await ruleRow().getByRole("button", { name: "停用" }).click();
+    await expect(page.locator(".ant-popover:visible")).toContainText("确认停用规则？");
+    await page.locator(
+      ".ant-popover:visible .ant-popconfirm-buttons .ant-btn-primary",
+    ).click();
+    await expect(ruleRow().getByRole("button", { name: "启用" })).toBeVisible();
+    await expect.poll(async () =>
+      prisma.topicRule.findUnique({ where: { id: original.id } }),
+    ).toMatchObject({ id: original.id, status: "INACTIVE", version: 6 });
+
+    await ruleRow().getByRole("button", { name: "启用" }).click();
+    await expect(page.locator(".ant-popover:visible")).toContainText("确认启用规则？");
+    await page.locator(
+      ".ant-popover:visible .ant-popconfirm-buttons .ant-btn-primary",
+    ).click();
+    await expect(ruleRow().getByRole("button", { name: "停用" })).toBeVisible();
+    await expect.poll(async () =>
+      prisma.topicRule.findUnique({ where: { id: original.id } }),
+    ).toMatchObject({ id: original.id, status: "ACTIVE", version: 7 });
+    expect(
+      (await prisma.campaign.findUniqueOrThrow({ where: { id: september.id } }))
+        .ruleVersion,
+    ).toBe(7);
+
+    await ruleRow().getByRole("button", { name: "删除" }).click();
+    const singleDeleteConfirm = page.locator(".ant-popover:visible").filter({
+      hasText: "确认永久删除这条规则？",
+    });
+    await expect(singleDeleteConfirm).toContainText("确认永久删除这条规则？");
+    await expect(singleDeleteConfirm).toContainText(topic);
+    await expect(singleDeleteConfirm).toContainText(september.name);
+    await expect(singleDeleteConfirm).toContainText("2026-09");
+    await singleDeleteConfirm.locator(
+      ".ant-popconfirm-buttons .ant-btn-primary",
+    ).click();
+    await expect(ruleRow()).toHaveCount(0);
+    expect(await prisma.topicRule.findUnique({ where: { id: original.id } })).toBeNull();
+    const deleteReloadUpdateCheck = waitForRuleUpdateCheck(page);
+    await page.reload();
+    await dismissRuleUpdateNoticeIfPresent(page, await deleteReloadUpdateCheck);
+    await expect(ruleRow()).toHaveCount(0);
+    expect(await prisma.campaign.findUnique({ where: { id: september.id } })).not.toBeNull();
+    expect(await prisma.product.findUnique({ where: { id: productA.id } })).not.toBeNull();
+    expect(await prisma.auditResult.count()).toBe(auditResultCount);
+
+    await prisma.topicRule.createMany({
+      data: Array.from({ length: 7 }, (_, index) => ({
+        id: `e2e-rule-september-${index + 1}-${suffix}`,
+        ruleSource: "LOCAL_DRAFT",
+        scope: "CAMPAIGN",
+        campaignId: september.id,
+        brandName: brandA,
+        contentChannel: "XIAOHONGSHU",
+        ruleType: "MUST_ALL",
+        topicCategory: "GENERAL",
+        topic: `#E2E九月规则${index + 1}${suffix}`,
+      })),
+    });
+    const retainedRules = await Promise.all([
+      prisma.topicRule.create({
+        data: {
+          id: `e2e-rule-august-${suffix}`,
+          scope: "CAMPAIGN",
+          campaignId: august.id,
+          brandName: brandA,
+          contentChannel: "XIAOHONGSHU",
+          ruleType: "MUST_ALL",
+          topic: `#E2E八月保留${suffix}`,
+        },
+      }),
+      prisma.topicRule.create({
+        data: {
+          id: `e2e-rule-douyin-${suffix}`,
+          scope: "CAMPAIGN",
+          campaignId: douyin.id,
+          brandName: brandA,
+          contentChannel: "DOUYIN",
+          ruleType: "MUST_ALL",
+          topic: `#E2E抖音保留${suffix}`,
+        },
+      }),
+      prisma.topicRule.create({
+        data: {
+          id: `e2e-rule-brand-b-${suffix}`,
+          scope: "CAMPAIGN",
+          campaignId: otherBrand.id,
+          brandName: brandB,
+          contentChannel: "XIAOHONGSHU",
+          ruleType: "MUST_ALL",
+          topic: `#E2E品牌B保留${suffix}`,
+        },
+      }),
+    ]);
+    await page.locator(".filter-bar").getByRole("button").click();
+    const monthDeleteButton = page.getByRole("button", {
+      name: "删除本月全部规则",
+    });
+    await expect(monthDeleteButton).toBeEnabled();
+    const versionBeforeBatch = (
+      await prisma.campaign.findUniqueOrThrow({ where: { id: september.id } })
+    ).ruleVersion;
+    await monthDeleteButton.click();
+    const monthDialog = page.getByRole("dialog", {
+      name: "确认删除 2026年9月全部话题规则？",
+    });
+    await expect(monthDialog).toContainText(`品牌：${brandA}`);
+    await expect(monthDialog).toContainText("渠道：小红书");
+    await expect(monthDialog).toContainText("月份：2026年9月");
+    await expect(monthDialog).toContainText("共 7 条规则。");
+    await expect(monthDialog).toContainText("不会删除活动、产品和历史审核结果。");
+    await monthDialog.getByRole("button", { name: "永久删除全部规则" }).click();
+    await expect(page.getByText("当前月份暂无规则", { exact: true }).first()).toBeVisible();
+    await expect(monthDeleteButton).toBeDisabled();
+    expect(await prisma.topicRule.count({
+      where: {
+        brandName: brandA,
+        contentChannel: { in: ["XIAOHONGSHU", "ALL"] },
+        campaign: { is: { month: "2026-09", deletedAt: null } },
+      },
+    })).toBe(0);
+    expect(
+      (await prisma.campaign.findUniqueOrThrow({ where: { id: september.id } }))
+        .ruleVersion,
+    ).toBe(versionBeforeBatch + 1);
+    for (const retained of retainedRules) {
+      expect(await prisma.topicRule.findUnique({ where: { id: retained.id } })).not.toBeNull();
+    }
+    expect(await prisma.auditResult.count()).toBe(auditResultCount);
+
+    const createResponse = await page.request.post("/api/rules", {
+      data: {
+        campaignId: september.id,
+        brandName: brandA,
+        contentChannel: "XIAOHONGSHU",
+        scope: "CAMPAIGN",
+        ruleType: "MUST_ALL",
+        topic: `#E2E删除后新增${suffix}`,
+      },
+    });
+    expect(createResponse.status()).toBe(201);
+    const recreateReloadUpdateCheck = waitForRuleUpdateCheck(page);
+    await page.reload();
+    await dismissRuleUpdateNoticeIfPresent(page, await recreateReloadUpdateCheck);
+    await expect(
+      page.getByText(`#E2E删除后新增${suffix}`, { exact: true }),
+    ).toBeVisible();
+  } finally {
+    await prisma.topicRule.deleteMany({
+      where: { campaignId: { in: campaignIds } },
+    });
+    await prisma.campaign.deleteMany({ where: { id: { in: campaignIds } } });
+    await prisma.product.deleteMany({
+      where: { id: { in: [productA.id, productB.id] } },
+    });
+  }
+});

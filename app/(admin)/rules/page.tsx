@@ -23,6 +23,8 @@ import {
 } from "antd";
 import {
   ArrowLeftOutlined,
+  CheckCircleOutlined,
+  DeleteOutlined,
   EditOutlined,
   PlusOutlined,
   RightOutlined,
@@ -145,6 +147,9 @@ export default function RulesPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [campaignId, setCampaignId] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const [mutatingRuleId, setMutatingRuleId] = useState<string>();
+  const [deleteMonthOpen, setDeleteMonthOpen] = useState(false);
+  const [deletingMonth, setDeletingMonth] = useState(false);
   const [open, setOpen] = useState(false);
   const [monthOpen, setMonthOpen] = useState(false);
   const [editing, setEditing] = useState<Rule | null>(null);
@@ -248,6 +253,68 @@ export default function RulesPage() {
       setLoading(false);
     }
   }, [campaignId, message, selectedBrand, selectedMonth, selectedChannel]);
+
+  const changeRuleStatus = useCallback(async (
+    rule: Rule,
+    status: "ACTIVE" | "INACTIVE",
+  ) => {
+    setMutatingRuleId(rule.id);
+    try {
+      await apiFetch(`/api/rules/${rule.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ status, brandName: selectedBrand }),
+      });
+      message.success(status === "ACTIVE" ? "规则已启用" : "规则已停用");
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "规则状态更新失败");
+    } finally {
+      setMutatingRuleId(undefined);
+    }
+  }, [load, message, selectedBrand]);
+
+  const permanentlyDeleteRule = useCallback(async (rule: Rule) => {
+    setMutatingRuleId(rule.id);
+    try {
+      await apiFetch(
+        `/api/rules/${rule.id}?mode=permanent&brandName=${encodeURIComponent(selectedBrand || "")}`,
+        { method: "DELETE" },
+      );
+      message.success(`已永久删除规则 ${rule.topic}`);
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "规则删除失败");
+    } finally {
+      setMutatingRuleId(undefined);
+    }
+  }, [load, message, selectedBrand]);
+
+  const permanentlyDeleteSelectedMonth = useCallback(async () => {
+    if (!selectedBrand || !selectedMonth || rules.length === 0) return;
+    setDeletingMonth(true);
+    try {
+      const result = await apiFetch<{ deletedCount: number }>(
+        "/api/rules/month",
+        {
+          method: "DELETE",
+          body: JSON.stringify({
+            brandName: selectedBrand,
+            month: selectedMonth,
+            contentChannel: selectedChannel,
+          }),
+        },
+      );
+      message.success(
+        `已删除 ${monthLabel(selectedMonth)}全部 ${result.deletedCount} 条规则`,
+      );
+      setDeleteMonthOpen(false);
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "本月规则删除失败");
+    } finally {
+      setDeletingMonth(false);
+    }
+  }, [load, message, rules.length, selectedBrand, selectedChannel, selectedMonth]);
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
@@ -381,6 +448,17 @@ export default function RulesPage() {
                 新增月份规则
               </Button>
             ) : null}
+            {canManageBusiness ? (
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                disabled={!selectedMonth || rules.length === 0}
+                loading={deletingMonth}
+                onClick={() => setDeleteMonthOpen(true)}
+              >
+                删除本月全部规则
+              </Button>
+            ) : null}
             {canManageBusiness && campaigns.length ? (
               <Button
                 type="primary"
@@ -459,11 +537,13 @@ export default function RulesPage() {
           <StatusTag value={campaigns[0]?.status || "INACTIVE"} />
         </Space>
       </Card>
-      {!campaigns.length ? (
+      {!rules.length ? (
         <Card className="surface-card" style={{ marginBottom: 16, textAlign: "center" }}>
           <Typography.Title level={4}>当前月份暂无规则</Typography.Title>
           <Typography.Paragraph type="secondary">
-            可通过“新增月份规则”创建空白规则集，或复制已有月份规则。
+            {campaigns.length
+              ? "活动和产品仍然保留，可继续新增规则。"
+              : "可通过“新增月份规则”创建空白规则集，或复制已有月份规则。"}
           </Typography.Paragraph>
         </Card>
       ) : null}
@@ -612,10 +692,10 @@ export default function RulesPage() {
             },
             {
               title: "操作",
-              width: 150,
+              width: 220,
               fixed: "right",
               render: (_value, row) => canManageBusiness ? (
-                <Space size={2}>
+                <Space size={2} wrap>
                   <Button
                     type="link"
                     icon={<EditOutlined />}
@@ -630,24 +710,54 @@ export default function RulesPage() {
                   >
                     编辑
                   </Button>
-                  {row.status === "ACTIVE" ? (
-                    <Popconfirm
-                      title="确认停用规则？"
-                      description="活动规则版本会自动递增，历史审核结果不受影响。"
-                      onConfirm={async () => {
-                        await apiFetch(
-                          `/api/rules/${row.id}?brandName=${encodeURIComponent(selectedBrand)}`,
-                          { method: "DELETE" },
-                        );
-                        message.success("规则已停用");
-                        void load();
-                      }}
+                  <Popconfirm
+                    title={row.status === "ACTIVE" ? "确认停用规则？" : "确认启用规则？"}
+                    description="活动规则版本会自动递增，历史审核结果不受影响。"
+                    onConfirm={() => changeRuleStatus(
+                      row,
+                      row.status === "ACTIVE" ? "INACTIVE" : "ACTIVE",
+                    )}
+                  >
+                    <Button
+                      type="link"
+                      loading={mutatingRuleId === row.id}
+                      icon={row.status === "ACTIVE"
+                        ? <StopOutlined />
+                        : <CheckCircleOutlined />}
                     >
-                      <Button type="link" danger icon={<StopOutlined />}>
-                        停用
-                      </Button>
-                    </Popconfirm>
-                  ) : null}
+                      {row.status === "ACTIVE" ? "停用" : "启用"}
+                    </Button>
+                  </Popconfirm>
+                  <Popconfirm
+                    title="确认永久删除这条规则？"
+                    description={(
+                      <Space direction="vertical" size={2}>
+                        <Typography.Text>
+                          删除后该规则将从当前规则集移除，无法通过“启用”恢复。
+                        </Typography.Text>
+                        <Typography.Text>历史审核结果不会被删除。</Typography.Text>
+                        <Typography.Text>标准话题词：{row.topic}</Typography.Text>
+                        <Typography.Text>
+                          所属活动：{row.campaign?.name || "-"}
+                        </Typography.Text>
+                        <Typography.Text>
+                          规则月份：{row.campaign?.month || selectedMonth || "-"}
+                        </Typography.Text>
+                      </Space>
+                    )}
+                    okText="永久删除"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => permanentlyDeleteRule(row)}
+                  >
+                    <Button
+                      type="link"
+                      danger
+                      loading={mutatingRuleId === row.id}
+                      icon={<DeleteOutlined />}
+                    >
+                      删除
+                    </Button>
+                  </Popconfirm>
                 </Space>
               ) : <Tag>只读</Tag>,
             },
@@ -655,6 +765,32 @@ export default function RulesPage() {
           pagination={{ pageSize: 12 }}
         />
       </Card>
+      <Modal
+        open={deleteMonthOpen}
+        title={`确认删除 ${selectedMonth ? monthLabel(selectedMonth) : "当前月份"}全部话题规则？`}
+        okText="永久删除全部规则"
+        cancelText="取消"
+        okButtonProps={{ danger: true }}
+        confirmLoading={deletingMonth}
+        onCancel={() => {
+          if (!deletingMonth) setDeleteMonthOpen(false);
+        }}
+        onOk={permanentlyDeleteSelectedMonth}
+      >
+        <Space direction="vertical" size={4}>
+          <Typography.Text>将永久删除当前：</Typography.Text>
+          <Typography.Text>品牌：{selectedBrand}</Typography.Text>
+          <Typography.Text>
+            渠道：{selectedChannel === "XIAOHONGSHU" ? "小红书" : "抖音"}
+          </Typography.Text>
+          <Typography.Text>
+            月份：{selectedMonth ? monthLabel(selectedMonth) : "-"}
+          </Typography.Text>
+          <Typography.Text strong>共 {rules.length} 条规则。</Typography.Text>
+          <Typography.Text>不会删除活动、产品和历史审核结果。</Typography.Text>
+          <Typography.Text type="danger">删除后不可恢复。</Typography.Text>
+        </Space>
+      </Modal>
       <Modal
         open={monthOpen}
         title="新增月份规则"

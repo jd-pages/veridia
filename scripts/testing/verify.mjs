@@ -142,7 +142,7 @@ process.stdout.write([
   `PROTECTED_REGRESSION 行为（${protectedSelection.behaviorKeys.length}）：${protectedSelection.behaviorKeys.join(", ") || "无"}`,
   ...(selection ? selection.reasons.map((reason) => `选择原因：${reason}`) : ["选择原因：FULL 明确执行全部正式 E2E；不使用变更选择器"]),
   ...protectedSelection.reasons.map((reason) => `Protected 选择原因：${reason}`),
-  mode === "full" ? "执行策略：完整报告，单个业务失败不阻断其余独立门禁" : `执行策略：${mode === "fast" ? "fail-fast" : "受影响模块全量 + 跨模块回归"}`,
+  mode === "full" ? "执行策略：完整报告，单个业务失败不阻断其余独立门禁" : `执行策略：${mode === "fast" ? "fail-fast" : "受影响业务分组 + 受保护行为"}`,
   "",
 ].join("\n"));
 

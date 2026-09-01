@@ -298,7 +298,7 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
     "localhost:3100/mock",
   );
 
-  await page.goto("/results");
+  await page.goto("/results?startDate=2020-01-01&endDate=2099-12-31");
   const batchDelete = page
     .getByRole("region", { name: "批量操作" })
     .getByRole("button", { name: /批量删除/u });

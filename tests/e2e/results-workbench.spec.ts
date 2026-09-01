@@ -603,7 +603,7 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toBe(originalUrl);
 
-  await page.goto("/results");
+  await page.goto("/results?startDate=2020-01-01&endDate=2099-12-31");
   await page.getByLabel("关键词搜索").fill("isolated-fixture-1");
   await page.getByRole("button", { name: "查询" }).click();
   const fixtureRow = page.locator(".ant-table-row").filter({
@@ -660,7 +660,7 @@ test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) 
       { timeout: 30_000 },
     )
     .toBe(0);
-  await page.goto("/results");
+  await page.goto("/results?startDate=2020-01-01&endDate=2099-12-31");
   await expect(page.locator(".ant-table-row").first()).toBeVisible();
 
   const initialList = (await (
