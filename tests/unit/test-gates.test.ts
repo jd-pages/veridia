@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import {
   CHANGE_RISK_LEVELS,
   E2E_MANIFEST,
+  INFRASTRUCTURE_UNIT_ALLOWLIST,
   TEST_CATEGORIES,
+  assertAffectedInfrastructureUnitSelection,
   groupE2eFiles,
   listFormalE2eFiles,
   selectTestScope,
@@ -117,6 +119,107 @@ describe("分层测试门禁", () => {
     expect(selection.e2eFiles).toEqual(["tests/e2e/results-workbench.spec.ts"]);
     expect(groupE2eFiles(selection.e2eFiles).map((group) => group.name)).toEqual(["RESULTS_UI"]);
     expect(selection.e2eFiles).not.toContain("tests/e2e/audit-flow.spec.ts");
+    expect(selection.unitFiles).toEqual([]);
+    expect(selection.unitRelatedFiles).toEqual([]);
+  });
+
+  it("TEST_ONLY Unit 只运行直接文件，E2E 不进入 vitest related", () => {
+    const directUnit = selectTestScope(["tests/unit/test-gates.test.ts"], "affected");
+    expect(directUnit.unitFiles).toEqual(["tests/unit/test-gates.test.ts"]);
+    expect(directUnit.unitRelatedFiles).toEqual([]);
+    expect(selectTestScope(["tests/unit/topic-rule-management.test.ts"], "affected").unitFiles)
+      .toEqual(["tests/unit/topic-rule-management.test.ts"]);
+
+    const directE2e = selectTestScope(["tests/e2e/results-workbench.spec.ts"], "affected");
+    expect(directE2e.unitFiles).toEqual([]);
+    expect(directE2e.unitRelatedFiles).toEqual([]);
+    expect(selectTestScope(["tests/e2e/rule-brand-navigation.spec.ts"], "affected").unitFiles)
+      .toEqual([
+        "tests/unit/campaign-stage-requirement.test.ts",
+        "tests/unit/protected-behavior-invariants.test.ts",
+      ]);
+  });
+
+  it("业务源码才允许 vitest related，Rule CRUD 优先使用显式 Unit 映射", () => {
+    const business = selectTestScope(["lib/product-stage.ts"], "affected");
+    expect(business.unitRelatedFiles).toEqual(["lib/product-stage.ts"]);
+
+    const ruleCrud = selectTestScope([
+      "app/(admin)/rules/page.tsx",
+      "app/api/rules/[id]/route.ts",
+      "lib/topic-rule-management.ts",
+    ], "affected");
+    expect(ruleCrud.unitFiles).toEqual([
+      "tests/unit/topic-rule-management-routes.test.ts",
+      "tests/unit/topic-rule-management.test.ts",
+    ]);
+    expect(ruleCrud.unitRelatedFiles).toEqual([]);
+  });
+
+  it("当前失败 Run 的真实 diff 只选择 6 个 gate Unit 和 RESULTS_UI 单文件", () => {
+    const changedFiles = [
+      ".github/workflows/veridia-ci.yml",
+      "package.json",
+      "scripts/fixed-workflow.mjs",
+      "scripts/package-full-gate.d.mts",
+      "scripts/package-full-gate.mjs",
+      "scripts/testing/ci-plan.d.mts",
+      "scripts/testing/ci-plan.mjs",
+      "scripts/testing/full-gate-attestation.d.mts",
+      "scripts/testing/full-gate-attestation.mjs",
+      "scripts/testing/local-package-worktree.d.mts",
+      "scripts/testing/local-package-worktree.mjs",
+      "scripts/testing/protected-behaviors.d.mts",
+      "scripts/testing/protected-behaviors.mjs",
+      "scripts/testing/test-matrix.d.mts",
+      "scripts/testing/test-matrix.mjs",
+      "scripts/testing/test-only-recovery.d.mts",
+      "scripts/testing/test-only-recovery.mjs",
+      "scripts/testing/verify.mjs",
+      "tests/e2e/results-workbench.spec.ts",
+      "tests/unit/full-gate-attestation.test.ts",
+      "tests/unit/local-package-worktree.test.ts",
+      "tests/unit/package-full-gate.test.ts",
+      "tests/unit/release-gate.test.ts",
+      "tests/unit/test-gates.test.ts",
+      "tests/unit/test-only-recovery.test.ts",
+    ];
+    const selection = selectTestScope(changedFiles, "affected");
+    expect(selection.unitFiles).toEqual([...INFRASTRUCTURE_UNIT_ALLOWLIST].sort());
+    expect(selection.unitRelatedFiles).toEqual([]);
+    expect(selection.unitFiles).not.toContain("tests/unit/automation.test.ts");
+    expect(selection.e2eFiles).toEqual(["tests/e2e/results-workbench.spec.ts"]);
+    const plan = createAffectedCiPlan(changedFiles);
+    expect(plan.unitFiles).toEqual(selection.unitFiles);
+    expect(plan.unitRelatedFiles).toEqual([]);
+    expect(plan.e2eFiles).toEqual(["tests/e2e/results-workbench.spec.ts"]);
+  });
+
+  it("CI infrastructure Unit 选择超过 30 文件时 fail-fast 并列出成因", () => {
+    expect(() => assertAffectedInfrastructureUnitSelection(
+      Array.from({ length: 31 }, (_, index) => `tests/unit/gate-${index}.test.ts`),
+      ["scripts/testing/test-matrix.mjs"],
+    )).toThrow(/AFFECTED_UNIT_SELECTION_TOO_BROAD.*scripts\/testing\/test-matrix\.mjs/u);
+  });
+
+  it("clean runner 的四种 verify 模式均在 Lint、Typecheck、Unit、E2E 前生成并校验 Prisma Client", () => {
+    const verify = fs.readFileSync(path.resolve("scripts/testing/verify.mjs"), "utf8");
+    const stages = [
+      'command("Protected behavior registry"',
+      'npm("Prisma Client", ["run", "db:generate"])',
+      'npm("Prisma Client assert", ["run", "prisma:assert"])',
+      'npm("Lint", ["run", "lint"])',
+      'npm("Typecheck", ["run", "typecheck"])',
+      'const unitCommandNames = []',
+      'const groups = groupE2eFiles(selectedFiles)',
+    ].map((stage) => verify.indexOf(stage));
+    expect(stages.every((index) => index >= 0)).toBe(true);
+    expect(stages).toEqual([...stages].sort((left, right) => left - right));
+    expect(verify.match(/\["run", "db:generate"\]/gu)).toHaveLength(1);
+    expect(verify).not.toMatch(/if \([^\n]+\) \{\s*record\(npm\("Prisma Client"/u);
+    expect(verify).toContain("AFFECTED_UNIT_FILES=");
+    expect(verify).toContain("AFFECTED_UNIT_CASES=");
+    expect(verify).toContain('...selection.unitFiles.flatMap((file) => ["--exclude", file])');
   });
 
   it("CI 只有选择到 E2E 或 Recovery group 时才安装 Playwright 浏览器", () => {

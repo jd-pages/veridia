@@ -156,6 +156,11 @@ process.stdout.write([
   `风险分类：${mode === "full" ? "RELEASE_FULL" : selection.risk.level}`,
   ...(selection ? selection.risk.reasons.map((reason) => `风险原因：${reason}`) : []),
   `选择分类：${mode === "full" ? "全部正式分类" : selection.categories.join(", ")}`,
+  ...(selection ? [
+    `Unit 显式文件（${selection.unitFiles.length}）：${selection.unitFiles.join(", ") || "无"}`,
+    `Unit related 生产源（${selection.unitRelatedFiles.length}）：${selection.unitRelatedFiles.join(", ") || "无"}`,
+    ...selection.unitSelectionReasons.map((reason) => `Unit 选择原因：${reason}`),
+  ] : []),
   `E2E 文件（${selectedFiles.length}/${formalFiles.length}）：${selectedFiles.join(", ")}`,
   `PROTECTED_REGRESSION 组：${protectedSelection.groups.join(", ") || "无"}`,
   `PROTECTED_REGRESSION 行为（${protectedSelection.behaviorKeys.length}）：${protectedSelection.behaviorKeys.join(", ") || "无"}`,
@@ -169,11 +174,9 @@ process.stdout.write([
 if (mode === "full") invalidateFullGateAttestation(root);
 
 const protectedRegistry = record(command("Protected behavior registry", process.execPath, [path.join(root, "scripts", "testing", "protected-behaviors.mjs")]));
+record(npm("Prisma Client", ["run", "db:generate"]));
+record(npm("Prisma Client assert", ["run", "prisma:assert"]));
 const highRiskKinds = new Set(selection?.risk.highRiskKinds || []);
-if (!affectedMode || highRiskKinds.has("database")) {
-  record(npm("Prisma Client", ["run", "db:generate"]));
-  record(npm("Prisma Client assert", ["run", "prisma:assert"]));
-}
 if (affectedMode && highRiskKinds.has("desktopRuntime")) {
   record(npm("Desktop bundled Node", ["run", "desktop:node:prepare"]));
 }
@@ -181,22 +184,35 @@ record(npm("Lint", ["run", "lint"]));
 record(npm("Typecheck", ["run", "typecheck"]));
 
 let unitTotal = 0;
-let unitCommandName = "All unit tests";
+const unitCommandNames = [];
 if (affectedMode) {
-  const related = changes.filter((file) => /\.(?:ts|tsx|js|mjs|json)$/u.test(file));
-  unitCommandName = "Affected unit tests";
-  if (related.length) {
-    const unit = record(runVitest(unitCommandName, ["related", ...related, "--run", "--passWithNoTests"], "affected"));
+  if (selection.unitFiles.length) {
+    const name = "Affected explicit unit";
+    unitCommandNames.push(name);
+    const unit = record(runVitest(name, ["run", ...selection.unitFiles], "affected-explicit"));
     unitTotal = passedTestCount(unit.output);
   }
-  if (protectedSelection.unitTests.length) {
-    record(runVitest("Protected regression unit", [
-      "run", ...protectedSelection.unitTests,
-    ], "protected"));
+  if (selection.unitRelatedFiles.length) {
+    const name = "Affected related unit";
+    unitCommandNames.push(name);
+    const unit = record(runVitest(name, [
+      "related", ...selection.unitRelatedFiles, "--run", "--passWithNoTests",
+      ...selection.unitFiles.flatMap((file) => ["--exclude", file]),
+    ], "affected-related"));
+    unitTotal += passedTestCount(unit.output);
   }
 } else {
-  const unit = record(runVitest(unitCommandName, ["run"], "all"));
+  const name = "All unit tests";
+  unitCommandNames.push(name);
+  const unit = record(runVitest(name, ["run"], "all"));
   unitTotal = passedTestCount(unit.output);
+}
+const affectedUnitFiles = affectedMode
+  ? [...new Set([...selection.unitFiles, ...unitEvidence.map((item) => item.file)])].sort()
+  : [];
+if (affectedMode) {
+  process.stdout.write(`AFFECTED_UNIT_FILES=${affectedUnitFiles.length}\n`);
+  process.stdout.write(`AFFECTED_UNIT_CASES=${unitEvidence.length}\n`);
 }
 
 let e2eTotal = 0;
@@ -278,7 +294,13 @@ const summary = {
     ? { level: "RELEASE_FULL", highRiskKinds: [], productionChanged: true }
     : selection.risk,
   recoveryGroup: recoveryGroup || null,
-  unitTests: { passed: failures.includes(unitCommandName) ? 0 : unitTotal, total: unitTotal },
+  selectedUnitFiles: affectedMode ? affectedUnitFiles : null,
+  unitRelatedFiles: affectedMode ? selection.unitRelatedFiles : null,
+  affectedUnitCases: affectedMode ? unitEvidence.length : null,
+  unitTests: {
+    passed: unitCommandNames.some((name) => failures.includes(name)) ? 0 : unitTotal,
+    total: affectedMode ? unitEvidence.length : unitTotal,
+  },
   productionBuild: affectedMode && !highRiskKinds.has("packageRuntime")
     ? "NOT_REQUIRED"
     : failures.includes("Production build") ? "FAILED" : "PASSED",

@@ -32,6 +32,46 @@ const TEST_ONLY_PATH = /^tests\//u;
 const LOW_RISK_PATH = /^(?:docs\/|README(?:\.|$)|CHANGELOG\.md$)/iu;
 const VERIFICATION_INFRASTRUCTURE_PATH = /^(?:\.github\/workflows\/|scripts\/(?:testing\/|release|software-publish|software-binary-publish|fixed-workflow|finalize-release|package-full-gate|run-publish-rules)|package(?:-lock)?\.json$|(?:发布新版|上传发布包|发布规则新版|本地打包验收)\.bat$)/u;
 const VERIFICATION_INFRASTRUCTURE_TEST_PATH = /^tests\/unit\/(?:test-gates|test-only-recovery|full-gate-attestation|package-full-gate|local-package-worktree|release-gate)\.test\.ts$/u;
+const RULE_CRUD_PRODUCTION_PATH = /(?:^|\/)(?:app\/\(admin\)\/rules(?:\/|$)|app\/api\/rules(?:\/|$)|lib\/topic-rule-management\.ts$|lib\/rules\/package\.ts$)/u;
+const RULE_CRUD_PATH = /(?:^|\/)(?:app\/\(admin\)\/rules(?:\/|$)|app\/api\/rules(?:\/|$)|lib\/topic-rule-management\.ts$|lib\/rules\/package\.ts$|tests\/(?:e2e\/rule-brand-navigation\.spec\.ts|unit\/topic-rule-management(?:-routes)?\.test\.ts)$)/u;
+const DIRECT_UNIT_TEST_PATH = /^tests\/unit\/.*\.test\.ts$/u;
+const BUSINESS_RELATED_SOURCE_PATH = /^(?:app|lib)\/.*\.(?:ts|tsx|js|mjs)$/u;
+
+export const INFRASTRUCTURE_UNIT_ALLOWLIST = Object.freeze([
+  "tests/unit/test-gates.test.ts",
+  "tests/unit/test-only-recovery.test.ts",
+  "tests/unit/full-gate-attestation.test.ts",
+  "tests/unit/package-full-gate.test.ts",
+  "tests/unit/local-package-worktree.test.ts",
+  "tests/unit/release-gate.test.ts",
+]);
+export const AFFECTED_INFRASTRUCTURE_UNIT_LIMIT = 30;
+
+export function assertAffectedInfrastructureUnitSelection(
+  unitFiles,
+  changedFiles,
+  limit = AFFECTED_INFRASTRUCTURE_UNIT_LIMIT,
+) {
+  const selected = [...new Set(unitFiles)].sort();
+  if (selected.length > limit) {
+    throw new Error([
+      `AFFECTED_UNIT_SELECTION_TOO_BROAD: ${selected.length} infrastructure Unit files selected`,
+      `causing changed files: ${changedFiles.join(", ")}`,
+    ].join("; "));
+  }
+  return selected;
+}
+
+const EXPLICIT_UNIT_RULES = Object.freeze([
+  {
+    match: RULE_CRUD_PRODUCTION_PATH,
+    unitFiles: [
+      "tests/unit/topic-rule-management.test.ts",
+      "tests/unit/topic-rule-management-routes.test.ts",
+    ],
+    reason: "话题规则 CRUD 使用显式 Unit 映射，不扩散 vitest related",
+  },
+]);
 const HIGH_RISK_RULES = Object.freeze([
   {
     match: /^prisma\/(?:migrations\/|schema(?:\.[^/]+)?\.prisma$)/u,
@@ -151,7 +191,7 @@ const RULES = [
   { match: /(?:^|\/)scripts\/testing\//u, categories: [], reason: "测试选择器或门禁脚本变化，仅运行直接关联 Unit 与静态验证" },
   { match: /(?:^|\/)package(?:-lock)?\.json$/u, categories: [], reason: "package runtime 变化，执行构建专项而非无条件全 E2E" },
   {
-    match: /(?:^|\/)(?:app\/\(admin\)\/rules(?:\/|$)|app\/api\/rules(?:\/|$)|lib\/topic-rule-management\.ts$|lib\/rules\/package\.ts$|tests\/(?:e2e\/rule-brand-navigation\.spec\.ts|unit\/topic-rule-management(?:-routes)?\.test\.ts)$)/u,
+    match: RULE_CRUD_PATH,
     categories: ["CAMPAIGN", "RULES"],
     exclusive: true,
     reason: "话题规则 CRUD、规则包或对应测试发生变化，仅选择 DATA_RULES 业务分组",
@@ -241,6 +281,42 @@ export function selectTestScope(changedFiles, mode = "fast") {
       (conservativeFallback || infrastructureChanged),
     },
   );
+  const directlyChangedUnit = normalized.filter((file) => DIRECT_UNIT_TEST_PATH.test(file));
+  const infrastructureChangedFiles = normalized.filter((file) => VERIFICATION_INFRASTRUCTURE_PATH.test(file));
+  const infrastructureUnitFiles = assertAffectedInfrastructureUnitSelection(
+    infrastructureChangedFiles.length ? [...INFRASTRUCTURE_UNIT_ALLOWLIST] : [],
+    infrastructureChangedFiles,
+  );
+  const explicitUnitFiles = new Set();
+  const explicitlyMappedSources = new Set();
+  const unitSelectionReasons = [];
+  for (const file of normalized) {
+    const rule = EXPLICIT_UNIT_RULES.find((candidate) => candidate.match.test(file));
+    if (!rule) continue;
+    rule.unitFiles.forEach((unitFile) => explicitUnitFiles.add(unitFile));
+    explicitlyMappedSources.add(file);
+    unitSelectionReasons.push(`${file}: ${rule.reason}`);
+  }
+  const unitFiles = [...new Set([
+    ...directlyChangedUnit,
+    ...infrastructureUnitFiles,
+    ...explicitUnitFiles,
+    ...protectedSelection.unitTests,
+  ])].sort();
+  const unitRelatedFiles = normalized.filter((file) =>
+    BUSINESS_RELATED_SOURCE_PATH.test(file) &&
+    !VERIFICATION_INFRASTRUCTURE_PATH.test(file) &&
+    !explicitlyMappedSources.has(file)
+  );
+  if (directlyChangedUnit.length) {
+    unitSelectionReasons.push(`直接 Unit：${directlyChangedUnit.join(", ")}`);
+  }
+  if (infrastructureUnitFiles.length) {
+    unitSelectionReasons.push(`CI/test/release/package 基础设施仅运行 ${infrastructureUnitFiles.length} 个 gate Unit`);
+  }
+  if (unitRelatedFiles.length) {
+    unitSelectionReasons.push(`仅生产业务源进入 vitest related：${unitRelatedFiles.join(", ")}`);
+  }
   if (mode === "regression") {
     reasons.push("REGRESSION 仅执行受影响业务分组与受保护行为，不无条件扩张跨模块测试");
   }
@@ -261,6 +337,10 @@ export function selectTestScope(changedFiles, mode = "fast") {
     changedFiles: normalized,
     categories: [...categories].sort(),
     e2eFiles,
+    unitFiles,
+    unitRelatedFiles,
+    infrastructureUnitFiles,
+    unitSelectionReasons: [...new Set(unitSelectionReasons)],
     reasons: [...new Set(reasons)],
     infrastructureChanged,
     minimumMode: infrastructureChanged ? "regression" : mode,

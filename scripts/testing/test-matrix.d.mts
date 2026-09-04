@@ -13,6 +13,10 @@ export interface TestSelection {
   changedFiles: string[];
   categories: TestCategory[];
   e2eFiles: string[];
+  unitFiles: string[];
+  unitRelatedFiles: string[];
+  infrastructureUnitFiles: string[];
+  unitSelectionReasons: string[];
   reasons: string[];
   infrastructureChanged: boolean;
   minimumMode: string;
@@ -36,8 +40,15 @@ export interface ChangeRisk {
 export const TEST_CATEGORIES: readonly TestCategory[];
 export const CHANGE_RISK_LEVELS: Readonly<Record<string, ChangeRisk["level"]>>;
 export const E2E_MANIFEST: Readonly<Record<string, E2eMetadata>>;
+export const INFRASTRUCTURE_UNIT_ALLOWLIST: readonly string[];
+export const AFFECTED_INFRASTRUCTURE_UNIT_LIMIT: number;
 export function isTestOnlyChangePath(file: string): boolean;
 export function classifyChangeRisk(changedFiles: string[]): ChangeRisk;
+export function assertAffectedInfrastructureUnitSelection(
+  unitFiles: string[],
+  changedFiles: string[],
+  limit?: number,
+): string[];
 export function listFormalE2eFiles(root?: string): string[];
 export function validateManifest(root?: string): string[];
 export function selectTestScope(changedFiles: string[], mode?: string): TestSelection;

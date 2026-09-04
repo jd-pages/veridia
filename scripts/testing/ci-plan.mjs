@@ -18,6 +18,8 @@ export function createAffectedCiPlan(changedFiles, recoveryGroup = "") {
   return {
     mode: "affected",
     risk: selection.risk,
+    unitFiles: selection.unitFiles,
+    unitRelatedFiles: selection.unitRelatedFiles,
     e2eFiles,
     needsBrowser: e2eFiles.length > 0,
   };
