@@ -12,4 +12,7 @@ export function attestationPath(root?: string): string;
 export function invalidateFullGateAttestation(root?: string): void;
 export function writeFullGateAttestation(results: Record<string, unknown>, root?: string): Record<string, unknown>;
 export function validateFullGateAttestation(root?: string): FullGateValidation;
+export function validateReusableFullBaseAttestation(root?: string): FullGateValidation & {
+  changedFiles?: string[];
+};
 export function printValidation(validation: FullGateValidation): void;

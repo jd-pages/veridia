@@ -2,7 +2,13 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { groupE2eFiles, selectTestScope, validateManifest } from "./test-matrix.mjs";
+import {
+  CHANGE_RISK_LEVELS,
+  e2eFilesForGroup,
+  groupE2eFiles,
+  selectTestScope,
+  validateManifest,
+} from "./test-matrix.mjs";
 import { invalidateFullGateAttestation, writeFullGateAttestation } from "./full-gate-attestation.mjs";
 import { PROTECTED_BEHAVIORS, selectProtectedBehaviors } from "./protected-behaviors.mjs";
 import {
@@ -16,7 +22,7 @@ import {
 
 const root = process.cwd();
 const requestedMode = process.argv[2] || "fast";
-if (!new Set(["fast", "regression", "full"]).has(requestedMode)) throw new Error("验证模式必须是 fast、regression 或 full");
+if (!new Set(["affected", "fast", "regression", "full"]).has(requestedMode)) throw new Error("验证模式必须是 affected、fast、regression 或 full");
 
 function gitLines(args) {
   const result = spawnSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true });
@@ -33,7 +39,7 @@ function changedFiles() {
   ];
   if (working.length) return [...new Set(working)];
   const upstream = spawnSync("git", ["rev-parse", "--verify", "origin/main"], { cwd: root, stdio: "ignore", windowsHide: true });
-  return upstream.status === 0 ? gitLines(["diff", "--name-only", "origin/main...HEAD"]) : [];
+  return upstream.status === 0 ? gitLines(["-c", "core.quotepath=false", "diff", "--name-only", "origin/main...HEAD"]) : [];
 }
 
 function command(name, executable, args, options = {}) {
@@ -121,7 +127,18 @@ if (selection?.minimumMode === "regression" && mode === "fast") {
   mode = "regression";
   selection = selectTestScope(changes, "regression");
 }
-const selectedFiles = mode === "full" ? formalFiles : selection.e2eFiles;
+const affectedMode = mode === "affected" || mode === "fast";
+const recoveryGroup = process.env.VERIDIA_TEST_RECOVERY_GROUP?.trim() || "";
+if (recoveryGroup && selection?.risk.level !== CHANGE_RISK_LEVELS.TEST_ONLY) {
+  throw new Error("TEST_ONLY_RECOVERY 只能用于 tests/** 唯一变化");
+}
+const recoveryFiles = recoveryGroup ? e2eFilesForGroup(recoveryGroup) : [];
+if (recoveryGroup && recoveryFiles.length === 0) {
+  throw new Error(`未知 TEST_ONLY_RECOVERY E2E 组：${recoveryGroup}`);
+}
+const selectedFiles = mode === "full"
+  ? formalFiles
+  : [...new Set([...selection.e2eFiles, ...recoveryFiles])].sort();
 const protectedSelection = mode === "full"
   ? selectProtectedBehaviors(changes, { full: true })
   : {
@@ -136,33 +153,42 @@ process.stdout.write([
   `VERIDIA ${mode.toUpperCase()} 验证门禁`,
   "========================================",
   `检测到的变更：${changes.length ? changes.join(", ") : "无（保守回退）"}`,
+  `风险分类：${mode === "full" ? "RELEASE_FULL" : selection.risk.level}`,
+  ...(selection ? selection.risk.reasons.map((reason) => `风险原因：${reason}`) : []),
   `选择分类：${mode === "full" ? "全部正式分类" : selection.categories.join(", ")}`,
   `E2E 文件（${selectedFiles.length}/${formalFiles.length}）：${selectedFiles.join(", ")}`,
   `PROTECTED_REGRESSION 组：${protectedSelection.groups.join(", ") || "无"}`,
   `PROTECTED_REGRESSION 行为（${protectedSelection.behaviorKeys.length}）：${protectedSelection.behaviorKeys.join(", ") || "无"}`,
   ...(selection ? selection.reasons.map((reason) => `选择原因：${reason}`) : ["选择原因：FULL 明确执行全部正式 E2E；不使用变更选择器"]),
   ...protectedSelection.reasons.map((reason) => `Protected 选择原因：${reason}`),
-  mode === "full" ? "执行策略：完整报告，单个业务失败不阻断其余独立门禁" : `执行策略：${mode === "fast" ? "fail-fast" : "受影响业务分组 + 受保护行为"}`,
+  recoveryGroup ? `TEST_ONLY_RECOVERY：完整重跑 ${recoveryGroup}` : "TEST_ONLY_RECOVERY：不适用",
+  mode === "full" ? "执行策略：完整报告，单个业务失败不阻断其余独立门禁" : `执行策略：${affectedMode ? "受影响测试 fail-fast，不执行 FULL" : "受影响业务分组 + 受保护行为"}`,
   "",
 ].join("\n"));
 
 if (mode === "full") invalidateFullGateAttestation(root);
 
 const protectedRegistry = record(command("Protected behavior registry", process.execPath, [path.join(root, "scripts", "testing", "protected-behaviors.mjs")]));
-record(npm("Prisma Client", ["run", "db:generate"]));
-record(npm("Prisma Client assert", ["run", "prisma:assert"]));
+const highRiskKinds = new Set(selection?.risk.highRiskKinds || []);
+if (!affectedMode || highRiskKinds.has("database")) {
+  record(npm("Prisma Client", ["run", "db:generate"]));
+  record(npm("Prisma Client assert", ["run", "prisma:assert"]));
+}
+if (affectedMode && highRiskKinds.has("desktopRuntime")) {
+  record(npm("Desktop bundled Node", ["run", "desktop:node:prepare"]));
+}
 record(npm("Lint", ["run", "lint"]));
 record(npm("Typecheck", ["run", "typecheck"]));
 
 let unitTotal = 0;
 let unitCommandName = "All unit tests";
-if (mode === "fast") {
+if (affectedMode) {
   const related = changes.filter((file) => /\.(?:ts|tsx|js|mjs|json)$/u.test(file));
-  unitCommandName = related.length ? "Affected unit tests" : "All unit tests (conservative fallback)";
-  const unit = record(related.length
-    ? runVitest(unitCommandName, ["related", ...related, "--run", "--passWithNoTests"], "affected")
-    : runVitest(unitCommandName, ["run"], "all"));
-  unitTotal = passedTestCount(unit.output);
+  unitCommandName = "Affected unit tests";
+  if (related.length) {
+    const unit = record(runVitest(unitCommandName, ["related", ...related, "--run", "--passWithNoTests"], "affected"));
+    unitTotal = passedTestCount(unit.output);
+  }
   if (protectedSelection.unitTests.length) {
     record(runVitest("Protected regression unit", [
       "run", ...protectedSelection.unitTests,
@@ -176,13 +202,14 @@ if (mode === "fast") {
 let e2eTotal = 0;
 let e2ePassed = 0;
 const e2eEvidence = [];
+const e2eGroups = [];
 const groups = groupE2eFiles(selectedFiles);
 for (const group of groups) {
   const result = record(command(`E2E ${group.name}`, process.execPath, [
     path.join(root, "scripts", "testing", "run-e2e.mjs"),
     `--group=${group.name}`,
     `--workers=${group.workers}`,
-    ...(mode === "fast" ? ["--fail-fast"] : []),
+    ...(affectedMode ? ["--fail-fast"] : []),
     ...group.files,
   ]));
   const marker = result.output.match(/VERIDIA_E2E_RESULT=(\{[^\r\n]+\})/u);
@@ -191,15 +218,31 @@ for (const group of groups) {
     e2eTotal += summary.total;
     e2ePassed += summary.passed;
     e2eEvidence.push(...(summary.cases || []));
+    e2eGroups.push({
+      name: group.name,
+      files: group.files,
+      total: summary.total,
+      passed: summary.passed,
+      status: result.passed ? "PASSED" : "FAILED",
+    });
   }
-  if (!result.passed && mode === "fast") break;
+  if (!result.passed && affectedMode) break;
 }
 
-if (mode !== "fast") {
+if (!affectedMode) {
   const productionBuild = record(npm("Production build", ["run", "build"]));
   if (productionBuild.passed) {
     record(npm("Standalone runtime", ["run", "test:standalone-runtime", "--", "--skip-build"]));
   }
+}
+if (affectedMode && highRiskKinds.has("database")) {
+  record(command("Database compatibility", process.execPath, [path.join(root, "scripts", "testing", "verify-databases.mjs")]));
+}
+if (affectedMode && highRiskKinds.has("desktopRuntime")) {
+  record(npm("Desktop health", ["run", "test:desktop-health"]));
+}
+if (affectedMode && highRiskKinds.has("packageRuntime")) {
+  record(npm("Production build", ["run", "build"]));
 }
 if (mode === "full") {
   record(command("Database compatibility", process.execPath, [path.join(root, "scripts", "testing", "verify-databases.mjs")]));
@@ -229,18 +272,32 @@ const summary = {
   failureDetails,
   e2eTotal,
   e2ePassed,
+  selectedE2eFiles: selectedFiles,
+  e2eGroups,
+  risk: mode === "full"
+    ? { level: "RELEASE_FULL", highRiskKinds: [], productionChanged: true }
+    : selection.risk,
+  recoveryGroup: recoveryGroup || null,
   unitTests: { passed: failures.includes(unitCommandName) ? 0 : unitTotal, total: unitTotal },
-  productionBuild: mode === "fast" ? "NOT_REQUIRED" : failures.includes("Production build") ? "FAILED" : "PASSED",
-  standaloneRuntime: mode === "fast"
+  productionBuild: affectedMode && !highRiskKinds.has("packageRuntime")
+    ? "NOT_REQUIRED"
+    : failures.includes("Production build") ? "FAILED" : "PASSED",
+  standaloneRuntime: affectedMode
     ? "NOT_REQUIRED"
     : failures.includes("Production build")
       ? "NOT_RUN"
       : failures.includes("Standalone runtime")
         ? "FAILED"
         : "PASSED",
-  sqliteFreshMigration: mode === "full" && !failures.includes("Database compatibility") ? "PASSED" : mode === "full" ? "FAILED" : "NOT_REQUIRED",
-  sqliteLegacyUpgrade: mode === "full" && !failures.includes("Database compatibility") ? "PASSED" : mode === "full" ? "FAILED" : "NOT_REQUIRED",
-  postgresValidate: mode === "full" && !failures.includes("Database compatibility") ? "PASSED" : mode === "full" ? "FAILED" : "NOT_REQUIRED",
+  sqliteFreshMigration: (mode === "full" || highRiskKinds.has("database"))
+    ? failures.includes("Database compatibility") ? "FAILED" : "PASSED"
+    : "NOT_REQUIRED",
+  sqliteLegacyUpgrade: (mode === "full" || highRiskKinds.has("database"))
+    ? failures.includes("Database compatibility") ? "FAILED" : "PASSED"
+    : "NOT_REQUIRED",
+  postgresValidate: (mode === "full" || highRiskKinds.has("database"))
+    ? failures.includes("Database compatibility") ? "FAILED" : "PASSED"
+    : "NOT_REQUIRED",
   sensitiveScan: mode === "full" && !failures.includes("Sensitive scan") ? "PASSED" : mode === "full" ? "FAILED" : "NOT_REQUIRED",
   gitDiffCheck: !failures.some((name) => name.startsWith("git diff")) ? "PASSED" : "FAILED",
   lint: failures.includes("Lint") ? "FAILED" : "PASSED",

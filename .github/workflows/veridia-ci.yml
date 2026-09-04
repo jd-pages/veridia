@@ -5,10 +5,24 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 验证模式（FULL 必须显式选择）
+        required: true
+        default: affected
+        type: choice
+        options:
+          - affected
+          - full
+
+permissions:
+  actions: read
+  contents: read
 
 concurrency:
-  group: veridia-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: veridia-ci-${{ github.ref }}-${{ github.event_name }}-${{ inputs.mode || 'affected' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   verify:
@@ -37,7 +51,40 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      - name: 计算 exact diff
+        if: github.event_name != 'workflow_dispatch' || inputs.mode == 'affected'
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CURRENT_HEAD_SHA: ${{ github.sha }}
+        run: |
+          $base = if ($env:EVENT_NAME -eq 'pull_request') { $env:PR_BASE_SHA } elseif ($env:EVENT_NAME -eq 'push') { $env:PUSH_BASE_SHA } else { git rev-parse HEAD^ }
+          if ($base -notmatch '^[0-9a-f]{40}$' -or $base -eq ('0' * 40)) { $base = git rev-list --max-parents=0 HEAD }
+          $files = @(git -c core.quotepath=false diff --name-only $base $env:CURRENT_HEAD_SHA)
+          "VERIDIA_CI_BASE_SHA=$base" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VERIDIA_CI_HEAD_SHA=$env:CURRENT_HEAD_SHA" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VERIDIA_TEST_CHANGED_FILES<<VERIDIA_FILES" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $files | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VERIDIA_FILES" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Diff base: $base"
+          Write-Host "Diff head: $env:CURRENT_HEAD_SHA"
+          Write-Host "Changed files: $($files.Count)"
+
+      - name: 准备 TEST_ONLY_RECOVERY 候选
+        if: github.event_name != 'workflow_dispatch' || inputs.mode == 'affected'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/testing/test-only-recovery.mjs prepare
+
+      - name: 生成 affected 执行计划
+        if: github.event_name != 'workflow_dispatch' || inputs.mode == 'affected'
+        run: node scripts/testing/ci-plan.mjs
+
       - name: 准备并校验 Desktop bundled Node
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'full'
         run: npm run desktop:node:prepare
 
       - name: 复用不可变测试基础设施缓存
@@ -51,19 +98,25 @@ jobs:
           key: ${{ runner.os }}-veridia-test-${{ hashFiles('package-lock.json', 'playwright.config.ts', 'prisma/schema.prisma', 'prisma/migrations/**', 'tests/e2e/setup-database.ts', 'scripts/testing/**') }}
 
       - name: 安装端到端测试浏览器
+        if: (github.event_name == 'workflow_dispatch' && inputs.mode == 'full') || env.VERIDIA_CI_NEEDS_BROWSER == 'true'
         run: npx playwright install chromium
 
       - name: 创建日志目录
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path artifacts/ci-logs | Out-Null
 
-      - name: Pull Request 回归门禁
-        if: github.event_name == 'pull_request'
+      - name: affected 变更影响门禁
+        if: github.event_name != 'workflow_dispatch' || inputs.mode == 'affected'
         shell: pwsh
-        run: npm run verify:regression *>&1 | Tee-Object artifacts/ci-logs/verify-regression.log
+        run: npm run verify:affected *>&1 | Tee-Object artifacts/ci-logs/verify-affected.log
 
-      - name: main 正式 FULL 门禁
-        if: github.event_name == 'push'
+      - name: 生成 TEST_ONLY_RECOVERY 证据
+        if: success() && env.VERIDIA_TEST_ONLY_RECOVERY_CANDIDATE == 'true'
+        shell: pwsh
+        run: node scripts/testing/test-only-recovery.mjs finalize
+
+      - name: RELEASE_FULL 门禁
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'full'
         shell: pwsh
         env:
           VERIDIA_DISABLE_ATTESTATION_WRITE: "true"

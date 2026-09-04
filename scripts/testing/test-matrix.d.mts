@@ -22,11 +22,24 @@ export interface TestSelection {
   protectedGroups: string[];
   protectedUnitTests: string[];
   protectedReasons: string[];
+  risk: ChangeRisk;
+}
+
+export interface ChangeRisk {
+  level: "TEST_ONLY" | "LOW" | "MEDIUM" | "HIGH";
+  changedFiles: string[];
+  highRiskKinds: string[];
+  reasons: string[];
+  productionChanged: boolean;
 }
 
 export const TEST_CATEGORIES: readonly TestCategory[];
+export const CHANGE_RISK_LEVELS: Readonly<Record<string, ChangeRisk["level"]>>;
 export const E2E_MANIFEST: Readonly<Record<string, E2eMetadata>>;
+export function isTestOnlyChangePath(file: string): boolean;
+export function classifyChangeRisk(changedFiles: string[]): ChangeRisk;
 export function listFormalE2eFiles(root?: string): string[];
 export function validateManifest(root?: string): string[];
 export function selectTestScope(changedFiles: string[], mode?: string): TestSelection;
+export function e2eFilesForGroup(groupName: string): string[];
 export function groupE2eFiles(files: string[]): Array<{ name: string; files: string[]; workers: number }>;

@@ -21,6 +21,97 @@ export const TEST_CATEGORIES = Object.freeze([
   "UI_LAYOUT",
 ]);
 
+export const CHANGE_RISK_LEVELS = Object.freeze({
+  TEST_ONLY: "TEST_ONLY",
+  LOW: "LOW",
+  MEDIUM: "MEDIUM",
+  HIGH: "HIGH",
+});
+
+const TEST_ONLY_PATH = /^tests\//u;
+const LOW_RISK_PATH = /^(?:docs\/|README(?:\.|$)|CHANGELOG\.md$)/iu;
+const VERIFICATION_INFRASTRUCTURE_PATH = /^(?:\.github\/workflows\/|scripts\/(?:testing\/|release|software-publish|software-binary-publish|fixed-workflow|finalize-release|package-full-gate|run-publish-rules)|package(?:-lock)?\.json$|(?:发布新版|上传发布包|发布规则新版|本地打包验收)\.bat$)/u;
+const VERIFICATION_INFRASTRUCTURE_TEST_PATH = /^tests\/unit\/(?:test-gates|test-only-recovery|full-gate-attestation|package-full-gate|local-package-worktree|release-gate)\.test\.ts$/u;
+const HIGH_RISK_RULES = Object.freeze([
+  {
+    match: /^prisma\/(?:migrations\/|schema(?:\.[^/]+)?\.prisma$)/u,
+    kind: "database",
+    reason: "Prisma schema / migration 变化",
+  },
+  {
+    match: /^(?:desktop\/|scripts\/(?:desktop-|prepare-desktop|build-desktop|after-pack))/u,
+    kind: "desktopRuntime",
+    reason: "Desktop runtime / package 变化",
+  },
+  {
+    match: /^(?:\.github\/workflows\/|scripts\/(?:release|software-publish|software-binary-publish|fixed-workflow|finalize-release|package-full-gate|run-publish-rules)|(?:发布新版|上传发布包|发布规则新版|本地打包验收)\.bat$)/u,
+    kind: "releaseInfrastructure",
+    reason: "Release / GitHub Actions 基础设施变化",
+  },
+  {
+    match: /^(?:scripts\/testing\/(?:verify|test-matrix|protected-|full-gate-attestation|test-only-recovery|ci-plan|run-e2e)|playwright\.config\.ts$|vitest\.config\.ts$)/u,
+    kind: "testInfrastructure",
+    reason: "测试选择器、门禁或 attestation 基础设施变化",
+  },
+  {
+    match: /^package(?:-lock)?\.json$/u,
+    kind: "packageRuntime",
+    reason: "package runtime semantics 变化",
+  },
+  {
+    match: /^(?:lib\/automation\/(?:queue|runtime-state|extraction-deadline|generation-lifecycle|runner-handoff|browser|douyin-browser|task-lifecycle|batch-service|batch-runtime-reconcile|batch-execution-reconcile)|tests\/e2e\/pause-resume-runner-lifecycle\.spec\.ts$)/u,
+    kind: "automationLifecycle",
+    reason: "Automation runner / browser lifecycle 变化",
+  },
+  {
+    match: /^(?:lib\/(?:audit-engine|audit-service|audit-result-lifecycle|audit-result-deletion|audit-task-deduplication|import-record-deletion)|app\/api\/(?:audit-tasks|results|imports)(?:\/|$))/u,
+    kind: "coreAuditLifecycle",
+    reason: "核心审核、结果、重复或删除生命周期变化",
+  },
+]);
+
+export function isTestOnlyChangePath(file) {
+  return TEST_ONLY_PATH.test(file.replaceAll("\\", "/"));
+}
+
+export function classifyChangeRisk(changedFiles) {
+  const normalized = [...new Set((changedFiles || []).map((file) => file.replaceAll("\\", "/")))].sort();
+  if (normalized.length > 0 && normalized.every(isTestOnlyChangePath)) {
+    return {
+      level: CHANGE_RISK_LEVELS.TEST_ONLY,
+      changedFiles: normalized,
+      highRiskKinds: [],
+      reasons: ["全部变化均位于 tests/**"],
+      productionChanged: false,
+    };
+  }
+  const highRiskKinds = new Set();
+  const reasons = [];
+  for (const file of normalized) {
+    for (const rule of HIGH_RISK_RULES.filter((candidate) => candidate.match.test(file))) {
+      highRiskKinds.add(rule.kind);
+      reasons.push(`${file}: ${rule.reason}`);
+    }
+  }
+  if (highRiskKinds.size > 0 || normalized.length === 0) {
+    return {
+      level: CHANGE_RISK_LEVELS.HIGH,
+      changedFiles: normalized,
+      highRiskKinds: [...highRiskKinds].sort(),
+      reasons: normalized.length ? [...new Set(reasons)] : ["未取得可靠 diff，按 HIGH fail-closed"],
+      productionChanged: true,
+    };
+  }
+  const low = normalized.every((file) => LOW_RISK_PATH.test(file));
+  return {
+    level: low ? CHANGE_RISK_LEVELS.LOW : CHANGE_RISK_LEVELS.MEDIUM,
+    changedFiles: normalized,
+    highRiskKinds: [],
+    reasons: [low ? "仅文档或说明文件变化" : "普通业务代码或配置变化"],
+    productionChanged: true,
+  };
+}
+
 const entry = (categories, isolationGroup, parallelSafe = false) => ({
   categories,
   isolationGroup,
@@ -54,7 +145,11 @@ export const E2E_MANIFEST = Object.freeze({
 });
 
 const RULES = [
-  { match: /(?:^|\/)(?:playwright\.config\.ts|package(?:-lock)?\.json|scripts\/testing\/|tests\/e2e\/setup-|tests\/unit\/test-gates)/u, categories: TEST_CATEGORIES, infrastructure: true, reason: "测试基础设施发生变化，至少执行 REGRESSION" },
+  { match: VERIFICATION_INFRASTRUCTURE_PATH, categories: [], exclusive: true, reason: "CI、测试、Release 或 package 门禁基础设施变化，使用对应 Unit/静态/构建专项" },
+  { match: VERIFICATION_INFRASTRUCTURE_TEST_PATH, categories: [], exclusive: true, reason: "CI/Release gate 防回归 Unit 变化，保持门禁基础设施专项范围" },
+  { match: /(?:^|\/)(?:playwright\.config\.ts|vitest\.config\.ts|tests\/e2e\/setup-)/u, categories: TEST_CATEGORIES, infrastructure: true, reason: "Playwright/Vitest 执行基础设施变化，覆盖全部受影响测试域" },
+  { match: /(?:^|\/)scripts\/testing\//u, categories: [], reason: "测试选择器或门禁脚本变化，仅运行直接关联 Unit 与静态验证" },
+  { match: /(?:^|\/)package(?:-lock)?\.json$/u, categories: [], reason: "package runtime 变化，执行构建专项而非无条件全 E2E" },
   {
     match: /(?:^|\/)(?:app\/\(admin\)\/rules(?:\/|$)|app\/api\/rules(?:\/|$)|lib\/topic-rule-management\.ts$|lib\/rules\/package\.ts$|tests\/(?:e2e\/rule-brand-navigation\.spec\.ts|unit\/topic-rule-management(?:-routes)?\.test\.ts)$)/u,
     categories: ["CAMPAIGN", "RULES"],
@@ -94,16 +189,25 @@ export function validateManifest(root = process.cwd()) {
 
 export function selectTestScope(changedFiles, mode = "fast") {
   const normalized = [...new Set(changedFiles.map((file) => file.replaceAll("\\", "/")))].sort();
+  const risk = classifyChangeRisk(normalized);
   const categories = new Set();
   const reasons = [];
   let infrastructureChanged = false;
   let conservativeFallback = normalized.length === 0;
 
   for (const file of normalized) {
+    if (isTestOnlyChangePath(file) && !/^tests\/e2e\/setup-/u.test(file)) {
+      reasons.push(`${file}: 测试文件只选择自身及其直接受保护行为`);
+      continue;
+    }
     const matches = RULES.filter((rule) => rule.match.test(file));
     if (matches.length === 0) {
-      conservativeFallback = true;
-      reasons.push(`${file}: 无精确映射，使用保守全量回退`);
+      if (risk.level === CHANGE_RISK_LEVELS.TEST_ONLY || risk.level === CHANGE_RISK_LEVELS.LOW) {
+        reasons.push(`${file}: ${risk.level} 仅运行直接关联测试`);
+      } else {
+        conservativeFallback = true;
+        reasons.push(`${file}: 无精确映射，使用保守全量回退`);
+      }
       continue;
     }
     const exclusiveMatches = matches.filter((rule) => rule.exclusive);
@@ -114,21 +218,44 @@ export function selectTestScope(changedFiles, mode = "fast") {
     }
   }
 
-  if (conservativeFallback || infrastructureChanged) {
+  if (risk.level === CHANGE_RISK_LEVELS.TEST_ONLY) {
+    conservativeFallback = false;
+    infrastructureChanged = false;
+  }
+
+  if (risk.level !== CHANGE_RISK_LEVELS.TEST_ONLY && (conservativeFallback || infrastructureChanged)) {
     TEST_CATEGORIES.forEach((category) => categories.add(category));
   }
-  const protectedSelection = selectProtectedBehaviors(normalized, {
-    conservative: conservativeFallback || infrastructureChanged,
-  });
+  const protectedImpactFiles = normalized.filter((file) =>
+    !VERIFICATION_INFRASTRUCTURE_PATH.test(file) &&
+    !VERIFICATION_INFRASTRUCTURE_TEST_PATH.test(file)
+  );
+  const verificationInfrastructureOnly = risk.level === CHANGE_RISK_LEVELS.HIGH && protectedImpactFiles.length === 0;
+  const protectedSelection = selectProtectedBehaviors(
+    protectedImpactFiles,
+    {
+      noFallback: verificationInfrastructureOnly || risk.level === CHANGE_RISK_LEVELS.TEST_ONLY,
+      directOnly: risk.level === CHANGE_RISK_LEVELS.TEST_ONLY,
+    conservative:
+      risk.level !== CHANGE_RISK_LEVELS.TEST_ONLY &&
+      (conservativeFallback || infrastructureChanged),
+    },
+  );
   if (mode === "regression") {
     reasons.push("REGRESSION 仅执行受影响业务分组与受保护行为，不无条件扩张跨模块测试");
   }
-  const e2eFiles = [...new Set([
-    ...Object.entries(E2E_MANIFEST)
-    .filter(([, metadata]) => metadata.categories.some((category) => categories.has(category)))
-    .map(([file]) => file),
-    ...protectedSelection.e2eTests,
-  ])].sort();
+  const directlyChangedE2e = normalized.filter((file) => E2E_MANIFEST[file]);
+  const e2eFiles = [...new Set(
+    risk.level === CHANGE_RISK_LEVELS.TEST_ONLY
+      ? [...directlyChangedE2e, ...protectedSelection.e2eTests]
+      : [
+          ...directlyChangedE2e,
+          ...Object.entries(E2E_MANIFEST)
+            .filter(([, metadata]) => metadata.categories.some((category) => categories.has(category)))
+            .map(([file]) => file),
+          ...protectedSelection.e2eTests,
+        ],
+  )].sort();
   const parallelSafe = e2eFiles.length > 0 && e2eFiles.every((file) => E2E_MANIFEST[file].parallelSafe);
   return {
     changedFiles: normalized,
@@ -143,7 +270,15 @@ export function selectTestScope(changedFiles, mode = "fast") {
     protectedGroups: protectedSelection.groups,
     protectedUnitTests: protectedSelection.unitTests,
     protectedReasons: protectedSelection.reasons,
+    risk,
   };
+}
+
+export function e2eFilesForGroup(groupName) {
+  return Object.entries(E2E_MANIFEST)
+    .filter(([, metadata]) => metadata.isolationGroup === groupName)
+    .map(([file]) => file)
+    .sort();
 }
 
 export function groupE2eFiles(files) {

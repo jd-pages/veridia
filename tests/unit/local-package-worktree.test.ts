@@ -106,11 +106,11 @@ describe("本地打包工作区恢复", () => {
       commitSha: "a".repeat(40),
       sourceFingerprint: "source-fingerprint",
       fullGate: {
-        source: "GITHUB_MAIN_CI",
-        mainCiRunId: 12345,
-        mainCiCommitSha: "a".repeat(40),
-        mainCiConclusion: "success",
-        mainCiUrl: "https://github.com/jd-pages/veridia/actions/runs/12345",
+        source: "GITHUB_RELEASE_FULL",
+        releaseFullRunId: 12345,
+        releaseFullCommitSha: "a".repeat(40),
+        releaseFullConclusion: "success",
+        releaseFullUrl: "https://github.com/jd-pages/veridia/actions/runs/12345",
       },
       artifacts: [
         {
@@ -123,13 +123,13 @@ describe("本地打包工作区恢复", () => {
     });
 
     expect(acceptance).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       version: "1.1.17",
       commitSha: "a".repeat(40),
-      fullGateSource: "GITHUB_MAIN_CI",
-      mainCiRunId: 12345,
-      mainCiCommitSha: "a".repeat(40),
-      mainCiConclusion: "success",
+      fullGateSource: "GITHUB_RELEASE_FULL",
+      releaseFullRunId: 12345,
+      releaseFullCommitSha: "a".repeat(40),
+      releaseFullConclusion: "success",
       packageChecks: {
         productionBuild: "PASSED",
         desktopPrepare: "PASSED",

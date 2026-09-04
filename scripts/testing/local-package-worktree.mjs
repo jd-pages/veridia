@@ -43,7 +43,7 @@ export function createLocalPackageAcceptance({
   artifacts,
 }) {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     version,
     acceptedAt,
     commitSha,
@@ -51,12 +51,22 @@ export function createLocalPackageAcceptance({
     fullGateSource: fullGate.source,
     ...(fullGate.source === "LOCAL_ATTESTATION"
       ? { fullGateAttestationGeneratedAt: fullGate.attestationGeneratedAt }
-      : {
-          mainCiRunId: fullGate.mainCiRunId,
-          mainCiCommitSha: fullGate.mainCiCommitSha,
-          mainCiConclusion: fullGate.mainCiConclusion,
-          mainCiUrl: fullGate.mainCiUrl,
-        }),
+      : fullGate.source === "GITHUB_RELEASE_FULL"
+        ? {
+            releaseFullRunId: fullGate.releaseFullRunId,
+            releaseFullCommitSha: fullGate.releaseFullCommitSha,
+            releaseFullConclusion: fullGate.releaseFullConclusion,
+            releaseFullUrl: fullGate.releaseFullUrl,
+          }
+        : {
+            baseFullRunId: fullGate.baseFullRunId,
+            baseFullHead: fullGate.baseFullHead,
+            recoveryCommit: fullGate.recoveryCommit,
+            recoveryScope: fullGate.recoveryScope,
+            recoveryGroupResult: fullGate.recoveryGroupResult,
+            recoveryCiRunId: fullGate.recoveryCiRunId,
+            recoveryCiUrl: fullGate.recoveryCiUrl,
+          }),
     packageChecks: {
       productionBuild: "PASSED",
       desktopPrepare: "PASSED",

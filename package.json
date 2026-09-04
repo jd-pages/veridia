@@ -29,6 +29,7 @@
     "electron:assert": "node scripts/assert-electron-runtime.mjs",
     "test:watch": "vitest",
     "test:e2e": "node scripts/testing/run-e2e.mjs",
+    "verify:affected": "node scripts/testing/verify.mjs affected",
     "verify:fast": "node scripts/testing/verify.mjs fast",
     "verify:regression": "node scripts/testing/verify.mjs regression",
     "verify:full": "node scripts/testing/verify.mjs full",

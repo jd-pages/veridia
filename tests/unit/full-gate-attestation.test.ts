@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   attestationPath,
   validateFullGateAttestation,
+  validateReusableFullBaseAttestation,
   writeFullGateAttestation,
 } from "../../scripts/testing/full-gate-attestation.mjs";
 import { canonicalizeProjectPath } from "../../scripts/testing/project-path.mjs";
@@ -159,6 +160,29 @@ describe("FULL 门禁验收凭证", { timeout: 15_000 }, () => {
     git(root, ["add", "README.md"]);
     git(root, ["commit", "-m", "next"]);
     expect(validateFullGateAttestation(root).reasons.join("\n")).toContain("Git HEAD");
+  });
+
+  it("FULL base 后仅 tests/** 提交变化时可作为 Recovery base 复用", () => {
+    const root = fixture();
+    writeFullGateAttestation(passedResults, root);
+    fs.writeFileSync(path.join(root, "tests/e2e/sample.spec.ts"), "test('recovered', () => {});\n");
+    git(root, ["add", "tests/e2e/sample.spec.ts"]);
+    git(root, ["commit", "-m", "test recovery"]);
+    const validation = validateReusableFullBaseAttestation(root);
+    expect(validation.valid).toBe(true);
+    expect(validation.changedFiles).toEqual(["tests/e2e/sample.spec.ts"]);
+    expect(validateFullGateAttestation(root).valid).toBe(false);
+  });
+
+  it("FULL base 后只要生产文件变化就不能作为 Recovery base 复用", () => {
+    const root = fixture();
+    writeFullGateAttestation(passedResults, root);
+    fs.writeFileSync(path.join(root, "scripts/release.mjs"), "export const changed = true;\n");
+    git(root, ["add", "scripts/release.mjs"]);
+    git(root, ["commit", "-m", "production change"]);
+    const validation = validateReusableFullBaseAttestation(root);
+    expect(validation.valid).toBe(false);
+    expect(validation.reasons.join("\n")).toContain("非 tests/**");
   });
 
   it.each([

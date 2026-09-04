@@ -65,14 +65,16 @@ export function selectProtectedBehaviors(changedFiles, options = {}) {
   const groups = new Set();
   const directKeys = new Set();
   const reasons = [];
-  if (options.full || options.conservative || normalized.length === 0) {
+  if (options.full || options.conservative || (normalized.length === 0 && !options.noFallback)) {
     Object.keys(PROTECTED_BEHAVIOR_GROUPS).forEach((group) => groups.add(group));
     reasons.push(options.full ? "FULL 固定执行全部受保护行为" : "无法精确限定影响范围，保守执行全部受保护行为");
   } else {
     for (const file of normalized) {
-      for (const rule of CHANGE_IMPACT_MAP.filter((candidate) => candidate.match.test(file))) {
-        rule.groups.forEach((group) => groups.add(group));
-        reasons.push(`${file}: ${rule.reason}`);
+      if (!options.directOnly) {
+        for (const rule of CHANGE_IMPACT_MAP.filter((candidate) => candidate.match.test(file))) {
+          rule.groups.forEach((group) => groups.add(group));
+          reasons.push(`${file}: ${rule.reason}`);
+        }
       }
       for (const item of PROTECTED_BEHAVIORS) {
         if (

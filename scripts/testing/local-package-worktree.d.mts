@@ -18,12 +18,19 @@ export function createLocalPackageAcceptance(options: {
   commitSha: string;
   sourceFingerprint: string;
   fullGate: {
-    source: "LOCAL_ATTESTATION" | "GITHUB_MAIN_CI";
+    source: "LOCAL_ATTESTATION" | "GITHUB_RELEASE_FULL" | "TEST_ONLY_RECOVERY";
     attestationGeneratedAt?: string;
-    mainCiRunId?: number;
-    mainCiCommitSha?: string;
-    mainCiConclusion?: string;
-    mainCiUrl?: string;
+    releaseFullRunId?: number;
+    releaseFullCommitSha?: string;
+    releaseFullConclusion?: string;
+    releaseFullUrl?: string;
+    baseFullRunId?: number;
+    baseFullHead?: string;
+    recoveryCommit?: string;
+    recoveryScope?: string[];
+    recoveryGroupResult?: Record<string, unknown>;
+    recoveryCiRunId?: number;
+    recoveryCiUrl?: string;
   };
   artifacts: Array<{
     name: string;

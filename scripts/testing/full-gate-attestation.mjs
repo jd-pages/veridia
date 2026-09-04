@@ -189,6 +189,46 @@ export function validateFullGateAttestation(root = process.cwd()) {
   return { valid: reasons.length === 0, reasons, attestation: saved, current };
 }
 
+export function validateReusableFullBaseAttestation(root = process.cwd()) {
+  const file = attestationPath(root);
+  if (!fs.existsSync(file)) return { valid: false, reasons: ["未找到可复用 FULL base attestation"] };
+  let saved;
+  try {
+    saved = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return { valid: false, reasons: ["FULL base attestation 已损坏"] };
+  }
+  const current = collectAttestationState(root);
+  const reasons = [];
+  if (saved.schemaVersion !== ATTESTATION_SCHEMA_VERSION) reasons.push("FULL base attestation schemaVersion 不兼容");
+  if (saved.verificationMode !== "FULL" || saved.results?.passed !== true) reasons.push("Base attestation 不是成功的 FULL");
+  if (!current.workingTreeClean) reasons.push("当前工作区存在未提交修改");
+  if (typeof saved.projectRoot !== "string" || !sameProjectPath(saved.projectRoot, current.projectRoot)) reasons.push("项目根目录已变化");
+  if (saved.gitBranch !== current.gitBranch) reasons.push("Git 分支已变化");
+  for (const key of ["nodeMajor", "platform", "architecture"]) {
+    if (saved[key] !== current[key]) reasons.push(`${key} 已变化`);
+  }
+  let changedFiles = [];
+  if (/^[0-9a-f]{40}$/u.test(saved.gitHead || "")) {
+    try {
+      git(root, ["merge-base", "--is-ancestor", saved.gitHead, current.gitHead]);
+      changedFiles = git(root, ["-c", "core.quotepath=false", "diff", "--name-only", saved.gitHead, current.gitHead])
+        .split(/\r?\n/u)
+        .map((fileName) => fileName.trim().replaceAll("\\", "/"))
+        .filter(Boolean);
+      if (!changedFiles.length) reasons.push("当前 HEAD 与 FULL base 相同，应使用 exact-HEAD attestation");
+      if (changedFiles.some((fileName) => !fileName.startsWith("tests/"))) {
+        reasons.push("FULL base 后存在非 tests/** 变化");
+      }
+    } catch {
+      reasons.push("FULL base 不是当前 HEAD 的祖先");
+    }
+  } else {
+    reasons.push("FULL base 缺少有效 Git HEAD");
+  }
+  return { valid: reasons.length === 0, reasons, attestation: saved, current, changedFiles };
+}
+
 function printValidation(validation) {
   if (!validation.valid) {
     process.stdout.write(`INVALID\nFULL凭证失效：\n${validation.reasons.map((reason) => `- ${reason}`).join("\n")}\n`);

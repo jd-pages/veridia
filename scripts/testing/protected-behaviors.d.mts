@@ -24,5 +24,5 @@ export const PROTECTED_EXPECTATION_CHANGE_POLICY: string;
 export const PROTECTED_BEHAVIORS: readonly ProtectedBehavior[];
 export const PROTECTED_BEHAVIOR_GROUPS: Readonly<Record<string, readonly string[]>>;
 export const CHANGE_IMPACT_MAP: readonly Readonly<{ match: RegExp; groups: readonly string[]; reason: string }>[];
-export function selectProtectedBehaviors(changedFiles: string[], options?: { full?: boolean; conservative?: boolean }): ProtectedSelection;
+export function selectProtectedBehaviors(changedFiles: string[], options?: { full?: boolean; conservative?: boolean; noFallback?: boolean; directOnly?: boolean }): ProtectedSelection;
 export function validateProtectedBehaviorRegistry(root?: string): { behaviorCount: number; groupCount: number; keys: string[] };

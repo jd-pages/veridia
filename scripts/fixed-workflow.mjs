@@ -568,8 +568,8 @@ async function localPackage() {
       [
         "本地打包验收 dry-run 通过。",
         `当前版本：${info.version}`,
-        "将验证当前 main、clean worktree、HEAD=origin/main，以及当前 exact HEAD 的正式 FULL 凭证。",
-        "凭证来源可为有效本地 FULL attestation 或 exact-HEAD GitHub Main CI SUCCESS。",
+        "将验证当前 main、clean worktree、HEAD=origin/main，以及发布级验证凭证。",
+        "凭证来源可为 exact-HEAD 本地 FULL、手动 RELEASE_FULL，或生产范围未变化的 TEST_ONLY_RECOVERY chain。",
         "凭证通过后将执行 Production Build、Desktop/Electron 准备、Windows NSIS 构建及安装包三件套 hash/manifest 验证。",
         "不会重复运行 Unit、E2E、数据库兼容、Sensitive scan 或完整 verify:full。",
         "不会创建 Tag、Release，不会上传安装包，也不会发布规则。",
@@ -579,11 +579,12 @@ async function localPackage() {
     return;
   }
   const fullGate = resolvePackageFullGate({ root });
-  process.stdout.write(
-    fullGate.source === PACKAGE_FULL_GATE_SOURCES.LOCAL_ATTESTATION
-      ? `FULL 凭证验证通过：LOCAL_ATTESTATION，HEAD ${fullGate.commitSha}\n`
-      : `FULL 凭证验证通过：GITHUB_MAIN_CI Run ${fullGate.mainCiRunId}，HEAD ${fullGate.commitSha}\n`,
-  );
+  const fullGateMessage = fullGate.source === PACKAGE_FULL_GATE_SOURCES.LOCAL_ATTESTATION
+    ? `FULL 凭证验证通过：LOCAL_ATTESTATION，HEAD ${fullGate.commitSha}`
+    : fullGate.source === PACKAGE_FULL_GATE_SOURCES.GITHUB_RELEASE_FULL
+      ? `FULL 凭证验证通过：GITHUB_RELEASE_FULL Run ${fullGate.releaseFullRunId}，HEAD ${fullGate.commitSha}`
+      : `FULL 凭证验证通过：TEST_ONLY_RECOVERY（Base Run ${fullGate.baseFullRunId}），HEAD ${fullGate.commitSha}`;
+  process.stdout.write(`${fullGateMessage}\n`);
   if (
     remoteTagExists(info.version, {
       allowUnavailable:

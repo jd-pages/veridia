@@ -136,7 +136,7 @@ describe("本地打包发布门禁", () => {
     expect(workflow).not.toMatch(/"[^"\r\n]*[“”][^"\r\n]*"/u);
   });
 
-  it("Main CI 与 Release Workflow 在 FULL 前使用同一 Desktop Node prepare 入口", () => {
+  it("手动 RELEASE_FULL 与 Release Workflow 在 FULL 前使用同一 Desktop Node prepare 入口", () => {
     const packageJson = JSON.parse(
       fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"),
     ) as { scripts: Record<string, string> };
@@ -156,6 +156,9 @@ describe("本地打包发布门禁", () => {
       expect(full).toBeGreaterThan(prepare);
       expect(workflow.match(/npm run desktop:node:prepare/gu)).toHaveLength(1);
     }
+    const mainCi = fs.readFileSync(path.resolve(".github/workflows/veridia-ci.yml"), "utf8");
+    expect(mainCi).toContain("npm run verify:affected");
+    expect(mainCi).toContain("github.event_name == 'workflow_dispatch' && inputs.mode == 'full'");
   });
 
   it("Standalone smoke 只验证 bundled Node，缺失时失败且不负责下载", () => {

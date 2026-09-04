@@ -2,12 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  CHANGE_RISK_LEVELS,
   E2E_MANIFEST,
   TEST_CATEGORIES,
   groupE2eFiles,
   listFormalE2eFiles,
   selectTestScope,
   validateManifest,
+  classifyChangeRisk,
 } from "../../scripts/testing/test-matrix.mjs";
 import {
   PROTECTED_BEHAVIORS,
@@ -23,6 +25,7 @@ import {
   restoreFile,
 } from "../../scripts/testing/next-type-isolation.mjs";
 import os from "node:os";
+import { createAffectedCiPlan } from "../../scripts/testing/ci-plan.mjs";
 
 describe("分层测试门禁", () => {
   it("Windows Unit 对重型 SQLite/Prisma 文件关闭并行以保护 worker RPC", () => {
@@ -105,6 +108,62 @@ describe("分层测试门禁", () => {
     const infrastructure = selectTestScope(["playwright.config.ts"], "fast");
     expect(infrastructure.minimumMode).toBe("regression");
     expect(infrastructure.e2eFiles).toHaveLength(Object.keys(E2E_MANIFEST).length);
+  });
+
+  it("TEST_ONLY 只选择直接改动测试，不拖入 AUTOMATION、Build 或 FULL", () => {
+    const selection = selectTestScope(["tests/e2e/results-workbench.spec.ts"], "affected");
+    expect(selection.risk.level).toBe(CHANGE_RISK_LEVELS.TEST_ONLY);
+    expect(selection.risk.productionChanged).toBe(false);
+    expect(selection.e2eFiles).toEqual(["tests/e2e/results-workbench.spec.ts"]);
+    expect(groupE2eFiles(selection.e2eFiles).map((group) => group.name)).toEqual(["RESULTS_UI"]);
+    expect(selection.e2eFiles).not.toContain("tests/e2e/audit-flow.spec.ts");
+  });
+
+  it("CI 只有选择到 E2E 或 Recovery group 时才安装 Playwright 浏览器", () => {
+    expect(createAffectedCiPlan(["README.md"]).needsBrowser).toBe(false);
+    expect(createAffectedCiPlan(["tests/unit/test-gates.test.ts"]).needsBrowser).toBe(false);
+    expect(createAffectedCiPlan(["tests/e2e/results-workbench.spec.ts"]).needsBrowser).toBe(true);
+    expect(createAffectedCiPlan(["tests/unit/test-gates.test.ts"], "RESULTS_UI").needsBrowser).toBe(true);
+  });
+
+  it("风险分类对数据库、Desktop、发布、Package 和核心生命周期 fail-closed 升级 HIGH", () => {
+    for (const file of [
+      "prisma/migrations/20260101000000_change/migration.sql",
+      "desktop/main.cjs",
+      ".github/workflows/veridia-ci.yml",
+      "package-lock.json",
+      "lib/automation/queue.ts",
+      "lib/audit-result-lifecycle.ts",
+    ]) {
+      expect(classifyChangeRisk([file]).level).toBe(CHANGE_RISK_LEVELS.HIGH);
+    }
+    expect(classifyChangeRisk(["app/(admin)/rules/page.tsx"]).level).toBe(CHANGE_RISK_LEVELS.MEDIUM);
+    expect(classifyChangeRisk(["README.md"]).level).toBe(CHANGE_RISK_LEVELS.LOW);
+  });
+
+  it("CI/Release/Test gate 基础设施 HIGH 使用 Unit/静态/构建专项，不无条件拖入全 E2E", () => {
+    const selection = selectTestScope([
+      ".github/workflows/veridia-ci.yml",
+      "package.json",
+      "scripts/testing/verify.mjs",
+    ], "affected");
+    expect(selection.risk.level).toBe(CHANGE_RISK_LEVELS.HIGH);
+    expect(selection.risk.highRiskKinds).toEqual(expect.arrayContaining([
+      "packageRuntime", "releaseInfrastructure", "testInfrastructure",
+    ]));
+    expect(selection.e2eFiles).toEqual([]);
+    expect(selection.protectedBehaviorKeys).toEqual([]);
+  });
+
+  it("Main CI 普通 Push 固定使用 affected，RELEASE_FULL 只能由 workflow_dispatch 显式 full 触发", () => {
+    const workflow = fs.readFileSync(path.resolve(".github/workflows/veridia-ci.yml"), "utf8");
+    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).toContain("default: affected");
+    expect(workflow).toContain("npm run verify:affected");
+    expect(workflow).toContain("name: RELEASE_FULL 门禁");
+    expect(workflow).toContain("github.event_name == 'workflow_dispatch' && inputs.mode == 'full'");
+    expect(workflow).not.toContain("main 正式 FULL 门禁");
+    expect(workflow).not.toContain("if: github.event_name == 'push'\n        shell: pwsh\n        env:\n          VERIDIA_DISABLE_ATTESTATION_WRITE");
   });
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
