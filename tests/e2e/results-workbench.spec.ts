@@ -95,6 +95,60 @@ function resultExportFileNamePattern(scope: "当前筛选" | "所选结果") {
   );
 }
 
+const chineseMonthLabels = [
+  "一月",
+  "二月",
+  "三月",
+  "四月",
+  "五月",
+  "六月",
+  "七月",
+  "八月",
+  "九月",
+  "十月",
+  "十一月",
+  "十二月",
+] as const;
+
+function formatLocalDate(year: number, month: number, day: number) {
+  return [year, month, day]
+    .map((value, index) =>
+      index === 0 ? String(value) : String(value).padStart(2, "0"),
+    )
+    .join("-");
+}
+
+async function isolatedFixtureMonthRange(
+  page: Page,
+  platformNoteId = "isolated-fixture-15",
+) {
+  const response = await page.request.get("/api/results?page=1&pageSize=100");
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as {
+    data: {
+      items: Array<{
+        auditedAt: string;
+        note: { platformNoteId: string | null };
+      }>;
+    };
+  };
+  const fixture = payload.data.items.find(
+    (item) => item.note.platformNoteId === platformNoteId,
+  );
+  expect(fixture).toBeTruthy();
+  const auditedAt = new Date(fixture!.auditedAt);
+  expect(Number.isNaN(auditedAt.valueOf())).toBe(false);
+  const year = auditedAt.getFullYear();
+  const monthIndex = auditedAt.getMonth();
+  const month = monthIndex + 1;
+  const lastDay = new Date(year, month, 0).getDate();
+  return {
+    startDate: formatLocalDate(year, month, 1),
+    endDate: formatLocalDate(year, month, lastDay),
+    monthLabel: chineseMonthLabels[monthIndex],
+  };
+}
+
 async function login(page: Page) {
   const isTransientConnectionError = (error: unknown) =>
     /\b(?:ECONNRESET|ECONNREFUSED)\b|socket hang up/iu.test(
@@ -140,24 +194,29 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   context,
 }) => {
   await login(page);
+  const fixtureRange = await isolatedFixtureMonthRange(page);
   await page.setViewportSize({ width: 1366, height: 768 });
-  await page.goto("/results?startDate=2026-08-01&endDate=2026-08-31");
+  await page.goto(
+    `/results?startDate=${fixtureRange.startDate}&endDate=${fixtureRange.endDate}`,
+  );
   await expect(page).toHaveTitle("VERIDIA");
   await expect(page.getByText("日期范围", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("开始日期")).toHaveValue("2026-08-01");
-  await expect(page.getByLabel("结束日期")).toHaveValue("2026-08-31");
+  await expect(page.getByLabel("开始日期")).toHaveValue(
+    fixtureRange.startDate,
+  );
+  await expect(page.getByLabel("结束日期")).toHaveValue(fixtureRange.endDate);
   const datePickerPopup = page.locator(".ant-picker-dropdown:visible");
   await expect(async () => {
     if (!(await datePickerPopup.isVisible())) {
       await page.getByLabel("开始日期").click();
     }
     await expect(datePickerPopup.locator(".ant-picker-header-view")).toContainText(
-      "八月",
+      fixtureRange.monthLabel,
       { timeout: 2_000 },
     );
   }).toPass({ timeout: 15_000 });
   await expect(datePickerPopup.locator(".ant-picker-header-view")).toContainText(
-    "八月",
+    fixtureRange.monthLabel,
   );
   await expect(datePickerPopup.locator("thead th")).toHaveText([
     "日",
@@ -181,8 +240,8 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
     .poll(() =>
       resultFilterRequests.some(
         (url) =>
-          url.searchParams.get("startDate") === "2026-08-01" &&
-          url.searchParams.get("endDate") === "2026-08-31",
+          url.searchParams.get("startDate") === fixtureRange.startDate &&
+          url.searchParams.get("endDate") === fixtureRange.endDate,
       ),
     )
     .toBe(true);
@@ -292,12 +351,24 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   const exportButton = page.getByRole("button", {
     name: /导出当前结果/u,
   });
-  const downloadPromise = page.waitForEvent("download");
-  await exportButton.evaluate((button) => {
-    for (let index = 0; index < 5; index += 1) {
-      (button as HTMLButtonElement).click();
-    }
+  await expect(exportButton).toBeEnabled();
+  const ruleUpdateNotice = page
+    .locator(".ant-notification-notice")
+    .filter({ hasText: "发现新规则" });
+  if (await ruleUpdateNotice.isVisible()) {
+    await ruleUpdateNotice.locator(".ant-notification-notice-close").click();
+  }
+  const exportResponsePromise = page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url());
+    return url.pathname === "/api/results/export";
   });
+  const downloadPromise = page.waitForEvent("download");
+  await exportButton.click();
+  const exportResponse = await exportResponsePromise;
+  expect(exportResponse.status()).toBe(200);
+  expect(exportResponse.headers()["content-disposition"]).toMatch(
+    /^attachment;/u,
+  );
   const download = await downloadPromise;
   await expect.poll(() => exportRequests.length).toBe(1);
   expect(context.pages()).toHaveLength(pagesBeforeExport);
@@ -305,12 +376,10 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
     resultExportFileNamePattern("当前筛选"),
   );
   const exportedUrl = new URL(exportRequests[0]);
-  expect(exportedUrl.searchParams.get("startDate")).toMatch(
-    /^\d{4}-\d{2}-01$/u,
+  expect(exportedUrl.searchParams.get("startDate")).toBe(
+    fixtureRange.startDate,
   );
-  expect(exportedUrl.searchParams.get("endDate")).toMatch(
-    /^\d{4}-\d{2}-\d{2}$/u,
-  );
+  expect(exportedUrl.searchParams.get("endDate")).toBe(fixtureRange.endDate);
   expect(exportedUrl.searchParams.get("dateType")).toBe("AUDITED_AT");
   expect(exportedUrl.searchParams.get("pageStatus")).toBe("NORMAL");
   const filteredList = (await (
@@ -360,6 +429,9 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   expect(exportRequests).toHaveLength(1);
   await page.getByRole("button", { name: "重置" }).click();
   await expect(page.locator(".ant-spin-spinning")).toHaveCount(0);
+  await page.goto(
+    `/results?startDate=${fixtureRange.startDate}&endDate=${fixtureRange.endDate}`,
+  );
   await expect(page.locator(".ant-table-row").first()).toBeVisible();
 
   const firstRowCheckbox = page
@@ -424,7 +496,7 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   ).toHaveText(/^(?:未识别到平台时间|(?:(?:编辑于|发布于) )?(?:\d{2}-\d{2}|\d{4}-\d{2}-\d{2}|昨天 \d{2}:\d{2}|\d+天前|\d+小时前|\d+分钟前)(?: \d{2}:\d{2}(?::\d{2})?)?)$/u);
   await expect(drawer.getByText("笔记基础信息", { exact: true })).toHaveCount(0);
   await expect(drawer.getByText(/笔记ID/u)).toHaveCount(0);
-  await expect(page).toHaveURL(/\/results$/u);
+  expect(new URL(page.url()).pathname).toBe("/results");
 });
 
 test("审核详情只展示业务判断卡片并隐藏自动取证技术字段", async ({ page }) => {
@@ -486,7 +558,10 @@ test("审核详情只展示业务判断卡片并隐藏自动取证技术字段",
 
 test("成交平台、内容渠道和订单编号可同时筛选并重置", async ({ page }) => {
   await login(page);
-  await page.goto("/results?startDate=2026-08-01&endDate=2026-08-31");
+  const fixtureRange = await isolatedFixtureMonthRange(page);
+  await page.goto(
+    `/results?startDate=${fixtureRange.startDate}&endDate=${fixtureRange.endDate}`,
+  );
   const resultRequests: URL[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
@@ -498,7 +573,22 @@ test("成交平台、内容渠道和订单编号可同时筛选并重置", async
   await page.getByRole("combobox", { name: "渠道" }).click();
   await page.getByText("小红书", { exact: true }).last().click();
   await page.getByLabel("订单编号").fill("  ORDER-isolated-fixture-15  ");
+  const filteredResponsePromise = page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url());
+    return (
+      url.pathname === "/api/results" &&
+      url.searchParams.get("commercePlatform") === "JD" &&
+      url.searchParams.get("channel") === "XIAOHONGSHU" &&
+      url.searchParams.get("orderNumber") === "ORDER-isolated-fixture-15"
+    );
+  });
   await page.getByRole("button", { name: "查询" }).click();
+  const filteredResponse = await filteredResponsePromise;
+  expect(filteredResponse.status()).toBe(200);
+  const filteredPayload = (await filteredResponse.json()) as {
+    data: { total: number };
+  };
+  expect(filteredPayload.data.total).toBe(1);
   await expect(page.getByText("当前筛选共 1 条", { exact: true })).toBeVisible();
   await expect
     .poll(() =>
@@ -511,11 +601,32 @@ test("成交平台、内容渠道和订单编号可同时筛选并重置", async
     )
     .toBe(true);
 
+  const resetResponsePromise = page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url());
+    return (
+      url.pathname === "/api/results" &&
+      !url.searchParams.has("commercePlatform") &&
+      !url.searchParams.has("channel") &&
+      !url.searchParams.has("orderNumber")
+    );
+  });
   await page.getByRole("button", { name: "重置" }).click();
+  const resetResponse = await resetResponsePromise;
+  expect(resetResponse.status()).toBe(200);
+  const resetPayload = (await resetResponse.json()) as {
+    data: { total: number };
+  };
   await expect(page.getByLabel("订单编号")).toHaveValue("");
   await expect(page.getByRole("combobox", { name: "平台" })).toHaveValue("");
   await expect(page.getByRole("combobox", { name: "渠道" })).toHaveValue("");
-  await expect(page.locator(".ant-table-row").first()).toBeVisible();
+  await expect(
+    page.getByText(`当前筛选共 ${resetPayload.data.total} 条`, { exact: true }),
+  ).toBeVisible();
+  if (resetPayload.data.total > 0) {
+    await expect(page.locator(".ant-table-row").first()).toBeVisible();
+  } else {
+    await expect(page.getByText("暂无数据", { exact: true }).last()).toBeVisible();
+  }
 });
 
 test("产品筛选从历史审核任务加载已结束活动", async ({ page }) => {
