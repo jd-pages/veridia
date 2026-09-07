@@ -754,6 +754,46 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
   ).toBeVisible();
 });
 
+test("互动奖励表格、详情和导出使用已保存快照", async ({ page }) => {
+  const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
+  const original = await prisma.auditResult.findFirstOrThrow({ include: { task: true } });
+  try {
+    await prisma.auditResult.update({ where: { id: original.id }, data: {
+      likeCount: 5, commentCount: 3, favoriteCount: 4, interactionTotal: 12,
+      interactionRewardThreshold: 10, interactionRewardStatus: "QUALIFIED",
+    } });
+    await login(page);
+    await page.goto("/results?startDate=2020-01-01&endDate=2099-12-31");
+    await page.getByLabel("关键词搜索").fill(original.task.url);
+    await page.getByRole("button", { name: "查询" }).click();
+    const row = page.locator(`.ant-table-row[data-row-key="${original.id}"]`);
+    await expect(row.getByLabel("互动奖励")).toContainText("达标 12 / 10");
+    await expect(row.getByLabel("互动奖励")).toContainText("赞 5 · 评 3 · 藏 4");
+    await row.getByRole("button", { name: /查看详情/u }).click();
+    const detail = page.locator(".ant-drawer-content").getByLabel("互动奖励");
+    await expect(detail).toContainText("点赞：5 · 评论：3 · 收藏：4");
+    await expect(detail).toContainText("互动合计：12 · 奖励门槛：10");
+    await expect(detail).toContainText("奖励结果：达标");
+    const exported = await page.request.get(`/api/results/export?ids=${original.id}`);
+    expect(exported.ok()).toBeTruthy();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(new Uint8Array(await exported.body()).buffer);
+    const sheet = workbook.worksheets[0];
+    const headers = sheet.getRow(1).values as string[];
+    for (const [header, value] of Object.entries({ 点赞数: 5, 评论数: 3, 收藏数: 4, 互动合计: 12, 互动奖励门槛: 10, 互动奖励结果: "达标" })) {
+      expect(headers.filter((item) => item === header)).toHaveLength(1);
+      expect(sheet.getRow(2).getCell(headers.indexOf(header)).value).toBe(value);
+    }
+  } finally {
+    await prisma.auditResult.update({ where: { id: original.id }, data: {
+      likeCount: original.likeCount, commentCount: original.commentCount, favoriteCount: original.favoriteCount,
+      interactionTotal: original.interactionTotal, interactionRewardThreshold: original.interactionRewardThreshold,
+      interactionRewardStatus: original.interactionRewardStatus,
+    } });
+    await prisma.$disconnect();
+  }
+});
+
 test("ADMIN 可确认单条删除和批量删除审核结果", async ({ page }) => {
   await login(page);
   const recreatedTaskIds: string[] = [];

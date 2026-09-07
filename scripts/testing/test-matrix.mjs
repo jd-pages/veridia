@@ -36,6 +36,13 @@ const RULE_CRUD_PRODUCTION_PATH = /(?:^|\/)(?:app\/\(admin\)\/rules(?:\/|$)|app\
 const RULE_CRUD_PATH = /(?:^|\/)(?:app\/\(admin\)\/rules(?:\/|$)|app\/api\/rules(?:\/|$)|lib\/topic-rule-management\.ts$|lib\/rules\/package\.ts$|tests\/(?:e2e\/rule-brand-navigation\.spec\.ts|unit\/topic-rule-management(?:-routes)?\.test\.ts)$)/u;
 const DIRECT_UNIT_TEST_PATH = /^tests\/unit\/.*\.test\.ts$/u;
 const BUSINESS_RELATED_SOURCE_PATH = /^(?:app|lib)\/.*\.(?:ts|tsx|js|mjs)$/u;
+// Shared RESULTS/DATABASE labels alone do not imply runner control changes.
+// Explicit protected selections and conservative/FULL selection still include these suites.
+const RUNNER_CONTROL_E2E_FILES = new Set([
+  "tests/e2e/audit-page-reuse.spec.ts",
+  "tests/e2e/batch-clear.spec.ts",
+  "tests/e2e/pause-resume-runner-lifecycle.spec.ts",
+]);
 
 export const INFRASTRUCTURE_UNIT_ALLOWLIST = Object.freeze([
   "tests/unit/test-gates.test.ts",
@@ -185,6 +192,7 @@ export const E2E_MANIFEST = Object.freeze({
 });
 
 const RULES = [
+  { match: /^lib\/(?:audit-engine|audit-service|types|interaction-reward)\.ts$/u, categories: ["RESULTS", "RULES", "CAMPAIGN"], exclusive: true, reason: "审核判断、持久化与共享审核类型影响结果和活动规则；Runner/Browser 生命周期由独立映射保护" },
   { match: VERIFICATION_INFRASTRUCTURE_PATH, categories: [], exclusive: true, reason: "CI、测试、Release 或 package 门禁基础设施变化，使用对应 Unit/静态/构建专项" },
   { match: VERIFICATION_INFRASTRUCTURE_TEST_PATH, categories: [], exclusive: true, reason: "CI/Release gate 防回归 Unit 变化，保持门禁基础设施专项范围" },
   { match: /(?:^|\/)(?:playwright\.config\.ts|vitest\.config\.ts|tests\/e2e\/setup-)/u, categories: TEST_CATEGORIES, infrastructure: true, reason: "Playwright/Vitest 执行基础设施变化，覆盖全部受影响测试域" },
@@ -327,7 +335,9 @@ export function selectTestScope(changedFiles, mode = "fast") {
       : [
           ...directlyChangedE2e,
           ...Object.entries(E2E_MANIFEST)
-            .filter(([, metadata]) => metadata.categories.some((category) => categories.has(category)))
+            .filter(([file, metadata]) =>
+              (!RUNNER_CONTROL_E2E_FILES.has(file) || categories.has("AUTOMATION")) &&
+              metadata.categories.some((category) => categories.has(category)))
             .map(([file]) => file),
           ...protectedSelection.e2eTests,
         ],

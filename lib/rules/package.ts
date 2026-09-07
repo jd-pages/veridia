@@ -67,6 +67,8 @@ const payloadSchema = z.object({
       publicRequired: z.boolean(),
       retentionDays: z.number().int().min(0),
       rewardDescription: nullableText,
+      interactionRewardEnabled: z.boolean().optional().default(false),
+      interactionRewardThreshold: z.number().int().min(0).optional().default(0),
       visualReviewGuidance: nullableText.optional().default(null),
       customerRegistrationNotes: nullableText,
       clickableTopicRequired: z.boolean(),
@@ -181,6 +183,12 @@ function uniqueValues(values: string[], label: string) {
 
 export function validateRulePayload(input: unknown): RulePackagePayload {
   const payload = payloadSchema.parse(input) as RulePackagePayload;
+  if (payload.campaigns.some((campaign) => campaign.interactionRewardEnabled)) {
+    if (compareSemver(payload.minimumAppVersion, "1.1.22") < 0) throw new Error("互动奖励规则包最低软件版本不能低于 1.1.22");
+    if (payload.campaigns.some((campaign) => campaign.interactionRewardEnabled && !(campaign.interactionRewardThreshold! > 0))) {
+      throw new Error("启用互动奖励时门槛必须为正整数");
+    }
+  }
   if (payload.importExportTemplates) {
     payload.importExportTemplates = validateImportExportTemplates(
       payload.importExportTemplates,
@@ -519,7 +527,9 @@ export async function exportCurrentRulePayload(options?: {
       "builtin-2026.07.29.1",
     schemaVersion: RULE_PACKAGE_SCHEMA_VERSION,
     publishedAt: (options?.publishedAt || new Date()).toISOString(),
-    minimumAppVersion: options?.minimumAppVersion || "1.1.17",
+    minimumAppVersion: campaigns.some((campaign) => campaign.interactionRewardEnabled)
+      ? (options?.minimumAppVersion && compareSemver(options.minimumAppVersion, "1.1.22") >= 0 ? options.minimumAppVersion : "1.1.22")
+      : options?.minimumAppVersion || "1.1.17",
     products: products.map((product) => ({
       key: productKeyById.get(product.id),
       code: product.code,
@@ -557,6 +567,8 @@ export async function exportCurrentRulePayload(options?: {
       publicRequired: campaign.publicRequired,
       retentionDays: campaign.retentionDays,
       rewardDescription: campaign.rewardDescription,
+      interactionRewardEnabled: campaign.interactionRewardEnabled,
+      interactionRewardThreshold: campaign.interactionRewardThreshold,
       visualReviewGuidance: campaign.visualReviewGuidance,
       customerRegistrationNotes: campaign.customerRegistrationNotes,
       clickableTopicRequired: campaign.clickableTopicRequired,
@@ -873,6 +885,8 @@ export async function applyRulePayload(
         publicRequired: item.publicRequired,
         retentionDays: item.retentionDays,
         rewardDescription: item.rewardDescription,
+        interactionRewardEnabled: item.interactionRewardEnabled ?? false,
+        interactionRewardThreshold: item.interactionRewardThreshold ?? 0,
         visualReviewGuidance: item.visualReviewGuidance,
         customerRegistrationNotes: item.customerRegistrationNotes,
         clickableTopicRequired: item.clickableTopicRequired,

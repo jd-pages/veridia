@@ -222,6 +222,8 @@ export async function getAuditContext(
     minImageCount: campaign.minImageCount,
     publicRequired: campaign.publicRequired,
     retentionDays: campaign.retentionDays,
+    interactionRewardEnabled: campaign.interactionRewardEnabled,
+    interactionRewardThreshold: campaign.interactionRewardThreshold,
     customerRegistrationNotes: campaign.customerRegistrationNotes,
     clickableTopicRequired: campaign.clickableTopicRequired,
     rules: effectiveRules.map((rule) => ({
@@ -436,6 +438,7 @@ export async function runAuditTask(
     });
 
     const auditResultData = {
+      ...evaluation.interactionReward,
       auditTaskId: task.id,
       noteId: note.id,
       ruleVersion: context.ruleVersion,

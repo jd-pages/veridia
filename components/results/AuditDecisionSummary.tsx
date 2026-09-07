@@ -26,6 +26,7 @@ import {
   resolveTaskChannel,
 } from "@/lib/result-source";
 import { getTopicAuditSummary } from "./TopicAuditCell";
+import InteractionReward from "./InteractionReward";
 import ResultDetailLink from "./ResultDetailLink";
 import type { ResultDetail, ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
@@ -148,6 +149,7 @@ export default function AuditDecisionSummary({
 
   return (
     <div className={styles.decisionLayout}>
+      <InteractionReward snapshot={row} detail />
       <section
         className={`${styles.decisionHero} ${styles[`decisionHero_${conclusionTone}`]}`}
         aria-label="顶部结论"

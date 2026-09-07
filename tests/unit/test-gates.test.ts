@@ -105,6 +105,19 @@ describe("分层测试门禁", () => {
     expect(selection.e2eFiles).not.toContain("tests/e2e/import-record-deletion.spec.ts");
   });
 
+  it("审核奖励能力具有明确映射，不因已知审核模块回退到全量", () => {
+    const selection = selectTestScope(["lib/audit-engine.ts", "lib/audit-service.ts", "lib/types.ts", "lib/interaction-reward.ts", "lib/automation/douyin-adapter.ts", "prisma/schema.prisma"], "affected");
+    expect(selection.conservativeFallback).toBe(false);
+    expect(selection.risk.level).toBe("HIGH");
+    expect(selection.e2eFiles).toContain("tests/e2e/results-workbench.spec.ts");
+    expect(selection.e2eFiles).toContain("tests/e2e/douyin-automation.spec.ts");
+    expect(selection.e2eFiles).not.toContain("tests/e2e/audit-page-reuse.spec.ts");
+    expect(selection.e2eFiles).not.toContain("tests/e2e/pause-resume-runner-lifecycle.spec.ts");
+    expect(selection.e2eFiles).not.toContain("tests/e2e/batch-clear.spec.ts");
+    expect(selection.e2eFiles.length).toBeLessThan(Object.keys(E2E_MANIFEST).length);
+    expect(selectTestScope(["lib/automation/queue.ts"], "affected").e2eFiles).toContain("tests/e2e/pause-resume-runner-lifecycle.spec.ts");
+  });
+
   it("未知改动保守回退，测试基础设施改动至少提升到 REGRESSION", () => {
     expect(selectTestScope(["unknown/new-core-file.xyz"]).e2eFiles).toHaveLength(Object.keys(E2E_MANIFEST).length);
     const infrastructure = selectTestScope(["playwright.config.ts"], "fast");

@@ -12,6 +12,7 @@ import {
   legacyZeroHistoryDuplicateMetadataFromNotes,
 } from "@/lib/import-task-metadata";
 import AuditStatusTag from "./AuditStatusTag";
+import InteractionReward from "./InteractionReward";
 import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
 
@@ -43,6 +44,7 @@ export default function AuditConclusionCell({
     const reasons = auditConclusionFailureReasons(row);
     return (
       <div className={styles.stack}>
+        <InteractionReward snapshot={row} />
         {duplicateReaudit ? (
           <div>
             <Tag color="orange">
@@ -96,6 +98,7 @@ export default function AuditConclusionCell({
 
   return (
     <div className={styles.stack}>
+      <InteractionReward snapshot={row} />
       {duplicateReaudit ? (
         <div>
           <Tag color="orange">

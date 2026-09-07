@@ -486,6 +486,46 @@ describe.sequential("店铺规则包 Source A → Client B", () => {
   }, 30_000);
 });
 
+describe.sequential("互动奖励规则包与历史兼容", () => {
+  it("正式配置脚本不重复建产品；双渠道规则传播且历史快照不漂移", async () => {
+    const sourcePath = path.join(temporaryRoot, "source.db");
+    const args = ["--import", "tsx", "scripts/apply-campaign-update.ts", sourcePath, "rules/updates/2026-09-interaction-reward.json"];
+    for (let index = 0; index < 2; index++) {
+      execFileSync(process.execPath, args, { cwd: root, windowsHide: true, stdio: "pipe" });
+    }
+    const products = await sourceClient.product.findMany({ where: { publishedKey: { in: ["product_nestle_nan_7hmo", "product_wyeth_organic", "product_wyeth_future_pro"] } } });
+    expect(products).toHaveLength(3);
+    const campaigns = await sourceClient.campaign.findMany({ where: { month: "2026-09", interactionRewardEnabled: true }, include: { topicRules: true, products: true } });
+    expect(campaigns).toHaveLength(4);
+    expect(campaigns.flatMap((campaign) => campaign.topicRules)).toHaveLength(24);
+    expect(campaigns.flatMap((campaign) => campaign.products)).toHaveLength(6);
+    for (const campaign of campaigns) {
+      expect(campaign).toMatchObject({ minImageCount: 2, minBodyLength: 21, bodyRequired: true, publicRequired: true, retentionDays: 15, interactionRewardThreshold: 10 });
+      expect(campaign.topicRules.every((rule) => rule.ruleType === "MUST_ALL" && rule.clickableRequired)).toBe(true);
+    }
+    const payload = await exportCurrentRulePayload({ ruleVersion: "rules-2026.09.07.1", minimumAppVersion: "1.1.17" }, sourceClient);
+    expect(payload.minimumAppVersion).toBe("1.1.22");
+    await applyRulePayload(payload, "GITHUB", targetClient);
+    expect(await targetClient.campaign.count({ where: { interactionRewardEnabled: true, interactionRewardThreshold: 10 } })).toBe(4);
+    const historical = await targetClient.auditResult.findFirstOrThrow();
+    await targetClient.auditResult.update({ where: { id: historical.id }, data: { likeCount: 5, commentCount: 3, favoriteCount: 4, interactionTotal: 12, interactionRewardThreshold: 10, interactionRewardStatus: "QUALIFIED" } });
+    const changed = structuredClone(payload);
+    changed.ruleVersion = "rules-2026.09.07.2";
+    for (const campaign of changed.campaigns) if (campaign.interactionRewardEnabled) campaign.interactionRewardThreshold = 20;
+    await applyRulePayload(changed, "GITHUB", targetClient);
+    expect(await targetClient.campaign.count({ where: { interactionRewardEnabled: true, interactionRewardThreshold: 20 } })).toBe(4);
+    expect(await targetClient.auditResult.findUniqueOrThrow({ where: { id: historical.id } })).toMatchObject({ interactionRewardThreshold: 10, interactionTotal: 12, interactionRewardStatus: "QUALIFIED" });
+    const legacy = structuredClone(payload);
+    legacy.ruleVersion = "rules-2026.09.07.3";
+    for (const campaign of legacy.campaigns) {
+      delete campaign.interactionRewardEnabled;
+      delete campaign.interactionRewardThreshold;
+    }
+    await applyRulePayload(validateRulePayload(legacy), "GITHUB", targetClient);
+    expect(await targetClient.campaign.count({ where: { interactionRewardEnabled: true } })).toBe(0);
+  }, 30_000);
+});
+
 describe("店铺规则 Payload 冲突门禁", () => {
   const baseRule = (platform: "JD" | "TMALL", storeName: string) => ({
     key: storeTopicRuleStableKey(platform, storeName),

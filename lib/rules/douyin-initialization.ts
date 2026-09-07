@@ -115,6 +115,8 @@ export async function ensureBuiltinDouyinRules(payload: RulePackagePayload) {
           publicRequired: false,
           retentionDays: item.retentionDays,
           rewardDescription: item.rewardDescription,
+          interactionRewardEnabled: item.interactionRewardEnabled ?? false,
+          interactionRewardThreshold: item.interactionRewardThreshold ?? 0,
           visualReviewGuidance: item.visualReviewGuidance,
           customerRegistrationNotes: item.customerRegistrationNotes,
           clickableTopicRequired: item.clickableTopicRequired,

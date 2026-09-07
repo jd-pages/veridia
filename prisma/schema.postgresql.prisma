@@ -222,6 +222,8 @@ model Campaign {
   publicRequired            Boolean           @default(false)
   retentionDays             Int               @default(0)
   rewardDescription         String?
+  interactionRewardEnabled  Boolean           @default(false)
+  interactionRewardThreshold Int              @default(0)
   visualReviewGuidance      String?
   customerRegistrationNotes String?
   clickableTopicRequired    Boolean           @default(true)
@@ -509,6 +511,12 @@ model AuditResult {
   softwareVersion            String         @default("unknown")
   rulePackageVersion         String?
   ruleSnapshot               String
+  likeCount                  Int?
+  commentCount               Int?
+  favoriteCount              Int?
+  interactionTotal           Int?
+  interactionRewardThreshold Int?
+  interactionRewardStatus    String         @default("NOT_ENABLED")
   pageStatus                 String
   bodyStatus                 String
   effectiveBodyLength        Int            @default(0)

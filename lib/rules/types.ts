@@ -32,6 +32,8 @@ export interface RulePackageCampaign {
   publicRequired: boolean;
   retentionDays: number;
   rewardDescription: string | null;
+  interactionRewardEnabled?: boolean;
+  interactionRewardThreshold?: number;
   visualReviewGuidance?: string | null;
   customerRegistrationNotes: string | null;
   clickableTopicRequired: boolean;

@@ -120,7 +120,7 @@ describe("audit engine", () => {
     expect(result.imageCount).toBeNull();
     expect(result.failureReasons.join("；")).not.toContain("图片数量不足");
   });
-  it("抖音正常作品不参与公开状态审核，历史活动值为 true 也不会误入复核", () => {
+  it("抖音活动要求公开时缺少公开证据必须待确认", () => {
     const note = markAsVerifiedDouyinTopics(createMockNote("passed"));
     note.isPublic = null;
     const result = evaluateAudit(note, {
@@ -129,8 +129,8 @@ describe("audit engine", () => {
       rulesConfigured: true,
       publicRequired: true,
     });
-    expect(result.publicStatus).toBe("NOT_REQUIRED");
-    expect(result.autoStatus).toBe("PASSED");
+    expect(result.publicStatus).toBe("UNKNOWN");
+    expect(result.autoStatus).toBe("NEEDS_REVIEW");
     expect(result.failureReasons.join("；")).not.toContain("公开");
   });
   it("小红书公开状态规则保持原有行为", () => {

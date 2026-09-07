@@ -97,6 +97,8 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     publicRequired?: boolean;
     retentionDays?: number;
     rewardDescription?: string;
+    interactionRewardEnabled?: boolean;
+    interactionRewardThreshold?: number;
     customerRegistrationNotes?: string;
     bodyRequired?: boolean;
     clickableTopicRequired?: boolean;
@@ -108,6 +110,9 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
       ...(body.productId ? [body.productId] : []),
     ]),
   ];
+  if ((body.interactionRewardEnabled !== undefined && typeof body.interactionRewardEnabled !== "boolean") ||
+    (body.interactionRewardThreshold !== undefined && (!Number.isSafeInteger(body.interactionRewardThreshold) || body.interactionRewardThreshold < 0)) ||
+    (body.interactionRewardEnabled === true && !(body.interactionRewardThreshold! > 0))) return fail("互动奖励启用时门槛必须为正整数");
   const contentChannel = body.contentChannel === "DOUYIN" ? "DOUYIN" : "XIAOHONGSHU";
   if (!productIds.length || !body.name?.trim() || !body.month) {
     return fail("至少一个产品、活动名称和月份为必填项");
@@ -157,6 +162,8 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
         publicRequired: body.publicRequired ?? false,
         retentionDays: body.retentionDays ?? 0,
         rewardDescription: body.rewardDescription?.trim() || null,
+        interactionRewardEnabled: body.interactionRewardEnabled ?? false,
+        interactionRewardThreshold: body.interactionRewardThreshold ?? 0,
         visualReviewGuidance: null,
         customerRegistrationNotes:
           body.customerRegistrationNotes?.trim() || null,

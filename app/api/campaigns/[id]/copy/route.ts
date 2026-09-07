@@ -62,6 +62,8 @@ export async function POST(
         publicRequired: source.publicRequired,
         retentionDays: source.retentionDays,
         rewardDescription: source.rewardDescription,
+        interactionRewardEnabled: source.interactionRewardEnabled,
+        interactionRewardThreshold: source.interactionRewardThreshold,
         visualReviewGuidance: null,
         customerRegistrationNotes: source.customerRegistrationNotes,
         clickableTopicRequired: source.clickableTopicRequired,

@@ -22,6 +22,7 @@ import {
   productStageTopicLabel,
 } from "@/lib/product-stage";
 import { BASIC_REWARD_MIN_INTERACTIONS } from "@/lib/interaction-metrics";
+import { evaluateInteractionReward } from "@/lib/interaction-reward";
 
 const pageFailureLabels: Record<string, string> = {
   NOTE_NOT_FOUND: "笔记不存在",
@@ -173,7 +174,7 @@ export function evaluateAudit(
   const topicClickabilityContext: TopicClickabilityContext = {
     pageUrl: note.finalUrl || note.url,
   };
-  const publicAuditRequired = !isDouyin && context.publicRequired;
+  const publicAuditRequired = context.publicRequired;
 
   if (context.rulesConfigured === false) {
     evaluations.push({
@@ -212,6 +213,7 @@ export function evaluateAudit(
       autoStatus: "NEEDS_REVIEW",
       failureReasons: ["抖音采集成功，业务规则未配置"],
       ruleResults: evaluations,
+      interactionReward: evaluateInteractionReward({}, context),
     };
   }
 
@@ -263,6 +265,7 @@ export function evaluateAudit(
           : "NEEDS_REVIEW",
       failureReasons: [...new Set(failures)],
       ruleResults: evaluations,
+      interactionReward: evaluateInteractionReward({}, context),
     };
   }
 
@@ -879,6 +882,7 @@ export function evaluateAudit(
     autoStatus = "FAILED";
   } else if (
     publicStatus === "UNKNOWN" ||
+    (publicAuditRequired && retentionStatus === "PENDING") ||
     imageStatus === "IMAGES_READ_FAILED"
   ) {
     autoStatus = "NEEDS_REVIEW";
@@ -984,5 +988,6 @@ export function evaluateAudit(
     autoStatus,
     failureReasons: [...new Set(failures)],
     ruleResults: evaluations,
+    interactionReward: evaluateInteractionReward(note, context),
   };
 }

@@ -1,6 +1,7 @@
 import type { Page } from "playwright";
 import type { ExtractedNote, ExtractedTopic } from "@/lib/types";
 import { parseStructuredPublishedAt } from "@/lib/platform-published-at";
+import { extractDouyinInteraction, extractDouyinPublicStatus } from "./douyin-interaction";
 import {
   douyinContentIdentityFromUrl,
   safeDouyinDiagnosticUrl,
@@ -919,6 +920,7 @@ export class PlaywrightDouyinAdapter {
         )
       : null;
     const publishedAtEvidence = structuredPublishedAt || domPublishedAt;
+    const interaction = extractDouyinInteraction(structuredItem, contentId);
 
     return {
       url: originalUrl,
@@ -926,6 +928,11 @@ export class PlaywrightDouyinAdapter {
       pageTitle: await page.title(),
       pageType: noteType === "VIDEO" ? "VIDEO_DETAIL" : "IMAGE_TEXT_DETAIL",
       noteId: contentId,
+      likeCount: interaction.likeCount,
+      commentCount: interaction.commentCount,
+      favoriteCount: interaction.favoriteCount,
+      interactionExtractionStatus: interaction.status,
+      interactionTechnicalMessage: interaction.technicalMessage,
       title: evidence.title || body || null,
       body: body || null,
       noteType,
@@ -942,7 +949,7 @@ export class PlaywrightDouyinAdapter {
       publishedAt: publishedAtEvidence?.value || null,
       publishedAtRaw: publishedAtEvidence?.raw || null,
       publishedAtSource: publishedAtEvidence?.source || null,
-      isPublic: null,
+      isPublic: extractDouyinPublicStatus(structuredItem, contentId),
       extractedAt: new Date().toISOString(),
       adapterName: this.name,
       adapterVersion: this.version,

@@ -76,6 +76,8 @@ interface Campaign {
   minBodyLength: number;
   publicRequired: boolean;
   retentionDays: number;
+  interactionRewardEnabled: boolean;
+  interactionRewardThreshold: number;
   rewardDescription: string | null;
   customerRegistrationNotes: string | null;
   ruleVersion: number;
@@ -581,6 +583,9 @@ export default function CampaignsPage() {
               </Descriptions.Item>
               <Descriptions.Item label="奖励信息" span={2}>
                 {detail.rewardDescription || "无"}
+                {detail.interactionRewardEnabled && (
+                  <div>互动额外奖励：点赞+评论+收藏≥{detail.interactionRewardThreshold}，独立于基础审核</div>
+                )}
               </Descriptions.Item>
               <Descriptions.Item label="客服登记备注" span={2}>
                 {detail.customerRegistrationNotes ||

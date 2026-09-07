@@ -15,6 +15,7 @@ export type TabularSourceType =
   | "TENCENT_DOCS_ONLINE_LINK";
 
 export type StandardField =
+  | "likeCount" | "commentCount" | "favoriteCount" | "interactionTotal" | "interactionRewardThreshold" | "interactionRewardStatus"
   | "noteUrl"
   | "noteId"
   | "platform"

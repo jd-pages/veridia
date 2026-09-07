@@ -1,0 +1,21 @@
+{
+  "month": "2026-09",
+  "minimumAppVersion": "1.1.22",
+  "channels": ["XIAOHONGSHU", "DOUYIN"],
+  "campaign": {
+    "minImageCount": 2,
+    "bodyRequired": true,
+    "minBodyLength": 21,
+    "publicRequired": true,
+    "retentionDays": 15,
+    "clickableTopicRequired": true,
+    "interactionRewardEnabled": true,
+    "interactionRewardThreshold": 10,
+    "rewardDescription": "到小红书&抖音发布真实内容分享，需上传≥2张图片；正文>20字；内容需设为公开状态并保留≥15天。"
+  },
+  "products": [
+    { "key": "product_nestle_nan_7hmo", "name": "能恩全护 7HMO", "brand": "雀巢", "aliases": ["能恩全护7HMO"], "topics": ["#能恩全护7HMO", "#适度水解奶粉", "#新生儿防敏", "#过敏体质孕妈"] },
+    { "key": "product_wyeth_organic", "name": "启赋有机", "brand": "惠氏", "aliases": ["惠氏启赋有机"], "topics": ["#惠氏启赋有机", "#港版有机奶粉", "#宝宝肠胃友好奶粉", "#新生儿奶粉"] },
+    { "key": "product_wyeth_future_pro", "name": "启赋未来 PRO", "brand": "惠氏", "aliases": ["启赋未来Pro"], "topics": ["#启赋未来Pro", "#HMO奶粉", "#混合喂养", "#转奶"] }
+  ]
+}

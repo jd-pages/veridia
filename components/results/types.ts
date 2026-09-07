@@ -1,4 +1,5 @@
 import type { Key } from "react";
+import type { InteractionRewardSnapshot } from "@/lib/interaction-reward";
 
 export interface ProductOption {
   id: string;
@@ -39,7 +40,7 @@ export interface AuditTopic {
   isClickable: boolean;
 }
 
-export interface ResultRow {
+export interface ResultRow extends InteractionRewardSnapshot {
   id: string;
   ruleVersion: number;
   ruleSnapshot: string;

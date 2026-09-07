@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { interactionRewardPresentation, type InteractionRewardSnapshot } from "@/lib/interaction-reward";
 import {
   businessFailureReasonLabel,
   businessSourceLabel,
@@ -81,7 +82,7 @@ function addDataValidationRange(
   );
 }
 
-export interface CompactAuditResultExportSourceRow {
+export interface CompactAuditResultExportSourceRow extends InteractionRewardSnapshot {
   autoStatus: string;
   pageStatus: string;
   bodyStatus: string;
@@ -215,6 +216,33 @@ function columns(
         ? auditResultDisplayNames[field]!
         : templates.fieldDefinitions[field].displayName,
   }));
+}
+
+const REWARD_COLUMNS = [
+  { field: "likeCount", displayName: "点赞数" },
+  { field: "commentCount", displayName: "评论数" },
+  { field: "favoriteCount", displayName: "收藏数" },
+  { field: "interactionTotal", displayName: "互动合计" },
+  { field: "interactionRewardThreshold", displayName: "互动奖励门槛" },
+  { field: "interactionRewardStatus", displayName: "互动奖励结果" },
+] satisfies Array<{ field: StandardField; displayName: string }>;
+
+function appendRewardColumns(selected: Array<{ field: StandardField; displayName: string }>, records: ExportValueRecord[]) {
+  if (records.some((record) => Boolean(record.interactionRewardStatus))) {
+    for (const column of REWARD_COLUMNS) {
+      if (!selected.some((existing) => existing.field === column.field)) selected.push(column);
+    }
+  }
+}
+
+function rewardExport(row: InteractionRewardSnapshot) {
+  const reward = interactionRewardPresentation(row);
+  if (!reward) return {};
+  return {
+    likeCount: row.likeCount ?? null, commentCount: row.commentCount ?? null,
+    favoriteCount: row.favoriteCount ?? null, interactionTotal: row.interactionTotal ?? null,
+    interactionRewardThreshold: row.interactionRewardThreshold ?? null, interactionRewardStatus: reward.status,
+  };
 }
 
 function fieldDefinition(
@@ -387,6 +415,7 @@ export function auditResultToCompactExportRecord(
     activityMonth: row.task.campaign?.month || "",
     templateType: IMPORT_TEMPLATE_TYPE_LABELS[templateType],
     selfReview: detailedSelfReview(row),
+    ...rewardExport(row),
   };
 }
 
@@ -415,10 +444,11 @@ export function auditResultToKabritaExportRecord(
       row.task.product.name,
     activityName: raw.activityName || imported.activityName || row.task.campaign?.name || "",
     selfReview: detailedSelfReview(row),
+    ...rewardExport(row),
   };
 }
 
-export function auditResultToExportRecord(row: {
+export function auditResultToExportRecord(row: InteractionRewardSnapshot & {
   autoStatus: string;
   pageStatus: string;
   bodyStatus: string;
@@ -561,6 +591,7 @@ export function auditResultToExportRecord(row: {
     title: row.note.title,
     content: row.note.body,
     effectiveBodyLength: row.effectiveBodyLength,
+    ...rewardExport(row),
     imageCount: row.imageCount,
     imageExtractionStatus: businessStatusLabel(
       row.imageExtractionStatus,
@@ -680,6 +711,7 @@ export async function buildConfiguredWorkbook(input: {
     purchaseProductLine: 22,
     complianceResult: 28,
   };
+  if (kind === "auditResults") appendRewardColumns(selected, records);
   sheet.columns = selected.map(({ field, displayName }) => ({
     header: displayName,
     key: field,
@@ -769,6 +801,7 @@ export function buildConfiguredCsv(input: {
     input.kind,
     input.templateBrand,
   );
+  if (input.kind === "auditResults") appendRewardColumns(selected, input.records);
   return utf8BomCsv(
     selected.map((column) => column.displayName),
     input.records.map((record) =>

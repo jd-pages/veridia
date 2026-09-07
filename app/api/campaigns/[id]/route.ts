@@ -53,11 +53,19 @@ export async function PUT(
   if (user instanceof Response) return user;
   const { id } = await params;
   const body = (await request.json()) as Record<string, unknown>;
+  const current = await prisma.campaign.findUnique({ where: { id } });
+  if (!current) return fail("活动不存在", 404);
+  const rewardEnabled = body.interactionRewardEnabled ?? current.interactionRewardEnabled;
+  const rewardThreshold = body.interactionRewardThreshold ?? current.interactionRewardThreshold;
+  if (typeof rewardEnabled !== "boolean" || typeof rewardThreshold !== "number" || !Number.isSafeInteger(rewardThreshold) ||
+    rewardThreshold < 0 || (rewardEnabled && rewardThreshold === 0)) return fail("互动奖励启用时门槛必须为正整数");
   try {
     const campaign = await prisma.campaign.update({
       where: { id },
       data: {
         ruleSource: "LOCAL_DRAFT",
+        interactionRewardEnabled: rewardEnabled,
+        interactionRewardThreshold: rewardThreshold,
         ...(typeof body.name === "string" ? { name: body.name.trim() } : {}),
         ...(typeof body.month === "string" ? { month: body.month } : {}),
         ...(body.contentChannel === "XIAOHONGSHU" ||
