@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { inferVerifyFailure } from "./release-failure.mjs";
 import {
   collectAttestationState,
   validateFullGateAttestation,
@@ -246,4 +247,56 @@ export function resolvePackageFullGate({
   const pending = newest(exactRuns.filter((run) => run.status !== "completed"));
   if (pending) throw new PackageFullGateError("MAIN_CI_PENDING", `exact HEAD CI Run ${pending.databaseId} 尚未完成（${pending.status}）。`, { runId: pending.databaseId });
   throw new PackageFullGateError("RELEASE_FULL_REQUIRED", `exact HEAD ${repository.head} 没有 RELEASE_FULL PASS 或有效 TEST_ONLY_RECOVERY chain。`);
+}
+
+export function runLocalPackageFull(root, execute = spawnSync) {
+  const log = path.join(root, ".release-work", "logs", "local-package-full.log");
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  const windows = process.platform === "win32";
+  const result = execute(windows ? process.env.ComSpec || "cmd.exe" : "npm", windows
+    ? ["/d", "/s", "/c", "call npm.cmd run verify:full"]
+    : ["run", "verify:full"], {
+    cwd: root, encoding: "utf8", windowsHide: true, maxBuffer: 200 * 1024 * 1024,
+    env: { ...process.env, VERIDIA_DISABLE_ATTESTATION_WRITE: "false", VERIDIA_TEST_RECOVERY_GROUP: "" },
+  });
+  const output = `${result.stdout || ""}\n${result.stderr || ""}\n${result.error?.message || ""}`;
+  fs.writeFileSync(log, output, "utf8");
+  process.stdout.write(output);
+  if (result.error || result.status !== 0) {
+    const failure = inferVerifyFailure(output, log);
+    throw new PackageFullGateError("LOCAL_FULL_FAILED", `FULL 失败，已停止打包。\n首个失败 Gate：${failure.stage}\n失败 Case / Group：${failure.failedItem || failure.message}\n日志：${log}`, { log });
+  }
+}
+
+export function ensurePackageFullGate({
+  root = process.cwd(),
+  resolve = () => resolvePackageFullGate({ root }),
+  runFull = () => runLocalPackageFull(root),
+  collectRepository = () => collectPackageRepositoryState(root),
+  collectCurrent = () => collectAttestationState(root),
+  notify = (message) => process.stdout.write(`${message}\n`),
+} = {}) {
+  const before = collectRepository();
+  assertPackageRepositoryState(before);
+  const fingerprint = collectCurrent().sourceFingerprint;
+  try {
+    const credential = resolve();
+    notify("已复用当前 Commit 的 FULL PASS，无需重复执行完整测试。");
+    return { credential, reuseBuild: false };
+  } catch (error) {
+    const missingEvidence = ["GITHUB_UNREACHABLE", "MAIN_CI_NOT_FOUND", "MAIN_CI_SHA_MISMATCH", "MAIN_CI_PENDING", "RELEASE_FULL_REQUIRED"];
+    if (!(error instanceof PackageFullGateError) || !missingEvidence.includes(error.code)) throw error;
+  }
+  notify("当前 HEAD 无 FULL 证据，正在自动执行完整验收...");
+  runFull();
+  const after = collectRepository();
+  assertPackageRepositoryState(after);
+  if (before.head !== after.head || fingerprint !== collectCurrent().sourceFingerprint) {
+    throw new PackageFullGateError("FULL_SOURCE_CHANGED", "FULL 期间源码或 HEAD 已变化，已停止打包。");
+  }
+  const credential = resolve();
+  if (credential.source !== PACKAGE_FULL_GATE_SOURCES.LOCAL_ATTESTATION) {
+    throw new PackageFullGateError("LOCAL_ATTESTATION_REQUIRED", "本地 FULL 未生成有效 exact-HEAD 凭证，已停止打包。");
+  }
+  return { credential, reuseBuild: true };
 }

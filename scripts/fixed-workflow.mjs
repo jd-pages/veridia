@@ -13,10 +13,10 @@ import {
   writeLocalPackageAcceptance,
 } from "./testing/local-package-worktree.mjs";
 import {
-  PACKAGE_FULL_GATE_SOURCES,
+  ensurePackageFullGate,
   resolvePackageFullGate,
 } from "./package-full-gate.mjs";
-import { validateSoftwareReleaseArtifacts } from "./software-release-artifacts.mjs";
+import { validateSoftwareReleaseArtifacts, writeReleaseArtifactManifest } from "./software-release-artifacts.mjs";
 import { collectSourceFingerprint } from "./source-fingerprint.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -124,25 +124,6 @@ function assertSoftwarePublishGitState() {
 
 function sourceFingerprint() {
   return collectSourceFingerprint(root);
-}
-
-function remoteTagExists(version, { allowUnavailable = false } = {}) {
-  if (git(["tag", "-l", `v${version}`]).stdout === `v${version}`) return true;
-  const result = git(
-    ["ls-remote", "--exit-code", "--tags", "origin", `refs/tags/v${version}`],
-    true,
-  );
-  if (result.status === 0) return true;
-  if (result.status === 2) return false;
-  if (allowUnavailable) {
-    process.stdout.write(
-      `警告：GitHub 当前不可访问；有效本地 FULL attestation 已允许离线继续，将仅依据本地 Tag 状态确认 v${version} 未被消费。\n`,
-    );
-    return false;
-  }
-  throw new Error(
-    `无法安全确认远程 v${version} Tag 状态，请检查网络或 GitHub 授权后重试。`,
-  );
 }
 
 let input;
@@ -571,49 +552,42 @@ async function localPackage() {
         "将验证当前 main、clean worktree、HEAD=origin/main，以及发布级验证凭证。",
         "凭证来源可为 exact-HEAD 本地 FULL、手动 RELEASE_FULL，或生产范围未变化的 TEST_ONLY_RECOVERY chain。",
         "凭证通过后将执行 Production Build、Desktop/Electron 准备、Windows NSIS 构建及安装包三件套 hash/manifest 验证。",
-        "不会重复运行 Unit、E2E、数据库兼容、Sensitive scan 或完整 verify:full。",
+        "缺少有效凭证时自动执行一次本地 FULL，PASS 后写入凭证并复用本次 Build；FAIL 停止打包。",
         "不会创建 Tag、Release，不会上传安装包，也不会发布规则。",
         "",
       ].join("\n"),
     );
     return;
   }
-  const fullGate = resolvePackageFullGate({ root });
-  const fullGateMessage = fullGate.source === PACKAGE_FULL_GATE_SOURCES.LOCAL_ATTESTATION
-    ? `FULL 凭证验证通过：LOCAL_ATTESTATION，HEAD ${fullGate.commitSha}`
-    : fullGate.source === PACKAGE_FULL_GATE_SOURCES.GITHUB_RELEASE_FULL
-      ? `FULL 凭证验证通过：GITHUB_RELEASE_FULL Run ${fullGate.releaseFullRunId}，HEAD ${fullGate.commitSha}`
-      : `FULL 凭证验证通过：TEST_ONLY_RECOVERY（Base Run ${fullGate.baseFullRunId}），HEAD ${fullGate.commitSha}`;
-  process.stdout.write(`${fullGateMessage}\n`);
-  if (
-    remoteTagExists(info.version, {
-      allowUnavailable:
-        fullGate.source === PACKAGE_FULL_GATE_SOURCES.LOCAL_ATTESTATION,
-    })
-  ) {
-    throw new Error(
-      `当前版本 v${info.version} 已存在正式 Tag，不能生成覆盖该版本的本地验收包。`,
-    );
-  }
+  process.stdout.write("VERIDIA 一键正式打包\n[1/5] 检查源码状态\n");
+  assertSoftwarePublishGitState();
+  process.stdout.write("[2/5] 检查正式 FULL 门禁\n");
+  const { credential: fullGate, reuseBuild } = ensurePackageFullGate({
+    root,
+    resolve: () => resolvePackageFullGate({ root }),
+  });
+  process.stdout.write(`[3/5] 构建正式版本${reuseBuild ? "（复用本次 FULL 的 Production Build）" : ""}\n`);
   const version = await withLocalPackageFileRestore(root, () => {
     run("node", [
       path.join(root, "scripts", "release.mjs"),
       "current",
       "--stage=package",
-    ]);
+    ], { env: { VERIDIA_REUSE_FULL_BUILD: String(reuseBuild), VERIDIA_LOCAL_PACKAGE: "true" } });
     return packageInfo().version;
   });
   const restoredSourceFingerprint = sourceFingerprint();
-  if (restoredSourceFingerprint !== fullGate.sourceFingerprint) {
+  if (git(["rev-parse", "HEAD"]).stdout !== fullGate.commitSha || restoredSourceFingerprint !== fullGate.sourceFingerprint) {
     throw new Error(
       "本地 Package 完成后源码 fingerprint 与 FULL 凭证不一致，已停止生成验收记录。",
     );
   }
+  process.stdout.write("[5/5] 校验安装包\n");
   const artifactValidation = validateSoftwareReleaseArtifacts({
     projectRoot: root,
     version,
     directory: path.join(root, "release", version),
   });
+  writeReleaseArtifactManifest({ projectRoot: root, version, validation: artifactValidation });
   const acceptance = createLocalPackageAcceptance({
     version,
     acceptedAt: new Date().toISOString(),
@@ -630,11 +604,12 @@ async function localPackage() {
   process.stdout.write(
     [
       "",
-      `本地安装包路径：${path.join(root, "release", version)}`,
-      `当前版本：${version}`,
-      "状态：仅本地安装包。",
-      "当前还没有发布到 GitHub Release，也没有创建 Tag 或上传文件。",
-      "请安装并完成升级、登录、规则同步、审核和导出验收。",
+      "====================================",
+      "VERIDIA 正式安装包生成成功",
+      `版本：${version}`,
+      `Commit：${fullGate.commitSha}`,
+      `安装包：${path.join(root, "release", version, `VERIDIA-Setup-${version}.exe`)}`,
+      "====================================",
       "",
     ].join("\n"),
   );

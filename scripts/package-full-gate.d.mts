@@ -5,6 +5,7 @@ export const PACKAGE_FULL_GATE_SOURCES: Readonly<{
 }>;
 
 export class PackageFullGateError extends Error {
+  constructor(code: string, message: string, details?: Record<string, unknown>);
   readonly code: string;
   readonly details: Record<string, unknown>;
 }
@@ -56,3 +57,14 @@ export function assertPackageRepositoryState(state: PackageRepositoryState): voi
 export function selectExactHeadMainCiRun(runs: MainCiRun[], head: string): MainCiRun;
 export function validateExactHeadReleaseFullDetails(run: MainCiRun, head: string): MainCiRun;
 export function resolvePackageFullGate(options?: Record<string, unknown>): PackageFullGateCredential;
+export function runLocalPackageFull(root: string, execute?: (...args: unknown[]) => {
+  stdout?: string; stderr?: string; status: number | null; error?: Error;
+}): void;
+export function ensurePackageFullGate(options?: {
+  root?: string;
+  resolve?: () => PackageFullGateCredential;
+  runFull?: () => void;
+  collectRepository?: () => PackageRepositoryState;
+  collectCurrent?: () => { sourceFingerprint: string };
+  notify?: (message: string) => void;
+}): { credential: PackageFullGateCredential; reuseBuild: boolean };

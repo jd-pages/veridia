@@ -201,6 +201,7 @@ try {
   }
   run("DESKTOP_PREPARE", "准备桌面资源", "npm.cmd", ["run", "desktop:prepare"]);
   run("PREREQUISITE_WARMUP", "准备并检查 Electron 运行文件", "npm.cmd", ["run", "electron:ensure"]);
+  if (process.env.VERIDIA_LOCAL_PACKAGE === "true") process.stdout.write("[4/5] 生成安装包\n");
   fs.rmSync(path.join(root, "dist-installer"), {
     recursive: true,
     force: true,

@@ -1,10 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import {
   PACKAGE_FULL_GATE_SOURCES,
   PackageFullGateError,
   resolvePackageFullGate,
+  ensurePackageFullGate,
+  runLocalPackageFull,
 } from "../../scripts/package-full-gate.mjs";
 
 const HEAD = "a".repeat(40);
@@ -164,10 +167,68 @@ describe("本地 Package 的发布级验证凭证", () => {
     expectCode(() => run({ git: gitStub({ originMain: OLD_HEAD }) }), "ORIGIN_MAIN_MISMATCH");
   });
 
-  it("fixed workflow 只调用 package stage，不执行 verify:full", () => {
+  it("fixed workflow 先确保 FULL 再调用纯本地 package stage", () => {
     const workflow = fs.readFileSync(path.resolve("scripts/fixed-workflow.mjs"), "utf8");
     expect(workflow).toContain('"--stage=package"');
     expect(workflow).toContain("resolvePackageFullGate");
-    expect(workflow).not.toContain('["run", "verify:full"]');
+    const localPackage = workflow.slice(workflow.indexOf("async function localPackage()"), workflow.indexOf("function readAcceptance()"));
+    expect(localPackage).toContain("ensurePackageFullGate");
+    expect(localPackage).toContain("VERIDIA_REUSE_FULL_BUILD: String(reuseBuild)");
+    expect(localPackage).toContain("writeReleaseArtifactManifest");
+    expect(localPackage).not.toMatch(/remoteTagExists|gh.*release|git.*tag|上传发布包|发布新版|发布规则新版/u);
+  });
+});
+
+describe("一键本地 FULL 准备", () => {
+  const repository = () => ({ branch: "main", worktreeStatus: "", head: HEAD, originMain: HEAD });
+  const credential = { source: "LOCAL_ATTESTATION" as const, commitSha: HEAD, sourceFingerprint: "source" };
+  const options = () => ({ collectRepository: repository, collectCurrent: () => ({ sourceFingerprint: "source" }), notify: vi.fn() });
+  it("本地 FULL 失败保存日志并显示 Gate 与失败 Case，不运行其他命令", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "veridia-local-full-test-"));
+    const output = `VERIDIA_VERIFY_RESULT=${JSON.stringify({ failures: ["E2E RESULTS_UI"], firstFailure: { failedItem: "RESULTS_UI / Case A", summary: "assertion failed" } })}`;
+    const execute = vi.fn(() => ({ status: 1, stdout: output, stderr: "" }));
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      expect(() => runLocalPackageFull(root, execute)).toThrow(/首个失败 Gate：E2E.*\n失败 Case \/ Group：RESULTS_UI \/ Case A.*\n日志：/u);
+      expect(execute).toHaveBeenCalledTimes(1);
+      const call = execute.mock.calls[0] as unknown as [string, string[], { env: Record<string, string> }];
+      expect(call[1].join(" ")).toContain("verify:full");
+      expect(call[2].env.VERIDIA_DISABLE_ATTESTATION_WRITE).toBe("false");
+      expect(fs.readFileSync(path.join(root, ".release-work/logs/local-package-full.log"), "utf8")).toContain(output);
+    } finally {
+      stdout.mockRestore();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it.each(["LOCAL_ATTESTATION", "GITHUB_RELEASE_FULL", "TEST_ONLY_RECOVERY"] as const)("复用 %s 时不运行 FULL", (source) => {
+    const runFull = vi.fn();
+    expect(ensurePackageFullGate({ ...options(), resolve: () => ({ ...credential, source }), runFull }).reuseBuild).toBe(false);
+    expect(runFull).not.toHaveBeenCalled();
+  });
+  it.each(["RELEASE_FULL_REQUIRED", "GITHUB_UNREACHABLE", "MAIN_CI_NOT_FOUND", "MAIN_CI_PENDING"])("%s 自动执行唯一一次 FULL，校验新凭证后复用本次 Build", (code) => {
+    const resolve = vi.fn().mockImplementationOnce(() => { throw new PackageFullGateError(code, "missing"); }).mockReturnValue(credential);
+    const runFull = vi.fn();
+    expect(ensurePackageFullGate({ ...options(), resolve, runFull })).toEqual({ credential, reuseBuild: true });
+    expect(runFull).toHaveBeenCalledTimes(1);
+    expect(resolve).toHaveBeenCalledTimes(2);
+  });
+  it("FULL FAIL 原样传播并停止，不再尝试凭证或打包", () => {
+    const resolve = vi.fn(() => { throw new PackageFullGateError("RELEASE_FULL_REQUIRED", "missing"); });
+    const runFull = vi.fn(() => { throw new Error("E2E RESULTS_UI; Case A; local-package-full.log"); });
+    expect(() => ensurePackageFullGate({ ...options(), resolve, runFull })).toThrow("Case A");
+    expect(runFull).toHaveBeenCalledTimes(1);
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+  it("源码状态错误不运行 FULL", () => {
+    const runFull = vi.fn();
+    expect(() => ensurePackageFullGate({ ...options(), collectRepository: () => ({ ...repository(), worktreeStatus: " M app/a.ts" }), runFull })).toThrow("工作区干净");
+    expect(runFull).not.toHaveBeenCalled();
+  });
+  it("FULL 期间源码改变或没有写入本地凭证均阻断", () => {
+    const resolve = vi.fn().mockImplementationOnce(() => { throw new PackageFullGateError("RELEASE_FULL_REQUIRED", "missing"); }).mockReturnValue(credential);
+    const collectCurrent = vi.fn().mockReturnValueOnce({ sourceFingerprint: "source" }).mockReturnValue({ sourceFingerprint: "changed" });
+    expect(() => ensurePackageFullGate({ ...options(), resolve, collectCurrent, runFull: vi.fn() })).toThrow("源码或 HEAD 已变化");
+    const noLocal = vi.fn().mockImplementationOnce(() => { throw new PackageFullGateError("RELEASE_FULL_REQUIRED", "missing"); }).mockReturnValue({ ...credential, source: "GITHUB_RELEASE_FULL" });
+    expect(() => ensurePackageFullGate({ ...options(), resolve: noLocal, runFull: vi.fn() })).toThrow("未生成有效 exact-HEAD 凭证");
   });
 });
