@@ -1,0 +1,323 @@
+{
+  "suites": [
+    {
+      "file": "fail-fast.spec.ts",
+      "specs": [
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-1",
+          "ok": false,
+          "tests": [
+            {
+              "results": [
+                {
+                  "status": "failed"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-2",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-3",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-4",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-5",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-6",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-7",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-8",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-9",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-10",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-11",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-12",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-13",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-14",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-15",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-16",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-17",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-18",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-19",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-20",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-21",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-22",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-23",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-24",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-25",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-26",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-27",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-28",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-29",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-30",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        },
+        {
+          "file": "fail-fast.spec.ts",
+          "title": "case-31",
+          "ok": true,
+          "tests": [
+            {
+              "results": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

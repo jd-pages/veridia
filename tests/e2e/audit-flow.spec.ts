@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import ExcelJS from "exceljs";
+import { PrismaClient } from "@prisma/client";
 import { readFile } from "node:fs/promises";
 import { createMockNote } from "../../lib/mock-data";
 import { E2E_ORIGIN } from "./e2e-origin";
@@ -913,6 +914,40 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     resultCoverageBatchId,
     ["COMPLETED_WITH_ERRORS"],
   );
+  if (!process.env.E2E_DATABASE_URL) throw new Error("诊断只允许使用隔离 E2E 数据库");
+  const diagnosticsDb = new PrismaClient({ datasourceUrl: process.env.E2E_DATABASE_URL });
+  try {
+    const result = await diagnosticsDb.auditResult.findFirstOrThrow({
+      where: { task: { batchId: resultCoverageBatchId, url: { contains: `${resultCoverageSuffix}-passed` } } },
+      include: { task: true, note: true, ruleResults: true },
+    });
+    const extraction = await diagnosticsDb.extractionRecord.findFirstOrThrow({
+      where: { auditTaskId: result.auditTaskId }, orderBy: { extractedAt: "desc" },
+    });
+    const raw = JSON.parse(extraction.rawData);
+    const publication = (note: { publishedAt?: unknown; publishedAtRaw?: unknown; publishedAtSource?: unknown; isPublic?: unknown }) => ({
+      publishedAt: note.publishedAt, publishedAtRaw: note.publishedAtRaw,
+      publishedAtSource: note.publishedAtSource, isPublic: note.isPublic,
+    });
+    const diagnostic = {
+      taskId: result.auditTaskId, taskStatus: result.task.status, stats: resultCoverageBatch.stats,
+      autoStatus: result.autoStatus, failureReasons: result.failureReasons,
+      publicStatus: result.publicStatus, retentionStatus: result.retentionStatus, retentionDueAt: result.retentionDueAt,
+      imageStatus: result.imageStatus, imageCount: result.imageCount, bodyStatus: result.bodyStatus,
+      bodyCompliant: result.bodyCompliant, topicsCompliant: result.topicsCompliant, clickableCompliant: result.clickableCompliant,
+      campaign: JSON.parse(result.ruleSnapshot), ruleResults: result.ruleResults,
+      note: publication(result.note), extraction: publication(raw),
+    };
+    console.log(`RESULT_COVERAGE_DIAGNOSTIC=${JSON.stringify(diagnostic)}`);
+    await test.info().attach("result-coverage-diagnostic", { body: JSON.stringify(diagnostic, null, 2), contentType: "application/json" });
+    expect(result).toMatchObject({ publicStatus: "PUBLIC", retentionStatus: "SATISFIED", autoStatus: "PASSED", interactionRewardStatus: "NOT_ENABLED" });
+    expect(result.note.publishedAt?.toISOString()).toBe("2026-07-08T08:30:00.000Z");
+    expect(result.retentionDueAt?.toISOString()).toBe("2026-07-23T08:30:00.000Z");
+    const retention = result.ruleResults.find((rule) => rule.ruleKey === "GLOBAL_RETENTION")!;
+    expect(JSON.parse(retention.evidence).publishedAt).toBe(result.note.publishedAt?.toISOString());
+  } finally {
+    await diagnosticsDb.$disconnect();
+  }
   expect(resultCoverageBatch.stats.succeeded).toBe(1);
   expect(resultCoverageBatch.stats.failed).toBe(2);
   expect(resultCoverageBatch.finishedAt).toBeTruthy();

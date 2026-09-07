@@ -27,23 +27,35 @@ export function readPlaywrightCaseEvidence(reportFile, root = process.cwd()) {
   const evidence = [];
   const visit = (suite) => {
     for (const spec of suite.specs || []) {
-      const results = (spec.tests || []).flatMap((test) => test.results || []);
-      const passed = spec.ok === true || (
-        results.length > 0 && results.every((result) => result.status === "passed")
-      );
+      // spec.ok also includes skipped/unstarted cases after max-failures.
+      // A retry is judged by its final actual attempt, across every project.
+      const statuses = (spec.tests || []).map((test) => {
+        const last = (test.results || []).filter((result) => result.status !== "skipped").at(-1);
+        return !last ? "NOT_RUN" : last.status === "passed" ? "PASSED" : "FAILED";
+      });
+      const status = statuses.includes("FAILED") ? "FAILED"
+        : statuses.length > 0 && statuses.every((item) => item === "PASSED") ? "PASSED" : "NOT_RUN";
       evidence.push({
         file: (() => {
           const file = normalizedFile(spec.file || suite.file, root);
           return file.startsWith("tests/e2e/") ? file : `tests/e2e/${file}`;
         })(),
         title: spec.title,
-        status: passed ? "PASSED" : "FAILED",
+        status,
       });
     }
     for (const child of suite.suites || []) visit(child);
   };
   for (const suite of report.suites || []) visit(suite);
   return evidence;
+}
+
+export function summarizePlaywrightCaseEvidence(cases, selectedTotal = cases.length) {
+  const total = Math.max(selectedTotal, cases.length);
+  const passed = cases.filter((item) => item.status === "PASSED").length;
+  const failed = cases.filter((item) => item.status === "FAILED").length;
+  const executed = passed + failed;
+  return { total, executed, passed, failed, notRun: total - executed };
 }
 
 export function aggregateProtectedBehaviorEvidence(input) {

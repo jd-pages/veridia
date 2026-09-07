@@ -217,6 +217,9 @@ if (affectedMode) {
 
 let e2eTotal = 0;
 let e2ePassed = 0;
+let e2eExecuted = 0;
+let e2eFailed = 0;
+let e2eNotRun = 0;
 const e2eEvidence = [];
 const e2eGroups = [];
 const groups = groupE2eFiles(selectedFiles);
@@ -233,12 +236,18 @@ for (const group of groups) {
     const summary = JSON.parse(marker[1]);
     e2eTotal += summary.total;
     e2ePassed += summary.passed;
+    e2eExecuted += summary.executed;
+    e2eFailed += summary.failed;
+    e2eNotRun += summary.notRun;
     e2eEvidence.push(...(summary.cases || []));
     e2eGroups.push({
       name: group.name,
       files: group.files,
       total: summary.total,
       passed: summary.passed,
+      executed: summary.executed,
+      failed: summary.failed,
+      notRun: summary.notRun,
       status: result.passed ? "PASSED" : "FAILED",
     });
   }
@@ -288,6 +297,9 @@ const summary = {
   failureDetails,
   e2eTotal,
   e2ePassed,
+  e2eExecuted,
+  e2eFailed,
+  e2eNotRun,
   selectedE2eFiles: selectedFiles,
   e2eGroups,
   risk: mode === "full"

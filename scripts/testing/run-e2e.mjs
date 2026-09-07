@@ -18,7 +18,7 @@ import {
   StartupRouteReadinessError,
   waitForStartupRoute,
 } from "./e2e-readiness.mjs";
-import { readPlaywrightCaseEvidence } from "./protected-evidence.mjs";
+import { readPlaywrightCaseEvidence, summarizePlaywrightCaseEvidence } from "./protected-evidence.mjs";
 
 const root = process.cwd();
 const args = process.argv.slice(2);
@@ -414,11 +414,12 @@ async function main() {
     testProcess.on("exit", (code) => resolve(code ?? 1));
   });
   const cases = readPlaywrightCaseEvidence(jsonReportPath, root);
-  const passed = cases.filter((item) => item.status === "PASSED").length;
-  writeMetadata({ testProcessPid: testProcess.pid, total, passed, status: status === 0 ? "PASSED" : "FAILED", cases });
-  process.stdout.write(`VERIDIA_E2E_RESULT=${JSON.stringify({ group: isolationGroup, total, passed, cases })}\n`);
-  await cleanup(status === 0 ? "completed" : "failed");
-  process.exitCode = status;
+  const summary = summarizePlaywrightCaseEvidence(cases, total);
+  const exitStatus = status || (summary.failed > 0 || summary.notRun > 0 ? 1 : 0);
+  writeMetadata({ testProcessPid: testProcess.pid, ...summary, status: exitStatus === 0 ? "PASSED" : "FAILED", cases });
+  process.stdout.write(`VERIDIA_E2E_RESULT=${JSON.stringify({ group: isolationGroup, ...summary, cases })}\n`);
+  await cleanup(exitStatus === 0 ? "completed" : "failed");
+  process.exitCode = exitStatus;
 }
 
 const timeout = setTimeout(async () => {

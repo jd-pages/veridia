@@ -7,6 +7,9 @@ export interface ProtectedCaseEvidence {
 export function protectedCaseKey(file: string, title: string, root?: string): string;
 export function readVitestCaseEvidence(reportFile: string, root?: string): ProtectedCaseEvidence[];
 export function readPlaywrightCaseEvidence(reportFile: string, root?: string): ProtectedCaseEvidence[];
+export function summarizePlaywrightCaseEvidence(cases: ProtectedCaseEvidence[], selectedTotal?: number): {
+  total: number; executed: number; passed: number; failed: number; notRun: number;
+};
 export function aggregateProtectedBehaviorEvidence(input: {
   root?: string;
   behaviorKeys: string[];

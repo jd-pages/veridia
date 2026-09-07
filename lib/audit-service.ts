@@ -268,10 +268,19 @@ export async function runAuditTask(
     storeTopicRequirement,
   };
   const auditedTopics = topicsForPlatformAudit(payload, contentChannel);
-  // Platform publication time is collection metadata only. It is persisted
-  // below for display, but is intentionally excluded from every audit rule.
+  // Use the same reliable platform timestamp for retention and persistence.
+  // Never substitute an imported/registration date for missing extraction evidence.
+  const parsedPublishedAt = payload.publishedAt
+    ? new Date(payload.publishedAt)
+    : null;
+  const platformPublishedAt =
+    payload.pageStatus === "NORMAL" &&
+    parsedPublishedAt &&
+    !Number.isNaN(parsedPublishedAt.getTime())
+      ? parsedPublishedAt
+      : null;
   const evaluation = evaluateAudit(
-    { ...payload, topics: auditedTopics, publishedAt: null },
+    { ...payload, topics: auditedTopics, publishedAt: platformPublishedAt?.toISOString() ?? null },
     context,
   );
   const duplicateReauditOutcome = resolveDuplicateReauditAutomaticOutcome(
@@ -350,15 +359,6 @@ export async function runAuditTask(
       });
       existingNote = existingByPlatformId;
     }
-    const parsedPublishedAt = payload.publishedAt
-      ? new Date(payload.publishedAt)
-      : null;
-    const platformPublishedAt =
-      payload.pageStatus === "NORMAL" &&
-      parsedPublishedAt &&
-      !Number.isNaN(parsedPublishedAt.getTime())
-        ? parsedPublishedAt
-        : null;
     const noteData = {
       contentChannel,
       platformNoteId: payload.noteId,
