@@ -398,6 +398,9 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
           topicEvidenceCollected: true,
           pageStatus: "NORMAL",
           isPublic: true,
+          publishedAt: "2026-07-08T08:30:00.000Z",
+          publishedAtRaw: "2026-07-08 16:30:00",
+          publishedAtSource: "MOCK_PLATFORM",
           extractedAt: new Date().toISOString(),
           adapterName: "playwright-xiaohongshu",
           adapterVersion: "1.6.0",
@@ -416,6 +419,9 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
   const detailResponse = await page.request.get(`/api/results/${result.id}`);
   expect(detailResponse.ok()).toBeTruthy();
   const detail = (await detailResponse.json()).data as {
+    publicStatus: string;
+    retentionStatus: string;
+    retentionDueAt: string;
     effectiveBodyLength: number;
     task: { productStage: string };
     failureReasons: string;
@@ -427,6 +433,9 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
       passed: boolean;
     }>;
   };
+  expect(detail.publicStatus).toBe("PUBLIC");
+  expect(detail.retentionStatus).toBe("SATISFIED");
+  expect(detail.retentionDueAt).toBe("2026-07-23T08:30:00.000Z");
   expect(detail.effectiveBodyLength).toBe(ordinaryBody.length);
   expect(detail.task.productStage).toBe("IFFO");
   expect(JSON.parse(detail.failureReasons)).not.toContain(
