@@ -175,6 +175,7 @@ export const E2E_MANIFEST = Object.freeze({
   "tests/e2e/audit-topic-boundaries.spec.ts": entry(["XHS", "DOUYIN", "RULES", "CAMPAIGN", "RESULTS"], "DATA_RULES"),
   "tests/e2e/batch-clear.spec.ts": entry(["AUTOMATION", "RESULTS"], "AUTOMATION"),
   "tests/e2e/current-task-content.spec.ts": entry(["XHS", "AUTOMATION", "RESULTS"], "AUTOMATION"),
+  "tests/e2e/csv-export-safety.spec.ts": entry(["RESULTS", "IMPORT"], "RESULTS_UI"),
   "tests/e2e/dashboard-risk-summary.spec.ts": entry(["RESULTS", "UI_LAYOUT"], "RESULTS_UI", true),
   "tests/e2e/douyin-automation.spec.ts": entry(["DOUYIN", "AUTOMATION", "MIXED_PLATFORM", "RESULTS"], "AUTOMATION"),
   "tests/e2e/douyin-response-collector.spec.ts": entry(["DOUYIN", "AUTOMATION"], "AUTOMATION"),

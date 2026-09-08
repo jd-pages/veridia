@@ -526,7 +526,15 @@ export function utf8BomCsv(
 ) {
   const escape = (value: unknown) => {
     const text = value == null ? "" : String(value);
-    return /[",\r\n]/u.test(text) ? `"${text.replace(/"/gu, '""')}"` : text;
+    // Neutralize text before CSV quoting. Importers may ignore leading Unicode
+    // whitespace/control/format characters; preserve them after the text marker.
+    // Keep genuine numeric/boolean scalars unchanged (e.g. numeric -12).
+    const formulaLike = typeof value === "string" &&
+      /^[\p{White_Space}\p{Cc}\p{Cf}]*[=+\-@＝＋－＠]/u.test(text);
+    const safeText = formulaLike ? `'${text}` : text;
+    return formulaLike || /[",\r\n]/u.test(safeText)
+      ? `"${safeText.replace(/"/gu, '""')}"`
+      : safeText;
   };
   return `\uFEFF${[headers, ...rows].map((row) => row.map(escape).join(",")).join("\r\n")}`;
 }
