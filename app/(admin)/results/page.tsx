@@ -62,6 +62,10 @@ import {
 import { pageAfterResultDeletion } from "@/components/results/deletion-state";
 import type { SessionUser } from "@/lib/auth";
 import { canAccessBusiness } from "@/lib/permissions";
+import {
+  ownsSelectedResultDrawerRequest,
+  ResultDrawerRequestIdentity,
+} from "@/lib/result-drawer-request-identity";
 import styles from "@/components/results/results-workbench.module.css";
 
 const defaultFilters: ResultFilters = {
@@ -222,6 +226,8 @@ export default function ResultsPage() {
   const [drawerRow, setDrawerRow] = useState<ResultRow | null>(null);
   const [drawerDetail, setDrawerDetail] = useState<ResultDetail | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  const drawerRowIdRef = useRef<string | null>(null);
+  const drawerRequestIdentityRef = useRef(new ResultDrawerRequestIdentity());
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
   );
@@ -293,6 +299,11 @@ export default function ResultsPage() {
   }, []);
 
   useEffect(() => {
+    const identity = drawerRequestIdentityRef.current;
+    return () => identity.invalidate();
+  }, []);
+
+  useEffect(() => {
     const requestId = ++campaignRequestRef.current;
     setCampaignsLoading(true);
     const query = filters.productId
@@ -356,6 +367,47 @@ export default function ResultsPage() {
     );
   };
 
+  const closeDrawer = () => {
+    drawerRequestIdentityRef.current.invalidate();
+    drawerRowIdRef.current = null;
+    setDrawerRow(null);
+    setDrawerDetail(null);
+    setDrawerLoading(false);
+  };
+
+  const openDrawer = async (row: ResultRow) => {
+    const identity = drawerRequestIdentityRef.current;
+    const request = identity.begin(row.id);
+    drawerRowIdRef.current = row.id;
+    setDrawerRow(row);
+    setDrawerDetail(null);
+    setDrawerLoading(true);
+    const ownsCurrentDrawer = () =>
+      ownsSelectedResultDrawerRequest(
+        identity,
+        request,
+        drawerRowIdRef.current,
+      );
+    try {
+      const detail = await apiFetch<ResultDetail>(`/api/results/${row.id}`, {
+        signal: request.signal,
+      });
+      if (!ownsCurrentDrawer()) return;
+      if (!identity.accepts(request, detail.id)) {
+        throw new Error("审核详情响应身份不匹配，请重试");
+      }
+      setDrawerDetail(detail);
+    } catch (error) {
+      if (!ownsCurrentDrawer()) return;
+      setDrawerDetail(null);
+      message.error(
+        error instanceof Error ? error.message : "加载审核详情失败",
+      );
+    } finally {
+      if (ownsCurrentDrawer()) setDrawerLoading(false);
+    }
+  };
+
   const selectSummary = (status: string) => {
     const next = { ...filters, status };
     setFilters(next);
@@ -382,8 +434,7 @@ export default function ResultsPage() {
       setSelected([]);
       await load(data.page, data.pageSize, appliedFilters);
       if (drawerRow && ids.includes(drawerRow.id)) {
-        setDrawerRow(null);
-        setDrawerDetail(null);
+        closeDrawer();
       }
     } catch (error) {
       message.error(error instanceof Error ? error.message : "批量操作失败");
@@ -448,21 +499,6 @@ export default function ResultsPage() {
     void runExport(
       new URLSearchParams({ ids: selected.map(String).join(",") }),
     );
-  };
-
-  const openDrawer = async (row: ResultRow) => {
-    setDrawerRow(row);
-    setDrawerDetail(null);
-    setDrawerLoading(true);
-    try {
-      setDrawerDetail(await apiFetch<ResultDetail>(`/api/results/${row.id}`));
-    } catch (error) {
-      message.error(
-        error instanceof Error ? error.message : "加载审核详情失败",
-      );
-    } finally {
-      setDrawerLoading(false);
-    }
   };
 
   const deleteResults = async (
@@ -860,10 +896,7 @@ export default function ResultsPage() {
         row={drawerRow}
         detail={drawerDetail}
         loading={drawerLoading}
-        onClose={() => {
-          setDrawerRow(null);
-          setDrawerDetail(null);
-        }}
+        onClose={closeDrawer}
         onOpenFullDetail={(row) => router.push(`/results/${row.id}`)}
         onAction={(row, action) => void bulk(action, [row.id])}
         canOperate={canOperate}

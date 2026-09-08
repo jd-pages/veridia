@@ -287,10 +287,10 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // Batch 2 adds four approved invariants and a topic-boundary group;
-      // the existing twenty-two protected expectations remain unchanged.
-      behaviorCount: 26,
-      groupCount: 9,
+      // Batch 6 adds the approved result-drawer response identity invariant;
+      // all previously protected expectations and group memberships remain unchanged.
+      behaviorCount: 27,
+      groupCount: 10,
     });
     expect(new Set(PROTECTED_BEHAVIORS.map((item) => item.key)).size)
       .toBe(PROTECTED_BEHAVIORS.length);
@@ -329,6 +329,7 @@ describe("分层测试门禁", () => {
     ["lib/automation/queue.ts", "AUTOMATION_RUNNER_LIFECYCLE_ALL"],
     ["lib/automation/douyin-response-collector.ts", "AUTOMATION_RUNNER_LIFECYCLE_ALL"],
     ["lib/automation/douyin-extract.ts", "AUTOMATION_RUNNER_LIFECYCLE_ALL"],
+    ["app/(admin)/results/page.tsx", "RESULT_DRAWER_IDENTITY_ALL"],
   ])("Change Impact Map: %s 触发 %s", (file, expectedGroup) => {
     const selection = selectProtectedBehaviors([file]);
     expect(selection.groups).toContain(expectedGroup);

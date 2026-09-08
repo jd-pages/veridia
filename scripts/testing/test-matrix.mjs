@@ -190,6 +190,7 @@ export const E2E_MANIFEST = Object.freeze({
   "tests/e2e/queue-paused-batch.spec.ts": entry(["AUTOMATION"], "AUTOMATION"),
   "tests/e2e/product-stage-topic.spec.ts": entry(["CAMPAIGN", "RULES", "XHS"], "DATA_RULES"),
   "tests/e2e/result-lifecycle.spec.ts": entry(["RESULTS", "RECHECK", "MIXED_PLATFORM", "XHS", "DOUYIN"], "RESULTS_UI"),
+  "tests/e2e/results-drawer-response-identity.spec.ts": entry(["RESULTS"], "RESULTS_UI"),
   "tests/e2e/results-horizontal-scroll.spec.ts": entry(["RESULTS", "UI_LAYOUT"], "RESULTS_UI", true),
   "tests/e2e/results-workbench.spec.ts": entry(["RESULTS", "RECHECK", "UI_LAYOUT"], "RESULTS_UI"),
   "tests/e2e/rule-brand-navigation.spec.ts": entry(["RULES", "CAMPAIGN", "ADMIN"], "DATA_RULES"),
