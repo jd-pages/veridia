@@ -181,6 +181,7 @@ export const E2E_MANIFEST = Object.freeze({
   "tests/e2e/douyin-response-collector.spec.ts": entry(["DOUYIN", "AUTOMATION"], "AUTOMATION"),
   "tests/e2e/historical-extraction-immutable.spec.ts": entry(["RESULTS", "RECHECK", "DATABASE", "UI_LAYOUT"], "RESULTS_UI"),
   "tests/e2e/import-record-deletion.spec.ts": entry(["IMPORT", "RESULTS", "AUTOMATION", "MIXED_PLATFORM", "DATABASE", "ADMIN", "UI_LAYOUT"], "AUTOMATION"),
+  "tests/e2e/import-row-limit.spec.ts": entry(["IMPORT"], "DATA_RULES"),
   "tests/e2e/kabrita-excel-template.spec.ts": entry(["IMPORT", "CAMPAIGN"], "DATA_RULES"),
   "tests/e2e/local-fonts.spec.ts": entry(["UI_LAYOUT", "UPDATE"], "RESULTS_UI", true),
   "tests/e2e/localization.spec.ts": entry(["UI_LAYOUT"], "RESULTS_UI", true),

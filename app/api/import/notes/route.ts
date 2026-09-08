@@ -23,6 +23,7 @@ import {
 import { getActiveImportExportTemplates } from "@/lib/import-export-templates/config";
 import {
   detectLocalSourceType,
+  ImportRowLimitError,
   parseTabularPreview,
   type TabularParsePerformance,
 } from "@/lib/import-export-templates/tabular";
@@ -1085,6 +1086,9 @@ export async function POST(request: Request) {
   } catch (error) {
     if (!commit && !performanceLogged) {
       logPrecheckPerformance(perf, measuredRowCount, "FAILED");
+    }
+    if (error instanceof ImportRowLimitError) {
+      return fail(error.message, 400, error.code);
     }
     return fail(
       error instanceof Error ? error.message : "无法读取表格",

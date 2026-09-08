@@ -28,6 +28,8 @@ type Matrix = string[][];
 type ParsedMatrix = {
   matrix: Matrix;
   hyperlinks: Map<string, string>;
+  sourceRowNumbers?: number[];
+  meaningfulRowNumbers?: number[];
   templateType?: ImportTemplateType;
   performance: {
     excelParseMs: number;
@@ -37,6 +39,20 @@ type ParsedMatrix = {
     effectiveWorksheetColumnCount: number;
   };
 };
+
+export class ImportRowLimitError extends Error {
+  readonly code = "IMPORT_ROW_LIMIT_EXCEEDED";
+
+  constructor(
+    readonly actualRows: number,
+    readonly maximumRows: number,
+  ) {
+    super(
+      `导入文件包含 ${actualRows} 条非空数据，最多支持 ${maximumRows} 条；本次未导入任何数据。`,
+    );
+    this.name = "ImportRowLimitError";
+  }
+}
 
 export interface TabularParsePerformance {
   excelParseMs: number;
@@ -122,33 +138,24 @@ async function xlsxMatrix(
   const worksheetParseStarted = performance.now();
   const rows: Matrix = [];
   const hyperlinks = new Map<string, string>();
-  let lastMeaningfulRow = 0;
+  const sourceRowNumbers: number[] = [];
+  const meaningfulRowNumbers: number[] = [];
   sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (row.hasValues) lastMeaningfulRow = Math.max(lastMeaningfulRow, rowNumber);
-  });
-  const effectiveWorksheetRowCount = Math.min(
-    lastMeaningfulRow,
-    maximumRelevantRows,
-  );
-  let effectiveWorksheetColumnCount = 0;
-  for (
-    let rowNumber = 1;
-    rowNumber <= effectiveWorksheetRowCount;
-    rowNumber += 1
-  ) {
-    const row = sheet.getRow(rowNumber);
     const values: string[] = [];
     let lastMeaningfulColumn = 0;
     row.eachCell({ includeEmpty: false }, (_cell, columnNumber) => {
       lastMeaningfulColumn = Math.max(lastMeaningfulColumn, columnNumber);
     });
-    effectiveWorksheetColumnCount = Math.max(
-      effectiveWorksheetColumnCount,
-      lastMeaningfulColumn,
-    );
     for (let columnNumber = 1; columnNumber <= lastMeaningfulColumn; columnNumber += 1) {
       const cell = row.getCell(columnNumber);
       values.push(excelCellText(cell));
+    }
+    if (!values.some((value) => value.trim())) return;
+    meaningfulRowNumbers.push(rowNumber);
+    if (rows.length >= maximumRelevantRows) return;
+    const matrixRowIndex = rows.length;
+    for (let columnNumber = 1; columnNumber <= lastMeaningfulColumn; columnNumber += 1) {
+      const cell = row.getCell(columnNumber);
       if (
         cell.value &&
         typeof cell.value === "object" &&
@@ -156,18 +163,23 @@ async function xlsxMatrix(
         cell.value.hyperlink
       ) {
         hyperlinks.set(
-          cellKey(rowNumber - 1, columnNumber - 1),
+          cellKey(matrixRowIndex, columnNumber - 1),
           String(cell.value.hyperlink).trim(),
         );
       }
     }
     rows.push(values);
-  }
+    sourceRowNumbers.push(rowNumber);
+  });
+  const effectiveWorksheetRowCount = sourceRowNumbers.at(-1) || 0;
+  const effectiveWorksheetColumnCount = widestRow(rows);
   const metadata = workbook.getWorksheet("VERIDIA模板信息");
   const metadataType = metadata?.getCell("B1").text.trim();
   return {
     matrix: rows,
     hyperlinks,
+    sourceRowNumbers,
+    meaningfulRowNumbers,
     templateType: isImportTemplateType(metadataType) ? metadataType : undefined,
     performance: {
       excelParseMs,
@@ -245,14 +257,13 @@ function aliasIndex(templates: ImportExportTemplates) {
 function locateHeader(
   matrix: Matrix,
   templates: ImportExportTemplates,
+  sourceRowNumbers?: number[],
 ) {
   const aliases = aliasIndex(templates);
-  const limit = Math.min(
-    matrix.length,
-    templates.importTemplates.default.headerRowSearchLimit,
-  );
   let best = { rowIndex: -1, count: 0 };
-  for (let rowIndex = 0; rowIndex < limit; rowIndex += 1) {
+  for (let rowIndex = 0; rowIndex < matrix.length; rowIndex += 1) {
+    const sourceRowNumber = sourceRowNumbers?.[rowIndex] || rowIndex + 1;
+    if (sourceRowNumber > templates.importTemplates.default.headerRowSearchLimit) break;
     const count = matrix[rowIndex].filter((value) =>
       aliases.has(normalizeTemplateHeader(value)),
     ).length;
@@ -359,8 +370,26 @@ export async function parseTabularPreview(input: {
   }
   const { matrix, hyperlinks: cellHyperlinks } = parsedMatrix;
   const headerRecognitionStarted = performance.now();
-  const { rowIndex, aliases } = locateHeader(matrix, templates);
+  const { rowIndex, aliases } = locateHeader(
+    matrix,
+    templates,
+    parsedMatrix.sourceRowNumbers,
+  );
   const header = matrix[rowIndex];
+  const headerRowNumber = parsedMatrix.sourceRowNumbers?.[rowIndex] || rowIndex + 1;
+  const dataRowCount = parsedMatrix.meaningfulRowNumbers
+    ? parsedMatrix.meaningfulRowNumbers.filter(
+        (sourceRowNumber) => sourceRowNumber > headerRowNumber,
+      ).length
+    : matrix.slice(rowIndex + 1).filter(
+        (sourceRow) => sourceRow.some((value) => value.trim()),
+      ).length;
+  if (dataRowCount > templates.dataValidation.maxRows) {
+    throw new ImportRowLimitError(
+      dataRowCount,
+      templates.dataValidation.maxRows,
+    );
+  }
   const templateType = detectTemplateType(header, parsedMatrix.templateType);
   const kabritaTemplate = templateType === "KABRITA";
   const recognizedFields: TabularPreview["recognizedFields"] = [];
@@ -421,11 +450,7 @@ export async function parseTabularPreview(input: {
   const headerRecognitionMs = performance.now() - headerRecognitionStarted;
   const rowConversionStarted = performance.now();
   const rows: TabularPreviewRow[] = [];
-  const maxRow = Math.min(
-    matrix.length,
-    rowIndex + 1 + templates.dataValidation.maxRows,
-  );
-  for (let index = rowIndex + 1; index < maxRow; index += 1) {
+  for (let index = rowIndex + 1; index < matrix.length; index += 1) {
     const sourceRow = matrix[index];
     if (!sourceRow.some((value) => value.trim())) continue;
     const values: TabularPreviewRow["values"] = {};
@@ -460,7 +485,7 @@ export async function parseTabularPreview(input: {
       }
     }
     rows.push({
-      rowNumber: index + 1,
+      rowNumber: parsedMatrix.sourceRowNumbers?.[index] || index + 1,
       values,
       rawValues,
       hyperlinks,
@@ -487,7 +512,7 @@ export async function parseTabularPreview(input: {
         ? "达能代发 Excel"
         : "达能客户 Excel",
     sourceType,
-    headerRowNumber: rowIndex + 1,
+    headerRowNumber,
     recognizedFields,
     unknownHeaders: [...new Set(unknownHeaders)],
     missingRequiredFields,
