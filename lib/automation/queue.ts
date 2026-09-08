@@ -774,7 +774,8 @@ async function runQueue() {
     const sessionBlockedBatch = await prisma.auditBatch.findFirst({
       where: {
         clearedAt: null,
-        status: { in: ["PAUSED", "LOGIN_EXPIRED", "SECURITY_RESTRICTED"] },
+        // User pause is batch-local. Session failures retain their existing gate.
+        status: { in: ["LOGIN_EXPIRED", "SECURITY_RESTRICTED"] },
       },
       select: { id: true },
     });
@@ -864,8 +865,7 @@ export async function controlAutomaticBatch(
         runtime.cancelActiveExtraction,
       ).catch(() => undefined);
     }
-    queueState.activeBatchId = undefined;
-    runtime.updateLock(null);
+    clearAutomaticBatchRuntime(batchId);
     console.info(
       "[自动审核生命周期] RUN_EPOCH_INVALIDATED",
       JSON.stringify({
@@ -1004,7 +1004,6 @@ export async function controlAutomaticBatch(
         },
       });
     });
-    queueState.activeBatchId = undefined;
     const activeExtraction = queueState.activeExtraction;
     if (activeExtraction?.batchId === batchId) {
       void cancelOwnedExtraction(
@@ -1012,7 +1011,7 @@ export async function controlAutomaticBatch(
         runtime.cancelActiveExtraction,
       ).catch(() => undefined);
     }
-    runtime.updateLock(null);
+    clearAutomaticBatchRuntime(batchId);
     return cancelled;
   }
   if (action === "RETRY_FAILED") {

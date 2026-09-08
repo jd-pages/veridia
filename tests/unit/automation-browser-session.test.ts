@@ -459,7 +459,7 @@ describe("抖音独立持久会话与后台审核页", () => {
     expect(pacing).toContain("DOUYIN_AUDIT_WAIT_MIN_MS: 7_000");
     expect(queue).toContain("automationRuntime(platform)");
     expect(queue).toContain("queueState.activeBatchId");
-    expect(queue).toContain('status: { in: ["PAUSED", "LOGIN_EXPIRED", "SECURITY_RESTRICTED"] }');
+    expect(queue).toContain('status: { in: ["LOGIN_EXPIRED", "SECURITY_RESTRICTED"] }');
     expect(queue).toContain('orderBy: [{ queueOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }]');
     expect(source("lib/automation/browser.ts")).toContain('platform: "XIAOHONGSHU"');
     expect(source("lib/automation/douyin-browser.ts")).toContain('platform: "DOUYIN"');
