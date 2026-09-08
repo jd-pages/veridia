@@ -284,8 +284,10 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      behaviorCount: 19,
-      groupCount: 7,
+      // Batch 1 explicitly approves three additional boundaries; the existing
+      // nineteen business invariants and seven groups retain their semantics.
+      behaviorCount: 22,
+      groupCount: 8,
     });
     expect(new Set(PROTECTED_BEHAVIORS.map((item) => item.key)).size)
       .toBe(PROTECTED_BEHAVIORS.length);

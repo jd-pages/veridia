@@ -38,6 +38,17 @@ const clickableTopic = (displayText: string) => ({
   domPath: `a.topic[data-topic="${displayText.replace(/^#/, "")}"]`,
 });
 
+export function isMockCase(value: unknown): value is MockCase {
+  return typeof value === "string" && [
+    "passed", "failed", "few-images", "empty-body", "inaccurate-topic",
+    "unclickable-topic", "read-failed", "not-found", "deleted", "no-permission",
+    "login-expired", "security-verification", "no-images", "live-photo", "video-note",
+    "no-topics", "structure-mismatch", "aptamil-passed", "aptamil-stage2-passed",
+    "aptamil-stage2-store-passed", "aptamil-stage2-folo-store-passed",
+    "aptamil-stage2-rockcheck-store-passed", "aptamil-wrong-stage", "aptamil-plain-topic",
+  ].includes(value);
+}
+
 export function createMockNote(
   caseName: MockCase,
   baseUrl = "http://localhost:3100/mock/xhs",

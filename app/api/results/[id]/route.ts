@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { normalizeProductStageTopicValue } from "@/lib/product-stage";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import { withXhsOriginalPublishedAt } from "@/lib/xhs-original-published-at";
+import { withAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
 
 export async function GET(
   _request: Request,
@@ -15,13 +16,8 @@ export async function GET(
   const result = await prisma.auditResult.findUnique({
     where: { id },
     include: {
-      note: {
-        include: {
-          topics: true,
-          extractions: { orderBy: { extractedAt: "desc" }, take: 5 },
-          noteProducts: { include: { product: true } },
-        },
-      },
+      note: { select: { id: true } },
+      extractionRecord: true,
         task: {
           include: { product: true, campaign: true, importRecord: true },
         },
@@ -75,13 +71,13 @@ export async function GET(
     include: { user: { select: { displayName: true } } },
     orderBy: { createdAt: "desc" },
   });
-  return ok(withXhsOriginalPublishedAt({
+  return ok(withXhsOriginalPublishedAt(withAuditExtractionSnapshot({
     ...result,
     isCurrent: result.supersededAt === null,
     latestResultId,
     currentStageGroup,
     operationLogs,
-  }));
+  })));
 }
 
 export const DELETE = withApiErrorBoundary(async function DELETE(

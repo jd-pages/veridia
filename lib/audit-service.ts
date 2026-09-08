@@ -33,10 +33,14 @@ import {
 import {
   resolveDuplicateReauditAutomaticOutcome,
 } from "@/lib/import-task-metadata";
+import { assertExtractorPayload } from "@/lib/extractor";
+import { buildAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
 import {
-  lockValidExecutionLease,
-  type AutomaticExecutionLease,
-} from "@/lib/automation/execution-lease";
+  assertAuditSubmission,
+  lockExternalAuditSubmission,
+  type AuditSubmissionOptions,
+} from "@/lib/audit-submission";
+import { lockValidExecutionLease } from "@/lib/automation/execution-lease";
 
 export async function getAuditContext(
   productId: string,
@@ -247,10 +251,13 @@ export async function getAuditContext(
 export async function runAuditTask(
   taskId: string,
   payload: ExtractedNote,
-  options: { executionLease?: AutomaticExecutionLease } = {},
+  options: AuditSubmissionOptions,
 ) {
+  assertExtractorPayload(payload);
+  payload = { ...payload, noteId: payload.noteId || payload.platformNoteId || payload.contentId || null };
   const task = await prisma.auditTask.findUnique({ where: { id: taskId } });
   if (!task) throw new Error("审核任务不存在");
+  assertAuditSubmission(task, payload, options);
   const contentChannel = resolveTaskAutomationPlatform(task);
   if (!contentChannel) throw new Error("审核任务未关联有效内容平台");
 
@@ -288,8 +295,14 @@ export async function runAuditTask(
     evaluation.autoStatus,
   );
   const persistedAutoStatus = duplicateReauditOutcome.persistedAutoStatus;
-  const sanitizedPayload = { ...payload, topics: auditedTopics };
-  delete sanitizedPayload.imageUrls;
+  const sanitizedPayload = buildAuditExtractionSnapshot(payload, {
+    contentChannel,
+    auditedTopics,
+    publishedAt: platformPublishedAt,
+    evaluation,
+    taskStatus: duplicateReauditOutcome.isDuplicateReaudit || evaluation.autoStatus === "NEEDS_REVIEW"
+      ? "NEEDS_REVIEW" : evaluation.autoStatus === "READ_FAILED" ? "READ_FAILED" : "COMPLETED",
+  });
   const ai = await evaluateSemanticRelevance({
     body: payload.body ?? "",
     topics: auditedTopics.map((topic) =>
@@ -301,8 +314,10 @@ export async function runAuditTask(
   });
 
   const result = await prisma.$transaction(async (tx) => {
-    if (options.executionLease) {
+    if (options.source === "RUNNER") {
       await lockValidExecutionLease(tx, options.executionLease);
+    } else {
+      await lockExternalAuditSubmission(tx, task);
     }
     if (storeTopicRequirement) {
       await tx.auditTask.update({
@@ -425,7 +440,7 @@ export async function runAuditTask(
       });
     }
 
-    await tx.extractionRecord.create({
+    const extractionRecord = await tx.extractionRecord.create({
       data: {
         auditTaskId: task.id,
         noteId: note.id,
@@ -439,6 +454,7 @@ export async function runAuditTask(
 
     const auditResultData = {
       ...evaluation.interactionReward,
+      extractionRecordId: extractionRecord.id,
       auditTaskId: task.id,
       noteId: note.id,
       ruleVersion: context.ruleVersion,

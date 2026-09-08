@@ -46,6 +46,9 @@ export interface ExtractedTopic {
 }
 
 export interface ExtractedNote {
+  contentChannel?: "XIAOHONGSHU" | "DOUYIN";
+  platformNoteId?: string | null;
+  contentId?: string | null;
   url: string;
   finalUrl?: string | null;
   pageTitle?: string | null;

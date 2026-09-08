@@ -492,6 +492,7 @@ model ExtractionRecord {
   createdAt      DateTime   @default(now())
   task           AuditTask? @relation(fields: [auditTaskId], references: [id])
   note           NoteRecord @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  auditResults   AuditResult[]
 
   @@index([auditTaskId, extractedAt])
   @@index([noteId, extractedAt])
@@ -507,6 +508,7 @@ model AuditResult {
   supersededAt               DateTime?
   supersededByResultId       String?
   noteId                     String
+  extractionRecordId         String?
   ruleVersion                Int
   softwareVersion            String         @default("unknown")
   rulePackageVersion         String?
@@ -552,6 +554,7 @@ model AuditResult {
   createdAt                  DateTime       @default(now())
   task                       AuditTask      @relation(fields: [auditTaskId], references: [id])
   note                       NoteRecord     @relation(fields: [noteId], references: [id])
+  extractionRecord           ExtractionRecord? @relation(fields: [extractionRecordId], references: [id], onDelete: Restrict)
   ruleResults                RuleResult[]
   manualReviews              ManualReview[]
 
@@ -559,6 +562,7 @@ model AuditResult {
   @@index([imageStatus, auditedAt])
   @@index([auditTaskId, auditedAt])
   @@index([noteId])
+  @@index([extractionRecordId])
   @@index([originTaskId])
   @@index([supersededByResultId])
   @@index([supersededAt, resultSlotCreatedAt, resultSlotOrder])

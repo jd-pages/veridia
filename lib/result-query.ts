@@ -42,6 +42,7 @@ const noteNotFoundWhere: Prisma.AuditResultWhereInput = {
     { autoStatus: "NOTE_NOT_FOUND" },
     { pageStatus: { in: ["NOTE_NOT_FOUND", "NOT_FOUND", "DELETED"] } },
     {
+      extractionRecordId: null,
       task: { is: {
         failureCode: {
           in: ["NOTE_NOT_FOUND", "PAGE_NOT_FOUND", "NOTE_DELETED"],
@@ -139,6 +140,9 @@ export function buildLocalDateRange(
 
 export function buildAuditResultWhere(
   filters: ResultQueryFilters,
+  // Legacy callers can still construct the original task-based filter. Result
+  // APIs supply resolved evidence IDs so bound rows use the recorded task state.
+  evidenceFilters?: { keywordIds: string[]; processingFailureIds: string[] },
 ): Prisma.AuditResultWhereInput {
   const and: Prisma.AuditResultWhereInput[] = [currentAuditResultWhere];
 
@@ -184,9 +188,15 @@ export function buildAuditResultWhere(
   }
 
   if (filters.status === "PROCESS_FAILED") {
-    and.push({
-      task: { status: { in: [...processingFailureTaskStatuses] } },
-    });
+    and.push(evidenceFilters ? {
+      OR: [
+        { id: { in: evidenceFilters.processingFailureIds } },
+        {
+          extractionRecordId: null,
+          task: { status: { in: [...processingFailureTaskStatuses] } },
+        },
+      ],
+    } : { task: { status: { in: [...processingFailureTaskStatuses] } } });
   } else if (filters.status === "NOTE_NOT_FOUND") {
     and.push(noteNotFoundWhere);
   } else if (filters.status) {
@@ -276,11 +286,19 @@ export function buildAuditResultWhere(
   if (filters.keyword) {
     and.push({
       OR: [
-        { note: { title: { contains: filters.keyword } } },
-        { note: { body: { contains: filters.keyword } } },
-        { note: { url: { contains: filters.keyword } } },
-        { note: { platformNoteId: { contains: filters.keyword } } },
-        { task: { finalUrl: { contains: filters.keyword } } },
+        { id: { in: evidenceFilters?.keywordIds ?? [] } },
+        {
+          // Preserve the legacy search contract without treating it as proven
+          // historical evidence. Bound results only search their own snapshot.
+          extractionRecordId: null,
+          OR: [
+            { note: { title: { contains: filters.keyword } } },
+            { note: { body: { contains: filters.keyword } } },
+            { note: { url: { contains: filters.keyword } } },
+            { note: { platformNoteId: { contains: filters.keyword } } },
+            { task: { finalUrl: { contains: filters.keyword } } },
+          ],
+        },
       ],
     });
   }

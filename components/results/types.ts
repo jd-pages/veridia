@@ -92,7 +92,7 @@ export interface ResultRow extends InteractionRewardSnapshot {
       noteIdDerivedCreationTime: string | null;
       differenceSeconds: number | null;
     };
-    lastCapturedAt: string;
+    lastCapturedAt: string | null;
     topics: AuditTopic[];
   };
   task: {
@@ -179,6 +179,9 @@ export interface ResultSummary {
 }
 
 export interface ResultDetail extends ResultRow {
+  extractionRecordId?: string | null;
+  evidenceStatus?: "RESULT_BOUND" | "LEGACY_UNAVAILABLE";
+  evidenceMessage?: string | null;
   note: ResultRow["note"] & {
     authorName: string | null;
     isPublic: boolean | null;

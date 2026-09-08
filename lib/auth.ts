@@ -3,7 +3,10 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 import { effectiveAccountStatus } from "@/lib/accounts/validation";
 import type { LocalAccountRole } from "@/lib/accounts/types";
-import { ensureLocalPreviewRuntime } from "@/lib/local-runtime";
+import {
+  isLocalPreviewMode,
+  LOCAL_PREVIEW_USER_ID,
+} from "@/lib/local-preview-mode";
 import {
   canAccessBusiness,
   canAccessSystemSettings,
@@ -53,13 +56,22 @@ async function lookupToken(token: string) {
     where: { tokenHash: tokenHash(token) },
     include: { user: true },
   });
+  const previewSession = Boolean(
+    session &&
+      isLocalPreviewMode() &&
+      ((session.user.authProvider === "LOCAL_PREVIEW" &&
+        session.user.id === LOCAL_PREVIEW_USER_ID) ||
+        (session.user.authProvider === "LOCAL_SYSTEM" &&
+          session.user.id === "veridia-local-system-user")),
+  );
   if (
     !session ||
     session.revokedAt ||
     session.expiresAt.getTime() <= Date.now() ||
     session.sessionVersion !== session.user.sessionVersion ||
-    !session.user.accountId ||
-    session.user.authProvider !== "LOCAL_ACTIVATION" ||
+    (!previewSession &&
+      (!session.user.accountId ||
+        session.user.authProvider !== "LOCAL_ACTIVATION")) ||
     effectiveAccountStatus(session.user) !== "ACTIVE"
   ) {
     return null;
@@ -101,14 +113,11 @@ export async function createSession(user: SessionUser) {
 
 export async function clearSession() {
   const cookieStore = await cookies();
-  const tokens = [
-    cookieStore.get(COOKIE_NAME)?.value,
-    process.env.VERIDIA_PERSISTENT_SESSION_TOKEN,
-  ].filter(Boolean) as string[];
-  if (tokens.length) {
+  const token = cookieStore.get(COOKIE_NAME)?.value;
+  if (token) {
     await prisma.localAuthSession.updateMany({
       where: {
-        tokenHash: { in: tokens.map(tokenHash) },
+        tokenHash: tokenHash(token),
         revokedAt: null,
       },
       data: { revokedAt: new Date() },
@@ -125,17 +134,9 @@ export async function revokeAllUserSessions(userId: string) {
 }
 
 export async function getSession(): Promise<SessionUser | null> {
-  const previewUser = await ensureLocalPreviewRuntime();
-  if (previewUser) return previewUser;
-
   const cookieStore = await cookies();
   const cookieToken = cookieStore.get(COOKIE_NAME)?.value;
-  if (cookieToken) {
-    const user = await lookupToken(cookieToken);
-    if (user) return user;
-  }
-  const persistentToken = process.env.VERIDIA_PERSISTENT_SESSION_TOKEN;
-  return persistentToken ? lookupToken(persistentToken) : null;
+  return cookieToken ? lookupToken(cookieToken) : null;
 }
 
 export function canManage(user: SessionUser | null) {

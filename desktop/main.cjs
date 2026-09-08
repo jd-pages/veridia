@@ -32,6 +32,10 @@ const {
 } = require("./update-check.cjs");
 const { installWindowOpenPolicy } = require("./window-open-policy.cjs");
 const {
+  restoreDesktopSessionCookie,
+  isTrustedSessionSender,
+} = require("./session-bootstrap.cjs");
+const {
   createPrismaExecutionContext,
   isPrismaCachePermissionError,
   prismaMigrationFailureMessage,
@@ -447,7 +451,8 @@ function serverEnvironment() {
     DATABASE_URL: toDatabaseUrl(databasePath),
     AUTH_SECRET: config.authSecret,
     AUTH_COOKIE_SECURE: "false",
-    VERIDIA_PERSISTENT_SESSION_TOKEN: readPersistentSession(),
+    // Credentials belong to the WebView cookie jar, never the HTTP process.
+    VERIDIA_PERSISTENT_SESSION_TOKEN: "",
     EXTENSION_TOKEN: config.extensionToken,
     VERIDIA_DESKTOP: "true",
     VERIDIA_DATA_LOCATION_CONFIRMED: "true",
@@ -976,12 +981,18 @@ function registerIpc() {
     return Boolean(enabled);
   });
   ipcMain.handle("veridia:get-update-status", () => lastUpdateStatus);
-  ipcMain.handle("veridia:store-persistent-session", (_event, token) =>
-    storePersistentSession(token),
-  );
-  ipcMain.handle("veridia:clear-persistent-session", () =>
-    clearPersistentSession(),
-  );
+  ipcMain.handle("veridia:store-persistent-session", (event, token) => {
+    if (!isTrustedSessionSender(event, mainWindow, `http://${HOST}:${PORT}`)) {
+      throw new Error("当前页面不能保存本地登录凭证。");
+    }
+    return storePersistentSession(token);
+  });
+  ipcMain.handle("veridia:clear-persistent-session", (event) => {
+    if (!isTrustedSessionSender(event, mainWindow, `http://${HOST}:${PORT}`)) {
+      throw new Error("当前页面不能清除本地登录凭证。");
+    }
+    return clearPersistentSession();
+  });
   ipcMain.removeHandler("veridia:save-export-file");
   ipcMain.handle(
     "veridia:save-export-file",
@@ -1091,6 +1102,16 @@ async function startApplication() {
   await waitForServer();
   setupUpdater();
   applicationStarted = true;
+  try {
+    await restoreDesktopSessionCookie({
+      session: mainWindow.webContents.session,
+      origin: `http://${HOST}:${PORT}`,
+      token: readPersistentSession(),
+    });
+  } catch {
+    // Do not include cookie API errors: they can contain the credential value.
+    writeLog("本地登录恢复失败，请在登录页重新登录。");
+  }
   await mainWindow.loadURL(`http://${HOST}:${PORT}`);
   createTray();
   if (readConfig().autoUpdate) {

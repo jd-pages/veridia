@@ -8,6 +8,8 @@ import {
 import { summarizeResultStatusGroups } from "@/lib/result-summary";
 import { withHeavyAuditReadSlot } from "@/lib/audit-read-concurrency";
 import { withXhsOriginalPublishedAt } from "@/lib/xhs-original-published-at";
+import { withAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
+import { resolveAuditEvidenceFilterIds } from "@/lib/audit-evidence-query";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -21,9 +23,13 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   let filters;
   try {
     filters = readResultQueryFilters(searchParams);
-    where = buildAuditResultWhere(filters);
+    const evidenceFilters = await resolveAuditEvidenceFilterIds({
+      keyword: filters.keyword,
+      includeProcessingFailures: filters.status === "PROCESS_FAILED",
+    });
+    where = buildAuditResultWhere(filters, evidenceFilters);
     const summaryFilters = { ...filters, status: undefined };
-    summaryWhere = buildAuditResultWhere(summaryFilters);
+    summaryWhere = buildAuditResultWhere(summaryFilters, evidenceFilters);
   } catch (error) {
     return fail(
       error instanceof Error ? error.message : "筛选条件不正确",
@@ -43,7 +49,8 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     const items = await tx.auditResult.findMany({
         where,
         include: {
-          note: { include: { topics: true } },
+          note: { select: { id: true } },
+          extractionRecord: true,
           task: {
             include: { product: true, campaign: true, importRecord: true },
           },
@@ -74,6 +81,8 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
         where: {
           AND: [
             summaryWhere,
+            // Bound results keep their own page outcome even while the task retries.
+            { extractionRecordId: null },
             { auditTaskId: { in: taskIds.slice(offset, offset + 5_000) } },
             {
               NOT: {
@@ -107,7 +116,16 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       total,
       page,
       pageSize,
-      items: items.map((item) => withXhsOriginalPublishedAt(item, presentationNow)),
+      items: items.map((item) => {
+        const snapshot = withAuditExtractionSnapshot(item);
+        return withXhsOriginalPublishedAt({
+          ...snapshot,
+          // The list needs business evidence, not the full diagnostic payload.
+          extractionRecord: undefined,
+          task: { ...snapshot.task, failureEvidence: null },
+          note: { ...snapshot.note, extractions: [] },
+        }, presentationNow);
+      }),
       summary,
     },
     { headers: { "Cache-Control": "no-store" } },

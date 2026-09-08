@@ -26,6 +26,8 @@ import {
 } from "@/lib/result-query";
 import { auditResultExportFileName } from "@/lib/result-export-file-name";
 import { sortAuditResultsByImportOrder } from "@/lib/result-export-order";
+import { withAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
+import { resolveAuditEvidenceFilterIds } from "@/lib/audit-evidence-query";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser(BUSINESS_ROLES);
@@ -41,8 +43,13 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   await backfillMissingProcessingFailureResults();
   let where;
   try {
+    const evidenceFilters = await resolveAuditEvidenceFilterIds({
+      keyword: filters.keyword,
+      includeProcessingFailures: filters.status === "PROCESS_FAILED",
+    });
     where = buildAuditResultWhere(
       filters,
+      evidenceFilters,
     );
   } catch (error) {
     return fail(
@@ -53,7 +60,8 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const foundRows = await prisma.auditResult.findMany({
     where,
     include: {
-      note: { include: { topics: true } },
+      note: { select: { id: true } },
+      extractionRecord: true,
       task: {
         include: {
           product: true,
@@ -66,7 +74,18 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     },
     orderBy: { createdAt: "asc" },
   });
-  const rows = sortAuditResultsByImportOrder(foundRows);
+  const rows = sortAuditResultsByImportOrder(foundRows.map((result) => {
+    const snapshot = withAuditExtractionSnapshot(result);
+    return {
+      ...snapshot,
+      note: {
+        ...snapshot.note,
+        // Export writers expect Date cells; retain the bound evidence timestamp.
+        // Imported registration dates continue to take precedence in the mapper.
+        publishedAt: snapshot.note.publishedAt ? new Date(snapshot.note.publishedAt) : null,
+      },
+    };
+  }));
   if (!rows.length) {
     console.info(
       "[审核结果导出] 未生成文件",

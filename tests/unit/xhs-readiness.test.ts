@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
@@ -24,8 +24,18 @@ describe("小红书页面 hydration 就绪门禁", () => {
 
   beforeAll(async () => {
     browser = await chromium.launch({ headless: true, channel: "chrome" });
-    page = await browser.newPage();
   }, 90_000);
+
+  beforeEach(async () => {
+    // Navigation fixtures leave a live document, pending media requests and
+    // lifecycle state behind. Each case owns its page so a later setContent
+    // cannot inherit the preceding fixture's load/navigation state.
+    page = await browser!.newPage();
+  });
+
+  afterEach(async () => {
+    await page?.close();
+  });
 
   afterAll(async () => {
     await browser?.close();

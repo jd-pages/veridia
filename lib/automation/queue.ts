@@ -534,6 +534,7 @@ async function processBatch(batchId: string) {
         return;
       }
       await runAuditTask(processingTask.id, extraction.note, {
+        source: "RUNNER",
         executionLease: lease,
       });
     } catch (error) {

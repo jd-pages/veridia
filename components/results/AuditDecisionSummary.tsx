@@ -1,6 +1,6 @@
 "use client";
 
-import { Tag, Tooltip, Typography } from "antd";
+import { Alert, Tag, Tooltip, Typography } from "antd";
 import { productStageTopicLabel } from "@/lib/product-stage";
 import {
   auditConclusionCardLabel,
@@ -78,12 +78,14 @@ function publicStatusText(value?: string) {
 }
 
 export default function AuditDecisionSummary({
-  row,
+  row: listRow,
   detail,
 }: {
   row: ResultRow;
   detail?: ResultDetail | null;
 }) {
+  // Detail is projected from this result's extraction; list note data is only a cache.
+  const row = detail ?? listRow;
   const legacyZeroHistory = legacyZeroHistoryDuplicateMetadataFromNotes(
     row.task.notes,
   );
@@ -149,6 +151,9 @@ export default function AuditDecisionSummary({
 
   return (
     <div className={styles.decisionLayout}>
+      {detail?.evidenceStatus === "LEGACY_UNAVAILABLE" ? (
+        <Alert type="warning" showIcon message="历史采集证据未能确认" description={detail.evidenceMessage} />
+      ) : null}
       <InteractionReward snapshot={row} detail />
       <section
         className={`${styles.decisionHero} ${styles[`decisionHero_${conclusionTone}`]}`}

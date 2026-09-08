@@ -80,6 +80,7 @@ async function main() {
   await resetDefaultDatabase();
   const accountPrivateKey = await prepareEphemeralAccountKey();
   process.env.DATABASE_URL = databaseUrl;
+  process.env.VERIDIA_E2E = "true";
 
   const commandEnvironment = {
     ...process.env,
@@ -204,7 +205,7 @@ async function main() {
           orderNumber: `ORDER-${payload.noteId}`,
         },
       });
-      await runAuditTask(task.id, payload);
+      await runAuditTask(task.id, { ...payload, extractedAt: new Date().toISOString() }, { source: "MANUAL" });
     }
   }
   await prisma.$disconnect();

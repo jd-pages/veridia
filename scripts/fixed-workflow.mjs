@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -468,6 +469,13 @@ async function preview() {
 
   deployPreviewDatabase(mode, locations, environment);
 
+  const previewNonce = mode === "setup" ? "" : randomBytes(32).toString("base64url");
+  environment.VERIDIA_PREVIEW_BOOTSTRAP_NONCE = previewNonce;
+  environment.VERIDIA_PREVIEW_BOOTSTRAP_EXPIRES_AT = String(Date.now() + 10 * 60_000);
+  const launchUrl = previewNonce
+    ? `http://localhost:${port}/preview#nonce=${previewNonce}`
+    : url;
+
   const workDirectory = path.join(root, ".preview-work");
   fs.mkdirSync(workDirectory, { recursive: true });
   const output = fs.openSync(path.join(workDirectory, "server.log"), "a");
@@ -513,7 +521,7 @@ async function preview() {
       )}`,
     );
   }
-  spawn("cmd.exe", ["/d", "/c", "start", "", url], {
+  spawn("cmd.exe", ["/d", "/c", "start", "", launchUrl], {
     cwd: root,
     detached: true,
     windowsHide: true,

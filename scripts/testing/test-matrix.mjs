@@ -167,13 +167,16 @@ const entry = (categories, isolationGroup, parallelSafe = false) => ({
 
 export const E2E_MANIFEST = Object.freeze({
   "tests/e2e/account-auth.spec.ts": entry(["AUTH", "ADMIN"], "AUTH_ADMIN"),
+  "tests/e2e/auth-request-bound-session.spec.ts": entry(["AUTH", "ADMIN"], "AUTH_ADMIN"),
   "tests/e2e/admin-layout.spec.ts": entry(["AUTH", "ADMIN", "UI_LAYOUT"], "AUTH_ADMIN"),
   "tests/e2e/audit-flow.spec.ts": entry(["XHS", "AUTOMATION", "RESULTS", "MIXED_PLATFORM"], "AUTOMATION"),
+  "tests/e2e/audit-ingest-boundary.spec.ts": entry(["AUTH", "AUTOMATION", "RESULTS"], "AUTOMATION"),
   "tests/e2e/audit-page-reuse.spec.ts": entry(["XHS", "AUTOMATION"], "AUTOMATION"),
   "tests/e2e/batch-clear.spec.ts": entry(["AUTOMATION", "RESULTS"], "AUTOMATION"),
   "tests/e2e/current-task-content.spec.ts": entry(["XHS", "AUTOMATION", "RESULTS"], "AUTOMATION"),
   "tests/e2e/dashboard-risk-summary.spec.ts": entry(["RESULTS", "UI_LAYOUT"], "RESULTS_UI", true),
   "tests/e2e/douyin-automation.spec.ts": entry(["DOUYIN", "AUTOMATION", "MIXED_PLATFORM", "RESULTS"], "AUTOMATION"),
+  "tests/e2e/historical-extraction-immutable.spec.ts": entry(["RESULTS", "RECHECK", "DATABASE", "UI_LAYOUT"], "RESULTS_UI"),
   "tests/e2e/import-record-deletion.spec.ts": entry(["IMPORT", "RESULTS", "AUTOMATION", "MIXED_PLATFORM", "DATABASE", "ADMIN", "UI_LAYOUT"], "AUTOMATION"),
   "tests/e2e/kabrita-excel-template.spec.ts": entry(["IMPORT", "CAMPAIGN"], "DATA_RULES"),
   "tests/e2e/local-fonts.spec.ts": entry(["UI_LAYOUT", "UPDATE"], "RESULTS_UI", true),

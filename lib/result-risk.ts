@@ -81,16 +81,24 @@ export function noteUnavailableWhere(): Prisma.AuditResultWhereInput {
   return {
     OR: [
       { pageStatus: { in: resultUnavailableStates } },
-      { task: { failureCode: { in: resultUnavailableStates } } },
-      { task: { status: { in: resultUnavailableStates } } },
-      ...resultUnavailablePhrases.flatMap((phrase) => [
-        { failureReasons: { contains: phrase } },
-        { task: { failureMessage: { contains: phrase } } },
-        { task: { failureEvidence: { contains: phrase } } },
-        { task: { pageTitle: { contains: phrase } } },
-        { note: { title: { contains: phrase } } },
-        { note: { body: { contains: phrase } } },
-      ]),
+      { autoStatus: "NOTE_NOT_FOUND" },
+      ...resultUnavailablePhrases.map((phrase) => ({ failureReasons: { contains: phrase } })),
+      {
+        // Unbound historical rows retain their established compatibility rules.
+        // For bound results, current task/note diagnostics are never audit evidence.
+        extractionRecordId: null,
+        OR: [
+          { task: { failureCode: { in: resultUnavailableStates } } },
+          { task: { status: { in: resultUnavailableStates } } },
+          ...resultUnavailablePhrases.flatMap((phrase) => [
+            { task: { failureMessage: { contains: phrase } } },
+            { task: { failureEvidence: { contains: phrase } } },
+            { task: { pageTitle: { contains: phrase } } },
+            { note: { title: { contains: phrase } } },
+            { note: { body: { contains: phrase } } },
+          ]),
+        ],
+      },
     ],
   };
 }
@@ -102,7 +110,7 @@ function topicMissingWhere(): Prisma.AuditResultWhereInput {
       {
         OR: [
           { missingTopics: { notIn: ["", "[]"] } },
-          { task: { failureCode: { in: resultTopicMissingCodes } } },
+          { extractionRecordId: null, task: { failureCode: { in: resultTopicMissingCodes } } },
           ...resultTopicMissingPhrases.map((phrase) => ({
             failureReasons: { contains: phrase },
           })),
@@ -121,7 +129,7 @@ function imageInsufficientWhere(): Prisma.AuditResultWhereInput {
           { imageStatus: { in: ["NON_COMPLIANT", "IMAGES_READ_FAILED"] } },
           { imageExtractionStatus: "IMAGES_READ_FAILED" },
           { imageCompliant: false },
-          { task: { failureCode: { in: resultImageRiskCodes } } },
+          { extractionRecordId: null, task: { failureCode: { in: resultImageRiskCodes } } },
           ...resultImageRiskPhrases.map((phrase) => ({
             failureReasons: { contains: phrase },
           })),
