@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { PlaywrightXiaohongshuAdapter } from "@/lib/automation/adapters";
 import { PlaywrightDouyinAdapter } from "@/lib/automation/douyin-adapter";
+import { readDouyinCurrentContentEvidence } from "@/lib/automation/douyin-current-content-evidence";
 
 const xhsNoteId = "6a5cb375000000000301c549";
 const douyinContentId = "7658919904867844532";
@@ -39,12 +40,43 @@ async function extractDouyinFixture(
   });
   if (recommendedTime) params.set("recommendedTime", recommendedTime);
   await page.goto(`/mock/douyin?${params.toString()}`);
+  // The local mock URL has no work identity. Model the current work explicitly
+  // in its visible detail DOM, independently of the adapter's requested ID.
+  await page.locator('[data-e2e="note-detail"]').evaluate((detail, id) => {
+    detail.setAttribute("data-aweme-id", id);
+  }, douyinContentId);
+  expect(await readDouyinCurrentContentEvidence(page, douyinContentId)).toMatchObject({
+    scopeContentId: douyinContentId,
+    contentIdInScope: true,
+    contentIdMatches: true,
+    hasContentEvidence: true,
+  });
   return new PlaywrightDouyinAdapter().extract(
     page,
     `https://www.douyin.com/video/${douyinContentId}`,
     { contentId: douyinContentId },
   );
 }
+
+test("抖音发布时间不接受仅请求 ID 或显式错误的详情 ID", async ({ page }) => {
+  await page.goto("/mock/douyin?case=video&raw=true&publishedText=2026-07-29%2021:49:48&recommendedTime=2024-01-01%2000:00:00");
+  for (const detailId of [null, "111"]) {
+    if (detailId) {
+      await page.locator('[data-e2e="note-detail"]').evaluate((detail, id) => {
+        detail.setAttribute("data-aweme-id", id);
+      }, detailId);
+    }
+    expect(await readDouyinCurrentContentEvidence(page, douyinContentId)).toMatchObject({
+      scopeKind: "NONE", contentIdMatches: false, hasContentEvidence: false,
+    });
+    const note = await new PlaywrightDouyinAdapter().extract(
+      page, `https://www.douyin.com/video/${douyinContentId}`, { contentId: douyinContentId },
+    );
+    expect(note).toMatchObject({
+      pageStatus: "READ_FAILED", publishedAtRaw: null, publishedAtSource: null,
+    });
+  }
+});
 
 test("小红书保留 MM-DD 原文、忽略 IP 属地且不补年份", async ({ page }) => {
   const note = await extractXhsFixture(page, "07-27 浙江");
