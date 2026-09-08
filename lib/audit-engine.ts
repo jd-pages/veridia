@@ -99,10 +99,22 @@ export function topicsForPlatformAudit(
 }
 
 function bodyTopicTexts(note: ExtractedNote, auditedTopics: ExtractedTopic[]) {
+  // Counting exclusions do not grant platform-topic or clickability evidence.
   return [
     ...(note.textHashtagCandidates || []),
+    ...(note.bodyTextHashtagCandidates || []),
+    ...(note.verifiedPlatformTopics || []),
+    ...(note.verifiedDouyinTopics || []),
+    ...note.topics,
     ...auditedTopics,
-  ].map((topic) => topic.displayText);
+  ].flatMap((topic) => [topic.displayText, topic.rawText || ""]);
+}
+
+function effectiveClickableRequired(
+  context: AuditContext,
+  rule: AuditContext["rules"][number],
+) {
+  return context.clickableTopicRequired || rule.clickableRequired;
 }
 
 export function extractEffectiveBodyText(
@@ -116,18 +128,24 @@ export function extractEffectiveBodyText(
   const topics = [
     ...new Set(
       detectedTopics
-        .map(normalizeTopic)
+        .flatMap((topic) => [
+          normalizeTopic(topic),
+          topic.trim() ? `#${topic.trim().replace(/^[#＃]+\s*/u, "")}` : "",
+        ])
         .filter(Boolean)
         .sort((left, right) => right.length - left.length),
     ),
   ];
   for (const topic of topics) {
     const topicText = escapeRegularExpression(topic.slice(1));
-    body = body.replace(new RegExp(`[#＃]\\s*${topicText}`, "giu"), " ");
+    // Preserve the exact boundaries supplied by extraction for topics directly
+    // adjacent to Chinese prose; do not consume only a prefix of an ASCII tag.
+    const suffix = /[a-z\d_]$/iu.test(topic) ? "(?![a-z\\d_])" : "";
+    body = body.replace(new RegExp(`[#＃]\\s*${topicText}${suffix}`, "giu"), " ");
   }
-  if (!topics.length) {
-    body = body.replace(/(^|\s)[#＃][^\s#＃]+(?=\s|$)/gu, "$1");
-  }
+  // Plain hashtags still contribute zero body characters, even when some
+  // other topics have verified platform evidence. This never changes topics.
+  body = body.replace(/[#＃]+\s*[\p{L}\p{M}\p{N}\p{S}_+\-·]+/gu, " ");
   return body.replace(/\s+/gu, " ").trim();
 }
 
@@ -544,8 +562,7 @@ export function evaluateAudit(
       clickability,
       topicClickabilityContext,
     );
-    const clickableRequired =
-      rule.clickableRequired || context.clickableTopicRequired;
+    const clickableRequired = effectiveClickableRequired(context, rule);
 
     if (rule.ruleType === "FORBIDDEN") {
       const passed = !match;
@@ -658,8 +675,7 @@ export function evaluateAudit(
         rule,
         topics,
         clickability,
-        clickableRequired:
-          rule.clickableRequired || context.clickableTopicRequired,
+        clickableRequired: effectiveClickableRequired(context, rule),
         preferred: preferredTopicCandidate(
           topics,
           clickability,
@@ -754,23 +770,7 @@ export function evaluateAudit(
   }
 
   if (anyRules.length) {
-    for (const rule of anyRules) {
-      const topics = findExactTopics(
-        auditedTopics,
-        rule.topic,
-        rule.caseSensitive,
-        context.contentChannel,
-      );
-      const clickability = classifyTopicCandidates(
-        topics,
-        topicClickabilityContext,
-      );
-      if (topics.length && rule.clickableRequired) {
-        clickableChecks.push(clickability !== "NOT_CLICKABLE");
-        clickabilityNeedsReview ||= clickability === "UNKNOWN";
-      }
-    }
-    const matches = anyRules
+    const candidates = anyRules
       .map((rule) => {
         const topics = findExactTopics(
           auditedTopics,
@@ -790,27 +790,54 @@ export function evaluateAudit(
             topicClickabilityContext,
           ),
           clickability,
+          clickableRequired: effectiveClickableRequired(context, rule),
         };
-      })
-      .filter(
-        (entry) =>
-          Boolean(entry.topic) &&
-          (!entry.rule.clickableRequired ||
-            entry.clickability !== "NOT_CLICKABLE"),
-      );
+      });
+    const presentCandidates = candidates.filter((entry) => Boolean(entry.topic));
+    const matches = presentCandidates.filter(
+      (entry) => !entry.clickableRequired || entry.clickability === "CLICKABLE",
+    );
+    const pendingCandidates = presentCandidates.filter(
+      (entry) => entry.clickableRequired && entry.clickability === "UNKNOWN",
+    );
     const minCount = Math.max(...anyRules.map((rule) => rule.minCount), 1);
-    const passed = matches.length >= minCount;
+    const confirmed = matches.length >= minCount;
+    const needsReview = !confirmed && matches.length + pendingCandidates.length >= minCount;
+    // RuleEvaluation.passed retains the existing non-failure representation for
+    // unresolved evidence; only confirmed candidates count toward matchedCount.
+    const passed = confirmed || needsReview;
+    if (presentCandidates.some((entry) => entry.clickableRequired)) {
+      const explicitlyNotClickable = presentCandidates.some(
+        (entry) => entry.clickableRequired && entry.clickability === "NOT_CLICKABLE",
+      );
+      clickableChecks.push(passed || !explicitlyNotClickable);
+      clickabilityNeedsReview ||= needsReview;
+    }
     const expectedTopics = anyRules.map((rule) => normalizeRuleTopic(rule.topic));
     evaluations.push({
       ruleKey: "TOPIC_ANY_GROUP",
       ruleName: "任意包含话题",
-      expectedValue: `${expectedTopics.join("、")} 中至少 ${minCount} 个`,
+      expectedValue: `${expectedTopics.join("、")} 中至少 ${minCount} 个${
+        candidates.some((entry) => entry.clickableRequired) ? "，按各话题要求确认可点击" : ""
+      }`,
       actualValue: `命中 ${matches.length} 个：${matches
         .map((entry) => normalizeRuleTopic(entry.rule.topic))
-        .join("、") || "无"}`,
+        .join("、") || "无"}${needsReview ? `；${pendingCandidates.length} 个可点击状态需人工确认` : ""}`,
       passed,
       failureReason: passed ? undefined : `任意话题命中不足 ${minCount} 个`,
-      evidence: { expectedTopics, matchedCount: matches.length },
+      evidence: {
+        expectedTopics,
+        matchedCount: matches.length,
+        pendingCount: pendingCandidates.length,
+        minCount,
+        clickabilityNeedsReview: needsReview,
+        candidates: candidates.map((entry) => ({
+          topic: normalizeRuleTopic(entry.rule.topic),
+          present: Boolean(entry.topic),
+          effectiveClickableRequired: entry.clickableRequired,
+          clickability: entry.clickability,
+        })),
+      },
     });
     if (!passed) failures.push(`任意话题命中不足 ${minCount} 个`);
   }

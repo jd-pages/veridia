@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>旧 SPA 页面标题</title><meta name="description" content="旧 SPA 全局摘要不能作为当前正文"></head>
+<body>
+  <section data-testid="douyin-note-detail" data-content-id="111" hidden>
+    <h1>旧作品标题</h1><p data-testid="douyin-description">旧作品正文不得采用</p>
+    <div class="dySwiper">1/10<img data-testid="douyin-image" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></div>
+  </section>
+  <section class="detail-preload-clone" data-e2e="note-detail" data-content-id="222">
+    <h1>同 ID 预加载副本</h1><p data-testid="douyin-description">克隆副本正文不得采用</p>
+    <div class="dySwiper">1/10<img data-testid="douyin-image" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></div>
+  </section>
+  <main data-e2e="note-detail" data-testid="douyin-note-detail" data-content-id="222">
+    <h1>当前作品标题</h1>
+    <p data-testid="douyin-description">当前作品的真实正文必须与当前图片发布时间和互动保持一致。<a data-douyin-topic href="/hashtag/12">#当前话题</a></p>
+    <div data-testid="douyin-author">当前作者</div>
+    <div data-testid="douyin-image-carousel" class="dySwiper">
+      <div class="dySwiperSlide" data-swiper-slide-index="0"><img width="80" height="60" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"><img width="80" height="60" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></div>
+      <div class="dySwiperSlide" data-swiper-slide-index="1"><img width="80" height="60" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"><img width="80" height="60" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></div>
+      <div class="dySwiperSlide" data-swiper-slide-index="2"><img width="80" height="60" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"><img width="80" height="60" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></div>
+      <aside data-preload="true"><span>1/10</span><img data-testid="douyin-image" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></aside>
+      <span data-testid="douyin-carousel-pager">3/3</span>
+    </div>
+    <section data-testid="douyin-note-detail" data-content-id="111" hidden><h1>嵌套旧标题</h1><p data-e2e="video-desc">嵌套旧正文</p><time datetime="2020-01-01T00:00:00Z">旧时间</time></section>
+    <time data-testid="douyin-publish-time" datetime="2026-08-07T08:20:51.000Z">发布时间：2026-08-07 16:20:51</time>
+    <div data-e2e="video-player-digg">8</div><div data-e2e="video-player-collect">10</div><div data-e2e="feed-comment-icon">4</div>
+  </main>
+  <script type="application/json">{"aweme_list":[{"aweme_id":"111","desc":"旧结构化正文","statistics":{"digg_count":9999}},{"aweme_id":"222","desc":"当前作品的真实正文必须与当前图片发布时间和互动保持一致。#当前话题","images":[{"image_id":"current-1"},{"image_id":"current-2"},{"image_id":"current-3"}],"create_time":1786090851,"author":{"nickname":"当前作者"},"text_extra":[{"type":1,"hashtag_id":"12","hashtag_name":"当前话题"}],"statistics":{"digg_count":8,"comment_count":4,"collect_count":10},"status":{"private_status":0}}]}</script>
+</body></html>

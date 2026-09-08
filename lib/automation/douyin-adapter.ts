@@ -44,20 +44,57 @@ function asArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
-function hasDouyinContentPayload(record: JsonRecord) {
-  return [
+function structuredItemIds(record: JsonRecord) {
+  return [record.aweme_id, record.awemeId, record.item_id,
+    record.itemId, record.group_id, record.groupId]
+    .filter((value) => value !== undefined && value !== null && value !== "")
+    .map(String);
+}
+
+export function hasDouyinContentPayload(record: JsonRecord) {
+  const ownerIds = structuredItemIds(record);
+  const ownerId = ownerIds[0];
+  const imageContainers = [record.image_post_info, record.imagePostInfo,
+    record.aweme_detail, record.awemeDetail].map(asRecord).filter((value) => value !== null);
+  for (const container of [...imageContainers]) {
+    for (const nested of [container.image_post_info, container.imagePostInfo]) {
+      const nestedRecord = asRecord(nested);
+      if (nestedRecord) imageContainers.push(nestedRecord);
+    }
+  }
+  if (ownerId && (ownerIds.some((id) => id !== ownerId) || imageContainers.some((container) =>
+    structuredItemIds(container).some((id) => id !== ownerId)
+  ))) return false;
+  const hasPayloadField = [
     "desc",
     "caption",
     "description",
     "images",
+    "image_infos",
+    "image_list",
+    "imageInfos",
+    "images_v2",
+    "imagesV2",
     "image_post_info",
     "imagePostInfo",
     "video",
     "create_time",
     "createTime",
+    "publish_time",
+    "publishTime",
     "text_extra",
     "textExtra",
+    "cha_list",
+    "chaList",
+    "hashtags",
+    "hashtag_list",
+    "hashtagList",
+    "challenges",
   ].some((key) => Object.prototype.hasOwnProperty.call(record, key));
+  // Match the extractor's supported aliases without treating an identity-only
+  // aweme_detail wrapper or unrelated share metadata as content.
+  return hasPayloadField || hasStructuredCaptionField(record) ||
+    extractDouyinStructuredImageEvidence(record).count > 0;
 }
 
 function extractDouyinBodyTextHashtagCandidates(body: string) {
@@ -96,16 +133,8 @@ export function findDouyinAwemeItem(payload: unknown, contentId: string) {
     }
     const record = asRecord(current);
     if (!record) continue;
-    const matchesContentId =
-      String(
-        record.aweme_id ||
-          record.awemeId ||
-          record.item_id ||
-          record.itemId ||
-          record.group_id ||
-          record.groupId ||
-          "",
-      ) === contentId;
+    const itemIds = structuredItemIds(record);
+    const matchesContentId = itemIds.length > 0 && itemIds.every((id) => id === contentId);
     if (matchesContentId) {
       if (hasDouyinContentPayload(record)) return record;
       identityOnlyMatch ||= record;
@@ -426,16 +455,65 @@ export async function collectDouyinEvidence(
   currentContentEvidence?: DouyinCurrentContentEvidence | null,
   expectedContentId?: string | null,
 ) {
-  const scopeReference = currentContentEvidence ||
-    await readDouyinCurrentContentEvidence(page, null);
+  // Re-resolve every observation: a readiness reference can outlive a SPA DOM.
+  const scopeReference = await readDouyinCurrentContentEvidence(
+    page, expectedContentId || currentContentEvidence?.scopeContentId || null,
+  );
   return page.evaluate((scopeInput) => {
-    const resolvedScope = scopeInput.scopeSelector && scopeInput.scopeIndex >= 0
+    const candidateScope = scopeInput.scopeSelector && scopeInput.scopeIndex >= 0
       ? document.querySelectorAll(scopeInput.scopeSelector).item(scopeInput.scopeIndex)
       : null;
+    const excludedContentSelector = [
+      "[class*='comment']", "[data-e2e*='comment']", "[data-testid*='comment']",
+      "[class*='recommend']", "[data-e2e*='recommend']", "[data-testid*='recommend']",
+      "[class*='related']", "[data-e2e*='related']", "[data-testid*='related']",
+      "[class*='search-suggest']", "[data-clone='true']", "[data-preload='true']",
+      "[class*='clone']", "[class*='preload']", "[data-testid*='preload']",
+      "[class*='swiper-slide-duplicate']",
+    ].join(", ");
+    const identityAttributes = [
+      "data-content-id", "data-aweme-id", "data-item-id", "data-note-id",
+      "data-video-id", "data-awemeid", "data-contentid", "data-itemid",
+    ];
+    const locationId = location.pathname.match(/^\/(?:share\/)?(?:note|video|slides)\/([^/?#]+)/iu)?.[1] ||
+      new URL(location.href).searchParams.get("modal_id");
+    const targetId = scopeInput.expectedContentId || locationId;
+    const visible = (node: Element) => {
+      for (let current: Element | null = node; current; current = current.parentElement) {
+        const style = getComputedStyle(current);
+        if (current.hasAttribute("hidden") || current.hasAttribute("inert") ||
+            current.getAttribute("aria-hidden") === "true" || style.display === "none" ||
+            style.visibility === "hidden" || style.visibility === "collapse" ||
+            style.opacity === "0" || style.contentVisibility === "hidden") return false;
+      }
+      return true;
+    };
+    const candidateRect = candidateScope?.getBoundingClientRect();
+    const owner = candidateScope?.parentElement?.closest(identityAttributes.map((attribute) => `[${attribute}]`).join(", "));
+    const resolvedScope = candidateScope && scopeInput.hasContentEvidence && scopeInput.contentIdMatches && scopeInput.scopeToken &&
+      candidateScope.getAttribute("data-veridia-douyin-scope") === scopeInput.scopeToken &&
+      visible(candidateScope) && !candidateScope.closest(excludedContentSelector) &&
+      candidateRect && candidateRect.width > 0 && candidateRect.height > 0 &&
+      candidateRect.bottom > 0 && candidateRect.right > 0 && candidateRect.top < innerHeight && candidateRect.left < innerWidth &&
+      (!targetId || !locationId || targetId === locationId) &&
+      identityAttributes.every((attribute) => !candidateScope.getAttribute(attribute) ||
+        candidateScope.getAttribute(attribute) === targetId) &&
+      (!owner || identityAttributes.every((attribute) => !owner.getAttribute(attribute) || owner.getAttribute(attribute) === targetId))
+        ? candidateScope : null;
     const scope = resolvedScope || document.createElement("div");
+    const belongsToScope = (node: Element) => {
+      const detail = node.closest("[data-e2e='note-detail'], [data-testid='douyin-note-detail']");
+      if (detail && detail !== scope) return false;
+      if (node.closest(excludedContentSelector)) return false;
+      for (let current: Element | null = node; current && scope.contains(current); current = current.parentElement) {
+        if (identityAttributes.some((attribute) => current!.getAttribute(attribute) &&
+            current!.getAttribute(attribute) !== targetId)) return false;
+      }
+      return true;
+    };
     const currentPlayingItems = Array.from(scope.querySelectorAll(
       "[class~='video-playing-item']",
-    ));
+    )).filter((node) => belongsToScope(node) && visible(node));
     const textScope = currentPlayingItems.length === 1
       ? currentPlayingItems[0]
       : scope;
@@ -453,8 +531,8 @@ export async function collectDouyinEvidence(
     let description = "";
     let descriptionSource: string | null = null;
     for (const selector of selectors) {
-      const localNode = textScope.querySelector(selector);
-      const fallbackNode = textScope === scope ? null : scope.querySelector(selector);
+      const localNode = Array.from(textScope.querySelectorAll(selector)).find((node) => belongsToScope(node) && visible(node));
+      const fallbackNode = textScope === scope ? null : Array.from(scope.querySelectorAll(selector)).find((node) => belongsToScope(node) && visible(node));
       const node = localNode || fallbackNode;
       const value = node?.textContent?.trim() || "";
       if (!value) continue;
@@ -488,13 +566,13 @@ export async function collectDouyinEvidence(
         "[role='button'][class*='hash']",
         "[role='button'][class*='topic']",
       ].join(", "),
-    )).filter((node) => !node.closest(excludedTopicSelector));
+    )).filter((node) => !node.closest(excludedTopicSelector) && belongsToScope(node) && visible(node));
     if (!description && topicNodes.length) {
       const topicTexts = topicNodes
         .map((node) => node.textContent?.trim() || "")
         .filter(Boolean);
       let current = topicNodes[0].parentElement;
-      for (let depth = 0; current && depth < 10; depth += 1) {
+      for (let depth = 0; current && scope.contains(current) && depth < 10; depth += 1) {
         const text = current.innerText?.trim() || current.textContent?.trim() || "";
         const containsEveryTopic = topicTexts.every((topic) => text.includes(topic));
         const nonTopicText = topicTexts.reduce(
@@ -513,7 +591,11 @@ export async function collectDouyinEvidence(
         current = current.parentElement;
       }
     }
-    if (!description) {
+    const canonicalMetaUrl = document.querySelector("meta[property='og:url']")?.getAttribute("content") ||
+      document.querySelector("link[rel='canonical']")?.getAttribute("href") || "";
+    const metaContentId = canonicalMetaUrl.match(/\/(?:note|video|slides)\/([^/?#]+)/iu)?.[1];
+    const hasBoundPageMetadata = Boolean(resolvedScope && targetId && metaContentId === targetId);
+    if (!description && hasBoundPageMetadata) {
       const metaDescription = (
         document.querySelector("meta[property='og:description']") ||
         document.querySelector("meta[name='description']")
@@ -578,7 +660,7 @@ export async function collectDouyinEvidence(
       "[data-testid='douyin-carousel']",
       "[data-testid='douyin-image-carousel']",
       "[data-testid='douyin-image']",
-    ].join(", ")));
+    ].join(", "))).filter(belongsToScope);
     if (!carouselRoots.length && resolvedScope) carouselRoots.push(scope);
     const excludedSelector = [
       "[class*='avatar']",
@@ -612,7 +694,7 @@ export async function collectDouyinEvidence(
     const logicalSlideElements = Array.from(scope.querySelectorAll(
       slideSelector,
     )).filter((element) =>
-      !element.closest(excludedSelector) &&
+      !element.closest(excludedSelector) && belongsToScope(element) &&
       Boolean(element.querySelector("img, picture source, source"))
     );
     const logicalSlideKeys = new Set<string>();
@@ -638,7 +720,7 @@ export async function collectDouyinEvidence(
         if (inspectedMediaNodes.has(node)) continue;
         inspectedMediaNodes.add(node);
         const element = node as HTMLElement;
-        if (element.closest(excludedSelector)) continue;
+        if (element.closest(excludedSelector) || !belongsToScope(element)) continue;
         const media = element as HTMLImageElement;
         const rawSource =
           media.getAttribute("data-key") ||
@@ -685,11 +767,12 @@ export async function collectDouyinEvidence(
     let carouselTotal = 0;
     const pagerCandidates = Array.from(scope.querySelectorAll("*")).filter(
       (element) =>
-        !element.closest(excludedSelector) &&
+        !element.closest(excludedSelector) && belongsToScope(element) && visible(element) &&
+        !element.querySelector(excludedContentSelector) &&
         /^\s*\d+\s*[\/／]\s*\d+\s*$/u.test(element.textContent || ""),
     );
     for (const root of [...carouselRoots, ...pagerCandidates]) {
-      const text = root.textContent || "";
+      const text = pagerCandidates.includes(root) ? root.textContent || "" : "";
       for (const match of text.matchAll(/\b\d+\s*[\/／]\s*(\d+)\b/gu)) {
         carouselTotal = Math.max(carouselTotal, Number(match[1]) || 0);
       }
@@ -711,18 +794,19 @@ export async function collectDouyinEvidence(
       ? [...scope.querySelectorAll(
           "[data-e2e='video-publish-time'],[data-testid='douyin-publish-time'],time[datetime]",
         )].find((element) =>
-          !element.closest("[class*='comment'],[data-e2e*='comment'],[class*='recommend'],[data-e2e*='recommend']") &&
+          belongsToScope(element) && visible(element) &&
           (/发布时间[：:]\s*\d{4}-\d{1,2}-\d{1,2}/u.test(element.textContent || "") ||
             element.hasAttribute("datetime")),
         )
       : null;
+    const titleNode = Array.from(scope.querySelectorAll("h1")).find((node) => belongsToScope(node) && visible(node));
     return {
-      title: scope.querySelector("h1")?.textContent?.trim() || document.title,
-      titleSource: scope.querySelector("h1") ? "DOM_H1" : "DOCUMENT_TITLE",
+      title: titleNode?.textContent?.trim() || (hasBoundPageMetadata ? document.title : ""),
+      titleSource: titleNode ? "DOM_H1" : hasBoundPageMetadata ? "DOCUMENT_TITLE" : null,
       description,
       descriptionSource,
       topics,
-      hasVideo: Boolean(scope.querySelector("video")),
+      hasVideo: Array.from(scope.querySelectorAll("video")).some(belongsToScope),
       imageCount: domImageEvidence.count,
       imageCountSource: domImageEvidence.source,
       imageKeys: [...imageKeys].sort(),
@@ -730,9 +814,9 @@ export async function collectDouyinEvidence(
       logicalSlideCount: logicalSlideKeys.size,
       carouselReady: carouselRoots.length > 0,
       carouselTotal,
-      authorName: scope.querySelector(
+      authorName: Array.from(scope.querySelectorAll(
         "[data-e2e='video-author-name'], [data-e2e='user-info'], [data-testid='douyin-author']",
-      )?.textContent?.trim() || null,
+      )).find((node) => belongsToScope(node) && visible(node))?.textContent?.trim() || null,
       publishedAt: publishedTimeElement
         ? publishedTimeElement.getAttribute("datetime") ||
           (publishedTimeElement.textContent || "").trim()
@@ -742,10 +826,16 @@ export async function collectDouyinEvidence(
         : null,
       structuredPayloads: scripts,
       visibleText: document.body?.innerText?.slice(0, 20_000) || "",
+      scopeValid: Boolean(resolvedScope),
+      currentContentEvidence: scopeInput.currentContentEvidence,
     };
   }, {
     scopeSelector: scopeReference.scopeSelector,
     scopeIndex: scopeReference.scopeIndex,
+    scopeToken: scopeReference.scopeToken || null,
+    contentIdMatches: scopeReference.contentIdMatches,
+    hasContentEvidence: scopeReference.hasContentEvidence,
+    currentContentEvidence: scopeReference,
     expectedContentId: expectedContentId || null,
   });
 }
@@ -836,8 +926,16 @@ export class PlaywrightDouyinAdapter {
           contentId,
         )
       : null;
-    const structuredEvidence = options.structured ||
-      (embeddedStructuredItem
+    const liveIdentity = douyinContentIdentityFromUrl(page.url());
+    const liveContentId = liveIdentity?.contentId || new URL(page.url()).searchParams.get("modal_id");
+    const locationMatchesContentId = !contentId || !liveContentId || liveContentId === contentId;
+    const providedStructuredItem = contentId && options.structured && locationMatchesContentId
+      ? findDouyinAwemeItem(options.structured.item, contentId)
+      : null;
+    const structuredEvidence = providedStructuredItem && hasDouyinContentPayload(providedStructuredItem) && options.structured
+      ? { ...options.structured, item: providedStructuredItem }
+      :
+      (embeddedStructuredItem && hasDouyinContentPayload(embeddedStructuredItem) && locationMatchesContentId
         ? {
             item: embeddedStructuredItem,
             responseUrl: finalUrl,
@@ -877,7 +975,7 @@ export class PlaywrightDouyinAdapter {
         : evidence.hasVideo
           ? "VIDEO" as const
           : "UNKNOWN" as const);
-    if (noteType === "IMAGE_TEXT" && structuredImages.count === 0) {
+    if (noteType === "IMAGE_TEXT" && structuredImages.count === 0 && evidence.scopeValid) {
       evidence = await collectStableDouyinImageEvidence(
         page,
         evidence,
@@ -898,11 +996,11 @@ export class PlaywrightDouyinAdapter {
     const structuredBodyReadable = structuredItem
       ? hasStructuredCaptionField(structuredItem)
       : false;
-    const body = structuredBody.body || evidence.description;
+    const body = structuredBodyReadable ? structuredBody.body : evidence.description;
     const bodyTextHashtagCandidates = extractDouyinBodyTextHashtagCandidates(
       body,
     );
-    const bodySource = structuredBody.body
+    const bodySource = structuredBodyReadable
       ? structuredBody.source
       : evidence.description
         ? evidence.descriptionSource
@@ -944,7 +1042,7 @@ export class PlaywrightDouyinAdapter {
       bodyTextHashtagCandidates,
       verifiedDouyinTopics: [...uniqueTopics.values()],
       topicEvidenceCollected: true,
-      pageStatus: "NORMAL",
+      pageStatus: structuredItem || evidence.scopeValid ? "NORMAL" : "READ_FAILED",
       authorName: authorName || null,
       publishedAt: publishedAtEvidence?.value || null,
       publishedAtRaw: publishedAtEvidence?.raw || null,
@@ -963,7 +1061,7 @@ export class PlaywrightDouyinAdapter {
             ? "PAGE_STRUCTURED_DATA"
             : "NETWORK_STRUCTURED_DATA"
           : "DOM",
-        currentContentEvidence,
+        currentContentEvidence: evidence.currentContentEvidence || currentContentEvidence,
         bodySource,
         titleSource: evidence.titleSource,
         structuredEvidenceSource: structuredEvidence?.source || null,

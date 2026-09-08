@@ -2,7 +2,7 @@ import "server-only";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AuditTask } from "@prisma/client";
-import type { Frame, Page, Request, Response } from "playwright";
+import type { Frame, Page } from "playwright";
 import { prisma } from "@/lib/db";
 import { AutomaticExtractionError, toAutomaticExtractionError } from "./failure";
 import type { AutomaticFailureCode } from "./failure";
@@ -24,7 +24,6 @@ import {
   waitForDouyinCurrentContentEvidence,
 } from "./douyin-current-content-evidence";
 import {
-  findDouyinAwemeItem,
   playwrightDouyinAdapter,
   type DouyinStructuredEvidence,
 } from "./douyin-adapter";
@@ -32,8 +31,9 @@ import {
   assertPlatformRouting,
   resolveTaskAutomationPlatform,
 } from "./platform";
-import type { OwnedExtractionHandle } from "./generation-lifecycle";
-import { throwIfAutomaticExtractionAborted } from "./extraction-deadline";
+import { isCurrentBrowserOwner, isStaleExtractionCompletion, type OwnedExtractionHandle } from "./generation-lifecycle";
+import { AutomaticExtractionHandoffCancelledError, throwIfAutomaticExtractionAborted } from "./extraction-deadline";
+import { appendDouyinRequestChain as appendRequestChain, createDouyinResponseCollector } from "./douyin-response-collector";
 
 function uniqueValues(values: string[]) {
   return [
@@ -53,73 +53,6 @@ function sanitizeDouyinBrowserValue(value: unknown): unknown {
     );
   }
   return value;
-}
-
-function appendRequestChain(request: Request, redirectChain: string[]) {
-  const chain: string[] = [];
-  let current: Request | null = request;
-  while (current) {
-    chain.unshift(current.url());
-    current = current.redirectedFrom();
-  }
-  redirectChain.push(...chain);
-}
-
-function createDouyinResponseCollector(
-  page: Page,
-  redirectChain: string[],
-) {
-  const payloads: Array<Promise<{ payload: unknown; responseUrl: string } | null>> = [];
-  const mainDocuments: Array<{ url: string; status: number }> = [];
-  const onResponse = (response: Response) => {
-    if (
-      response.request().resourceType() === "document" &&
-      response.frame() === page.mainFrame()
-    ) {
-      appendRequestChain(response.request(), redirectChain);
-      redirectChain.push(response.url());
-      mainDocuments.push({ url: response.url(), status: response.status() });
-    }
-    if (
-      /(?:\/aweme\/v1\/web\/aweme\/(?:post|detail)\/?|aweme_detail)/iu.test(
-        response.url(),
-      )
-    ) {
-      payloads.push(
-        response.json()
-          .then((payload) => ({ payload, responseUrl: response.url() }))
-          .catch(() => null),
-      );
-    }
-  };
-  page.on("response", onResponse);
-
-  return {
-    mainDocuments,
-    async waitFor(contentId: string, timeoutMs: number): Promise<DouyinStructuredEvidence | null> {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const snapshot = [...payloads];
-        const resolved = await Promise.all(snapshot);
-        for (const candidate of resolved) {
-          if (!candidate) continue;
-          const item = findDouyinAwemeItem(candidate.payload, contentId);
-          if (item) {
-            return {
-              item,
-              responseUrl: candidate.responseUrl,
-              source: "NETWORK_RESPONSE",
-            };
-          }
-        }
-        await page.waitForTimeout(150);
-      }
-      return null;
-    },
-    dispose() {
-      page.off("response", onResponse);
-    },
-  };
 }
 
 type DouyinNavigationAttempt = {
@@ -258,7 +191,17 @@ export async function extractDouyinAuditTaskAutomatically(
     const value = frame.url();
     if (value && redirectChain.at(-1) !== value) redirectChain.push(value);
   };
-  const responseCollector = createDouyinResponseCollector(page, redirectChain);
+  const isCurrentGeneration = lifecycle
+    ? () => !isStaleExtractionCompletion(lifecycle) && isCurrentBrowserOwner(lifecycle)
+    : undefined;
+  const assertCurrentGeneration = () => {
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
+    if (isCurrentGeneration && !isCurrentGeneration()) throw new AutomaticExtractionHandoffCancelledError();
+  };
+  const responseCollector = createDouyinResponseCollector(page, redirectChain, {
+    signal: lifecycle?.signal,
+    isCurrentGeneration,
+  });
   page.on("framenavigated", onFrame);
 
   let canonicalUrl: string | null = null;
@@ -349,6 +292,9 @@ export async function extractDouyinAuditTaskAutomatically(
         mock ? 300 : 10_000,
       );
     }
+    assertCurrentGeneration();
+    // No future response belongs to this completed evidence collection.
+    responseCollector.dispose();
     const identityEvidence = await readDouyinCurrentContentEvidence(
       page,
       contentIdentity?.contentId || null,
@@ -431,7 +377,7 @@ export async function extractDouyinAuditTaskAutomatically(
       structured,
       currentContentEvidence: identity.currentContentEvidence,
     });
-    throwIfAutomaticExtractionAborted(lifecycle?.signal);
+    assertCurrentGeneration();
     const note = sanitizeDouyinBrowserValue(extractedNote) as typeof extractedNote;
     note.redirectChain = uniqueValues(redirectChain).map(safeDouyinDiagnosticUrl);
     const evidence = {
@@ -476,7 +422,7 @@ export async function extractDouyinAuditTaskAutomatically(
       warnings: (note.technicalWarnings || []) as AutomaticFailureCode[],
     };
   } catch (error) {
-    throwIfAutomaticExtractionAborted(lifecycle?.signal);
+    assertCurrentGeneration();
     let normalized = toAutomaticExtractionError(error);
     if (/timeout/iu.test(normalized.message) && normalized.code === "NETWORK_ERROR") {
       normalized = new AutomaticExtractionError(

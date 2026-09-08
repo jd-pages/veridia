@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import ExcelJS from "exceljs";
+import fs from "node:fs";
+import path from "node:path";
 import { E2E_ORIGIN } from "./e2e-origin";
+import { playwrightDouyinAdapter } from "../../lib/automation/douyin-adapter";
+import { readDouyinCurrentContentEvidence } from "../../lib/automation/douyin-current-content-evidence";
 
 async function login(page: Page) {
   await page.goto("/login");
@@ -44,6 +48,39 @@ async function createDouyinBatchForUrl(page: Page, url: string) {
   expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
   return payload.data.batchId as string;
 }
+
+test("Protected DOUYIN_VISIBLE_CONTENT_ID_SCOPE：隐藏旧详情与同 ID clone 不覆盖当前正文和三张图片", async ({ page }) => {
+  const url = "https://www.douyin.com/note/222";
+  const fixture = fs.readFileSync(path.resolve("tests/regression/fixtures/douyin/visible-content-id-scope.html"), "utf8");
+  await page.route("https://www.douyin.com/**", (route) => route.fulfill({
+    status: 200, contentType: "text/html; charset=utf-8", body: fixture,
+  }));
+  await page.goto(url);
+  expect(await readDouyinCurrentContentEvidence(page, "222")).toMatchObject({
+    scopeContentId: "222", hasContentEvidence: true, contentIdMatches: true,
+  });
+  const note = await playwrightDouyinAdapter.extract(page, url, { contentId: "222" });
+  expect(note).toMatchObject({
+    noteId: "222", pageStatus: "NORMAL", title: "当前作品标题",
+    body: "当前作品的真实正文必须与当前图片发布时间和互动保持一致。#当前话题",
+    imageCount: 3, imageExtractionStatus: "SUCCESS",
+    publishedAt: "2026-08-07T08:20:51.000Z",
+    likeCount: 8, commentCount: 4, favoriteCount: 10,
+  });
+  expect(note.pageEvidence).toMatchObject({ domImageCount: 3, domCarouselTotal: 3, structuredImageCount: 3 });
+  expect(note.body).not.toMatch(/旧|克隆/u);
+
+  // The current document can disappear between readiness and extraction.
+  await page.evaluate(() => {
+    document.body.innerHTML = '<section data-testid="douyin-note-detail" data-content-id="111"><p data-testid="douyin-description">上一作品仍可见</p></section>';
+  });
+  expect(await readDouyinCurrentContentEvidence(page, "222")).toMatchObject({
+    hasContentEvidence: false, contentIdMatches: false,
+  });
+  expect(await playwrightDouyinAdapter.extract(page, url, { contentId: "222" })).toMatchObject({
+    pageStatus: "READ_FAILED", body: null, imageCount: 0,
+  });
+});
 
 test("审核任务页提供相互隔离的小红书与抖音环境入口", async ({ page }) => {
   await login(page);

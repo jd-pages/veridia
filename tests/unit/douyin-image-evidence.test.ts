@@ -18,6 +18,12 @@ describe("抖音图文图片证据稳定性", () => {
         body: Buffer.from("R0lGODlhAQABAAAAACw=", "base64"),
       }),
     );
+    // setContent preserves the document URL. Bind these DOM variants to their
+    // actual current item instead of supplying canonicalUrl over about:blank.
+    await page.route(canonicalUrl, (route) => route.fulfill({
+      status: 200, contentType: "text/html", body: "<!doctype html><html><body></body></html>",
+    }));
+    await page.goto(canonicalUrl);
   }, 90_000);
 
   afterAll(async () => {

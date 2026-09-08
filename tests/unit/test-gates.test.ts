@@ -76,7 +76,9 @@ describe("分层测试门禁", () => {
     const selection = selectTestScope(["lib/automation/douyin-page-classifier.ts"]);
     expect(selection.categories).toEqual(["DOUYIN"]);
     expect(selection.e2eFiles).toEqual([
+      "tests/e2e/audit-topic-boundaries.spec.ts",
       "tests/e2e/douyin-automation.spec.ts",
+      "tests/e2e/douyin-response-collector.spec.ts",
       "tests/e2e/platform-published-at.spec.ts",
       "tests/e2e/result-lifecycle.spec.ts",
     ]);
@@ -93,6 +95,7 @@ describe("分层测试门禁", () => {
     ], "regression");
     expect(selection.categories).toEqual(["CAMPAIGN", "RULES"]);
     expect(selection.e2eFiles).toEqual([
+      "tests/e2e/audit-topic-boundaries.spec.ts",
       "tests/e2e/kabrita-excel-template.spec.ts",
       "tests/e2e/product-stage-topic.spec.ts",
       "tests/e2e/rule-brand-navigation.spec.ts",
@@ -284,10 +287,10 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // Batch 1 explicitly approves three additional boundaries; the existing
-      // nineteen business invariants and seven groups retain their semantics.
-      behaviorCount: 22,
-      groupCount: 8,
+      // Batch 2 adds four approved invariants and a topic-boundary group;
+      // the existing twenty-two protected expectations remain unchanged.
+      behaviorCount: 26,
+      groupCount: 9,
     });
     expect(new Set(PROTECTED_BEHAVIORS.map((item) => item.key)).size)
       .toBe(PROTECTED_BEHAVIORS.length);
@@ -324,6 +327,8 @@ describe("分层测试门禁", () => {
     ["lib/import-export.ts", "TEMPLATE_ISOLATION_ALL"],
     ["lib/automation/douyin-current-content-evidence.ts", "DOUYIN_REGRESSION_ALL"],
     ["lib/automation/queue.ts", "AUTOMATION_RUNNER_LIFECYCLE_ALL"],
+    ["lib/automation/douyin-response-collector.ts", "AUTOMATION_RUNNER_LIFECYCLE_ALL"],
+    ["lib/automation/douyin-extract.ts", "AUTOMATION_RUNNER_LIFECYCLE_ALL"],
   ])("Change Impact Map: %s 触发 %s", (file, expectedGroup) => {
     const selection = selectProtectedBehaviors([file]);
     expect(selection.groups).toContain(expectedGroup);
