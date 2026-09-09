@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import packageJson from "@/package.json";
 import { prisma } from "@/lib/db";
@@ -19,6 +19,7 @@ import {
 import { validateImportExportTemplates } from "@/lib/import-export-templates/validation";
 import {
   RULE_PACKAGE_SCHEMA_VERSION,
+  type RuleCounts,
   type RulePackagePayload,
   type RulePackageStageGroup,
 } from "./types";
@@ -615,10 +616,21 @@ export function payloadSha256(payload: RulePackagePayload) {
     .digest("hex");
 }
 
+export interface ApplyRulePayloadTransactionOptions {
+  finalizeTransaction?: (
+    tx: Prisma.TransactionClient,
+    result: {
+      payload: RulePackagePayload;
+      counts: RuleCounts;
+    },
+  ) => Promise<void>;
+}
+
 export async function applyRulePayload(
   input: unknown,
   source: "BUILTIN" | "GITHUB" | "RESTORE",
   database: PrismaClient = prisma,
+  options: ApplyRulePayloadTransactionOptions = {},
 ) {
   const payload = validateRulePayload(input);
   assertRulePackageCompatibleWithApp(
@@ -1070,6 +1082,8 @@ export async function applyRulePayload(
         lastSyncedAt: new Date(),
       },
     });
-    return { payload, counts };
+    const result = { payload, counts };
+    await options.finalizeTransaction?.(tx, result);
+    return result;
   });
 }

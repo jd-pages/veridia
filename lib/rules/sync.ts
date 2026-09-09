@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
-import type { RuleSyncState } from "@prisma/client";
+import type { PrismaClient, RulePackageBackup, RuleSyncState } from "@prisma/client";
 import packageJson from "@/package.json";
 import { prisma } from "@/lib/db";
 import builtinRules from "@/rules/default-rules.json";
@@ -27,6 +27,10 @@ import {
 } from "./version-contract";
 
 const MAX_RULE_PACKAGE_BYTES = 20 * 1024 * 1024;
+type TemporaryDirectoryRemover = (
+  directory: string,
+  options: { recursive: true; force: true },
+) => Promise<unknown>;
 const ALLOWED_DOWNLOAD_HOSTS = new Set([
   "api.github.com",
   "github.com",
@@ -35,6 +39,18 @@ const ALLOWED_DOWNLOAD_HOSTS = new Set([
 ]);
 
 let builtinInitializationPromise: Promise<RuleSyncState> | null = null;
+
+export async function cleanupRuleSyncTemporaryDirectory(
+  temporaryDirectory: string | null,
+  removeDirectory: TemporaryDirectoryRemover = fs.rm,
+) {
+  if (!temporaryDirectory) return;
+  try {
+    await removeDirectory(temporaryDirectory, { recursive: true, force: true });
+  } catch (error) {
+    console.error("[VERIDIA RULE SYNC] 临时目录清理失败", error);
+  }
+}
 
 const BUNDLED_LOCAL_PRODUCT_KEYS = [
   "product_kabrita_netherlands",
@@ -364,6 +380,35 @@ function logRuleSyncFailure(
   );
 }
 
+export async function recordRuleSyncFailure(input: {
+  historyId: string;
+  error: unknown;
+  database?: PrismaClient;
+}) {
+  const database = input.database ?? prisma;
+  const failure = ruleSyncFailureDetails(input.error, "RULE_SYNC_FAILED");
+  logRuleSyncFailure("同步", failure, input.error);
+  await database.$transaction([
+    database.ruleSyncState.update({
+      where: { id: "active" },
+      data: { status: "FAILED" },
+    }),
+    database.ruleSyncHistory.update({
+      where: { id: input.historyId },
+      data: {
+        status: "FAILED",
+        errorCode: failure.errorCode,
+        message: "暂时无法获取最新规则，已继续使用本地规则。",
+        detailsJson: JSON.stringify({
+          technicalMessage: failure.technicalMessage,
+        }),
+        completedAt: new Date(),
+      },
+    }),
+  ]);
+  return failure;
+}
+
 async function readLatestRelease() {
   const config = ruleSyncConfiguration();
   if (!config.configured) {
@@ -684,56 +729,13 @@ export async function synchronizeLatestRules() {
       where: { id: "active" },
       data: { status: "APPLYING" },
     });
-    await applyRulePayload(payload, "GITHUB");
-    await prisma.$transaction([
-      prisma.ruleSyncState.update({
-        where: { id: "active" },
-        data: {
-          latestVersion: manifest.ruleVersion,
-          manifestJson: JSON.stringify(manifest),
-          status: "COMPLETED",
-          lastCheckedAt: new Date(),
-          lastSyncedAt: new Date(),
-        },
-      }),
-      prisma.ruleSyncHistory.update({
-        where: { id: history.id },
-        data: {
-          ruleVersion: manifest.ruleVersion,
-          schemaVersion: manifest.schemaVersion,
-          status: "COMPLETED",
-          message: "规则同步完成",
-          completedAt: new Date(),
-        },
-      }),
-    ]);
+    await commitSynchronizedRulePayload({ payload, manifest, historyId: history.id });
     return getRuleSyncStatus();
   } catch (error) {
-    const failure = ruleSyncFailureDetails(error, "RULE_SYNC_FAILED");
-    logRuleSyncFailure("同步", failure, error);
-    await prisma.$transaction([
-      prisma.ruleSyncState.update({
-        where: { id: "active" },
-        data: { status: "FAILED" },
-      }),
-      prisma.ruleSyncHistory.update({
-        where: { id: history.id },
-        data: {
-          status: "FAILED",
-          errorCode: failure.errorCode,
-          message: "暂时无法获取最新规则，已继续使用本地规则。",
-          detailsJson: JSON.stringify({
-            technicalMessage: failure.technicalMessage,
-          }),
-          completedAt: new Date(),
-        },
-      }),
-    ]);
+    await recordRuleSyncFailure({ historyId: history.id, error });
     throw new Error("暂时无法获取最新规则，已继续使用本地规则。");
   } finally {
-    if (temporaryDirectory) {
-      await fs.rm(temporaryDirectory, { recursive: true, force: true });
-    }
+    await cleanupRuleSyncTemporaryDirectory(temporaryDirectory);
   }
 }
 
@@ -743,26 +745,71 @@ export async function restorePreviousRules() {
   });
   if (!backup) throw new Error("没有可恢复的上一版规则");
   const payload = validateRulePayload(JSON.parse(backup.payloadJson));
-  await applyRulePayload(payload, "RESTORE");
-  await prisma.$transaction([
-    prisma.rulePackageBackup.update({
-      where: { id: backup.id },
-      data: { restoredAt: new Date() },
-    }),
-    prisma.ruleSyncState.update({
-      where: { id: "active" },
-      data: { status: "RESTORED", source: "RESTORE" },
-    }),
-    prisma.ruleSyncHistory.create({
-      data: {
-        ruleVersion: payload.ruleVersion,
-        schemaVersion: payload.schemaVersion,
-        source: "RESTORE",
-        status: "RESTORED",
-        message: "已恢复上一版规则",
-        completedAt: new Date(),
-      },
-    }),
-  ]);
+  await commitRestoredRulePayload({ payload, backup });
   return getRuleSyncStatus();
+}
+
+export async function commitSynchronizedRulePayload(input: {
+  payload: RulePackagePayload;
+  manifest: RulePackageManifest;
+  historyId: string;
+  database?: PrismaClient;
+}) {
+  const database = input.database ?? prisma;
+  return applyRulePayload(input.payload, "GITHUB", database, {
+    finalizeTransaction: async (tx) => {
+      const completedAt = new Date();
+      await tx.ruleSyncState.update({
+        where: { id: "active" },
+        data: {
+          latestVersion: input.manifest.ruleVersion,
+          manifestJson: JSON.stringify(input.manifest),
+          status: "COMPLETED",
+          lastCheckedAt: completedAt,
+          lastSyncedAt: completedAt,
+        },
+      });
+      await tx.ruleSyncHistory.update({
+        where: { id: input.historyId },
+        data: {
+          ruleVersion: input.manifest.ruleVersion,
+          schemaVersion: input.manifest.schemaVersion,
+          status: "COMPLETED",
+          message: "规则同步完成",
+          completedAt,
+        },
+      });
+    },
+  });
+}
+
+export async function commitRestoredRulePayload(input: {
+  payload: RulePackagePayload;
+  backup: Pick<RulePackageBackup, "id">;
+  database?: PrismaClient;
+}) {
+  const database = input.database ?? prisma;
+  return applyRulePayload(input.payload, "RESTORE", database, {
+    finalizeTransaction: async (tx) => {
+      const completedAt = new Date();
+      await tx.rulePackageBackup.update({
+        where: { id: input.backup.id },
+        data: { restoredAt: completedAt },
+      });
+      await tx.ruleSyncState.update({
+        where: { id: "active" },
+        data: { status: "RESTORED", source: "RESTORE" },
+      });
+      await tx.ruleSyncHistory.create({
+        data: {
+          ruleVersion: input.payload.ruleVersion,
+          schemaVersion: input.payload.schemaVersion,
+          source: "RESTORE",
+          status: "RESTORED",
+          message: "已恢复上一版规则",
+          completedAt,
+        },
+      });
+    },
+  });
 }

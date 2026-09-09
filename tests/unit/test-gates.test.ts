@@ -299,10 +299,10 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // R03 adds the browser lifecycle cleanup deadline contract;
+      // R04 adds the rule sync atomic commit contract;
       // all previously protected expectations and group memberships remain unchanged.
-      behaviorCount: 30,
-      groupCount: 12,
+      behaviorCount: 31,
+      groupCount: 13,
     });
     expect(new Set(PROTECTED_BEHAVIORS.map((item) => item.key)).size)
       .toBe(PROTECTED_BEHAVIORS.length);
@@ -336,6 +336,7 @@ describe("分层测试门禁", () => {
     ["lib/audit-task-deduplication.ts", "DUPLICATE_REGRESSION_ALL"],
     ["lib/store-topic-config.ts", "STORE_MAPPING_AND_TOPIC_ALL"],
     ["lib/rules/package.ts", "STORE_IDENTITY_CONTINUITY_ALL"],
+    ["lib/rules/sync.ts", "RULE_SYNC_TRANSACTION_ALL"],
     ["lib/rules/version-contract.ts", "RULE_PACKAGE_COMPATIBILITY_ALL"],
     ["lib/import-record-deletion.ts", "IMPORT_DELETE_AND_DUPLICATE_ALL"],
     ["lib/import-export.ts", "TEMPLATE_ISOLATION_ALL"],

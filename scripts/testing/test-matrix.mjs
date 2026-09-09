@@ -75,6 +75,7 @@ const EXPLICIT_UNIT_RULES = Object.freeze([
     unitFiles: [
       "tests/unit/rule-package-minimum-version.test.ts",
       "tests/unit/rule-sync.test.ts",
+      "tests/unit/rule-sync-transaction-atomicity.test.ts",
       "tests/unit/store-rule-package-sync.test.ts",
       "tests/unit/store-rename-identity-continuity.test.ts",
       "tests/unit/topic-rule-management.test.ts",
