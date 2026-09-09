@@ -299,9 +299,9 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // R02 adds the rule-package minimum-version contract;
+      // R03 adds the browser lifecycle cleanup deadline contract;
       // all previously protected expectations and group memberships remain unchanged.
-      behaviorCount: 29,
+      behaviorCount: 30,
       groupCount: 12,
     });
     expect(new Set(PROTECTED_BEHAVIORS.map((item) => item.key)).size)

@@ -14,13 +14,17 @@ export type ExtractionLifecycleState =
   | "RUNNING"
   | "ABORT_REQUESTED"
   | "SETTLING"
+  | "ABANDONED"
   | "SETTLED";
+
+export const DEFAULT_BROWSER_LIFECYCLE_CLEANUP_DEADLINE_MS = 15_000;
 
 export type OwnedExtractionHandle = GenerationLifecycleIdentity & {
   signal: AbortSignal;
   state: ExtractionLifecycleState;
   startedAt: string;
   abortRequestedAt: string | null;
+  abandonedAt: string | null;
   settledAt: string | null;
   settled: Promise<void>;
   abort: () => void;
@@ -44,6 +48,9 @@ export type GenerationLifecycleEventName =
   | "CLEANUP_BARRIER_CREATED"
   | "CLEANUP_BARRIER_WAIT_START"
   | "CLEANUP_BARRIER_WAIT_END"
+  | "BROWSER_LIFECYCLE_CLEANUP_DEADLINE_EXCEEDED"
+  | "BROWSER_SESSION_POISONED"
+  | "STALE_BROWSER_CLEANUP_SETTLED"
   | "BROWSER_OWNER_ACQUIRED"
   | "BROWSER_OWNER_RELEASED"
   | "STALE_BROWSER_CLEANUP_REJECTED"
@@ -134,6 +141,7 @@ export function startOwnedExtraction(input: {
     state: "RUNNING",
     startedAt: new Date().toISOString(),
     abortRequestedAt: null,
+    abandonedAt: null,
     settledAt: null,
     settled,
     resolveSettled,
@@ -157,7 +165,7 @@ export function trackOwnedExtraction<T>(
 
 export function settleOwnedExtraction(handle: OwnedExtractionHandle) {
   const active = state.activeExtractions.get(handle.ownerGeneration);
-  if (!active || active.state === "SETTLED") return;
+  if (!active || active.state === "SETTLED" || active.state === "ABANDONED") return;
   active.state = "SETTLED";
   active.settledAt = new Date().toISOString();
   state.activeExtractions.delete(active.ownerGeneration);
@@ -165,9 +173,31 @@ export function settleOwnedExtraction(handle: OwnedExtractionHandle) {
   active.resolveSettled();
 }
 
+export function browserLifecycleCleanupDeadlineMs() {
+  const configured = Number(
+    process.env.AUTOMATION_BROWSER_CLEANUP_DEADLINE_MS ||
+      DEFAULT_BROWSER_LIFECYCLE_CLEANUP_DEADLINE_MS,
+  );
+  return Number.isFinite(configured)
+    ? Math.max(100, configured)
+    : DEFAULT_BROWSER_LIFECYCLE_CLEANUP_DEADLINE_MS;
+}
+
+function abandonOwnedExtraction(active: InternalExtractionHandle) {
+  const stillRegistered =
+    state.activeExtractions.get(active.ownerGeneration) === active;
+  active.state = "ABANDONED";
+  active.abandonedAt = new Date().toISOString();
+  if (stillRegistered) state.activeExtractions.delete(active.ownerGeneration);
+  releaseBrowserOwner(active);
+  if (stillRegistered) active.resolveSettled();
+  lifecycleLog("BROWSER_SESSION_POISONED", active);
+}
+
 export function requestOwnedExtractionCancellation(
   handle: OwnedExtractionHandle,
   cleanup: (identity: GenerationLifecycleIdentity) => Promise<void>,
+  options: { deadlineMs?: number } = {},
 ) {
   const existing = state.cleanupBarriers.get(handle.platform);
   if (
@@ -191,12 +221,38 @@ export function requestOwnedExtractionCancellation(
   };
   barrier.promise = (async () => {
     active.state = "SETTLING";
+    let requestedCleanup: Promise<void>;
     try {
-      await cleanup(active);
+      requestedCleanup = cleanup(active);
     } catch {
+      requestedCleanup = Promise.reject(new Error("Browser cleanup threw synchronously"));
+    }
+    const cleanupOperation = requestedCleanup.catch(() => {
       lifecycleLog("STALE_EXTRACTION_ERROR_IGNORED", active);
-    } finally {
-      await active.settled;
+    });
+    const lifecycleCompletion = Promise.all([
+      cleanupOperation,
+      active.settled,
+    ]).then(() => undefined);
+    const deadlineMs = Math.max(
+      1,
+      options.deadlineMs ?? browserLifecycleCleanupDeadlineMs(),
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<"DEADLINE">((resolve) => {
+      timer = setTimeout(() => resolve("DEADLINE"), deadlineMs);
+    });
+    const result = await Promise.race([
+      lifecycleCompletion.then(() => "SETTLED" as const),
+      deadline,
+    ]);
+    if (timer) clearTimeout(timer);
+    if (result === "DEADLINE") {
+      lifecycleLog("BROWSER_LIFECYCLE_CLEANUP_DEADLINE_EXCEEDED", active);
+      abandonOwnedExtraction(active);
+      void cleanupOperation.then(() => {
+        lifecycleLog("STALE_BROWSER_CLEANUP_SETTLED", active);
+      });
     }
   })().finally(() => {
     if (state.cleanupBarriers.get(active.platform) === barrier) {
@@ -284,6 +340,7 @@ export function getGenerationLifecycleDiagnostics(platform?: AutomationPlatform)
       wakeGeneration: entry.wakeGeneration,
       startedAt: entry.startedAt,
       abortRequestedAt: entry.abortRequestedAt,
+      abandonedAt: entry.abandonedAt,
       settledAt: entry.settledAt,
       state: entry.state,
     })),
@@ -294,7 +351,12 @@ export function getGenerationLifecycleDiagnostics(platform?: AutomationPlatform)
 }
 
 export function resetGenerationLifecycleForTesting() {
-  for (const entry of state.activeExtractions.values()) entry.controller.abort();
+  for (const entry of state.activeExtractions.values()) {
+    entry.controller.abort();
+    entry.state = "ABANDONED";
+    entry.abandonedAt = new Date().toISOString();
+    entry.resolveSettled();
+  }
   state.nextOwnerGeneration = 0;
   state.activeExtractions.clear();
   state.cleanupBarriers.clear();
