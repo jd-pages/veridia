@@ -71,6 +71,17 @@ export function assertAffectedInfrastructureUnitSelection(
 
 const EXPLICIT_UNIT_RULES = Object.freeze([
   {
+    match: /^lib\/rules\/package\.ts$/u,
+    unitFiles: [
+      "tests/unit/rule-sync.test.ts",
+      "tests/unit/store-rule-package-sync.test.ts",
+      "tests/unit/store-rename-identity-continuity.test.ts",
+      "tests/unit/topic-rule-management.test.ts",
+      "tests/unit/topic-rule-management-routes.test.ts",
+    ],
+    reason: "规则包应用显式覆盖同步、店铺 identity 连续性与规则 CRUD",
+  },
+  {
     match: RULE_CRUD_PRODUCTION_PATH,
     unitFiles: [
       "tests/unit/topic-rule-management.test.ts",

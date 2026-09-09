@@ -1,11 +1,138 @@
 import { expect, test } from "@playwright/test";
+import { createHash } from "node:crypto";
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import { prisma } from "@/lib/db";
 import { ensureStoreTopicRuleSeeds } from "@/lib/store-topic-rule-service";
 import { E2E_ORIGIN } from "./e2e-origin";
 
 test.beforeAll(async () => {
   await ensureStoreTopicRuleSeeds();
+});
+
+test("Protected STORE_RENAME_IDENTITY_CONTINUITY：规则包正式改名保留 Store ID 和旧名 Alias", async ({
+  page,
+}) => {
+  expect((await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  })).ok()).toBeTruthy();
+  const suffix = `${Date.now()}`.slice(-9);
+  const oldName = `Batch7E2EOld${suffix}`;
+  const newName = `Batch7E2ENew${suffix}`;
+  const created = await page.request.post("/api/store-topic-rules", {
+    data: { commercePlatform: "JD", storeName: oldName, enabled: true },
+  });
+  const createdPayload = await created.json();
+  expect(created.ok(), JSON.stringify(createdPayload)).toBeTruthy();
+  const originalId = createdPayload.data.id as string;
+  const backupIdsBefore = new Set(
+    (await prisma.rulePackageBackup.findMany({ select: { id: true } }))
+      .map((item) => item.id),
+  );
+  const syncStateBefore = await prisma.ruleSyncState.findUnique({
+    where: { id: "active" },
+    select: { status: true, source: true },
+  });
+
+  try {
+    const exported = await page.request.get("/api/rule-sync/export");
+    expect(exported.ok()).toBeTruthy();
+    const zip = await JSZip.loadAsync(await exported.body());
+    const rulesFile = zip.file("rules.json");
+    expect(rulesFile).toBeTruthy();
+    const current = JSON.parse(await rulesFile!.async("string")) as {
+      ruleVersion: string;
+      schemaVersion: number;
+      storeTopicRules: Array<{
+        key: string;
+        commercePlatform: string;
+        storeName: string;
+        storeAliases: Array<{
+          value: string;
+          enabled: boolean;
+          sortOrder: number;
+        }>;
+      }>;
+      [key: string]: unknown;
+    };
+    const oldRule = current.storeTopicRules.find(
+      (item) =>
+        item.commercePlatform === "JD" && item.storeName === oldName,
+    );
+    expect(oldRule).toBeTruthy();
+    const renamedPayload = {
+      ...current,
+      ruleVersion: `batch7-e2e-renamed-${suffix}`,
+      storeTopicRules: current.storeTopicRules.map((item) =>
+        item === oldRule
+          ? {
+              ...item,
+              key: `store_${createHash("sha256")
+                .update(`JD\u001f${newName.toLowerCase()}`)
+                .digest("hex")
+                .slice(0, 20)}`,
+              storeName: newName,
+              storeAliases: [
+                ...item.storeAliases,
+                { value: oldName, enabled: true, sortOrder: item.storeAliases.length },
+              ],
+            }
+          : item,
+      ),
+    };
+    const payloadJson = JSON.stringify(renamedPayload);
+    await prisma.rulePackageBackup.create({
+      data: {
+        ruleVersion: renamedPayload.ruleVersion,
+        schemaVersion: renamedPayload.schemaVersion,
+        source: "E2E",
+        sha256: createHash("sha256").update(payloadJson).digest("hex"),
+        payloadJson,
+      },
+    });
+    const restore = await page.request.post("/api/rule-sync/restore");
+    expect(restore.ok(), JSON.stringify(await restore.json())).toBeTruthy();
+
+    const response = await page.request.get(
+      `/api/store-topic-rules?commercePlatform=JD&query=${encodeURIComponent(newName)}&pageSize=10`,
+    );
+    expect(response.ok()).toBeTruthy();
+    const renamed = (await response.json()).data.items.find(
+      (item: { id: string }) => item.id === originalId,
+    ) as {
+      id: string;
+      storeName: string;
+      storeAliases: Array<{ alias: string }>;
+    };
+    expect(renamed).toMatchObject({ id: originalId, storeName: newName });
+    expect(renamed.storeAliases.map((item) => item.alias)).toContain(oldName);
+    expect(await prisma.storeTopicRule.count({
+      where: { id: originalId, deletedAt: null },
+    })).toBe(1);
+  } finally {
+    await prisma.storeTopicEntry.deleteMany({
+      where: { storeTopicRuleId: originalId },
+    });
+    await prisma.storeTopicRule.deleteMany({ where: { id: originalId } });
+    const backupIdsAfter = await prisma.rulePackageBackup.findMany({
+      select: { id: true },
+    });
+    await prisma.rulePackageBackup.deleteMany({
+      where: {
+        id: {
+          in: backupIdsAfter
+            .map((item) => item.id)
+            .filter((id) => !backupIdsBefore.has(id)),
+        },
+      },
+    });
+    if (syncStateBefore) {
+      await prisma.ruleSyncState.update({
+        where: { id: "active" },
+        data: syncStateBefore,
+      });
+    }
+  }
 });
 
 test("佳贝艾特 Canonical 可不要求店铺话题并保留 STORE_ALIAS", async ({ page }) => {

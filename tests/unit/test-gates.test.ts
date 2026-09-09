@@ -84,7 +84,7 @@ describe("分层测试门禁", () => {
     ]);
   });
 
-  it("Rule CRUD Regression 只选择 DATA_RULES，不拖入 Browser Automation 长耗时组", () => {
+  it("Rule CRUD Regression 只选择规则和店铺身份相关回归，不拖入 Browser Automation 长耗时用例", () => {
     const selection = selectTestScope([
       "app/(admin)/rules/page.tsx",
       "app/api/rules/[id]/route.ts",
@@ -100,9 +100,13 @@ describe("分层测试门禁", () => {
       "tests/e2e/product-stage-topic.spec.ts",
       "tests/e2e/rule-brand-navigation.spec.ts",
       "tests/e2e/stage-import.spec.ts",
+      "tests/e2e/store-topic-audit.spec.ts",
       "tests/e2e/store-topic-rule-management.spec.ts",
     ]);
-    expect(groupE2eFiles(selection.e2eFiles).map((group) => group.name)).toEqual(["DATA_RULES"]);
+    expect(groupE2eFiles(selection.e2eFiles).map((group) => group.name)).toEqual([
+      "DATA_RULES",
+      "AUTOMATION",
+    ]);
     expect(selection.e2eFiles).not.toContain("tests/e2e/douyin-automation.spec.ts");
     expect(selection.e2eFiles).not.toContain("tests/e2e/audit-flow.spec.ts");
     expect(selection.e2eFiles).not.toContain("tests/e2e/import-record-deletion.spec.ts");
@@ -170,6 +174,14 @@ describe("分层测试门禁", () => {
       "tests/unit/topic-rule-management.test.ts",
     ]);
     expect(ruleCrud.unitRelatedFiles).toEqual([]);
+
+    const rulePackage = selectTestScope(["lib/rules/package.ts"], "affected");
+    expect(rulePackage.unitFiles).toEqual(expect.arrayContaining([
+      "tests/unit/rule-sync.test.ts",
+      "tests/unit/store-rule-package-sync.test.ts",
+      "tests/unit/store-rename-identity-continuity.test.ts",
+    ]));
+    expect(rulePackage.unitRelatedFiles).toEqual([]);
   });
 
   it("当前失败 Run 的真实 diff 只选择 6 个 gate Unit 和 RESULTS_UI 单文件", () => {
@@ -287,10 +299,10 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // Batch 6 adds the approved result-drawer response identity invariant;
+      // Batch 7 adds store rename identity continuity;
       // all previously protected expectations and group memberships remain unchanged.
-      behaviorCount: 27,
-      groupCount: 10,
+      behaviorCount: 28,
+      groupCount: 11,
     });
     expect(new Set(PROTECTED_BEHAVIORS.map((item) => item.key)).size)
       .toBe(PROTECTED_BEHAVIORS.length);
@@ -323,6 +335,7 @@ describe("分层测试门禁", () => {
   it.each([
     ["lib/audit-task-deduplication.ts", "DUPLICATE_REGRESSION_ALL"],
     ["lib/store-topic-config.ts", "STORE_MAPPING_AND_TOPIC_ALL"],
+    ["lib/rules/package.ts", "STORE_IDENTITY_CONTINUITY_ALL"],
     ["lib/import-record-deletion.ts", "IMPORT_DELETE_AND_DUPLICATE_ALL"],
     ["lib/import-export.ts", "TEMPLATE_ISOLATION_ALL"],
     ["lib/automation/douyin-current-content-evidence.ts", "DOUYIN_REGRESSION_ALL"],

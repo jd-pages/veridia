@@ -639,32 +639,54 @@ export async function applyRulePayload(
 
     if (payload.storeTopicRules !== undefined) {
       const appliedAt = new Date();
-      const publishedIdentities = new Set(
-        payload.storeTopicRules.map(
-          (item) =>
-            `${item.commercePlatform}\u001f${normalizeStoreNameForMatch(item.storeName)}`,
-        ),
-      );
-      const existingActiveRules = await tx.storeTopicRule.findMany({
-        where: { deletedAt: null },
+      const existingRules = await tx.storeTopicRule.findMany({
         select: {
           id: true,
           commercePlatform: true,
+          storeName: true,
           normalizedStoreName: true,
+          deletedAt: true,
+          topicEntries: {
+            where: { topicType: "STORE_ALIAS", deletedAt: null },
+            select: { normalizedTopic: true },
+          },
         },
       });
-      for (const existing of existingActiveRules) {
-        const identity =
-          `${existing.commercePlatform}\u001f${existing.normalizedStoreName}`;
-        if (publishedIdentities.has(identity)) continue;
-        await tx.storeTopicEntry.updateMany({
-          where: { storeTopicRuleId: existing.id, deletedAt: null },
-          data: { enabled: false, deletedAt: appliedAt },
+      const resolvedRuleIds = new Map<string, string>();
+      const claimedRuleIds = new Map<string, string>();
+      for (const item of payload.storeTopicRules) {
+        const normalizedStoreName = normalizeStoreNameForMatch(item.storeName);
+        const incomingAliases = new Set(
+          item.storeAliases.map((entry) =>
+            normalizeStoreNameForMatch(entry.value),
+          ),
+        );
+        const candidates = existingRules.filter((existing) => {
+          if (existing.commercePlatform !== item.commercePlatform) return false;
+          if (existing.normalizedStoreName === normalizedStoreName) return true;
+          if (existing.deletedAt) return false;
+          return (
+            incomingAliases.has(existing.normalizedStoreName) ||
+            existing.topicEntries.some(
+              (entry) => entry.normalizedTopic === normalizedStoreName,
+            )
+          );
         });
-        await tx.storeTopicRule.update({
-          where: { id: existing.id },
-          data: { enabled: false, deletedAt: appliedAt },
-        });
+        if (candidates.length > 1) {
+          throw new Error(
+            `STORE_IDENTITY_CONFLICT：${item.commercePlatform} / ${item.storeName} 同时匹配多个现有店铺：${candidates.map((candidate) => candidate.storeName).join("、")}`,
+          );
+        }
+        const existing = candidates[0];
+        if (!existing) continue;
+        const claimedBy = claimedRuleIds.get(existing.id);
+        if (claimedBy) {
+          throw new Error(
+            `STORE_IDENTITY_CONFLICT：${item.commercePlatform} / ${item.storeName} 与 ${claimedBy} 不能复用同一店铺 Identity`,
+          );
+        }
+        resolvedRuleIds.set(item.key, existing.id);
+        claimedRuleIds.set(existing.id, item.storeName);
       }
 
       for (const item of payload.storeTopicRules) {
@@ -673,17 +695,10 @@ export async function applyRulePayload(
           item.acceptedTopics.find((topic) => topic.enabled)?.value ||
             item.acceptedTopics[0]?.value,
         );
-        const existing = await tx.storeTopicRule.findUnique({
-          where: {
-            commercePlatform_normalizedStoreName: {
-              commercePlatform: item.commercePlatform,
-              normalizedStoreName,
-            },
-          },
-        });
-        const rule = existing
+        const existingId = resolvedRuleIds.get(item.key);
+        const rule = existingId
           ? await tx.storeTopicRule.update({
-              where: { id: existing.id },
+              where: { id: existingId },
               data: {
                 storeName: item.storeName,
                 normalizedStoreName,
@@ -763,6 +778,18 @@ export async function applyRulePayload(
               ? { id: { notIn: retainedEntryIds } }
               : {}),
           },
+          data: { enabled: false, deletedAt: appliedAt },
+        });
+      }
+      const retainedRuleIds = new Set(resolvedRuleIds.values());
+      for (const existing of existingRules) {
+        if (existing.deletedAt || retainedRuleIds.has(existing.id)) continue;
+        await tx.storeTopicEntry.updateMany({
+          where: { storeTopicRuleId: existing.id, deletedAt: null },
+          data: { enabled: false, deletedAt: appliedAt },
+        });
+        await tx.storeTopicRule.update({
+          where: { id: existing.id },
           data: { enabled: false, deletedAt: appliedAt },
         });
       }
