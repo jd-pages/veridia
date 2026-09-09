@@ -19,6 +19,12 @@ import {
   type RulePackageManifest,
   type RulePackagePayload,
 } from "./types";
+import {
+  assertRulePackageCompatibleWithApp,
+  assertRulePackageMinimumVersionContract,
+  assertValidRulePackageVersion,
+  isRulePackageVersionCompatible,
+} from "./version-contract";
 
 const MAX_RULE_PACKAGE_BYTES = 20 * 1024 * 1024;
 const ALLOWED_DOWNLOAD_HOSTS = new Set([
@@ -191,35 +197,25 @@ async function fetchReleaseDownload(
   }
 }
 
-function compareSemver(left: string, right: string) {
-  const parse = (value: string) =>
-    value
-      .split(/[.+-]/u)
-      .slice(0, 3)
-      .map((part) => Number.parseInt(part, 10) || 0);
-  const a = parse(left);
-  const b = parse(right);
-  for (let index = 0; index < 3; index += 1) {
-    if (a[index] !== b[index]) return a[index] - b[index];
-  }
-  return 0;
-}
-
 export function isRulePackageCompatible(
   appVersion: string,
   minimumAppVersion: string,
 ) {
-  return compareSemver(appVersion, minimumAppVersion) >= 0;
+  return isRulePackageVersionCompatible(appVersion, minimumAppVersion);
 }
 
 export function validateRuleManifest(input: unknown): RulePackageManifest {
   if (!input || typeof input !== "object") throw new Error("规则清单格式无效");
   const value = input as Record<string, unknown>;
+  const minimumAppVersion = assertValidRulePackageVersion(
+    value.minimumAppVersion,
+    "规则清单最低软件版本",
+  );
   const manifest = {
     ruleVersion: String(value.ruleVersion || ""),
     schemaVersion: Number(value.schemaVersion),
     publishedAt: String(value.publishedAt || ""),
-    minimumAppVersion: String(value.minimumAppVersion || ""),
+    minimumAppVersion,
     downloadUrl: String(value.downloadUrl || ""),
     fileSize: Number(value.fileSize),
     sha256: String(value.sha256 || "").toLowerCase(),
@@ -611,16 +607,10 @@ export async function synchronizeLatestRules() {
   let temporaryDirectory = "";
   try {
     const { manifest, packageAssetUrl } = await readLatestRelease();
-    if (
-      !isRulePackageCompatible(
-        packageJson.version,
-        manifest.minimumAppVersion,
-      )
-    ) {
-      throw Object.assign(new Error("当前软件版本低于规则包最低兼容版本"), {
-        code: "APP_VERSION_INCOMPATIBLE",
-      });
-    }
+    assertRulePackageCompatibleWithApp(
+      packageJson.version,
+      manifest.minimumAppVersion,
+    );
     await prisma.ruleSyncState.update({
       where: { id: "active" },
       data: {
@@ -663,6 +653,11 @@ export async function synchronizeLatestRules() {
     const payload = validateRulePayload(
       JSON.parse(await rulesFile.async("string")),
     );
+    assertRulePackageMinimumVersionContract({
+      appVersion: packageJson.version,
+      manifestMinimumAppVersion: manifest.minimumAppVersion,
+      payloadMinimumAppVersion: payload.minimumAppVersion,
+    });
     if (manifest.templateVersion && !payload.importExportTemplates) {
       throw new Error("规则清单声明了表格模板，但规则包中缺少模板配置");
     }

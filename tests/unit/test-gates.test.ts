@@ -299,10 +299,10 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // Batch 7 adds store rename identity continuity;
+      // R02 adds the rule-package minimum-version contract;
       // all previously protected expectations and group memberships remain unchanged.
-      behaviorCount: 28,
-      groupCount: 11,
+      behaviorCount: 29,
+      groupCount: 12,
     });
     expect(new Set(PROTECTED_BEHAVIORS.map((item) => item.key)).size)
       .toBe(PROTECTED_BEHAVIORS.length);
@@ -336,6 +336,7 @@ describe("分层测试门禁", () => {
     ["lib/audit-task-deduplication.ts", "DUPLICATE_REGRESSION_ALL"],
     ["lib/store-topic-config.ts", "STORE_MAPPING_AND_TOPIC_ALL"],
     ["lib/rules/package.ts", "STORE_IDENTITY_CONTINUITY_ALL"],
+    ["lib/rules/version-contract.ts", "RULE_PACKAGE_COMPATIBILITY_ALL"],
     ["lib/import-record-deletion.ts", "IMPORT_DELETE_AND_DUPLICATE_ALL"],
     ["lib/import-export.ts", "TEMPLATE_ISOLATION_ALL"],
     ["lib/automation/douyin-current-content-evidence.ts", "DOUYIN_REGRESSION_ALL"],

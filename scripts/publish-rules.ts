@@ -4,8 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import JSZip from "jszip";
 import packageJson from "@/package.json";
+import { createRulePackageManifest } from "@/lib/rules/publish-manifest";
 import { prepareRulePublishSource } from "@/lib/rules/publish-source";
-import type { RulePackageManifest } from "@/lib/rules/types";
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -101,27 +101,11 @@ const packageBytes = await zip.generateAsync({
 });
 const packageName = `veridia-rules-${ruleVersion}.zip`;
 const downloadUrl = `https://github.com/${repository}/releases/download/${ruleVersion}/${packageName}`;
-const manifest: RulePackageManifest = {
-  ruleVersion,
-  schemaVersion: payload.schemaVersion,
-  publishedAt: payload.publishedAt,
-  minimumAppVersion: payload.minimumAppVersion,
+const manifest = createRulePackageManifest({
+  payload,
+  packageBytes,
   downloadUrl,
-  fileSize: packageBytes.length,
-  sha256: createHash("sha256").update(packageBytes).digest("hex"),
-  productCount: payload.products.length,
-  activityCount: payload.campaigns.length,
-  stageGroupCount: payload.stageGroups.length,
-  topicRuleCount: payload.topicRules.length,
-  storeTopicRuleCount: payload.storeTopicRules?.length,
-  storeAliasCount: payload.storeTopicRules ? storeAliasCount : undefined,
-  templateVersion: payload.importExportTemplates?.templateVersion,
-  templateConfigSha256: payload.importExportTemplates
-    ? createHash("sha256")
-        .update(JSON.stringify(payload.importExportTemplates))
-        .digest("hex")
-    : undefined,
-};
+});
 const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
 const signature = sign(
   null,

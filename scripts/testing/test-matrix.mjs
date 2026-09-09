@@ -71,15 +71,16 @@ export function assertAffectedInfrastructureUnitSelection(
 
 const EXPLICIT_UNIT_RULES = Object.freeze([
   {
-    match: /^lib\/rules\/package\.ts$/u,
+    match: /^lib\/rules\/(?:package|publish-manifest|sync|version-contract)\.ts$/u,
     unitFiles: [
+      "tests/unit/rule-package-minimum-version.test.ts",
       "tests/unit/rule-sync.test.ts",
       "tests/unit/store-rule-package-sync.test.ts",
       "tests/unit/store-rename-identity-continuity.test.ts",
       "tests/unit/topic-rule-management.test.ts",
       "tests/unit/topic-rule-management-routes.test.ts",
     ],
-    reason: "规则包应用显式覆盖同步、店铺 identity 连续性与规则 CRUD",
+    reason: "规则包应用显式覆盖兼容契约、同步、店铺 identity 连续性与规则 CRUD",
   },
   {
     match: RULE_CRUD_PRODUCTION_PATH,

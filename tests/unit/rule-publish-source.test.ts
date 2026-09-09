@@ -183,13 +183,18 @@ describe("规则发布来源", () => {
       path.join(process.cwd(), "scripts", "publish-rules.ts"),
       "utf8",
     );
+    const manifestBuilder = fs.readFileSync(
+      path.join(process.cwd(), "lib", "rules", "publish-manifest.ts"),
+      "utf8",
+    );
     const createDraft = publisher.indexOf('    "--draft",');
     const downloadRemote = publisher.indexOf('    "download",', createDraft);
     const publishLatest = publisher.indexOf('    "--draft=false",', downloadRemote);
     expect(createDraft).toBeGreaterThan(-1);
     expect(downloadRemote).toBeGreaterThan(createDraft);
     expect(publishLatest).toBeGreaterThan(downloadRemote);
-    expect(publisher).toContain("storeTopicRuleCount");
-    expect(publisher).toContain("storeAliasCount");
+    expect(publisher).toContain("createRulePackageManifest");
+    expect(manifestBuilder).toContain("storeTopicRuleCount");
+    expect(manifestBuilder).toContain("storeAliasCount");
   });
 });

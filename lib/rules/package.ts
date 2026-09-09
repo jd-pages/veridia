@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
+import packageJson from "@/package.json";
 import { prisma } from "@/lib/db";
 import {
   normalizeStoreNameForMatch,
@@ -21,6 +22,11 @@ import {
   type RulePackagePayload,
   type RulePackageStageGroup,
 } from "./types";
+import {
+  assertRulePackageCompatibleWithApp,
+  assertValidRulePackageVersion,
+  compareRulePackageVersions,
+} from "./version-contract";
 
 const nonEmpty = z.string().trim().min(1);
 const nullableText = z.string().nullable();
@@ -34,7 +40,7 @@ const payloadSchema = z.object({
   ruleVersion: nonEmpty,
   schemaVersion: z.literal(RULE_PACKAGE_SCHEMA_VERSION),
   publishedAt: z.string().datetime(),
-  minimumAppVersion: z.string().regex(/^\d+\.\d+\.\d+(?:[-+].+)?$/u),
+  minimumAppVersion: z.string(),
   products: z.array(
     z.object({
       key: nonEmpty,
@@ -155,20 +161,6 @@ export function storeTopicRuleStableKey(
   ]);
 }
 
-function compareSemver(left: string, right: string) {
-  const parse = (value: string) =>
-    value
-      .split(/[.+-]/u)
-      .slice(0, 3)
-      .map((part) => Number.parseInt(part, 10) || 0);
-  const a = parse(left);
-  const b = parse(right);
-  for (let index = 0; index < 3; index += 1) {
-    if (a[index] !== b[index]) return a[index] - b[index];
-  }
-  return 0;
-}
-
 function normalizedRuleBrand(brand: string | null | undefined) {
   return brand?.trim() === "爱他美" ? "达能" : brand?.trim() || null;
 }
@@ -182,9 +174,17 @@ function uniqueValues(values: string[], label: string) {
 }
 
 export function validateRulePayload(input: unknown): RulePackagePayload {
+  const rawMinimumAppVersion =
+    input && typeof input === "object"
+      ? (input as Record<string, unknown>).minimumAppVersion
+      : undefined;
+  assertValidRulePackageVersion(
+    rawMinimumAppVersion,
+    "规则包内容最低软件版本",
+  );
   const payload = payloadSchema.parse(input) as RulePackagePayload;
   if (payload.campaigns.some((campaign) => campaign.interactionRewardEnabled)) {
-    if (compareSemver(payload.minimumAppVersion, "1.1.22") < 0) throw new Error("互动奖励规则包最低软件版本不能低于 1.1.22");
+    if (compareRulePackageVersions(payload.minimumAppVersion, "1.1.22") < 0) throw new Error("互动奖励规则包最低软件版本不能低于 1.1.22");
     if (payload.campaigns.some((campaign) => campaign.interactionRewardEnabled && !(campaign.interactionRewardThreshold! > 0))) {
       throw new Error("启用互动奖励时门槛必须为正整数");
     }
@@ -200,7 +200,7 @@ export function validateRulePayload(input: unknown): RulePackagePayload {
   uniqueValues(payload.topicRules.map((item) => item.key), "话题规则键");
 
   if (payload.storeTopicRules !== undefined) {
-    if (compareSemver(payload.minimumAppVersion, "1.1.17") < 0) {
+    if (compareRulePackageVersions(payload.minimumAppVersion, "1.1.17") < 0) {
       throw new Error("包含店铺规则的规则包最低软件版本不能低于 1.1.17");
     }
     uniqueValues(
@@ -528,7 +528,7 @@ export async function exportCurrentRulePayload(options?: {
     schemaVersion: RULE_PACKAGE_SCHEMA_VERSION,
     publishedAt: (options?.publishedAt || new Date()).toISOString(),
     minimumAppVersion: campaigns.some((campaign) => campaign.interactionRewardEnabled)
-      ? (options?.minimumAppVersion && compareSemver(options.minimumAppVersion, "1.1.22") >= 0 ? options.minimumAppVersion : "1.1.22")
+      ? (options?.minimumAppVersion && compareRulePackageVersions(options.minimumAppVersion, "1.1.22") >= 0 ? options.minimumAppVersion : "1.1.22")
       : options?.minimumAppVersion || "1.1.17",
     products: products.map((product) => ({
       key: productKeyById.get(product.id),
@@ -621,6 +621,10 @@ export async function applyRulePayload(
   database: PrismaClient = prisma,
 ) {
   const payload = validateRulePayload(input);
+  assertRulePackageCompatibleWithApp(
+    packageJson.version,
+    payload.minimumAppVersion,
+  );
   const previous = await exportCurrentRulePayload(undefined, database);
   const previousState = await database.ruleSyncState.findUnique({
     where: { id: "active" },
