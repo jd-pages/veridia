@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 export const PROTECTED_EXPECTATION_CHANGE_POLICY =
@@ -28,20 +29,20 @@ export const PROTECTED_BEHAVIORS = Object.freeze([
   behavior({ key: "XHS_NOTE_NOT_FOUND", module: "XHS page classification", invariant: "404、-510001、明确不存在文案或 HTTP 404 必须终态为 NOTE_NOT_FOUND，且不得进入普通内容审核。", unitTests: ["tests/unit/automation.test.ts", "tests/unit/audit-engine.test.ts", "tests/unit/processing-failure.test.ts", "tests/unit/protected-behavior-invariants.test.ts"], e2eTests: ["tests/e2e/audit-flow.spec.ts"], unitCases: [caseRef("tests/unit/automation.test.ts", "使用明确 HTTP 404 或不存在 DOM 标记识别笔记不存在")], e2eCases: [], fixtures: ["tests/regression/fixtures/xhs/note-not-found.html"], triggerFiles: ["lib/automation/xhs-readiness.ts", "lib/automation/xhs-page-evidence.ts", "lib/automation/page-classification.ts", "lib/audit-engine.ts"] }),
   behavior({ key: "XHS_GENERIC_SHELL_DELAYED_404", module: "XHS readiness", invariant: "generic shell/JSON-LD 出现后 750ms 跳转 404 时不得提前抽取，最终必须 NOTE_NOT_FOUND。", unitTests: ["tests/unit/xhs-readiness.test.ts", "tests/unit/xhs-page-evidence.test.ts"], e2eTests: ["tests/e2e/audit-flow.spec.ts"], unitCases: [caseRef("tests/unit/xhs-readiness.test.ts", "壳层与 JSON-LD 后跳转真实 404 时终态优先于普通提取")], e2eCases: [], fixtures: ["tests/regression/fixtures/xhs/generic-shell-delayed-404.html"], triggerFiles: ["lib/automation/xhs-readiness.ts", "lib/automation/xhs-page-evidence.ts"] }),
   behavior({ key: "XHS_PUBLIC_LOGGED_OUT_NOTE_DETAIL", module: "XHS readiness and current-note classification", invariant: "公开未登录图文详情页只要可见 current-note 标题/正文/媒体强证据完整，就必须为 NORMAL / NOTE_DETAIL；外围登录或 App CTA 不得触发 LOGIN、APP_LAUNCH 或 STRUCTURE_MISMATCH。", unitTests: ["tests/unit/automation.test.ts", "tests/unit/xhs-readiness.test.ts", "tests/unit/xhs-page-evidence.test.ts"], e2eTests: ["tests/e2e/audit-flow.spec.ts"], unitCases: [caseRef("tests/unit/xhs-readiness.test.ts", "Protected XHS_PUBLIC_LOGGED_OUT_NOTE_DETAIL：外围登录与 App CTA 不覆盖可读 current-note")], e2eCases: [], fixtures: ["tests/regression/fixtures/xhs/public-logged-out-note-detail.html"], triggerFiles: ["lib/automation/page-classification.ts", "lib/automation/xhs-readiness.ts", "lib/automation/xhs-page-evidence.ts", "lib/automation/extract.ts"] }),
-  behavior({ key: "XHS_NORMAL_NOTE", module: "XHS extraction", invariant: "普通图文的标题、正文、图片、话题、平台时间及公开状态均从 current-note scope 正常提取。", unitTests: ["tests/unit/xhs-page-evidence.test.ts", "tests/unit/xhs-topic-evidence-dom.test.ts", "tests/unit/xhs-published-at-dom.test.ts"], e2eTests: ["tests/e2e/audit-flow.spec.ts", "tests/e2e/platform-published-at.spec.ts"], unitCases: [caseRef("tests/unit/xhs-page-evidence.test.ts", "从当前 feed JSON 中提取正文、话题和按图片项去重的候选")], e2eCases: [], fixtures: ["tests/unit/xhs-page-evidence.test.ts"], triggerFiles: ["lib/automation/xhs-page-evidence.ts", "lib/automation/xhs-readiness.ts", "lib/automation/xhs-adapter.ts"] }),
-  behavior({ key: "XHS_LIVE_PHOTO", module: "XHS media extraction", invariant: "Live Photo 保持 IMAGE_TEXT、图片数量正确且不误判为视频，同时标题正文正常。", unitTests: ["tests/unit/xhs-live-photo-current-note.test.ts", "tests/unit/image-count-extractor.test.ts"], e2eTests: ["tests/e2e/audit-flow.spec.ts"], unitCases: [caseRef("tests/unit/xhs-live-photo-current-note.test.ts", "从同一作品容器读取标题、正文、话题、Live Photo、时间、公开状态和 8/4/10")], e2eCases: [], fixtures: ["tests/unit/xhs-live-photo-current-note.test.ts"], triggerFiles: ["lib/automation/xhs-page-evidence.ts", "lib/automation/xhs-adapter.ts"] }),
+  behavior({ key: "XHS_NORMAL_NOTE", module: "XHS extraction", invariant: "普通图文的标题、正文、图片、话题、平台时间及公开状态均从 current-note scope 正常提取。", unitTests: ["tests/unit/xhs-page-evidence.test.ts", "tests/unit/xhs-topic-evidence-dom.test.ts", "tests/unit/xhs-published-at-dom.test.ts"], e2eTests: ["tests/e2e/audit-flow.spec.ts", "tests/e2e/platform-published-at.spec.ts"], unitCases: [caseRef("tests/unit/xhs-page-evidence.test.ts", "从当前 feed JSON 中提取正文、话题和按图片项去重的候选")], e2eCases: [], fixtures: ["tests/unit/xhs-page-evidence.test.ts"], triggerFiles: ["lib/automation/xhs-page-evidence.ts", "lib/automation/xhs-readiness.ts", "lib/automation/adapters.ts"] }),
+  behavior({ key: "XHS_LIVE_PHOTO", module: "XHS media extraction", invariant: "Live Photo 保持 IMAGE_TEXT、图片数量正确且不误判为视频，同时标题正文正常。", unitTests: ["tests/unit/xhs-live-photo-current-note.test.ts", "tests/unit/image-count-extractor.test.ts"], e2eTests: ["tests/e2e/audit-flow.spec.ts"], unitCases: [caseRef("tests/unit/xhs-live-photo-current-note.test.ts", "从同一作品容器读取标题、正文、话题、Live Photo、时间、公开状态和 8/4/10")], e2eCases: [], fixtures: ["tests/unit/xhs-live-photo-current-note.test.ts"], triggerFiles: ["lib/automation/xhs-page-evidence.ts", "lib/automation/adapters.ts"] }),
   behavior({ key: "XHS_PLATFORM_TIME", module: "XHS published time", invariant: "平台发布时间只取当前作品可靠证据，不被编辑时间或邻近作品污染。", unitTests: ["tests/unit/xhs-published-at-dom.test.ts", "tests/unit/xhs-original-published-at.test.ts", "tests/unit/platform-published-at.test.ts"], e2eTests: ["tests/e2e/platform-published-at.spec.ts"], unitCases: [caseRef("tests/unit/xhs-published-at-dom.test.ts", "评论和推荐区域时间不能作为当前作品平台时间")], e2eCases: [caseRef("tests/e2e/platform-published-at.spec.ts", "小红书保留相对时间原文并排除评论时间")], fixtures: ["tests/unit/xhs-published-at-dom.test.ts"], triggerFiles: ["lib/automation/xhs-page-evidence.ts", "lib/platform-published-at.ts"] }),
   behavior({ key: "XHS_INTERACTION_ZERO", module: "XHS interaction evidence", invariant: "0/0/0 与 1/0/0 均为可靠值并计算 total；wrapper 缺失为 UNAVAILABLE，冲突为 CONFLICT。", unitTests: ["tests/unit/xhs-interaction-dom.test.ts", "tests/unit/interaction-metrics.test.ts"], e2eTests: ["tests/e2e/audit-flow.spec.ts"], unitCases: [caseRef("tests/unit/xhs-interaction-dom.test.ts", "真实空数字 Variant：heart/star 无数字且评论为动作标签时确认为 0/0/0")], e2eCases: [], fixtures: ["tests/unit/xhs-interaction-dom.test.ts"], triggerFiles: ["lib/automation/xhs-page-evidence.ts", "lib/interaction-metrics.ts"] }),
   behavior({ key: "XHS_INTERACTION_NORMAL", module: "XHS interaction evidence", invariant: "8/4/10 必须可靠计算 total=22，且评论区与推荐作品数字不得污染当前作品。", unitTests: ["tests/unit/xhs-live-photo-current-note.test.ts", "tests/unit/xhs-interaction-dom.test.ts", "tests/unit/interaction-metrics.test.ts"], e2eTests: ["tests/e2e/audit-flow.spec.ts"], unitCases: [caseRef("tests/unit/xhs-interaction-dom.test.ts", "真实样本 8/4/10 合计 22")], e2eCases: [], fixtures: ["tests/unit/xhs-live-photo-current-note.test.ts"], triggerFiles: ["lib/automation/xhs-page-evidence.ts", "lib/interaction-metrics.ts"] }),
-  behavior({ key: "KABRITA_STORE_NOT_REQUIRED", module: "Store topic audit", invariant: "Kabrita 店铺映射可为 MATCHED，但店铺话题保持 NOT_REQUIRED，页面异常不得制造 STORE_TOPIC_MISSING。", unitTests: ["tests/unit/store-topic-config.test.ts", "tests/unit/store-topic-channel-policy.test.ts", "tests/unit/protected-behavior-invariants.test.ts"], e2eTests: ["tests/e2e/store-topic-rule-management.spec.ts"], unitCases: [caseRef("tests/unit/store-topic-config.test.ts", "佳贝艾特 Alias 匹配后没有店铺话题要求且页面无店铺话题仍不失败")], e2eCases: [caseRef("tests/e2e/store-topic-rule-management.spec.ts", "佳贝艾特 Canonical 可不要求店铺话题并保留 STORE_ALIAS")], fixtures: ["rules/default-rules.json"], triggerFiles: ["lib/store-topic-config.ts", "lib/store-topic-audit.ts", "rules/default-rules.json"] }),
+  behavior({ key: "KABRITA_STORE_NOT_REQUIRED", module: "Store topic audit", invariant: "Kabrita 店铺映射可为 MATCHED，但店铺话题保持 NOT_REQUIRED，页面异常不得制造 STORE_TOPIC_MISSING。", unitTests: ["tests/unit/store-topic-config.test.ts", "tests/unit/store-topic-channel-policy.test.ts", "tests/unit/protected-behavior-invariants.test.ts"], e2eTests: ["tests/e2e/store-topic-rule-management.spec.ts"], unitCases: [caseRef("tests/unit/store-topic-config.test.ts", "佳贝艾特 Alias 匹配后没有店铺话题要求且页面无店铺话题仍不失败")], e2eCases: [caseRef("tests/e2e/store-topic-rule-management.spec.ts", "佳贝艾特 Canonical 可不要求店铺话题并保留 STORE_ALIAS")], fixtures: ["rules/default-rules.json"], triggerFiles: ["lib/store-topic-config.ts", "lib/store-topic-rule-service.ts", "rules/default-rules.json"] }),
   behavior({ key: "KABRITA_NO_PRODUCT_STAGE_TOPIC", module: "Campaign stage requirements", invariant: "Kabrita 可保留 productStage 数据，但 PRODUCT_STAGE topic requirement 永远为 NONE。", unitTests: ["tests/unit/campaign-stage-requirement.test.ts", "tests/unit/protected-behavior-invariants.test.ts"], e2eTests: ["tests/e2e/product-stage-topic.spec.ts", "tests/e2e/rule-brand-navigation.spec.ts"], unitCases: [caseRef("tests/unit/campaign-stage-requirement.test.ts", "没有阶段规则时不要求阶段")], e2eCases: [caseRef("tests/e2e/product-stage-topic.spec.ts", "佳贝艾特活动过滤产品、隐藏阶段并允许无阶段创建任务")], fixtures: ["rules/default-rules.json"], triggerFiles: ["lib/campaign-stage-requirement.ts", "lib/product-stage.ts", "rules/default-rules.json"] }),
-  behavior({ key: "STORE_ALIAS_IDENTITY_ONLY", module: "Store mapping", invariant: "STORE_ALIAS 只做导入身份映射，绝不能自动成为页面 ACCEPTED/REQUIRED 话题。", unitTests: ["tests/unit/store-topic-config.test.ts", "tests/unit/store-accepted-topics.test.ts", "tests/unit/protected-behavior-invariants.test.ts"], e2eTests: ["tests/e2e/store-topic-rule-management.spec.ts", "tests/e2e/store-topic-audit.spec.ts"], unitCases: [caseRef("tests/unit/store-accepted-topics.test.ts", "导入别名不是话题，不调用话题补井号语义")], e2eCases: [caseRef("tests/e2e/store-topic-rule-management.spec.ts", "同文本 ACCEPTED_ALIAS 页面话题与 STORE_ALIAS 导入身份独立共存")], fixtures: ["rules/default-rules.json"], triggerFiles: ["lib/store-topic-config.ts", "lib/store-accepted-topics.ts"] }),
+  behavior({ key: "STORE_ALIAS_IDENTITY_ONLY", module: "Store mapping", invariant: "STORE_ALIAS 只做导入身份映射，绝不能自动成为页面 ACCEPTED/REQUIRED 话题。", unitTests: ["tests/unit/store-topic-config.test.ts", "tests/unit/store-accepted-topics.test.ts", "tests/unit/protected-behavior-invariants.test.ts"], e2eTests: ["tests/e2e/store-topic-rule-management.spec.ts", "tests/e2e/store-topic-audit.spec.ts"], unitCases: [caseRef("tests/unit/store-accepted-topics.test.ts", "导入别名不是话题，不调用话题补井号语义")], e2eCases: [caseRef("tests/e2e/store-topic-rule-management.spec.ts", "同文本 ACCEPTED_ALIAS 页面话题与 STORE_ALIAS 导入身份独立共存")], fixtures: ["rules/default-rules.json"], triggerFiles: ["lib/store-topic-config.ts", "lib/store-topic-rule-service.ts"] }),
   behavior({ key: "STORE_RENAME_IDENTITY_CONTINUITY", module: "Store rule package identity", invariant: "同一平台店铺正式改名必须通过显式 canonical/STORE_ALIAS 连续性保留 StoreTopicRule.id；重复应用、连续改名、改回旧名与 restore 均幂等，跨店冲突 fail closed，真实移除及后续相似新店不得误复用历史 identity。", unitTests: ["tests/unit/store-rename-identity-continuity.test.ts", "tests/unit/store-rule-package-sync.test.ts", "tests/unit/rule-sync.test.ts"], e2eTests: ["tests/e2e/store-topic-rule-management.spec.ts"], unitCases: [caseRef("tests/unit/store-rename-identity-continuity.test.ts", "初次创建、重复 apply 与正式改名保留 Store ID、Alias、历史引用及无关店铺"), caseRef("tests/unit/store-rename-identity-continuity.test.ts", "A → B → C 与 A → B → A 始终保留同一 Store ID"), caseRef("tests/unit/store-rename-identity-continuity.test.ts", "跨店 Alias 候选冲突 fail closed 且不合并或删除任一 Store"), caseRef("tests/unit/store-rename-identity-continuity.test.ts", "真正移除保持软删除，后续相似店铺不凭历史 Alias 复用旧 ID"), caseRef("tests/unit/store-rename-identity-continuity.test.ts", "rename → restore → rename 与重复 reapply 保持 identity 幂等")], e2eCases: [caseRef("tests/e2e/store-topic-rule-management.spec.ts", "Protected STORE_RENAME_IDENTITY_CONTINUITY：规则包正式改名保留 Store ID 和旧名 Alias")], fixtures: ["tests/unit/store-rename-identity-continuity.test.ts", "tests/e2e/store-topic-rule-management.spec.ts"], triggerFiles: ["lib/rules/package.ts"] }),
   behavior({ key: "DELETED_RESULT_DUPLICATE_RELEASE", module: "Duplicate lifecycle", invariant: "已删除正式 Result 永不进入 effective history；有效历史为 0 时不得标记 duplicate。", unitTests: ["tests/unit/audit-task-deduplication.test.ts", "tests/unit/audit-result-deletion.test.ts", "tests/unit/duplicate-reaudit.test.ts", "tests/unit/protected-behavior-invariants.test.ts"], e2eTests: ["tests/e2e/result-lifecycle.spec.ts"], unitCases: [caseRef("tests/unit/audit-result-deletion.test.ts", "只删除审核结果及其直属明细并写入审计日志")], e2eCases: [caseRef("tests/e2e/result-lifecycle.spec.ts", "删除当前审核结果后同日重新导入立即释放单条重复占用")], fixtures: ["tests/unit/audit-result-deletion.test.ts"], triggerFiles: ["lib/audit-task-deduplication.ts", "lib/import-task-metadata.ts", "app/api/results"] }),
-  behavior({ key: "BULK_DUPLICATE_CONFIRM", module: "Bulk duplicate confirmation", invariant: "真实重复支持单条、多选和全部确认；批量确认不能绕过任何其他预检错误。", unitTests: ["tests/unit/bulk-duplicate-reaudit.test.ts", "tests/unit/duplicate-reaudit.test.ts"], e2eTests: ["tests/e2e/audit-flow.spec.ts"], unitCases: [caseRef("tests/unit/bulk-duplicate-reaudit.test.ts", "服务端只批量确认真实历史重复，并保留其他 errors 门禁")], e2eCases: [caseRef("tests/e2e/audit-flow.spec.ts", "历史重复预检查保持幂等并只在本次确认后创建重复重审任务")], fixtures: ["tests/unit/bulk-duplicate-reaudit.test.ts"], triggerFiles: ["app/api/audit-tasks", "lib/import-task-metadata.ts"] }),
+  behavior({ key: "BULK_DUPLICATE_CONFIRM", module: "Bulk duplicate confirmation", invariant: "真实重复支持单条、多选和全部确认；批量确认不能绕过任何其他预检错误。", unitTests: ["tests/unit/bulk-duplicate-reaudit.test.ts", "tests/unit/duplicate-reaudit.test.ts"], e2eTests: ["tests/e2e/audit-flow.spec.ts"], unitCases: [caseRef("tests/unit/bulk-duplicate-reaudit.test.ts", "服务端只批量确认真实历史重复，并保留其他 errors 门禁")], e2eCases: [caseRef("tests/e2e/audit-flow.spec.ts", "历史重复预检查保持幂等并只在本次确认后创建重复重审任务")], fixtures: ["tests/unit/bulk-duplicate-reaudit.test.ts"], triggerFiles: ["app/api/import/notes", "lib/import-task-metadata.ts"] }),
   behavior({ key: "IMPORT_CASCADE_DELETE", module: "Import deletion", invariant: "删除 Import 仅级联其 Batch/Task/Result、释放 duplicate occupancy，且不影响同名文件的其他 Import。", unitTests: ["tests/unit/import-record-deletion.test.ts"], e2eTests: ["tests/e2e/import-record-deletion.spec.ts"], unitCases: [caseRef("tests/unit/import-record-deletion.test.ts", "一个 Batch、13 Tasks、13 Results 的标准链路可完整删除")], e2eCases: [caseRef("tests/e2e/import-record-deletion.spec.ts", "单条删除联动两个平台批次、13 个任务及全版本结果，并释放重复占用")], fixtures: ["tests/unit/import-record-deletion.test.ts"], triggerFiles: ["app/api/imports", "lib/import-record-deletion.ts", "app/(admin)/imports"] }),
-  behavior({ key: "DANONE_STAGE_SEGMENT_SEMANTICS", module: "Danone import template", invariant: "仅 Danone 模板使用阶段 IFFO/GUM 与段位 P/1/2/3/4/1+/2+；反向输入必须失败。", unitTests: ["tests/unit/danone-import-templates.test.ts", "tests/unit/product-stage.test.ts", "tests/unit/protected-behavior-invariants.test.ts"], e2eTests: ["tests/e2e/stage-import.spec.ts"], unitCases: [caseRef("tests/unit/danone-import-templates.test.ts", "按元数据识别模板且严格校验客户段位与代发阶段")], e2eCases: [caseRef("tests/e2e/stage-import.spec.ts", "达能8月Excel按阶段与具体段位精确选择单一阶段规则")], fixtures: ["tests/unit/danone-import-templates.test.ts"], triggerFiles: ["lib/import-export.ts", "lib/product-stage.ts", "app/api/imports"] }),
-  behavior({ key: "KABRITA_TEMPLATE_ISOLATION", module: "Kabrita import template", invariant: "Kabrita 模板保持独立解析，不得继承 Danone 阶段/段位语义。", unitTests: ["tests/unit/import-export-templates.test.ts", "tests/unit/danone-import-templates.test.ts"], e2eTests: ["tests/e2e/kabrita-excel-template.spec.ts", "tests/e2e/stage-import.spec.ts"], unitCases: [caseRef("tests/unit/import-export-templates.test.ts", "严格生成不含是否符合的13列表头并可识别模板品牌")], e2eCases: [caseRef("tests/e2e/kabrita-excel-template.spec.ts", "佳贝艾特13列导入模板下载、识别和六种购买产品线预检")], fixtures: ["tests/unit/import-export-templates.test.ts"], triggerFiles: ["lib/import-export.ts", "lib/product-stage.ts", "app/api/imports"] }),
+  behavior({ key: "DANONE_STAGE_SEGMENT_SEMANTICS", module: "Danone import template", invariant: "仅 Danone 模板使用阶段 IFFO/GUM 与段位 P/1/2/3/4/1+/2+；反向输入必须失败。", unitTests: ["tests/unit/danone-import-templates.test.ts", "tests/unit/product-stage.test.ts", "tests/unit/protected-behavior-invariants.test.ts"], e2eTests: ["tests/e2e/stage-import.spec.ts"], unitCases: [caseRef("tests/unit/danone-import-templates.test.ts", "按元数据识别模板且严格校验客户段位与代发阶段")], e2eCases: [caseRef("tests/e2e/stage-import.spec.ts", "达能8月Excel按阶段与具体段位精确选择单一阶段规则")], fixtures: ["tests/unit/danone-import-templates.test.ts"], triggerFiles: ["lib/import-export-templates", "lib/product-stage.ts", "app/api/imports"] }),
+  behavior({ key: "KABRITA_TEMPLATE_ISOLATION", module: "Kabrita import template", invariant: "Kabrita 模板保持独立解析，不得继承 Danone 阶段/段位语义。", unitTests: ["tests/unit/import-export-templates.test.ts", "tests/unit/danone-import-templates.test.ts"], e2eTests: ["tests/e2e/kabrita-excel-template.spec.ts", "tests/e2e/stage-import.spec.ts"], unitCases: [caseRef("tests/unit/import-export-templates.test.ts", "严格生成不含是否符合的13列表头并可识别模板品牌")], e2eCases: [caseRef("tests/e2e/kabrita-excel-template.spec.ts", "佳贝艾特13列导入模板下载、识别和六种购买产品线预检")], fixtures: ["tests/unit/import-export-templates.test.ts"], triggerFiles: ["lib/import-export-templates", "lib/product-stage.ts", "app/api/imports"] }),
   behavior({ key: "DOUYIN_PUBLIC_IMAGE_TEXT_DETAIL", module: "Douyin current-content evidence", invariant: "公开 /note/{id} 图文即使未登录，只要 current-content 轮播、作者/action bar 与 contentId 证据完整，必须为 NORMAL / IMAGE_TEXT_DETAIL；不存在、安全验证、评论区或推荐作品证据不得误判 NORMAL。", unitTests: ["tests/unit/douyin-current-content-evidence.test.ts", "tests/unit/douyin-page-classification.test.ts", "tests/unit/douyin-image-evidence.test.ts"], e2eTests: ["tests/e2e/douyin-automation.spec.ts"], unitCases: [caseRef("tests/unit/douyin-current-content-evidence.test.ts", "公开 /note/ 图文轮播未登录仍识别为 NORMAL / IMAGE_TEXT_DETAIL")], e2eCases: [caseRef("tests/e2e/douyin-automation.spec.ts", "Protected DOUYIN_PUBLIC_IMAGE_TEXT_DETAIL：公开图文未登录仍为 NORMAL")], fixtures: ["tests/unit/douyin-current-content-evidence.test.ts"], triggerFiles: ["lib/automation/douyin-current-content-evidence.ts", "lib/automation/douyin-page-classification.ts", "lib/automation/douyin-extract.ts", "lib/automation/douyin-adapter.ts"] }),
   behavior({ key: "DOUYIN_PUBLIC_IMAGE_TEXT_CONTENT_ACCURACY", module: "Douyin current-content extraction", invariant: "公开图文必须按 current contentId 的 structured image list、carousel pager、logical slide、raw image fallback 顺序计数；clone/preload 不得放大图片数，正文、话题和图片必须来自同一当前作品且隔离评论与推荐。", unitTests: ["tests/unit/douyin-adapter.test.ts", "tests/unit/douyin-image-evidence.test.ts", "tests/unit/douyin-current-content-evidence.test.ts"], e2eTests: ["tests/e2e/douyin-automation.spec.ts"], unitCases: [caseRef("tests/unit/douyin-image-evidence.test.ts", "Protected DOUYIN_PUBLIC_IMAGE_TEXT_CONTENT_ACCURACY：真实三张轮播不被十个 clone/preload img/source 放大且正文同源")], e2eCases: [caseRef("tests/e2e/douyin-automation.spec.ts", "Protected DOUYIN_PUBLIC_IMAGE_TEXT_CONTENT_ACCURACY：十个媒体节点仍为三张且正文完整")], fixtures: ["tests/unit/douyin-image-evidence.test.ts"], triggerFiles: ["lib/automation/douyin-current-content-evidence.ts", "lib/automation/douyin-extract.ts", "lib/automation/douyin-adapter.ts"] }),
   behavior({ key: "PAUSE_CONTINUE_RUNNER_HANDOFF", module: "Automation runner lifecycle", invariant: "PROCESSING 中 PAUSE 后立即 CONTINUE 必须由下一代 runner 有界接管；旧 lease/owner 无写入或关闭新资源的权限，底层 extraction 必须 settle，且后续 Batch 不得饥饿。", unitTests: ["tests/unit/automation-runner-lifecycle.test.ts"], e2eTests: ["tests/e2e/pause-resume-runner-lifecycle.spec.ts"], unitCases: [caseRef("tests/unit/automation-runner-lifecycle.test.ts", "PAUSE 能立即中断等待中的 extraction 而不等待底层 Promise 退出"), caseRef("tests/unit/automation-runner-lifecycle.test.ts", "多次 CONTINUE 使用 generation latch 合并唤醒且不产生双 runner"), caseRef("tests/unit/automation-runner-lifecycle.test.ts", "XHS context close 与下一代 launch 通过 closePromise 串行"), caseRef("tests/unit/automation-runner-lifecycle.test.ts", "generation 1 延迟 cleanup 无权关闭 generation 2 browser owner"), caseRef("tests/unit/automation-runner-lifecycle.test.ts", "PAUSE cleanup barrier 不阻塞控制响应但会阻止下一代 browser acquire"), caseRef("tests/unit/automation-runner-lifecycle.test.ts", "底层 extraction 接收 AbortSignal 后真正 settle 且 registry 归零")], e2eCases: [caseRef("tests/e2e/pause-resume-runner-lifecycle.spec.ts", "Protected PAUSE_CONTINUE_RUNNER_HANDOFF：旧 extraction 延迟退出仍有界接管且后续批次不饥饿")], fixtures: ["tests/e2e/pause-resume-runner-lifecycle.spec.ts"], triggerFiles: ["lib/automation/queue.ts", "lib/automation/runtime-state.ts", "lib/automation/extraction-deadline.ts", "lib/automation/generation-lifecycle.ts", "lib/automation/runner-handoff.ts", "lib/automation/browser.ts", "lib/automation/douyin-browser.ts"] }),
@@ -81,6 +82,144 @@ export const CHANGE_IMPACT_MAP = Object.freeze([
 
 const unique = (values) => [...new Set(values)].sort();
 const behaviorByKey = new Map(PROTECTED_BEHAVIORS.map((item) => [item.key, item]));
+const unsupportedTriggerPattern = /[*?{}]/u;
+
+function trackedRepositoryTargets(root) {
+  let output;
+  try {
+    output = execFileSync("git", ["-C", root, "ls-files", "-z"], {
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`无法读取 Git tracked files：${detail}`);
+  }
+
+  const files = new Set(output.split("\0").filter(Boolean));
+  const directories = new Set();
+  for (const file of files) {
+    const segments = file.split("/");
+    for (let index = 1; index < segments.length; index += 1) {
+      directories.add(segments.slice(0, index).join("/"));
+    }
+  }
+  const canonicalByLowerCase = new Map(
+    [...files, ...directories].map((target) => [target.toLowerCase(), target]),
+  );
+  return { files, directories, canonicalByLowerCase };
+}
+
+function inspectProtectedTriggerFiles(items, root) {
+  const errors = [];
+  const { files, directories, canonicalByLowerCase } = trackedRepositoryTargets(root);
+  const owners = new Map();
+  let totalEntryCount = 0;
+  let exactFileEntryCount = 0;
+  let directoryEntryCount = 0;
+  let patternEntryCount = 0;
+  let duplicateEntryCount = 0;
+  let missingEntryCount = 0;
+  let malformedEntryCount = 0;
+
+  for (const item of items) {
+    const key = typeof item?.key === "string" && item.key.trim()
+      ? item.key
+      : "UNKNOWN_BEHAVIOR";
+    if (!Array.isArray(item?.triggerFiles)) {
+      malformedEntryCount += 1;
+      errors.push(`${key}: triggerFiles 必须是数组`);
+      continue;
+    }
+
+    const seen = new Set();
+    for (const trigger of item.triggerFiles) {
+      totalEntryCount += 1;
+      if (typeof trigger !== "string") {
+        malformedEntryCount += 1;
+        errors.push(`${key}: triggerFiles 条目必须是字符串`);
+        continue;
+      }
+      if (!trigger || trigger !== trigger.trim()) {
+        malformedEntryCount += 1;
+        errors.push(`${key}: triggerFiles 条目不能为空或包含首尾空白 ${JSON.stringify(trigger)}`);
+        continue;
+      }
+      if (trigger.includes("\\")) {
+        malformedEntryCount += 1;
+        errors.push(`${key}: triggerFiles 必须使用 repository-relative POSIX 路径 ${trigger}`);
+        continue;
+      }
+      if (path.posix.isAbsolute(trigger) || path.win32.isAbsolute(trigger)) {
+        malformedEntryCount += 1;
+        errors.push(`${key}: triggerFiles 不允许绝对路径 ${trigger}`);
+        continue;
+      }
+      if (
+        trigger.includes("\0") ||
+        path.posix.normalize(trigger) !== trigger ||
+        trigger.split("/").some((segment) => segment === "." || segment === "..")
+      ) {
+        malformedEntryCount += 1;
+        errors.push(`${key}: triggerFiles 必须位于 repository 内且使用 canonical 路径 ${trigger}`);
+        continue;
+      }
+      if (unsupportedTriggerPattern.test(trigger)) {
+        patternEntryCount += 1;
+        malformedEntryCount += 1;
+        errors.push(`${key}: triggerFiles schema 不支持 glob/pattern ${trigger}`);
+        continue;
+      }
+      if (seen.has(trigger)) {
+        duplicateEntryCount += 1;
+        errors.push(`${key}: triggerFiles 存在重复条目 ${trigger}`);
+        continue;
+      }
+      seen.add(trigger);
+
+      if (files.has(trigger)) exactFileEntryCount += 1;
+      else if (directories.has(trigger)) directoryEntryCount += 1;
+      else {
+        missingEntryCount += 1;
+        const canonical = canonicalByLowerCase.get(trigger.toLowerCase());
+        errors.push(canonical
+          ? `${key}: triggerFiles 大小写与 Git canonical path 不一致 ${trigger}（应为 ${canonical}）`
+          : `${key}: triggerFiles 未命中 Git tracked 文件或目录 ${trigger}`);
+      }
+
+      if (!owners.has(trigger)) owners.set(trigger, new Set());
+      owners.get(trigger).add(key);
+    }
+  }
+
+  const shared = [...owners.values()].filter((keys) => keys.size > 1);
+  return {
+    errors,
+    result: {
+      totalEntryCount,
+      exactFileEntryCount,
+      directoryEntryCount,
+      patternEntryCount,
+      duplicateEntryCount,
+      missingEntryCount,
+      malformedEntryCount,
+      sharedTriggerCount: shared.length,
+      sharedTriggerReferenceCount: shared.reduce((count, keys) => count + keys.size, 0),
+    },
+  };
+}
+
+export function validateProtectedTriggerFiles(
+  items = PROTECTED_BEHAVIORS,
+  root = process.cwd(),
+) {
+  const validation = inspectProtectedTriggerFiles(items, root);
+  if (validation.errors.length) {
+    throw new Error(`Protected triggerFiles 无效：\n- ${validation.errors.join("\n- ")}`);
+  }
+  return validation.result;
+}
 
 export function selectProtectedBehaviors(changedFiles, options = {}) {
   const normalized = unique((changedFiles || []).map((file) => file.replaceAll("\\", "/")));
@@ -148,8 +287,15 @@ export function validateProtectedBehaviorRegistry(root = process.cwd()) {
     if (!members.length) errors.push(`${group}: 空组`);
     for (const key of members) if (!behaviorByKey.has(key)) errors.push(`${group}: 未知 behavior ${key}`);
   }
+  const triggerValidation = inspectProtectedTriggerFiles(PROTECTED_BEHAVIORS, root);
+  errors.push(...triggerValidation.errors);
   if (errors.length) throw new Error(`Protected Behavior Registry 无效：\n- ${errors.join("\n- ")}`);
-  return { behaviorCount: PROTECTED_BEHAVIORS.length, groupCount: Object.keys(PROTECTED_BEHAVIOR_GROUPS).length, keys: [...keys].sort() };
+  return {
+    behaviorCount: PROTECTED_BEHAVIORS.length,
+    groupCount: Object.keys(PROTECTED_BEHAVIOR_GROUPS).length,
+    keys: [...keys].sort(),
+    triggerFiles: triggerValidation.result,
+  };
 }
 
 function printRegistry() {

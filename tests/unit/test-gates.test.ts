@@ -19,6 +19,7 @@ import {
   PROTECTED_EXPECTATION_CHANGE_POLICY,
   selectProtectedBehaviors,
   validateProtectedBehaviorRegistry,
+  validateProtectedTriggerFiles,
 } from "../../scripts/testing/protected-behaviors.mjs";
 import {
   captureFile,
@@ -303,6 +304,15 @@ describe("分层测试门禁", () => {
       // all previously protected expectations and group memberships remain unchanged.
       behaviorCount: 31,
       groupCount: 13,
+      triggerFiles: {
+        totalEntryCount: 112,
+        exactFileEntryCount: 101,
+        directoryEntryCount: 11,
+        patternEntryCount: 0,
+        duplicateEntryCount: 0,
+        missingEntryCount: 0,
+        malformedEntryCount: 0,
+      },
     });
     expect(new Set(PROTECTED_BEHAVIORS.map((item) => item.key)).size)
       .toBe(PROTECTED_BEHAVIORS.length);
@@ -312,6 +322,66 @@ describe("分层测试门禁", () => {
     )).toBe(true);
     expect(fs.readFileSync(path.resolve("tests/regression/README.md"), "utf8"))
       .toContain("用户明确批准");
+  });
+
+  it("triggerFiles 接受 Git tracked 精确文件和目录前缀", () => {
+    expect(validateProtectedTriggerFiles([
+      {
+        key: "VALID_TRIGGER_TARGETS",
+        triggerFiles: ["lib/rules/package.ts", "app/api/results"],
+      },
+    ])).toMatchObject({
+      totalEntryCount: 2,
+      exactFileEntryCount: 1,
+      directoryEntryCount: 1,
+      missingEntryCount: 0,
+      malformedEntryCount: 0,
+    });
+  });
+
+  it.each([
+    ["不存在的精确文件", ["lib/definitely-not-existing-file.ts"], "未命中 Git tracked"],
+    ["路径 typo", ["lib/rules/pakcage.ts"], "未命中 Git tracked"],
+    ["repository escape", ["../outside.ts"], "位于 repository 内"],
+    ["Windows 绝对路径", ["C:/outside.ts"], "不允许绝对路径"],
+    ["POSIX 绝对路径", ["/tmp/outside.ts"], "不允许绝对路径"],
+    ["空字符串", [""], "不能为空"],
+    ["null", [null], "必须是字符串"],
+    ["number", [42], "必须是字符串"],
+    ["object", [{}], "必须是字符串"],
+    ["重复 trigger", ["lib/rules/package.ts", "lib/rules/package.ts"], "重复条目"],
+    ["Windows 路径分隔符", ["lib\\rules\\package.ts"], "POSIX 路径"],
+    ["大小写错误", ["lib/Rules/package.ts"], "Git canonical path 不一致"],
+    ["不受支持的 glob", ["lib/**/*.ts"], "不支持 glob/pattern"],
+    ["stale rename", ["lib/automation/xhs-adapter.ts"], "未命中 Git tracked"],
+  ])("triggerFiles fail closed：%s", (_name, triggerFiles, message) => {
+    expect(() => validateProtectedTriggerFiles([
+      { key: "INVALID_TRIGGER_TARGET", triggerFiles },
+    ])).toThrow(message);
+  });
+
+  it("changedFiles 接受 Windows 分隔符，但 registry 只保存 POSIX canonical path", () => {
+    expect(selectProtectedBehaviors(
+      ["lib\\rules\\sync.ts"],
+      { directOnly: true },
+    ).behaviorKeys).toContain("RULE_SYNC_ATOMIC_COMMIT");
+  });
+
+  it.each([
+    ["lib/rules/sync.ts", "RULE_SYNC_ATOMIC_COMMIT", "RULE_SYNC_TRANSACTION_ALL"],
+    ["lib/rules/version-contract.ts", "RULE_PACKAGE_MINIMUM_APP_VERSION_CONSISTENCY", "RULE_PACKAGE_COMPATIBILITY_ALL"],
+    ["lib/automation/generation-lifecycle.ts", "BROWSER_LIFECYCLE_CLEANUP_DEADLINE", "AUTOMATION_RUNNER_LIFECYCLE_ALL"],
+    ["lib/result-drawer-request-identity.ts", "RESULT_DRAWER_RESPONSE_IDENTITY", "RESULT_DRAWER_IDENTITY_ALL"],
+    ["lib/rules/package.ts", "STORE_RENAME_IDENTITY_CONTINUITY", "STORE_IDENTITY_CONTINUITY_ALL"],
+  ])("triggerFiles selector：%s 精确选中 %s", (file, behaviorKey, group) => {
+    const selection = selectProtectedBehaviors([file]);
+    expect(selection.behaviorKeys).toContain(behaviorKey);
+    expect(selection.groups).toContain(group);
+  });
+
+  it("无关文件不选择 Protected behavior 或 group", () => {
+    expect(selectProtectedBehaviors(["docs/unrelated.md"], { noFallback: true }))
+      .toMatchObject({ behaviorKeys: [], groups: [] });
   });
 
   it("XHS 共享底层改动自动加入完整兄弟回归，不只选择当前 Bug", () => {

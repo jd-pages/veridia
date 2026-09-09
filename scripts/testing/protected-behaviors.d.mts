@@ -20,9 +20,34 @@ export interface ProtectedSelection {
   reasons: string[];
 }
 
+export interface ProtectedTriggerFileValidation {
+  totalEntryCount: number;
+  exactFileEntryCount: number;
+  directoryEntryCount: number;
+  patternEntryCount: number;
+  duplicateEntryCount: number;
+  missingEntryCount: number;
+  malformedEntryCount: number;
+  sharedTriggerCount: number;
+  sharedTriggerReferenceCount: number;
+}
+
+export interface ProtectedTriggerFileRegistration {
+  key?: unknown;
+  triggerFiles?: unknown;
+}
+
+export interface ProtectedRegistryValidation {
+  behaviorCount: number;
+  groupCount: number;
+  keys: string[];
+  triggerFiles: ProtectedTriggerFileValidation;
+}
+
 export const PROTECTED_EXPECTATION_CHANGE_POLICY: string;
 export const PROTECTED_BEHAVIORS: readonly ProtectedBehavior[];
 export const PROTECTED_BEHAVIOR_GROUPS: Readonly<Record<string, readonly string[]>>;
 export const CHANGE_IMPACT_MAP: readonly Readonly<{ match: RegExp; groups: readonly string[]; reason: string }>[];
 export function selectProtectedBehaviors(changedFiles: string[], options?: { full?: boolean; conservative?: boolean; noFallback?: boolean; directOnly?: boolean }): ProtectedSelection;
-export function validateProtectedBehaviorRegistry(root?: string): { behaviorCount: number; groupCount: number; keys: string[] };
+export function validateProtectedTriggerFiles(items?: readonly ProtectedTriggerFileRegistration[], root?: string): ProtectedTriggerFileValidation;
+export function validateProtectedBehaviorRegistry(root?: string): ProtectedRegistryValidation;
