@@ -72,6 +72,16 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   ).toBeLessThanOrEqual(1);
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(async () => {
+      const [danoneBox, kabritaBox] = await Promise.all([
+        danoneBrandCard.boundingBox(),
+        kabritaBrandCard.boundingBox(),
+      ]);
+      if (!danoneBox || !kabritaBox) return Number.POSITIVE_INFINITY;
+      return Math.abs(danoneBox.x - kabritaBox.x);
+    })
+    .toBeLessThanOrEqual(6);
   const [
     mobileDanoneBox,
     mobileKabritaBox,
