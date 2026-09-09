@@ -8,8 +8,16 @@
     "url": "https://github.com/jd-pages/veridia.git"
   },
   "main": "desktop/main.cjs",
+  "packageManager": "npm@11.13.0",
   "engines": {
     "node": ">=20.18.0"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "11.13.0",
+      "onFail": "error"
+    }
   },
   "scripts": {
     "dev": "next dev -p 3100",

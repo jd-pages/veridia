@@ -55,6 +55,16 @@ jobs:
           node-version: 22.19.0
           cache: npm
 
+      - name: 固定 npm toolchain
+        shell: pwsh
+        run: |
+          Push-Location $env:RUNNER_TEMP
+          npm install --global npm@11.13.0
+          Pop-Location
+          if ((npm --version).Trim() -ne "11.13.0") {
+            throw "npm toolchain 必须为 11.13.0"
+          }
+
       - name: 安装依赖
         shell: pwsh
         run: |
