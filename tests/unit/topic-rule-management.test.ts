@@ -9,6 +9,7 @@ import {
   deleteTopicRuleInTransaction,
   monthlyTopicRuleWhere,
   normalizeMonthlyTopicRuleDeletionInput,
+  topicRuleListWhere,
   updateTopicRuleInTransaction,
 } from "@/lib/topic-rule-management";
 import {
@@ -95,6 +96,31 @@ afterAll(async () => {
 }, 30_000);
 
 describe.sequential("话题规则启停与永久删除", () => {
+  it("品牌月份视角同时返回通用/产品规则与当前月活动规则", () => {
+    expect(
+      topicRuleListWhere({
+        brandName: "惠氏",
+        month: "2026-09",
+        contentChannel: "XIAOHONGSHU",
+      }),
+    ).toEqual({
+      campaignId: undefined,
+      productId: undefined,
+      brandName: "惠氏",
+      contentChannel: { in: ["XIAOHONGSHU", "ALL"] },
+      OR: [
+        { campaignId: null },
+        { campaign: { is: { month: "2026-09", deletedAt: null } } },
+      ],
+    });
+    expect(
+      topicRuleListWhere({
+        brandName: "惠氏",
+        contentChannel: "XIAOHONGSHU",
+      }),
+    ).toMatchObject({ brandName: "惠氏", campaignId: null });
+  });
+
   it("严格解析 selectedMonth 范围并与 GET 的渠道可见性一致", () => {
     expect(
       normalizeMonthlyTopicRuleDeletionInput({
@@ -150,6 +176,14 @@ describe.sequential("话题规则启停与永久删除", () => {
         brandName: brandB,
       },
     });
+    const productA2 = await source.product.create({
+      data: {
+        id: `product-a2-${suffix}`,
+        code: `RULE-A2-${suffix}`,
+        name: `规则管理产品A2-${suffix}`,
+        brandName: brandA,
+      },
+    });
     const september = await createCampaign(source, {
       id: `campaign-september-${suffix}`,
       name: `规则管理九月-${suffix}`,
@@ -190,6 +224,44 @@ describe.sequential("话题规则启停与永久删除", () => {
       contentChannel: "XIAOHONGSHU",
       topic: `#可逆规则${suffix}`,
       version: 10,
+    });
+
+    const productRule = await source.topicRule.create({
+      data: {
+        id: `rule-product-${suffix}`,
+        ruleSource: "LOCAL_DRAFT",
+        scope: "PRODUCT",
+        productId: productA.id,
+        brandName: brandA,
+        contentChannel: "XIAOHONGSHU",
+        ruleType: "MUST_ALL",
+        topicCategory: "PRODUCT_COMMON",
+        topic: `#产品规则${suffix}`,
+      },
+    });
+    await expect(
+      source.$transaction((tx) =>
+        updateTopicRuleInTransaction(tx, {
+          id: productRule.id,
+          userId,
+          expectedBrandName: brandA,
+          body: { productId: productB.id },
+        }),
+      ),
+    ).rejects.toThrow("所选产品不属于当前品牌");
+    const movedProductRule = await source.$transaction((tx) =>
+      updateTopicRuleInTransaction(tx, {
+        id: productRule.id,
+        userId,
+        expectedBrandName: brandA,
+        body: { productId: productA2.id },
+      }),
+    );
+    expect(movedProductRule).toMatchObject({
+      id: productRule.id,
+      productId: productA2.id,
+      version: 2,
+      product: { id: productA2.id, brandName: brandA },
     });
 
     const disabled = await source.$transaction((tx) =>

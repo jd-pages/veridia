@@ -125,6 +125,7 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "达能话题规则" }),
   ).toBeVisible();
+  await page.getByText("活动规则", { exact: true }).first().click();
   await expect(page.getByText("#爱他美新手爸妈日记")).toBeVisible();
   await expect(
     page.getByText("产品阶段与要求话题", { exact: true }),
@@ -136,6 +137,141 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
     page.getByText("GUM 成长组（3段/4段/1+段/2+段）", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "返回品牌列表" })).toBeVisible();
+});
+
+test("惠氏按产品进入启赋未来规则并可新增、编辑回显", async ({ page }) => {
+  test.setTimeout(90_000);
+  const login = await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  });
+  expect(login.ok()).toBeTruthy();
+
+  const productsResponse = await page.request.get("/api/products");
+  const products = (await productsResponse.json()).data as Array<{
+    id: string;
+    name: string;
+    brandName: string;
+  }>;
+  const product = products.find(
+    (item) => item.brandName === "惠氏" && item.name === "启赋未来",
+  );
+  expect(product).toBeTruthy();
+
+  const rulesResponse = await page.request.get(
+    `/api/rules?brandName=${encodeURIComponent("惠氏")}&contentChannel=XIAOHONGSHU`,
+  );
+  expect(rulesResponse.ok()).toBeTruthy();
+  const productRules = ((await rulesResponse.json()).data as Array<{
+    scope: string;
+    productId: string | null;
+    topic: string;
+    ruleType: string;
+    exactMatch: boolean;
+    clickableRequired: boolean;
+    caseSensitive: boolean;
+    minCount: number;
+    sortOrder: number;
+    product: { name: string } | null;
+  }>).filter((rule) => rule.productId === product!.id);
+  expect(productRules).toEqual(
+    ["#启赋未来", "#港版启赋", "#10HMO奶粉", "#启赋未来10HMO"].map(
+      (topic, index) => expect.objectContaining({
+        scope: "PRODUCT",
+        productId: product!.id,
+        topic,
+        ruleType: "MUST_ALL",
+        exactMatch: true,
+        clickableRequired: true,
+        caseSensitive: false,
+        minCount: 1,
+        sortOrder: (index + 1) * 10,
+        product: expect.objectContaining({ name: "启赋未来" }),
+      }),
+    ),
+  );
+
+  const rejected = await page.request.post("/api/rules", {
+    data: {
+      brandName: "惠氏",
+      contentChannel: "XIAOHONGSHU",
+      scope: "PRODUCT",
+      ruleType: "MUST_ALL",
+      topic: "#缺少产品",
+    },
+  });
+  expect(rejected.status()).toBe(400);
+  await expect(rejected.json()).resolves.toMatchObject({
+    error: "产品规则必须选择所属产品",
+  });
+
+  const suffix = Date.now().toString(36);
+  const createdTopic = `#启赋未来维护测试${suffix}`;
+  try {
+    const updateCheck = waitForRuleUpdateCheck(page);
+    await page.goto("/rules");
+    await dismissRuleUpdateNoticeIfPresent(page, await updateCheck);
+    const wyethBrandCard = page.locator(".rule-brand-card").filter({
+      has: page.getByText("惠氏", { exact: true }),
+    });
+    await expect(wyethBrandCard).toContainText("启赋未来");
+    await wyethBrandCard.getByRole("button", { name: "进入规则" }).click();
+    await expect(page.getByRole("heading", { name: "惠氏话题规则" })).toBeVisible();
+    await expect(page.getByText("通用规则", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("产品规则", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("活动规则", { exact: true }).first()).toBeVisible();
+    await page.getByRole("button", { name: "新增通用规则" }).click();
+    const generalDialog = page.getByRole("dialog", { name: "新增通用规则" });
+    await expect(generalDialog.getByText("所属产品", { exact: true })).toHaveCount(0);
+    await generalDialog.locator(".ant-modal-footer .ant-btn").first().click();
+
+    await page.getByText("产品规则", { exact: true }).first().click();
+    const productCard = page.locator(".rule-brand-card").filter({
+      has: page.getByText("启赋未来", { exact: true }),
+    });
+    await expect(productCard).toContainText("4 条产品规则");
+    await productCard.getByRole("button", { name: "进入产品规则" }).click();
+    await expect(page.getByText("启赋未来话题规则", { exact: true })).toBeVisible();
+    for (const topic of ["#启赋未来", "#港版启赋", "#10HMO奶粉", "#启赋未来10HMO"]) {
+      await expect(page.getByText(topic, { exact: true })).toBeVisible();
+    }
+
+    await page.getByRole("button", { name: "新增产品规则" }).click();
+    const createDialog = page.getByRole("dialog", { name: "新增产品规则" });
+    const productField = createDialog.locator(".ant-form-item").filter({
+      hasText: "所属产品",
+    });
+    await expect(productField.locator(".ant-select-selector")).toContainText("启赋未来");
+    await expect(productField.locator(".ant-select")).not.toHaveClass(/ant-select-disabled/u);
+    await createDialog.getByLabel("标准话题词").fill(createdTopic);
+    await createDialog.locator(".ant-modal-footer .ant-btn-primary").click();
+    await expect(page.getByText(createdTopic, { exact: true })).toBeVisible();
+
+    const created = await prisma.topicRule.findFirstOrThrow({
+      where: { brandName: "惠氏", productId: product!.id, topic: createdTopic },
+    });
+    expect(created).toMatchObject({
+      scope: "PRODUCT",
+      exactMatch: true,
+      clickableRequired: true,
+      caseSensitive: false,
+      minCount: 1,
+    });
+
+    const createdRow = page.locator(".ant-table-row").filter({
+      has: page.getByText(createdTopic, { exact: true }),
+    });
+    await expect(createdRow).toContainText("启赋未来");
+    await createdRow.getByRole("button", { name: "编辑" }).click();
+    const editDialog = page.getByRole("dialog", { name: "编辑话题规则" });
+    const editProductField = editDialog.locator(".ant-form-item").filter({
+      hasText: "所属产品",
+    });
+    await expect(editProductField.locator(".ant-select-selector")).toContainText("启赋未来");
+    await expect(editProductField.locator(".ant-select")).not.toHaveClass(/ant-select-disabled/u);
+    await editDialog.locator(".ant-modal-footer .ant-btn").first().click();
+  } finally {
+    await prisma.topicRule.deleteMany({ where: { topic: createdTopic } });
+  }
 });
 
 test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({ page }) => {
@@ -296,6 +432,7 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
   await expect(breadcrumb.getByText("笔记合规中心", { exact: true })).toBeVisible();
   await expect(breadcrumb.getByText("话题规则", { exact: true })).toBeVisible();
   await expect(breadcrumb.getByText("佳贝艾特", { exact: true })).toBeVisible();
+  await page.getByText("活动规则", { exact: true }).first().click();
   await expect(page.getByText("#佳贝艾特荷兰版", { exact: true })).toBeVisible();
   await expect(page.getByText("#佳贝艾特港版", { exact: true })).toBeVisible();
   await expect(
@@ -348,6 +485,7 @@ test("达能月度规则支持空月份、复制创建、独立主键和刷新�
   await expect(
     page.getByRole("heading", { name: "达能话题规则" }),
   ).toBeVisible();
+  await page.getByText("活动规则", { exact: true }).first().click();
   await expect(page.getByTitle("2026年9月")).toBeVisible();
   await expect(
     page.getByText("当前月份暂无规则", { exact: true }),
@@ -390,6 +528,7 @@ test("达能月度规则支持空月份、复制创建、独立主键和刷新�
 
   await page.reload();
   await expect(page.getByTitle("2026年9月")).toBeVisible();
+  await page.getByText("活动规则", { exact: true }).first().click();
   await expect(
     page.getByText("IFFO 新生儿组（P段/1段）", { exact: true }),
   ).toBeVisible();
@@ -525,6 +664,7 @@ test("话题规则可逆启停、永久删除并按 selectedMonth 隔离批量�
     await expect(
       page.getByRole("heading", { name: `${brandA}话题规则` }),
     ).toBeVisible();
+    await page.getByText("活动规则", { exact: true }).first().click();
     const ruleRow = () => page.locator(".ant-table-row").filter({
       has: page.getByText(topic, { exact: true }),
     });
@@ -573,6 +713,7 @@ test("话题规则可逆启停、永久删除并按 selectedMonth 隔离批量�
     const deleteReloadUpdateCheck = waitForRuleUpdateCheck(page);
     await page.reload();
     await dismissRuleUpdateNoticeIfPresent(page, await deleteReloadUpdateCheck);
+    await page.getByText("活动规则", { exact: true }).first().click();
     await expect(ruleRow()).toHaveCount(0);
     expect(await prisma.campaign.findUnique({ where: { id: september.id } })).not.toBeNull();
     expect(await prisma.product.findUnique({ where: { id: productA.id } })).not.toBeNull();
@@ -641,7 +782,7 @@ test("话题规则可逆启停、永久删除并按 selectedMonth 隔离批量�
     await expect(monthDialog).toContainText(`品牌：${brandA}`);
     await expect(monthDialog).toContainText("渠道：小红书");
     await expect(monthDialog).toContainText("月份：2026年9月");
-    await expect(monthDialog).toContainText("共 7 条规则。");
+    await expect(monthDialog).toContainText("共 7 条活动规则。");
     await expect(monthDialog).toContainText("不会删除活动、产品和历史审核结果。");
     await monthDialog.getByRole("button", { name: "永久删除全部规则" }).click();
     await expect(page.getByText("当前月份暂无规则", { exact: true }).first()).toBeVisible();
@@ -676,6 +817,7 @@ test("话题规则可逆启停、永久删除并按 selectedMonth 隔离批量�
     const recreateReloadUpdateCheck = waitForRuleUpdateCheck(page);
     await page.reload();
     await dismissRuleUpdateNoticeIfPresent(page, await recreateReloadUpdateCheck);
+    await page.getByText("活动规则", { exact: true }).first().click();
     await expect(
       page.getByText(`#E2E删除后新增${suffix}`, { exact: true }),
     ).toBeVisible();

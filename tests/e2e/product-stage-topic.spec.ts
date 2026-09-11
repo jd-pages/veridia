@@ -526,6 +526,7 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
       { exact: true },
     ),
   ).toBeVisible();
+  await page.getByText("活动规则", { exact: true }).first().click();
   await expect(page.getByText("正文允许段位", { exact: true })).toHaveCount(0);
   const stageSummaryCard = page.locator(".ant-card").filter({
     has: page.getByText("产品阶段与要求话题", { exact: true }),

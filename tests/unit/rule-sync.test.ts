@@ -84,7 +84,7 @@ describe("GitHub 规则同步", () => {
 
   it("内置规则快照包含产品、活动、阶段组和话题规则", () => {
     const payload = validateRulePayload(builtinRules);
-    expect(payload.products.length).toBe(7);
+    expect(payload.products.length).toBe(8);
     expect(payload.campaigns.length).toBe(6);
     expect(
       payload.campaigns.filter(
@@ -104,19 +104,40 @@ describe("GitHub 规则同步", () => {
     expect(
       payload.stageGroups.every((item) => item.requireBodyStage === false),
     ).toBe(true);
-    expect(payload.topicRules.length).toBe(48);
+    expect(payload.topicRules.length).toBe(52);
     expect(
       payload.topicRules.filter(
         (rule) => rule.contentChannel === "XIAOHONGSHU",
       ),
-    ).toHaveLength(25);
+    ).toHaveLength(29);
     expect(
       payload.topicRules.filter((rule) => rule.contentChannel === "DOUYIN"),
     ).toHaveLength(23);
     expect(payload.products.filter((item) => item.brand === "达能")).toHaveLength(5);
     expect(payload.products.filter((item) => item.brand === "佳贝艾特")).toHaveLength(2);
+    expect(payload.products.filter((item) => item.brand === "惠氏")).toHaveLength(1);
     expect(payload.topicRules.filter((item) => item.brand === "达能")).toHaveLength(34);
     expect(payload.topicRules.filter((item) => item.brand === "佳贝艾特")).toHaveLength(14);
+    expect(payload.topicRules.filter((item) => item.brand === "惠氏")).toHaveLength(4);
+    expect(
+      payload.topicRules
+        .filter((item) => item.productKey === "product_wyeth_illuma_future")
+        .map((item) => ({
+          topic: item.topic,
+          scope: item.scope,
+          ruleType: item.ruleType,
+          exactMatch: item.exactMatch,
+          clickableRequired: item.clickableRequired,
+          caseSensitive: item.caseSensitive,
+          minCount: item.minCount,
+          sortOrder: item.sortOrder,
+        })),
+    ).toEqual([
+      { topic: "#启赋未来", scope: "PRODUCT", ruleType: "MUST_ALL", exactMatch: true, clickableRequired: true, caseSensitive: false, minCount: 1, sortOrder: 10 },
+      { topic: "#港版启赋", scope: "PRODUCT", ruleType: "MUST_ALL", exactMatch: true, clickableRequired: true, caseSensitive: false, minCount: 1, sortOrder: 20 },
+      { topic: "#10HMO奶粉", scope: "PRODUCT", ruleType: "MUST_ALL", exactMatch: true, clickableRequired: true, caseSensitive: false, minCount: 1, sortOrder: 30 },
+      { topic: "#启赋未来10HMO", scope: "PRODUCT", ruleType: "MUST_ALL", exactMatch: true, clickableRequired: true, caseSensitive: false, minCount: 1, sortOrder: 40 },
+    ]);
     expect(
       payload.topicRules.filter(
         (item) => item.brand === "佳贝艾特" && item.topicCategory === "PRODUCT_STAGE",
@@ -129,7 +150,7 @@ describe("GitHub 规则同步", () => {
       topicRules: Array<Record<string, unknown>>;
     };
     for (const rule of legacy.topicRules) delete rule.brand;
-    expect(validateRulePayload(legacy).topicRules).toHaveLength(48);
+    expect(validateRulePayload(legacy).topicRules).toHaveLength(52);
 
     const multiBrand = structuredClone(builtinRules);
     multiBrand.products.push({
@@ -153,7 +174,7 @@ describe("GitHub 规则同步", () => {
       campaignKey: "activity_kabrita",
       productKey: null,
     });
-    expect(validateRulePayload(multiBrand).topicRules).toHaveLength(49);
+    expect(validateRulePayload(multiBrand).topicRules).toHaveLength(53);
   });
 
   it("旧规则包缺少正文段位开关时保持原校验语义", () => {

@@ -55,6 +55,7 @@ export async function cleanupRuleSyncTemporaryDirectory(
 const BUNDLED_LOCAL_PRODUCT_KEYS = [
   "product_kabrita_netherlands",
   "product_kabrita_hongkong",
+  "product_wyeth_illuma_future",
 ];
 const BUNDLED_LOCAL_CAMPAIGN_KEYS = [
   "activity_kabrita_2026_08",
@@ -83,6 +84,10 @@ const BUNDLED_LOCAL_TOPIC_KEYS = [
   "topic_kabrita_stage_iffo_p1",
   "topic_kabrita_stage_iffo_2",
   "topic_kabrita_stage_gum",
+  "topic_wyeth_illuma_future_name",
+  "topic_wyeth_illuma_future_hongkong",
+  "topic_wyeth_illuma_future_10hmo_milk",
+  "topic_wyeth_illuma_future_10hmo",
   ...validateRulePayload(builtinRules).topicRules
     .filter((rule) => rule.contentChannel === "DOUYIN")
     .map((rule) => rule.key),

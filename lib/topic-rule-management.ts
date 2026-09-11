@@ -9,6 +9,34 @@ export type TopicRuleStatus = (typeof topicRuleStatuses)[number];
 export type TopicRuleContentChannel =
   (typeof topicRuleContentChannels)[number];
 
+export function topicRuleListWhere(input: {
+  campaignId?: string;
+  productId?: string;
+  brandName?: string;
+  month?: string;
+  contentChannel?: string;
+}): Prisma.TopicRuleWhereInput {
+  const brandRuleWindow = input.brandName && !input.campaignId && !input.productId
+    ? input.month
+      ? {
+          OR: [
+            { campaignId: null },
+            { campaign: { is: { month: input.month, deletedAt: null } } },
+          ],
+        }
+      : { campaignId: null }
+    : {};
+  return {
+    campaignId: input.campaignId,
+    productId: input.productId,
+    brandName: input.brandName,
+    ...(input.contentChannel
+      ? { contentChannel: { in: [input.contentChannel, "ALL"] } }
+      : {}),
+    ...brandRuleWindow,
+  };
+}
+
 export class TopicRuleManagementError extends Error {
   constructor(
     message: string,
@@ -111,6 +139,23 @@ export async function updateTopicRuleInTransaction(
 
   const requestedStatus = readRequestedStatus(input.body.status);
   const contentChannel = readContentChannel(input.body.contentChannel);
+  let productId: string | undefined;
+  if (existing.scope === "PRODUCT" && hasOwn(input.body, "productId")) {
+    productId =
+      typeof input.body.productId === "string"
+        ? input.body.productId.trim()
+        : "";
+    if (!productId) {
+      throw new TopicRuleManagementError("产品规则必须选择所属产品");
+    }
+    const product = await tx.product.findFirst({
+      where: { id: productId, deletedAt: null },
+      select: { brandName: true },
+    });
+    if (!product || product.brandName !== existing.brandName) {
+      throw new TopicRuleManagementError("所选产品不属于当前品牌");
+    }
+  }
   const mutableFields = [
     "ruleType",
     "contentChannel",
@@ -122,6 +167,7 @@ export async function updateTopicRuleInTransaction(
     "sortOrder",
     "status",
     "notes",
+    ...(existing.scope === "PRODUCT" ? ["productId"] : []),
   ];
   if (
     !mutableFields.some((field) => hasOwn(input.body, field)) ||
@@ -177,6 +223,7 @@ export async function updateTopicRuleInTransaction(
       ...(typeof input.body.notes === "string"
         ? { notes: input.body.notes.trim() }
         : {}),
+      ...(productId ? { productId } : {}),
       version,
     },
     include: { campaign: true, product: true },

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { normalizeTopic } from "@/lib/topic";
 import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
+import { topicRuleListWhere } from "@/lib/topic-rule-management";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -13,16 +14,22 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const month = searchParams.get("month")?.trim() || undefined;
   const contentChannel = searchParams.get("contentChannel")?.trim() || undefined;
   const rules = await prisma.topicRule.findMany({
-    where: {
+    where: topicRuleListWhere({
       campaignId,
       productId,
       brandName,
-      ...(contentChannel
-        ? { contentChannel: { in: [contentChannel, "ALL"] } }
-        : {}),
-      ...(month ? { campaign: { is: { month, deletedAt: null } } } : {}),
+      month,
+      contentChannel,
+    }),
+    include: {
+      campaign: {
+        include: {
+          product: true,
+          products: { include: { product: true } },
+        },
+      },
+      product: true,
     },
-    include: { campaign: true, product: true },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
   return ok(rules);
@@ -53,14 +60,27 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   if (!body.ruleType || !topic) return fail("规则类型和标准话题为必填项");
   const brandName = body.brandName?.trim();
   if (!brandName) return fail("规则必须归属品牌");
+  const scope = body.scope ?? "CAMPAIGN";
+  if (!["GLOBAL", "PRODUCT", "CAMPAIGN"].includes(scope)) {
+    return fail("规则层级无效");
+  }
   const ruleType = body.ruleType;
   let resolvedContentChannel = body.contentChannel || "XIAOHONGSHU";
-  if ((body.scope ?? "CAMPAIGN") === "CAMPAIGN" && !body.campaignId) {
+  if (scope === "CAMPAIGN" && !body.campaignId) {
     return fail("活动规则必须选择所属活动");
   }
+  if (scope === "PRODUCT" && !body.productId) {
+    return fail("产品规则必须选择所属产品");
+  }
+  if (scope === "GLOBAL" && (body.campaignId || body.productId)) {
+    return fail("通用规则不能绑定活动或产品");
+  }
+  if (scope === "PRODUCT" && body.campaignId) {
+    return fail("产品规则不能绑定活动");
+  }
   if (body.productId) {
-    const product = await prisma.product.findUnique({
-      where: { id: body.productId },
+    const product = await prisma.product.findFirst({
+      where: { id: body.productId, deletedAt: null },
       select: { brandName: true },
     });
     if (!product || product.brandName !== brandName) {
@@ -81,6 +101,13 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     ];
     if (!campaign || !campaignBrands.includes(brandName)) {
       return fail("所选活动不属于当前品牌");
+    }
+    const campaignProductIds = [
+      campaign.productId,
+      ...campaign.products.map(({ productId }) => productId),
+    ];
+    if (body.productId && !campaignProductIds.includes(body.productId)) {
+      return fail("所选产品不属于当前活动");
     }
     resolvedContentChannel =
       body.contentChannel ||
@@ -108,7 +135,7 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
           contentChannel: resolvedContentChannel,
           campaignId: body.campaignId || null,
           productId: body.productId || null,
-          scope: body.scope || "CAMPAIGN",
+          scope,
           ruleType,
           topicCategory: body.topicCategory || "GENERAL",
           applicableStage: body.applicableStage?.trim() || null,

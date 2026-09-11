@@ -47,7 +47,7 @@ import { rulesRequireAnyProductStage } from "@/lib/campaign-stage-requirement";
 interface Product {
   id: string;
   name: string;
-  code: string;
+  code: string | null;
   brandName: string;
 }
 
@@ -113,6 +113,8 @@ interface StageDisplayRow {
   members: StageGroup[];
 }
 
+type RuleView = "GENERAL" | "PRODUCT" | "CAMPAIGN";
+
 function monthLabel(value: string) {
   const [year, month] = value.split("-");
   return `${year}年${Number(month)}月`;
@@ -146,6 +148,8 @@ export default function RulesPage() {
   const [brandCampaigns, setBrandCampaigns] = useState<Campaign[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [campaignId, setCampaignId] = useState<string>();
+  const [ruleView, setRuleView] = useState<RuleView>("GENERAL");
+  const [selectedProductId, setSelectedProductId] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [mutatingRuleId, setMutatingRuleId] = useState<string>();
   const [deleteMonthOpen, setDeleteMonthOpen] = useState(false);
@@ -167,12 +171,25 @@ export default function RulesPage() {
     () => rulesRequireAnyProductStage(rules),
     [rules],
   );
-  const displayedRules = useMemo(
-    () =>
-      showProductStageModule
-        ? rules
-        : rules.filter((rule) => rule.topicCategory !== "PRODUCT_STAGE"),
-    [rules, showProductStageModule],
+  const displayedRules = useMemo(() => {
+    const scopedRules = rules.filter((rule) => {
+      if (ruleView === "GENERAL") return rule.scope === "GLOBAL";
+      if (ruleView === "PRODUCT") {
+        return rule.scope === "PRODUCT" && rule.productId === selectedProductId;
+      }
+      return rule.scope === "CAMPAIGN" && (!campaignId || rule.campaignId === campaignId);
+    });
+    return showProductStageModule
+      ? scopedRules
+      : scopedRules.filter((rule) => rule.topicCategory !== "PRODUCT_STAGE");
+  }, [campaignId, ruleView, rules, selectedProductId, showProductStageModule]);
+  const monthlyRules = useMemo(
+    () => rules.filter((rule) => rule.campaign?.month === selectedMonth),
+    [rules, selectedMonth],
+  );
+  const selectedProduct = useMemo(
+    () => products.find((product) => product.id === selectedProductId),
+    [products, selectedProductId],
   );
   const displayedStageGroups = useMemo(
     () => {
@@ -228,11 +245,11 @@ export default function RulesPage() {
       const monthlyCampaigns = matchingCampaigns.filter(
         (campaign) => campaign.month === requestedMonth,
       );
-      const ruleData = requestedMonth
-        ? await apiFetch<Rule[]>(
-            `/api/rules?brandName=${encodeURIComponent(activeBrand)}&month=${encodeURIComponent(requestedMonth)}&contentChannel=${selectedChannel}`,
-          )
-        : [];
+      const ruleData = await apiFetch<Rule[]>(
+        `/api/rules?brandName=${encodeURIComponent(activeBrand)}${
+          requestedMonth ? `&month=${encodeURIComponent(requestedMonth)}` : ""
+        }&contentChannel=${selectedChannel}`,
+      );
       setRules(ruleData);
       setBrandCampaigns(matchingCampaigns);
       setCampaigns(monthlyCampaigns);
@@ -243,8 +260,14 @@ export default function RulesPage() {
       if (campaignId && !monthlyCampaigns.some((item) => item.id === campaignId)) {
         setCampaignId(undefined);
       }
-      setProducts(
-        productData.filter((product) => product.brandName === activeBrand),
+      const matchingProducts = productData.filter(
+        (product) => product.brandName === activeBrand,
+      );
+      setProducts(matchingProducts);
+      setSelectedProductId((current) =>
+        current && matchingProducts.some((product) => product.id === current)
+          ? current
+          : undefined,
       );
       setStageGroups(stageData);
     } catch (error) {
@@ -253,6 +276,24 @@ export default function RulesPage() {
       setLoading(false);
     }
   }, [campaignId, message, selectedBrand, selectedMonth, selectedChannel]);
+
+  const openNewRule = useCallback((targetScope: RuleView, productId?: string) => {
+    setEditing(null);
+    setOpen(true);
+    window.setTimeout(() => {
+      form.resetFields();
+      form.setFieldsValue({
+        scope: targetScope === "GENERAL" ? "GLOBAL" : targetScope,
+        productId: targetScope === "PRODUCT" ? productId : undefined,
+        ruleType: "MUST_ALL",
+        exactMatch: true,
+        clickableRequired: true,
+        caseSensitive: false,
+        minCount: 1,
+        sortOrder: 10,
+      });
+    }, 0);
+  }, [form]);
 
   const changeRuleStatus = useCallback(async (
     rule: Rule,
@@ -290,7 +331,7 @@ export default function RulesPage() {
   }, [load, message, selectedBrand]);
 
   const permanentlyDeleteSelectedMonth = useCallback(async () => {
-    if (!selectedBrand || !selectedMonth || rules.length === 0) return;
+    if (!selectedBrand || !selectedMonth || monthlyRules.length === 0) return;
     setDeletingMonth(true);
     try {
       const result = await apiFetch<{ deletedCount: number }>(
@@ -314,7 +355,7 @@ export default function RulesPage() {
     } finally {
       setDeletingMonth(false);
     }
-  }, [load, message, rules.length, selectedBrand, selectedChannel, selectedMonth]);
+  }, [load, message, monthlyRules.length, selectedBrand, selectedChannel, selectedMonth]);
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
@@ -410,6 +451,7 @@ export default function RulesPage() {
           selectedChannel === "DOUYIN" ? "抖音" : "小红书",
           selectedBrand,
           ...(selectedMonth ? [monthLabel(selectedMonth)] : []),
+          ...(selectedProduct ? [selectedProduct.name] : []),
         ]}
         description={
           showProductStageModule
@@ -424,6 +466,8 @@ export default function RulesPage() {
                 setSelectedBrand(undefined);
                 setSelectedMonth(undefined);
                 setCampaignId(undefined);
+                setRuleView("GENERAL");
+                setSelectedProductId(undefined);
                 updateRulePageUrl(undefined, undefined, selectedChannel);
                 void loadBrands();
               }}
@@ -452,35 +496,38 @@ export default function RulesPage() {
               <Button
                 danger
                 icon={<DeleteOutlined />}
-                disabled={!selectedMonth || rules.length === 0}
+                disabled={!selectedMonth || monthlyRules.length === 0}
                 loading={deletingMonth}
                 onClick={() => setDeleteMonthOpen(true)}
               >
                 删除本月全部规则
               </Button>
             ) : null}
-            {canManageBusiness && campaigns.length ? (
+            {canManageBusiness && ruleView === "GENERAL" ? (
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
-                onClick={() => {
-                  setEditing(null);
-                  setOpen(true);
-                  window.setTimeout(() => {
-                    form.resetFields();
-                    form.setFieldsValue({
-                      scope: "CAMPAIGN",
-                      ruleType: "MUST_ALL",
-                      exactMatch: true,
-                      clickableRequired: true,
-                      caseSensitive: false,
-                      minCount: 1,
-                      sortOrder: 10,
-                    });
-                  }, 0);
-                }}
+                onClick={() => openNewRule("GENERAL")}
               >
-                新增规则
+                新增通用规则
+              </Button>
+            ) : null}
+            {canManageBusiness && ruleView === "PRODUCT" && selectedProduct ? (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => openNewRule("PRODUCT", selectedProduct.id)}
+              >
+                新增产品规则
+              </Button>
+            ) : null}
+            {canManageBusiness && ruleView === "CAMPAIGN" && campaigns.length ? (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => openNewRule("CAMPAIGN")}
+              >
+                新增活动规则
               </Button>
             ) : null}
           </Space>
@@ -498,6 +545,7 @@ export default function RulesPage() {
             setSelectedChannel(channel);
             setSelectedMonth(undefined);
             setCampaignId(undefined);
+            setSelectedProductId(undefined);
             updateRulePageUrl(selectedBrand, undefined, channel);
           }}
         />
@@ -526,15 +574,39 @@ export default function RulesPage() {
             }))}
           />
           <Statistic title="产品" value={[
-            ...new Set(campaigns.flatMap((campaign) => [
-              campaign.product?.id,
-              ...(campaign.products || []).map(({ product }) => product.id),
-            ]).filter(Boolean)),
+            ...new Set(products.map((product) => product.id)),
           ].length} suffix="个" />
           <Statistic title="活动" value={campaigns.length} suffix="个" />
           <Statistic title="规则" value={rules.length} suffix="条" />
           <Statistic title="规则版本" value={campaigns[0]?.ruleVersion || 0} prefix="v" />
           <StatusTag value={campaigns[0]?.status || "INACTIVE"} />
+        </Space>
+      </Card>
+      <Card className="surface-card" style={{ marginBottom: 16 }}>
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          <Typography.Text strong>规则类型</Typography.Text>
+          <Segmented
+            block
+            value={ruleView}
+            options={[
+              { label: "通用规则", value: "GENERAL" },
+              { label: "产品规则", value: "PRODUCT" },
+              { label: "活动规则", value: "CAMPAIGN" },
+            ]}
+            onChange={(value) => {
+              const nextView = value as RuleView;
+              setRuleView(nextView);
+              if (nextView !== "PRODUCT") setSelectedProductId(undefined);
+              if (nextView !== "CAMPAIGN") setCampaignId(undefined);
+            }}
+          />
+          <Typography.Text type="secondary">
+            {ruleView === "GENERAL"
+              ? "通用规则应用于当前品牌下的全部产品，不绑定具体产品或活动。"
+              : ruleView === "PRODUCT"
+                ? "先选择产品，再维护该产品专属的话题规则。"
+                : "活动规则按当前规则月份和所属活动维护。"}
+          </Typography.Text>
         </Space>
       </Card>
       {!rules.length ? (
@@ -547,7 +619,7 @@ export default function RulesPage() {
           </Typography.Paragraph>
         </Card>
       ) : null}
-      {showProductStageModule ? (
+      {showProductStageModule && ruleView === "CAMPAIGN" ? (
         <Card
           className="surface-card"
           title="产品阶段与要求话题"
@@ -608,23 +680,88 @@ export default function RulesPage() {
           />
         </Card>
       ) : null}
-      <Card className="surface-card">
-        <div className="filter-bar">
-          <Select
-            allowClear
-            showSearch
-            optionFilterProp="label"
-            value={campaignId}
-            onChange={setCampaignId}
-            placeholder="按活动筛选"
-            style={{ width: 340 }}
-            options={campaigns.map((item) => ({
-              value: item.id,
-              label: `${item.month} · ${item.name}`,
-            }))}
-          />
-          <Button onClick={() => void load()}>查询</Button>
-        </div>
+      {ruleView === "PRODUCT" && !selectedProduct ? (
+        products.length ? (
+          <Row className="rule-brand-grid" gutter={[16, 16]}>
+            {products.map((product) => {
+              const productRuleCount = rules.filter(
+                (rule) => rule.scope === "PRODUCT" && rule.productId === product.id,
+              ).length;
+              return (
+                <Col key={product.id} xs={24} md={12}>
+                  <Card
+                    className="surface-card rule-brand-card"
+                    title={product.name}
+                    extra={<Tag color="blue">{productRuleCount} 条产品规则</Tag>}
+                    actions={[
+                      <Button
+                        key="enter-product"
+                        type="link"
+                        icon={<RightOutlined />}
+                        onClick={() => setSelectedProductId(product.id)}
+                      >
+                        进入产品规则
+                      </Button>,
+                    ]}
+                  >
+                    <Typography.Text type="secondary">
+                      {product.code ? `产品编码：${product.code}` : "未设置产品编码"}
+                    </Typography.Text>
+                  </Card>
+                </Col>
+              );
+            })}
+          </Row>
+        ) : (
+          <Card className="surface-card" style={{ textAlign: "center" }}>
+            <Typography.Title level={4}>当前品牌暂无产品</Typography.Title>
+            <Typography.Paragraph type="secondary">
+              请先在产品管理中新增产品，再维护产品规则。
+            </Typography.Paragraph>
+          </Card>
+        )
+      ) : (
+        <Card
+          className="surface-card"
+          title={
+            ruleView === "GENERAL"
+              ? "通用规则"
+              : ruleView === "PRODUCT"
+                ? `${selectedProduct?.name || "产品"}话题规则`
+                : "活动规则"
+          }
+        >
+          <div className="filter-bar">
+            {ruleView === "CAMPAIGN" ? (
+              <>
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  value={campaignId}
+                  onChange={setCampaignId}
+                  placeholder="按活动筛选"
+                  style={{ width: 340 }}
+                  options={campaigns.map((item) => ({
+                    value: item.id,
+                    label: `${item.month} · ${item.name}`,
+                  }))}
+                />
+                <Button onClick={() => void load()}>查询</Button>
+              </>
+            ) : null}
+            {ruleView === "PRODUCT" ? (
+              <Button
+                icon={<ArrowLeftOutlined />}
+                onClick={() => setSelectedProductId(undefined)}
+              >
+                返回产品列表
+              </Button>
+            ) : null}
+            <Typography.Text type="secondary">
+              当前 {displayedRules.length} 条规则
+            </Typography.Text>
+          </div>
         <Table<Rule>
           rowKey="id"
           loading={loading}
@@ -662,8 +799,13 @@ export default function RulesPage() {
             {
               title: "所属产品",
               width: 200,
-              render: (_value, row) =>
-                row.product?.name || row.campaign?.product?.name || "-",
+              render: (_value, row) => {
+                const campaignProducts = row.campaign?.products
+                  ?.map(({ product }) => product.name)
+                  .filter(Boolean)
+                  .join("、");
+                return row.product?.name || row.campaign?.product?.name || campaignProducts || "-";
+              },
             },
             {
               title: "匹配设置",
@@ -712,7 +854,7 @@ export default function RulesPage() {
                   </Button>
                   <Popconfirm
                     title={row.status === "ACTIVE" ? "确认停用规则？" : "确认启用规则？"}
-                    description="活动规则版本会自动递增，历史审核结果不受影响。"
+                    description="规则版本会自动递增，历史审核结果不受影响。"
                     onConfirm={() => changeRuleStatus(
                       row,
                       row.status === "ACTIVE" ? "INACTIVE" : "ACTIVE",
@@ -741,6 +883,9 @@ export default function RulesPage() {
                           所属活动：{row.campaign?.name || "-"}
                         </Typography.Text>
                         <Typography.Text>
+                          所属产品：{row.product?.name || "-"}
+                        </Typography.Text>
+                        <Typography.Text>
                           规则月份：{row.campaign?.month || selectedMonth || "-"}
                         </Typography.Text>
                       </Space>
@@ -763,8 +908,10 @@ export default function RulesPage() {
             },
           ]}
           pagination={{ pageSize: 12 }}
+          locale={{ emptyText: "当前视角暂无规则" }}
         />
-      </Card>
+        </Card>
+      )}
       <Modal
         open={deleteMonthOpen}
         title={`确认删除 ${selectedMonth ? monthLabel(selectedMonth) : "当前月份"}全部话题规则？`}
@@ -786,7 +933,7 @@ export default function RulesPage() {
           <Typography.Text>
             月份：{selectedMonth ? monthLabel(selectedMonth) : "-"}
           </Typography.Text>
-          <Typography.Text strong>共 {rules.length} 条规则。</Typography.Text>
+          <Typography.Text strong>共 {monthlyRules.length} 条活动规则。</Typography.Text>
           <Typography.Text>不会删除活动、产品和历史审核结果。</Typography.Text>
           <Typography.Text type="danger">删除后不可恢复。</Typography.Text>
         </Space>
@@ -871,7 +1018,13 @@ export default function RulesPage() {
       </Modal>
       <Modal
         open={open}
-        title={editing ? "编辑话题规则" : "新增话题规则"}
+        title={editing
+          ? "编辑话题规则"
+          : scope === "GLOBAL"
+            ? "新增通用规则"
+            : scope === "PRODUCT"
+              ? "新增产品规则"
+              : "新增活动规则"}
         onCancel={() => setOpen(false)}
         onOk={() => form.submit()}
         okText="保存"
@@ -897,7 +1050,7 @@ export default function RulesPage() {
           <Space style={{ display: "flex" }} align="start">
             <Form.Item name="scope" label="规则层级" rules={[{ required: true }]}>
               <Select
-                disabled={Boolean(editing)}
+                disabled
                 style={{ width: 180 }}
                 options={[
                   {
@@ -945,10 +1098,11 @@ export default function RulesPage() {
           {scope === "PRODUCT" ? (
             <Form.Item name="productId" label="所属产品" rules={[{ required: true }]}>
               <Select
-                disabled={Boolean(editing)}
+                showSearch
+                optionFilterProp="label"
                 options={products.map((item) => ({
                   value: item.id,
-                  label: `${item.code} · ${item.name}`,
+                  label: item.code ? `${item.code} · ${item.name}` : item.name,
                 }))}
               />
             </Form.Item>
