@@ -25,21 +25,48 @@ async function waitForTerminalBatch(page: Page, batchId: string) {
   );
 }
 
+async function getDouyinAutomationFixture(
+  page: Page,
+  options: { brandName?: string } = {},
+) {
+  const response = await page.request.get(
+    "/api/campaigns?contentChannel=DOUYIN",
+  );
+  const payload = await response.json();
+  expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
+  const campaigns = payload.data as Array<{
+    id: string;
+    product: { id: string; brandName: string } | null;
+    products: Array<{ product: { id: string; brandName: string } }>;
+  }>;
+  const fixture = campaigns
+    .flatMap((campaign) => [
+      ...(campaign.product ? [campaign.product] : []),
+      ...campaign.products.map(({ product }) => product),
+    ].map((product) => ({
+      campaignId: campaign.id,
+      productId: product.id,
+      brandName: product.brandName,
+    })))
+    .find(({ brandName }) =>
+      options.brandName ? brandName === options.brandName : true,
+    );
+  expect(
+    fixture,
+    options.brandName
+      ? `未找到 ${options.brandName} 的有效抖音产品与活动关联`
+      : "未找到有效的抖音产品与活动关联",
+  ).toBeTruthy();
+  return fixture!;
+}
+
 async function createDouyinBatchForUrl(page: Page, url: string) {
-  const products = (await (
-    await page.request.get("/api/products")
-  ).json()).data as Array<{ id: string; brandName: string }>;
-  const product = products.find((item) => item.brandName === "达能") || products[0];
-  const campaigns = (await (
-    await page.request.get(
-      `/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`,
-    )
-  ).json()).data as Array<{ id: string }>;
+  const { productId, campaignId } = await getDouyinAutomationFixture(page);
   const response = await page.request.post("/api/automation/batches", {
     data: {
       contentChannel: "DOUYIN",
-      productId: product.id,
-      campaignId: campaigns[0].id,
+      productId,
+      campaignId,
       productStage: "IFFO_P1",
       urls: [url],
     },
@@ -728,15 +755,11 @@ test("抖音复用店铺映射但仅审核 ACCEPTED，小红书继续审核 REQU
 test("抖音批次使用独立会话、单一后台页面并应用独立业务规则", async ({ page }) => {
   test.setTimeout(120_000);
   await login(page);
-  const products = (await (await page.request.get("/api/products")).json()).data as Array<{
-    id: string;
-    brandName: string;
-  }>;
-  const product = products.find((item) => item.brandName === "达能")!;
-  const campaigns = (await (await page.request.get(`/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`)).json()).data as Array<{ id: string }>;
-  const campaign = campaigns[0];
+  const { productId, campaignId } = await getDouyinAutomationFixture(page, {
+    brandName: "达能",
+  });
   const requirementsResponse = await page.request.get(
-    `/api/campaigns/${campaign.id}/requirements?productId=${product.id}&stage=IFFO_P1`,
+    `/api/campaigns/${campaignId}/requirements?productId=${productId}&stage=IFFO_P1`,
   );
   expect(requirementsResponse.ok()).toBeTruthy();
   const requirementContext = (await requirementsResponse.json()).data.context as {
@@ -756,8 +779,8 @@ test("抖音批次使用独立会话、单一后台页面并应用独立业务�
   const response = await page.request.post("/api/automation/batches", {
     data: {
       contentChannel: "DOUYIN",
-      productId: product.id,
-      campaignId: campaign.id,
+      productId,
+      campaignId,
       productStage: "IFFO_P1",
       urls: [
         `${E2E_ORIGIN}/mock/douyin?case=video&dy=${suffix}-1`,
@@ -922,15 +945,13 @@ test("抖音图文正文、真实话题、店铺话题和公开免审共同产�
 
 test("抖音不存在作品使用独立终态且不阻断后续作品", async ({ page }) => {
   await login(page);
-  const products = (await (await page.request.get("/api/products")).json()).data as Array<{ id: string }>;
-  const product = products[0];
-  const campaigns = (await (await page.request.get(`/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`)).json()).data as Array<{ id: string }>;
+  const { productId, campaignId } = await getDouyinAutomationFixture(page);
   const suffix = Date.now();
   const response = await page.request.post("/api/automation/batches", {
     data: {
       contentChannel: "DOUYIN",
-      productId: product.id,
-      campaignId: campaigns[0].id,
+      productId,
+      campaignId,
       urls: [
         `${E2E_ORIGIN}/mock/douyin?case=not-found&dy=${suffix}-missing`,
         `${E2E_ORIGIN}/mock/douyin?case=video&dy=${suffix}-normal`,
@@ -951,14 +972,13 @@ test("抖音不存在作品使用独立终态且不阻断后续作品", async ({
 
 test("抖音临时网络错误最多重试两次且不创建新页面", async ({ page }) => {
   await login(page);
-  const product = ((await (await page.request.get("/api/products")).json()).data as Array<{ id: string }>)[0];
-  const campaign = ((await (await page.request.get(`/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`)).json()).data as Array<{ id: string }>)[0];
+  const { productId, campaignId } = await getDouyinAutomationFixture(page);
   const before = (await (await page.request.get("/api/automation/session?platform=DOUYIN")).json()).data;
   const response = await page.request.post("/api/automation/batches", {
     data: {
       contentChannel: "DOUYIN",
-      productId: product.id,
-      campaignId: campaign.id,
+      productId,
+      campaignId,
       urls: [`${E2E_ORIGIN}/mock/douyin?case=network-error&dy=${Date.now()}`],
     },
   });
@@ -994,13 +1014,12 @@ test("抖音临时网络错误最多重试两次且不创建新页面", async ({
 
 test("抖音安全限制暂停批次并只显示同一会话的人工页", async ({ page }) => {
   await login(page);
-  const product = ((await (await page.request.get("/api/products")).json()).data as Array<{ id: string }>)[0];
-  const campaign = ((await (await page.request.get(`/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`)).json()).data as Array<{ id: string }>)[0];
+  const { productId, campaignId } = await getDouyinAutomationFixture(page);
   const response = await page.request.post("/api/automation/batches", {
     data: {
       contentChannel: "DOUYIN",
-      productId: product.id,
-      campaignId: campaign.id,
+      productId,
+      campaignId,
       urls: [`${E2E_ORIGIN}/mock/douyin?case=security&dy=${Date.now()}`],
     },
   });
@@ -1029,17 +1048,12 @@ test("抖音安全限制暂停批次并只显示同一会话的人工页", async
 
 test("抖音未登录只暂停当前平台批次且不生成业务失败结果", async ({ page }) => {
   await login(page);
-  const product = ((await (
-    await page.request.get("/api/products")
-  ).json()).data as Array<{ id: string }>)[0];
-  const campaign = ((await (
-    await page.request.get(`/api/campaigns?productId=${product.id}&contentChannel=DOUYIN`)
-  ).json()).data as Array<{ id: string }>)[0];
+  const { productId, campaignId } = await getDouyinAutomationFixture(page);
   const response = await page.request.post("/api/automation/batches", {
     data: {
       contentChannel: "DOUYIN",
-      productId: product.id,
-      campaignId: campaign.id,
+      productId,
+      campaignId,
       urls: [
         `${E2E_ORIGIN}/mock/douyin?case=logged-out&dy=${Date.now()}`,
       ],
