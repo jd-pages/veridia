@@ -78,8 +78,23 @@ export async function runWithExtractionDeadline<T>(input: {
 }) {
   const deadlineMs = input.deadlineMs ?? automationExtractionDeadlineMs();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let internalDeadlineTriggered = false;
+  let externalHandoffTriggered = false;
+  const suppressedAfterCancellation = new Promise<never>(() => undefined);
+  const operation = input.operation.then(
+    (value) => internalDeadlineTriggered || externalHandoffTriggered
+      ? suppressedAfterCancellation
+      : value,
+    (error: unknown) => {
+      if (internalDeadlineTriggered || externalHandoffTriggered) {
+        return suppressedAfterCancellation;
+      }
+      throw error;
+    },
+  );
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
+      internalDeadlineTriggered = true;
       void (async () => {
         console.warn(
           "[自动审核生命周期] EXTRACTION_DEADLINE_EXCEEDED",
@@ -105,12 +120,14 @@ export async function runWithExtractionDeadline<T>(input: {
     rejectCancelled = reject;
   });
   const cancelForHandoff = () => {
+    if (internalDeadlineTriggered) return;
+    externalHandoffTriggered = true;
     rejectCancelled?.(new AutomaticExtractionHandoffCancelledError());
   };
   if (input.signal?.aborted) cancelForHandoff();
   else input.signal?.addEventListener("abort", cancelForHandoff, { once: true });
   try {
-    return await Promise.race([input.operation, timeout, cancelled]);
+    return await Promise.race([operation, timeout, cancelled]);
   } finally {
     if (timer) clearTimeout(timer);
     input.signal?.removeEventListener("abort", cancelForHandoff);

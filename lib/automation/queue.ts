@@ -464,10 +464,7 @@ async function processBatch(batchId: string) {
           }));
           break;
         } catch (error) {
-          if (
-            error instanceof AutomaticExtractionHandoffCancelledError ||
-            extractionHandle.signal.aborted
-          ) {
+          if (error instanceof AutomaticExtractionHandoffCancelledError) {
             throw error;
           }
           const extractionError = toAutomaticExtractionError(error);
@@ -540,8 +537,7 @@ async function processBatch(batchId: string) {
     } catch (error) {
       if (
         currentExtractionHandle &&
-        (error instanceof AutomaticExtractionHandoffCancelledError ||
-          currentExtractionHandle.signal.aborted)
+        error instanceof AutomaticExtractionHandoffCancelledError
       ) {
         recordGenerationLifecycleEvent(
           "STALE_EXTRACTION_ERROR_IGNORED",
@@ -686,15 +682,70 @@ async function processBatch(batchId: string) {
       }
     } finally {
       if (!mustPauseBatch) {
-        await prisma.auditBatch.updateMany({
-          where: {
-            id: batchId,
-            status: "RUNNING",
-            runEpoch,
-            currentTaskId: task.id,
-          },
-          data: { currentTaskId: null },
+        const released = await prisma.$transaction(async (tx) => {
+          const stillProcessing = await tx.auditTask.findFirst({
+            where: {
+              id: task.id,
+              status: "PROCESSING",
+              claimEpoch: lease.claimEpoch,
+            },
+            select: { id: true },
+          });
+          if (stillProcessing) {
+            const batchRelease = await tx.auditBatch.updateMany({
+              where: {
+                id: batchId,
+                status: "RUNNING",
+                runEpoch,
+                currentTaskId: task.id,
+              },
+              data: {
+                status: "QUEUED",
+                runEpoch: { increment: 1 },
+                currentTaskId: null,
+              },
+            });
+            if (batchRelease.count !== 1) return false;
+            await tx.auditTask.updateMany({
+              where: {
+                id: task.id,
+                status: "PROCESSING",
+                claimEpoch: lease.claimEpoch,
+              },
+              data: {
+                status: "PENDING",
+                claimEpoch: null,
+                failureCode: null,
+                failureMessage: null,
+                startedAt: null,
+                finishedAt: null,
+                nextRunAt: null,
+              },
+            });
+            return true;
+          }
+          await tx.auditBatch.updateMany({
+            where: {
+              id: batchId,
+              status: "RUNNING",
+              runEpoch,
+              currentTaskId: task.id,
+            },
+            data: { currentTaskId: null },
+          });
+          return false;
         });
+        if (released) {
+          console.warn(
+            "[自动审核生命周期] PROCESSING_LEASE_REQUEUED_ON_RUNNER_EXIT",
+            JSON.stringify({
+              batchId,
+              taskId: task.id,
+              runEpoch,
+              claimEpoch: lease.claimEpoch,
+            }),
+          );
+        }
       }
     }
     if (mustPauseBatch) {

@@ -5,6 +5,8 @@ import path from "node:path";
 import { E2E_ORIGIN } from "./e2e-origin";
 import { playwrightDouyinAdapter } from "../../lib/automation/douyin-adapter";
 import { readDouyinCurrentContentEvidence } from "../../lib/automation/douyin-current-content-evidence";
+import { DEFAULT_AUTOMATION_EXTRACTION_DEADLINE_MS } from "../../lib/automation/extraction-deadline";
+import { DEFAULT_BROWSER_LIFECYCLE_CLEANUP_DEADLINE_MS } from "../../lib/automation/generation-lifecycle";
 
 async function login(page: Page) {
   await page.goto("/login");
@@ -14,15 +16,131 @@ async function login(page: Page) {
   await expect(page).toHaveURL(/\/dashboard/u);
 }
 
+type AutomationBatchTaskSnapshot = {
+  id: string;
+  status: string;
+  claimEpoch: number | null;
+  attempts: number;
+  auditResults?: unknown[];
+};
+
+type AutomationBatchSnapshot = {
+  id: string;
+  status: string;
+  runEpoch: number;
+  currentTaskId: string | null;
+  tasks: AutomationBatchTaskSnapshot[];
+};
+
+const AUTOMATION_STATE_PERSISTENCE_MARGIN_MS = 15_000;
+const AUTOMATION_BATCH_STALL_DEADLINE_MS =
+  DEFAULT_AUTOMATION_EXTRACTION_DEADLINE_MS +
+  DEFAULT_BROWSER_LIFECYCLE_CLEANUP_DEADLINE_MS +
+  AUTOMATION_STATE_PERSISTENCE_MARGIN_MS;
+const AUTOMATION_BATCH_HARD_DEADLINE_MS =
+  AUTOMATION_BATCH_STALL_DEADLINE_MS + 30_000;
+
+function automationBatchDiagnostic(batch: AutomationBatchSnapshot) {
+  const counts = batch.tasks.reduce<Record<string, number>>((summary, task) => {
+    summary[task.status] = (summary[task.status] ?? 0) + 1;
+    return summary;
+  }, {});
+  const currentTask = batch.tasks.find((task) => task.id === batch.currentTaskId);
+  return {
+    batchId: batch.id,
+    status: batch.status,
+    currentTaskId: batch.currentTaskId,
+    PENDING: counts.PENDING ?? 0,
+    PROCESSING: counts.PROCESSING ?? 0,
+    COMPLETED: counts.COMPLETED ?? 0,
+    FAILED: counts.FAILED ?? 0,
+    READ_FAILED: counts.READ_FAILED ?? 0,
+    runEpoch: batch.runEpoch,
+    claimEpoch: currentTask?.claimEpoch ?? null,
+  };
+}
+
+function automationBatchProgressSignature(batch: AutomationBatchSnapshot) {
+  return JSON.stringify({
+    status: batch.status,
+    runEpoch: batch.runEpoch,
+    currentTaskId: batch.currentTaskId,
+    tasks: batch.tasks.map((task) => ({
+      id: task.id,
+      status: task.status,
+      claimEpoch: task.claimEpoch,
+      attempts: task.attempts,
+      resultCount: task.auditResults?.length ?? 0,
+    })),
+  });
+}
+
 async function waitForTerminalBatch(page: Page, batchId: string) {
-  await expect.poll(async () => {
-    const payload = await (
-      await page.request.get(`/api/automation/batches?batchId=${batchId}`)
-    ).json();
-    return payload.data[0]?.status;
-  }, { timeout: 120_000 }).toMatch(
-    /^(?:COMPLETED|COMPLETED_WITH_ERRORS)$/u,
+  const startedAt = Date.now();
+  let lastProgressAt = startedAt;
+  let lastSignature = "";
+  let latest: AutomationBatchSnapshot | undefined;
+  while (Date.now() - startedAt < AUTOMATION_BATCH_HARD_DEADLINE_MS) {
+    const response = await page.request.get(
+      `/api/automation/batches?batchId=${batchId}`,
+    );
+    if (!response.ok()) {
+      throw new Error(`读取自动审核批次失败：${batchId} HTTP ${response.status()}`);
+    }
+    const payload = await response.json();
+    latest = payload.data[0] as AutomationBatchSnapshot | undefined;
+    if (!latest) throw new Error(`自动审核批次不存在：${batchId}`);
+    if (/^(?:COMPLETED|COMPLETED_WITH_ERRORS)$/u.test(latest.status)) {
+      return latest;
+    }
+    const signature = automationBatchProgressSignature(latest);
+    if (signature !== lastSignature) {
+      lastSignature = signature;
+      lastProgressAt = Date.now();
+    } else if (Date.now() - lastProgressAt >= AUTOMATION_BATCH_STALL_DEADLINE_MS) {
+      throw new Error(
+        `自动审核批次长时间无状态进展：${JSON.stringify(automationBatchDiagnostic(latest))}`,
+      );
+    }
+    await page.waitForTimeout(500);
+  }
+  throw new Error(
+    `自动审核批次超过绝对截止时间：${JSON.stringify(latest ? automationBatchDiagnostic(latest) : { batchId })}`,
   );
+}
+
+async function cleanupOwnedAutomationBatches(
+  page: Page,
+  batchIds: readonly string[],
+) {
+  for (const batchId of [...new Set(batchIds)].reverse()) {
+    const response = await page.request.get(
+      `/api/automation/batches?batchId=${batchId}`,
+    );
+    if (!response.ok()) throw new Error(`清理前读取自动审核批次失败：${batchId}`);
+    const batch = (await response.json()).data[0] as AutomationBatchSnapshot | undefined;
+    if (!batch) continue;
+    if (![
+      "COMPLETED",
+      "COMPLETED_WITH_ERRORS",
+      "CANCELLED",
+      "CLEARED",
+    ].includes(batch.status)) {
+      const cancelResponse = await page.request.post(
+        `/api/automation/batches/${batchId}/control`,
+        { data: { action: "CANCEL" } },
+      );
+      if (!cancelResponse.ok()) {
+        throw new Error(
+          `取消测试自有自动审核批次失败：${JSON.stringify(automationBatchDiagnostic(batch))}`,
+        );
+      }
+    }
+    const clearResponse = await page.request.post(
+      `/api/automation/batches/${batchId}/clear`,
+    );
+    if (!clearResponse.ok()) throw new Error(`清除测试自有自动审核批次失败：${batchId}`);
+  }
 }
 
 async function getDouyinAutomationFixture(
@@ -352,7 +470,7 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
 });
 
 test("混合 Excel 只创建一个导入记录并拆分为两个串行平台批次", async ({ page }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(AUTOMATION_BATCH_HARD_DEADLINE_MS * 2 + 60_000);
   await login(page);
   const campaigns = (await (
     await page.request.get("/api/campaigns")
@@ -463,12 +581,17 @@ test("混合 Excel 只创建一个导入记录并拆分为两个串行平台批�
       commit: "true",
     },
   });
-  const committed = (await commitResponse.json()).data as {
-    importRecordId: string;
-    batchIds: string[];
-  };
-  expect(commitResponse.ok()).toBeTruthy();
-  expect(committed.batchIds).toHaveLength(2);
+  const commitPayload = await commitResponse.json();
+  const ownedBatchIds = Array.isArray(commitPayload?.data?.batchIds)
+    ? (commitPayload.data.batchIds as string[])
+    : [];
+  try {
+    const committed = commitPayload.data as {
+      importRecordId: string;
+      batchIds: string[];
+    };
+    expect(commitResponse.ok()).toBeTruthy();
+    expect(committed.batchIds).toHaveLength(2);
 
   const importRecordResponse = await page.request.get(
     `/api/results/import-batches?q=${encodeURIComponent(`mixed-platform-${suffix}`)}`,
@@ -557,10 +680,8 @@ test("混合 Excel 只创建一个导入记录并拆分为两个串行平台批�
   );
   expect(exported.worksheets[0].actualRowCount - 1).toBe(10);
 
-  for (const batchId of committed.batchIds) {
-    expect(
-      (await page.request.post(`/api/automation/batches/${batchId}/clear`)).ok(),
-    ).toBeTruthy();
+  } finally {
+    await cleanupOwnedAutomationBatches(page, ownedBatchIds);
   }
 });
 

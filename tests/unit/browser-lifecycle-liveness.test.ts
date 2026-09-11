@@ -205,7 +205,7 @@ describe("Protected BROWSER_LIFECYCLE_CLEANUP_DEADLINE", () => {
     expect(diagnostics.pendingCleanupBarrierCount).toBe(0);
   });
 
-  it("task deadline + hung operation 结束当前等待并最终清空 lifecycle", async () => {
+  it("内部 task deadline 触发同一 signal abort 时仍暴露 LOAD_TIMEOUT 并清空 lifecycle", async () => {
     const handle = start("task-deadline");
     const operation = trackOwnedExtraction(
       handle,
@@ -221,9 +221,33 @@ describe("Protected BROWSER_LIFECYCLE_CLEANUP_DEADLINE", () => {
         runEpoch: handle.runEpoch,
         signal: handle.signal,
       }),
-    ).rejects.toBeInstanceOf(AutomaticExtractionHandoffCancelledError);
+    ).rejects.toMatchObject({ code: "LOAD_TIMEOUT" });
+    expect(handle.signal.aborted).toBe(true);
     await waitForNext(handle);
     expect(getGenerationLifecycleDiagnostics().activeExtractionCount).toBe(0);
+  });
+
+  it("外部 lifecycle abort 仍暴露 handoff cancellation", async () => {
+    const handle = start("external-handoff");
+    const operation = trackOwnedExtraction(
+      handle,
+      new Promise<never>(() => undefined),
+    );
+    const waiting = runWithExtractionDeadline({
+      operation,
+      cancel: () => cancel(handle),
+      deadlineMs: 60_000,
+      batchId: handle.batchId,
+      taskId: handle.taskId,
+      runEpoch: handle.runEpoch,
+      signal: handle.signal,
+    });
+
+    handle.abort();
+
+    await expect(waiting).rejects.toBeInstanceOf(
+      AutomaticExtractionHandoffCancelledError,
+    );
   });
 
   it("next task after hung operation 不再 starvation", async () => {
