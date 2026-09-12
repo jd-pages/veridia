@@ -6,6 +6,7 @@ import {
 } from "@/lib/audit-engine";
 import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
+import { effectiveTopicRulesForContext } from "@/lib/topic-rule-model";
 import { normalizeDouyinTopicName } from "@/lib/douyin-topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
 import { resolveStoreTopicAuditRequirement } from "@/lib/store-topic-rule-service";
@@ -91,46 +92,47 @@ export async function getAuditContext(
   );
   const compatibleStages = compatibleStageRuleValues(normalizedProductStage);
 
-  const rules = await prisma.topicRule.findMany({
+  const candidateRules = await prisma.topicRule.findMany({
     where: {
       brandName,
       status: "ACTIVE",
       contentChannel: { in: [resolvedContentChannel, "ALL"] },
-      AND: [
-        {
-          OR: [
-            { scope: "GLOBAL" },
-            { scope: "PRODUCT", productId },
-            { scope: "CAMPAIGN", campaignId, productId: null },
-            { scope: "CAMPAIGN", campaignId, productId },
-          ],
-        },
-        {
-          OR: [
-            { applicableStage: null },
-            ...(compatibleStages.length
-              ? [{ applicableStage: { in: compatibleStages } }]
-              : []),
-          ],
-        },
-      ],
     },
-    orderBy: [{ scope: "asc" }, { sortOrder: "asc" }],
+    include: {
+      product: { select: { id: true, brandName: true } },
+      campaign: {
+        include: {
+          product: { select: { id: true, brandName: true } },
+          products: {
+            select: {
+              productId: true,
+              product: { select: { id: true, brandName: true } },
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
-  const campaignStageRequirementRules = await prisma.topicRule.findMany({
-    where: {
+  const rules = effectiveTopicRulesForContext(candidateRules, {
+    brandName,
+    productId,
+    campaignId,
+    contentChannel: resolvedContentChannel,
+    compatibleStages,
+  });
+  const campaignStageRequirementRules = effectiveTopicRulesForContext(
+    candidateRules,
+    {
       brandName,
+      productId,
       campaignId,
-      status: "ACTIVE",
-      contentChannel: { in: [resolvedContentChannel, "ALL"] },
+      contentChannel: resolvedContentChannel,
+      compatibleStages: candidateRules
+        .map((rule) => rule.applicableStage)
+        .filter((value): value is string => Boolean(value)),
     },
-    select: {
-      campaignId: true,
-      topicCategory: true,
-      applicableStage: true,
-      topic: true,
-    },
-  });
+  );
   const campaignChannelMatches = [resolvedContentChannel, "ALL"].includes(
     campaign.contentChannel,
   );

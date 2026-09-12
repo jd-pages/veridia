@@ -8,7 +8,7 @@ function source(relativePath: string) {
 }
 
 describe("达能月度规则拆分", () => {
-  it("7月与8月使用独立活动、独立规则主键和准确段位话题", () => {
+  it("7月与8月产品规则独立绑定活动，阶段话题统一归入品牌 GLOBAL", () => {
     const july = builtinRules.campaigns.find(
       (campaign) => campaign.name === "爱他美2026年7月小红书种草审核",
     );
@@ -26,11 +26,18 @@ describe("达能月度规则拆分", () => {
 
     expect(july?.month).toBe("2026-07");
     expect(august?.month).toBe("2026-08");
-    expect(augustRules).toHaveLength(9);
+    expect(augustRules).toHaveLength(5);
     expect(augustRules.every((rule) => !julyKeys.has(rule.key))).toBe(true);
+    expect(augustRules.every((rule) => rule.scope === "PRODUCT" && Boolean(rule.productKey))).toBe(true);
     expect(
-      augustRules
-        .filter((rule) => rule.topicCategory === "PRODUCT_STAGE")
+      builtinRules.topicRules
+        .filter(
+          (rule) =>
+            rule.brand === "达能" &&
+            (rule.contentChannel || "XIAOHONGSHU") === "XIAOHONGSHU" &&
+            rule.scope === "GLOBAL" &&
+            rule.topicCategory === "PRODUCT_STAGE",
+        )
         .map((rule) => [rule.applicableStage, rule.topic]),
     ).toEqual([
       ["IFFO_P1", "#新生儿奶粉"],

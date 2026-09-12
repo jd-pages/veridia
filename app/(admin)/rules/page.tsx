@@ -37,24 +37,22 @@ import { ruleScopeLabels, ruleTypeLabels } from "@/lib/zh-CN";
 import type { SessionUser } from "@/lib/auth";
 import { canAccessBusiness } from "@/lib/permissions";
 import {
-  aggregateProductStageTopicRows,
-  aggregateDetailedProductStageTopicRows,
-  campaignUsesDetailedProductStages,
   productStageTopicLabel,
 } from "@/lib/product-stage";
-import { rulesRequireAnyProductStage } from "@/lib/campaign-stage-requirement";
+import { campaignContainsProduct } from "@/lib/topic-rule-model";
 
 interface Product {
   id: string;
   name: string;
   code: string | null;
   brandName: string;
+  status: string;
 }
 
 interface Campaign {
   id: string;
   name: string;
-  productId: string;
+  productId: string | null;
   month: string;
   product: Product;
   products?: Array<{ product: Product }>;
@@ -84,6 +82,9 @@ interface Rule {
   contentChannel: "XIAOHONGSHU" | "DOUYIN" | "ALL";
   campaign: Campaign | null;
   product: Product | null;
+  ruleSource: string;
+  bindingStatus?: string;
+  resolutionBasis?: string;
 }
 
 interface RuleBrand {
@@ -91,6 +92,10 @@ interface RuleBrand {
   productCount: number;
   campaignCount: number;
   ruleCount: number;
+  generalRuleCount: number;
+  productRuleCount: number;
+  campaignRuleCount: number;
+  unresolvedRuleCount: number;
   productNames: string[];
   status: string;
 }
@@ -103,14 +108,6 @@ interface StageGroup {
   requireBodyStage: boolean;
   requiredTopic: string;
   ruleSource: string;
-}
-
-interface StageDisplayRow {
-  key: string;
-  label?: string;
-  requiredTopics: string[];
-  ruleSources: string[];
-  members: StageGroup[];
 }
 
 type RuleView = "GENERAL" | "PRODUCT" | "CAMPAIGN";
@@ -157,18 +154,17 @@ export default function RulesPage() {
   const [open, setOpen] = useState(false);
   const [monthOpen, setMonthOpen] = useState(false);
   const [editing, setEditing] = useState<Rule | null>(null);
-  const [editingStage, setEditingStage] = useState<StageGroup | null>(null);
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
   );
   const [form] = Form.useForm();
-  const [stageForm] = Form.useForm();
   const [monthForm] = Form.useForm();
   const copyExistingMonth = Form.useWatch("copyExisting", monthForm);
   const scope = Form.useWatch("scope", form);
+  const formProductId = Form.useWatch("productId", form);
   const canManageBusiness = canAccessBusiness(currentRole);
   const showProductStageModule = useMemo(
-    () => rulesRequireAnyProductStage(rules),
+    () => rules.some((rule) => rule.topicCategory === "PRODUCT_STAGE"),
     [rules],
   );
   const displayedRules = useMemo(() => {
@@ -187,27 +183,26 @@ export default function RulesPage() {
     () => rules.filter((rule) => rule.campaign?.month === selectedMonth),
     [rules, selectedMonth],
   );
+  const ruleCounts = useMemo(() => ({
+    GLOBAL: rules.filter((rule) => rule.scope === "GLOBAL").length,
+    PRODUCT: rules.filter((rule) => rule.scope === "PRODUCT").length,
+    CAMPAIGN: rules.filter((rule) => rule.scope === "CAMPAIGN").length,
+  }), [rules]);
   const selectedProduct = useMemo(
     () => products.find((product) => product.id === selectedProductId),
     [products, selectedProductId],
   );
-  const displayedStageGroups = useMemo(
-    () => {
-      const source =
-        stageGroups.map((group) => ({
-          ...group,
-          requiredTopic:
-            rules.find(
-              (rule) =>
-                rule.topicCategory === "PRODUCT_STAGE" &&
-                rule.applicableStage === group.key,
-            )?.topic || "未配置",
-        }));
-      return campaignUsesDetailedProductStages(selectedBrand, selectedMonth)
-        ? aggregateDetailedProductStageTopicRows(source)
-        : aggregateProductStageTopicRows(source);
-    },
-    [rules, selectedBrand, selectedMonth, stageGroups],
+  const brandGeneralRules = useMemo(
+    () => displayedRules.filter((rule) => rule.topicCategory !== "PRODUCT_STAGE"),
+    [displayedRules],
+  );
+  const stageGeneralRules = useMemo(
+    () => displayedRules.filter((rule) => rule.topicCategory === "PRODUCT_STAGE"),
+    [displayedRules],
+  );
+  const productCampaignOptions = useMemo(
+    () => campaigns.filter((campaign) => campaignContainsProduct(campaign, formProductId)),
+    [campaigns, formProductId],
   );
 
   const loadBrands = useCallback(async () => {
@@ -261,7 +256,7 @@ export default function RulesPage() {
         setCampaignId(undefined);
       }
       const matchingProducts = productData.filter(
-        (product) => product.brandName === activeBrand,
+        (product) => product.brandName === activeBrand && product.status === "ACTIVE",
       );
       setProducts(matchingProducts);
       setSelectedProductId((current) =>
@@ -278,6 +273,9 @@ export default function RulesPage() {
   }, [campaignId, message, selectedBrand, selectedMonth, selectedChannel]);
 
   const openNewRule = useCallback((targetScope: RuleView, productId?: string) => {
+    const eligibleCampaigns = campaigns.filter((campaign) =>
+      campaignContainsProduct(campaign, productId),
+    );
     setEditing(null);
     setOpen(true);
     window.setTimeout(() => {
@@ -285,6 +283,10 @@ export default function RulesPage() {
       form.setFieldsValue({
         scope: targetScope === "GENERAL" ? "GLOBAL" : targetScope,
         productId: targetScope === "PRODUCT" ? productId : undefined,
+        campaignId:
+          targetScope === "PRODUCT" && eligibleCampaigns.length === 1
+            ? eligibleCampaigns[0].id
+            : undefined,
         ruleType: "MUST_ALL",
         exactMatch: true,
         clickableRequired: true,
@@ -292,6 +294,15 @@ export default function RulesPage() {
         minCount: 1,
         sortOrder: 10,
       });
+    }, 0);
+  }, [campaigns, form]);
+
+  const openRuleEditor = useCallback((rule: Rule) => {
+    setEditing(rule);
+    setOpen(true);
+    window.setTimeout(() => {
+      form.resetFields();
+      form.setFieldsValue(rule);
     }, 0);
   }, [form]);
 
@@ -577,7 +588,9 @@ export default function RulesPage() {
             ...new Set(products.map((product) => product.id)),
           ].length} suffix="个" />
           <Statistic title="活动" value={campaigns.length} suffix="个" />
-          <Statistic title="规则" value={rules.length} suffix="条" />
+          <Statistic title="通用规则" value={ruleCounts.GLOBAL} suffix="条" />
+          <Statistic title="产品规则" value={ruleCounts.PRODUCT} suffix="条" />
+          <Statistic title="活动规则" value={ruleCounts.CAMPAIGN} suffix="条" />
           <Statistic title="规则版本" value={campaigns[0]?.ruleVersion || 0} prefix="v" />
           <StatusTag value={campaigns[0]?.status || "INACTIVE"} />
         </Space>
@@ -619,60 +632,83 @@ export default function RulesPage() {
           </Typography.Paragraph>
         </Card>
       ) : null}
-      {showProductStageModule && ruleView === "CAMPAIGN" ? (
+      {showProductStageModule && ruleView === "GENERAL" ? (
         <Card
           className="surface-card"
-          title="产品阶段与要求话题"
+          title="阶段通用话题"
           style={{ marginBottom: 16 }}
         >
-          <Table<StageDisplayRow>
-            rowKey="key"
-            dataSource={displayedStageGroups}
+          <Table<Rule>
+            rowKey="id"
+            dataSource={stageGeneralRules}
             pagination={false}
             columns={[
             {
-              title: "产品阶段话题",
-              width: 180,
-              render: (_value, row) => row.label || productStageTopicLabel(row.key),
+              title: "阶段组",
+              width: 210,
+              render: (_value, row) =>
+                stageGroups.find((group) => group.key === row.applicableStage)?.label ||
+                productStageTopicLabel(row.applicableStage || ""),
             },
             {
-              title: "要求阶段话题",
-              dataIndex: "requiredTopics",
-              render: (value: string[]) => value.join(" / "),
+              title: "适用阶段",
+              width: 170,
+              render: (_value, row) =>
+                stageGroups
+                  .find((group) => group.key === row.applicableStage)
+                  ?.canonicalStages.join(" / ") || row.applicableStage || "-",
+            },
+            {
+              title: "标准话题",
+              dataIndex: "topic",
+              render: (value: string) => <Tag color="blue">{value}</Tag>,
+            },
+            {
+              title: "匹配设置",
+              width: 220,
+              render: (_value, row) => (
+                <Space wrap size={4}>
+                  {row.exactMatch ? <Tag>精确匹配</Tag> : null}
+                  {row.clickableRequired ? <Tag color="blue">要求可点击</Tag> : null}
+                  {row.caseSensitive ? <Tag>区分大小写</Tag> : null}
+                </Space>
+              ),
+            },
+            { title: "排序", dataIndex: "sortOrder", width: 80 },
+            {
+              title: "状态",
+              dataIndex: "status",
+              width: 90,
+              render: (value: string) => <StatusTag value={value} />,
             },
             {
               title: "规则来源",
-              dataIndex: "ruleSources",
+              dataIndex: "ruleSource",
               width: 120,
-              render: (values: string[]) => [
-                ...new Set(
-                  values.map((value) =>
-                    value === "LOCAL_DRAFT" ? "本地草稿" : "已发布规则",
-                  ),
-                ),
-              ].join(" / "),
+              render: (value: string) =>
+                value === "LOCAL_DRAFT" ? "本地草稿" : "已发布规则",
             },
             {
               title: "操作",
-              width: 280,
+              width: 220,
               render: (_value, row) => canManageBusiness ? (
-                <Space size={4} wrap>
-                  {row.members.map((member) => (
-                    <Button
-                      key={member.key}
-                      type="link"
-                      icon={<EditOutlined />}
-                      onClick={() => {
-                        setEditingStage(member);
-                        stageForm.setFieldsValue({
-                          requireBodyStage: member.requireBodyStage,
-                          requiredTopic: member.requiredTopic,
-                        });
-                      }}
-                    >
-                      编辑 {member.requiredTopic}
-                    </Button>
-                  ))}
+                <Space size={2} wrap>
+                  <Button type="link" icon={<EditOutlined />} onClick={() => openRuleEditor(row)}>
+                    编辑
+                  </Button>
+                  <Button
+                    type="link"
+                    loading={mutatingRuleId === row.id}
+                    onClick={() => changeRuleStatus(
+                      row,
+                      row.status === "ACTIVE" ? "INACTIVE" : "ACTIVE",
+                    )}
+                  >
+                    {row.status === "ACTIVE" ? "停用" : "启用"}
+                  </Button>
+                  <Popconfirm title="确认永久删除这条阶段规则？" onConfirm={() => permanentlyDeleteRule(row)}>
+                    <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+                  </Popconfirm>
                 </Space>
               ) : <Tag>只读</Tag>,
             },
@@ -687,12 +723,20 @@ export default function RulesPage() {
               const productRuleCount = rules.filter(
                 (rule) => rule.scope === "PRODUCT" && rule.productId === product.id,
               ).length;
+              const productCampaignCount = campaigns.filter((campaign) =>
+                campaignContainsProduct(campaign, product.id),
+              ).length;
               return (
                 <Col key={product.id} xs={24} md={12}>
                   <Card
                     className="surface-card rule-brand-card"
                     title={product.name}
-                    extra={<Tag color="blue">{productRuleCount} 条产品规则</Tag>}
+                    extra={(
+                      <Space size={4}>
+                        <Tag color="blue">规则 {productRuleCount} 条</Tag>
+                        <Tag>活动 {productCampaignCount} 个</Tag>
+                      </Space>
+                    )}
                     actions={[
                       <Button
                         key="enter-product"
@@ -725,7 +769,7 @@ export default function RulesPage() {
           className="surface-card"
           title={
             ruleView === "GENERAL"
-              ? "通用规则"
+              ? "品牌通用话题"
               : ruleView === "PRODUCT"
                 ? `${selectedProduct?.name || "产品"}话题规则`
                 : "活动规则"
@@ -765,7 +809,7 @@ export default function RulesPage() {
         <Table<Rule>
           rowKey="id"
           loading={loading}
-          dataSource={displayedRules}
+          dataSource={ruleView === "GENERAL" ? brandGeneralRules : displayedRules}
           scroll={{ x: 1300 }}
           columns={[
             {
@@ -794,7 +838,9 @@ export default function RulesPage() {
             {
               title: "所属活动",
               width: 260,
-              render: (_value, row) => row.campaign?.name || "-",
+              render: (_value, row) =>
+                row.campaign?.name ||
+                (row.scope === "PRODUCT" ? <Tag color="orange">待绑定活动</Tag> : "-"),
             },
             {
               title: "所属产品",
@@ -833,6 +879,13 @@ export default function RulesPage() {
               render: (value: string) => <StatusTag value={value} />,
             },
             {
+              title: "来源",
+              dataIndex: "ruleSource",
+              width: 110,
+              render: (value: string) =>
+                value === "LOCAL_DRAFT" ? "本地草稿" : "已发布规则",
+            },
+            {
               title: "操作",
               width: 220,
               fixed: "right",
@@ -841,14 +894,7 @@ export default function RulesPage() {
                   <Button
                     type="link"
                     icon={<EditOutlined />}
-                    onClick={() => {
-                      setEditing(row);
-                      setOpen(true);
-                      window.setTimeout(() => {
-                        form.resetFields();
-                        form.setFieldsValue(row);
-                      }, 0);
-                    }}
+                    onClick={() => openRuleEditor(row)}
                   >
                     编辑
                   </Button>
@@ -933,7 +979,7 @@ export default function RulesPage() {
           <Typography.Text>
             月份：{selectedMonth ? monthLabel(selectedMonth) : "-"}
           </Typography.Text>
-          <Typography.Text strong>共 {monthlyRules.length} 条活动规则。</Typography.Text>
+          <Typography.Text strong>共 {monthlyRules.length} 条当前月份规则。</Typography.Text>
           <Typography.Text>不会删除活动、产品和历史审核结果。</Typography.Text>
           <Typography.Text type="danger">删除后不可恢复。</Typography.Text>
         </Space>
@@ -1040,6 +1086,7 @@ export default function RulesPage() {
                 ...values,
                 brandName: selectedBrand,
                 contentChannel: selectedChannel,
+                selectedMonth,
               }),
             });
             message.success(editing ? "规则已更新并生成新版本" : "规则已创建");
@@ -1078,28 +1125,12 @@ export default function RulesPage() {
               />
             </Form.Item>
           </Space>
-          {scope === "CAMPAIGN" ? (
-            <Form.Item name="campaignId" label="所属活动" rules={[{ required: true }]}>
-              <Select
-                showSearch
-                optionFilterProp="label"
-                disabled={Boolean(editing)}
-                onChange={(value) => {
-                  const campaign = campaigns.find((item) => item.id === value);
-                  form.setFieldValue("productId", campaign?.productId);
-                }}
-                options={campaigns.map((item) => ({
-                  value: item.id,
-                  label: `${item.month} · ${item.name}`,
-                }))}
-              />
-            </Form.Item>
-          ) : null}
           {scope === "PRODUCT" ? (
             <Form.Item name="productId" label="所属产品" rules={[{ required: true }]}>
               <Select
                 showSearch
                 optionFilterProp="label"
+                onChange={() => form.setFieldValue("campaignId", undefined)}
                 options={products.map((item) => ({
                   value: item.id,
                   label: item.code ? `${item.code} · ${item.name}` : item.name,
@@ -1108,6 +1139,31 @@ export default function RulesPage() {
             </Form.Item>
           ) : (
             <Form.Item name="productId" hidden><Input /></Form.Item>
+          )}
+          {scope === "CAMPAIGN" || scope === "PRODUCT" ? (
+            <Form.Item
+              name="campaignId"
+              label="所属活动"
+              rules={[{ required: true, message: "请选择所属活动" }]}
+              extra={scope === "PRODUCT"
+                ? "仅显示当前品牌、月份、平台且包含所选产品的活动。"
+                : undefined}
+            >
+              <Select
+                showSearch
+                optionFilterProp="label"
+                placeholder={scope === "PRODUCT" && !formProductId
+                  ? "请先选择所属产品"
+                  : "请选择所属活动"}
+                disabled={scope === "PRODUCT" && !formProductId}
+                options={(scope === "PRODUCT" ? productCampaignOptions : campaigns).map((item) => ({
+                  value: item.id,
+                  label: `${item.month} · ${item.name}`,
+                }))}
+              />
+            </Form.Item>
+          ) : (
+            <Form.Item name="campaignId" hidden><Input /></Form.Item>
           )}
           <Form.Item
             name="topic"
@@ -1146,54 +1202,6 @@ export default function RulesPage() {
           </Space>
           <Form.Item name="notes" label="备注">
             <Input.TextArea rows={2} />
-          </Form.Item>
-        </Form>
-      </Modal>
-      <Modal
-        open={Boolean(editingStage)}
-        title={`编辑 ${
-          editingStage
-            ? productStageTopicLabel(editingStage.key)
-            : "产品阶段话题"
-        }`}
-        okText="保存为本地草稿"
-        onCancel={() => setEditingStage(null)}
-        onOk={() => stageForm.submit()}
-      >
-        <Form
-          form={stageForm}
-          layout="vertical"
-          onFinish={async (values) => {
-            if (!editingStage) return;
-            await apiFetch(`/api/rule-stage-groups/${editingStage.key}`, {
-              method: "PUT",
-              body: JSON.stringify({
-                brandName: selectedBrand,
-                campaignId: campaigns[0]?.id,
-                bodyTerms: editingStage.bodyTerms,
-                requireBodyStage: Boolean(values.requireBodyStage),
-                requiredTopic: values.requiredTopic,
-              }),
-            });
-            message.success("产品阶段话题已保存为本地草稿");
-            setEditingStage(null);
-            void load();
-          }}
-        >
-          <Form.Item
-            name="requireBodyStage"
-            label="是否校验正文段位"
-            valuePropName="checked"
-            extra="当前业务规则关闭此项；产品阶段仅用于匹配对应的蓝色可点击话题。"
-          >
-            <Switch checkedChildren="校验" unCheckedChildren="不校验" />
-          </Form.Item>
-          <Form.Item
-            name="requiredTopic"
-            label="要求阶段话题"
-            rules={[{ required: true }]}
-          >
-            <Input />
           </Form.Item>
         </Form>
       </Modal>

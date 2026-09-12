@@ -49,12 +49,13 @@ test("150条阶段规则预检失败时提交也不创建正式任务", async ({
     expect(campaign).toBeTruthy();
     const gumRules = await prisma.topicRule.findMany({
       where: {
-        campaignId: campaign!.id,
+        scope: "GLOBAL",
+        campaignId: null,
+        productId: null,
         brandName: product.brandName,
         topicCategory: "PRODUCT_STAGE",
         status: "ACTIVE",
         contentChannel: { in: ["XIAOHONGSHU", "ALL"] },
-        OR: [{ productId: null }, { productId: product.id }],
         milkType: "GUM",
       },
       select: { id: true },

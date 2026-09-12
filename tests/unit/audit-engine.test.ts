@@ -8,6 +8,9 @@ import { createMockNote } from "@/lib/mock-data";
 import type { AuditContext } from "@/lib/types";
 import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 import defaultRules from "@/rules/default-rules.json";
+import type { RulePackageTopicRule } from "@/lib/rules/types";
+
+const defaultTopicRules = defaultRules.topicRules as RulePackageTopicRule[];
 
 const context: AuditContext = {
   productId: "p1",
@@ -197,12 +200,14 @@ describe("audit engine", () => {
     )!;
     const productKey = xhsCampaign.productKeys[0];
     const applicable = (channel: "XIAOHONGSHU" | "DOUYIN") =>
-      defaultRules.topicRules.filter(
+      defaultTopicRules.filter(
         (rule) =>
+          rule.brand === "达能" &&
           (rule.contentChannel || "XIAOHONGSHU") === channel &&
-          rule.campaignKey ===
-            (channel === "DOUYIN" ? douyinCampaign.key : xhsCampaign.key) &&
-          (!rule.productKey || rule.productKey === productKey) &&
+          (rule.scope === "GLOBAL" ||
+            (rule.campaignKey ===
+              (channel === "DOUYIN" ? douyinCampaign.key : xhsCampaign.key) &&
+              (!rule.productKey || rule.productKey === productKey))) &&
           (!rule.applicableStage || rule.applicableStage === "IFFO_2"),
       );
     const toContext = (
@@ -567,10 +572,13 @@ describe("audit engine", () => {
       (item) => item.key === "activity_kabrita_2026_08",
     )!;
     const productKey = "product_kabrita_netherlands";
-    const applicableRules = defaultRules.topicRules.filter(
+    const applicableRules = defaultTopicRules.filter(
       (rule) =>
-        rule.campaignKey === campaign.key &&
-        (!rule.productKey || rule.productKey === productKey) &&
+        rule.brand === "佳贝艾特" &&
+        (rule.contentChannel || "XIAOHONGSHU") === "XIAOHONGSHU" &&
+        (rule.scope === "GLOBAL" ||
+          (rule.campaignKey === campaign.key &&
+            (!rule.productKey || rule.productKey === productKey))) &&
         (!rule.applicableStage || rule.applicableStage === "IFFO_2"),
     );
     const kabritaContext: AuditContext = {

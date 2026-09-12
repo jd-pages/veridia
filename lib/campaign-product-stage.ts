@@ -8,6 +8,7 @@ import {
   PRODUCT_STAGE_TOPIC_OPTIONS,
 } from "@/lib/product-stage";
 import type { AutomationPlatform } from "@/lib/automation/platform";
+import { effectiveTopicRulesForContext } from "@/lib/topic-rule-model";
 
 export interface CampaignProductStageRule {
   id: string;
@@ -133,22 +134,35 @@ export async function resolveCampaignProductStageConfiguration(input: {
   }
   const configuredRules = await prisma.topicRule.findMany({
     where: {
-      campaignId: input.campaignId,
       brandName: product.brandName,
+      status: "ACTIVE",
       contentChannel: { in: [input.contentChannel, "ALL"] },
     },
-    select: {
-      id: true,
-      status: true,
-      productId: true,
-      topicCategory: true,
-      applicableStage: true,
-      milkType: true,
-      topic: true,
+    include: {
+      product: { select: { id: true, brandName: true } },
+      campaign: {
+        include: {
+          product: { select: { id: true, brandName: true } },
+          products: {
+            select: {
+              productId: true,
+              product: { select: { id: true, brandName: true } },
+            },
+          },
+        },
+      },
     },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
-  const rules = configuredRules.filter((rule) => rule.status === "ACTIVE");
+  const rules = effectiveTopicRulesForContext(configuredRules, {
+    brandName: product.brandName,
+    productId: input.productId,
+    campaignId: input.campaignId,
+    contentChannel: input.contentChannel,
+    compatibleStages: configuredRules
+      .map((rule) => rule.applicableStage)
+      .filter((value): value is string => Boolean(value)),
+  });
   const detailed = campaignUsesDetailedProductStages(
     product.brandName,
     campaign.month,

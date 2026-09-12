@@ -104,19 +104,19 @@ describe("GitHub 规则同步", () => {
     expect(
       payload.stageGroups.every((item) => item.requireBodyStage === false),
     ).toBe(true);
-    expect(payload.topicRules.length).toBe(52);
+    expect(payload.topicRules.length).toBe(45);
     expect(
       payload.topicRules.filter(
         (rule) => rule.contentChannel === "XIAOHONGSHU",
       ),
-    ).toHaveLength(29);
+    ).toHaveLength(25);
     expect(
       payload.topicRules.filter((rule) => rule.contentChannel === "DOUYIN"),
-    ).toHaveLength(23);
+    ).toHaveLength(20);
     expect(payload.products.filter((item) => item.brand === "达能")).toHaveLength(5);
     expect(payload.products.filter((item) => item.brand === "佳贝艾特")).toHaveLength(2);
     expect(payload.products.filter((item) => item.brand === "惠氏")).toHaveLength(1);
-    expect(payload.topicRules.filter((item) => item.brand === "达能")).toHaveLength(34);
+    expect(payload.topicRules.filter((item) => item.brand === "达能")).toHaveLength(27);
     expect(payload.topicRules.filter((item) => item.brand === "佳贝艾特")).toHaveLength(14);
     expect(payload.topicRules.filter((item) => item.brand === "惠氏")).toHaveLength(4);
     expect(
@@ -150,7 +150,7 @@ describe("GitHub 规则同步", () => {
       topicRules: Array<Record<string, unknown>>;
     };
     for (const rule of legacy.topicRules) delete rule.brand;
-    expect(validateRulePayload(legacy).topicRules).toHaveLength(52);
+    expect(validateRulePayload(legacy).topicRules).toHaveLength(45);
 
     const multiBrand = structuredClone(builtinRules);
     multiBrand.products.push({
@@ -171,10 +171,11 @@ describe("GitHub 规则同步", () => {
       ...multiBrand.topicRules[6],
       key: "topic_kabrita_stage",
       brand: "佳贝艾特",
-      campaignKey: "activity_kabrita",
+      scope: "GLOBAL",
+      campaignKey: null,
       productKey: null,
-    });
-    expect(validateRulePayload(multiBrand).topicRules).toHaveLength(53);
+    } as (typeof multiBrand.topicRules)[number]);
+    expect(validateRulePayload(multiBrand).topicRules).toHaveLength(46);
   });
 
   it("旧规则包缺少正文段位开关时保持原校验语义", () => {

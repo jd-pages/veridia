@@ -358,7 +358,6 @@ export async function POST(request: Request) {
       ? await measureDatabase("stageRules", () =>
           prisma.topicRule.findMany({
             where: {
-              campaignId: { in: campaignCandidates.map((campaign) => campaign.id) },
               topicCategory: "PRODUCT_STAGE",
               status: "ACTIVE",
             },
@@ -695,8 +694,6 @@ export async function POST(request: Request) {
         matchingStageRules = allStageRules.filter(
           (rule) =>
             rule.brandName === product.brandName &&
-            rule.campaignId === campaign.id &&
-            (rule.productId === null || rule.productId === product.id) &&
             [checked.channel, "ALL"].includes(rule.contentChannel),
         );
         stageRulesCache.set(stageRulesKey, matchingStageRules);

@@ -133,7 +133,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     name: "爱他美2026年8月小红书种草审核",
     month: "2026-08",
   });
-  expect(danoneAugustRules).toHaveLength(9);
+  expect(danoneAugustRules).toHaveLength(5);
   expect(afterRules.counts.products).toBeGreaterThanOrEqual(
     builtinRules.products.length,
   );

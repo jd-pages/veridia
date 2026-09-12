@@ -34,8 +34,8 @@ describe("产品阶段话题用户可见口径", () => {
     expect(decision).toContain("productStageTopicLabel(row.task.productStage)");
     expect(decision).toContain('topicSummary.stageCandidates.join(" / ")');
     expect(campaignPage).toContain("productStageTopicLabel(row.applicableStage)");
-    expect(rulesPage).toContain("productStageTopicLabel(row.key)");
-    expect(rulesPage).toContain("aggregateProductStageTopicRows");
+    expect(rulesPage).toContain('title="阶段通用话题"');
+    expect(rulesPage).toContain('productStageTopicLabel(row.applicableStage || "")');
     for (const hidden of [
       "IFFO：P段/1段",
       "IFFO：2段",
@@ -45,7 +45,7 @@ describe("产品阶段话题用户可见口径", () => {
     }
   });
 
-  it("规则页和任务规则提示只展示聚合后的阶段话题", () => {
+  it("规则页逐条展示阶段通用话题且任务规则提示保持聚合语义", () => {
     const taskPage = source("app/(admin)/tasks/page.tsx");
     const rulesPage = source("app/(admin)/rules/page.tsx");
 

@@ -10,6 +10,10 @@ import {
 } from "@/lib/store-topic-config";
 import { normalizeTopic } from "@/lib/topic";
 import {
+  resolveTopicRuleOwnership,
+  topicRuleSemanticKey,
+} from "@/lib/topic-rule-model";
+import {
   DEFAULT_PAGE_STATUS_RULES,
   DEFAULT_RULE_STAGE_GROUPS,
 } from "./defaults";
@@ -307,7 +311,17 @@ export function validateRulePayload(input: unknown): RulePackagePayload {
       ),
     ]),
   );
+  const campaignProductKeysByKey = new Map(
+    payload.campaigns.map((campaign) => [
+      campaign.key,
+      new Set(campaign.productKeys),
+    ]),
+  );
+  const campaignChannelByKey = new Map(
+    payload.campaigns.map((campaign) => [campaign.key, campaign.contentChannel]),
+  );
   const stageKeys = new Set(payload.stageGroups.map((item) => item.key));
+  const semanticRuleKeys = new Map<string, string>();
   for (const campaign of payload.campaigns) {
     for (const key of campaign.productKeys) {
       if (!productKeys.has(key)) {
@@ -348,6 +362,50 @@ export function validateRulePayload(input: unknown): RulePackagePayload {
     if (normalizeTopic(rule.topic) !== rule.topic) {
       throw new Error(`话题格式不规范：${rule.topic}`);
     }
+    if (rule.scope === "GLOBAL") {
+      if (rule.productKey || rule.campaignKey) {
+        throw new Error(`GLOBAL 规则不能绑定产品或活动：${rule.topic}`);
+      }
+    } else if (rule.scope === "PRODUCT") {
+      const legacyUnresolved =
+        Boolean(rule.productKey) &&
+        !rule.campaignKey &&
+        rule.notes === "LEGACY_UNRESOLVED_ACTIVITY_BINDING";
+      if ((!rule.productKey || !rule.campaignKey) && !legacyUnresolved) {
+        throw new Error(`PRODUCT 规则必须同时绑定产品和活动：${rule.topic}`);
+      }
+      if (
+        rule.productKey &&
+        rule.campaignKey &&
+        !campaignProductKeysByKey.get(rule.campaignKey)?.has(rule.productKey)
+      ) {
+        throw new Error(`PRODUCT 规则所属产品不属于活动：${rule.topic}`);
+      }
+    } else if (rule.scope === "CAMPAIGN") {
+      if (!rule.campaignKey || rule.productKey) {
+        throw new Error(`CAMPAIGN 规则必须只绑定活动：${rule.topic}`);
+      }
+    } else {
+      throw new Error(`话题规则层级无效：${rule.scope}`);
+    }
+    if (
+      ["BRAND_COMMON", "PRODUCT_STAGE"].includes(rule.topicCategory) &&
+      rule.scope !== "GLOBAL"
+    ) {
+      throw new Error(`品牌通用或阶段通用规则必须使用 GLOBAL：${rule.topic}`);
+    }
+    if (
+      rule.campaignKey &&
+      rule.contentChannel !== campaignChannelByKey.get(rule.campaignKey)
+    ) {
+      throw new Error(`话题规则平台与所属活动不一致：${rule.topic}`);
+    }
+    const semanticKey = topicRuleSemanticKey(rule);
+    const duplicateKey = semanticRuleKeys.get(semanticKey);
+    if (duplicateKey) {
+      throw new Error(`话题规则语义重复：${duplicateKey} / ${rule.key}`);
+    }
+    semanticRuleKeys.set(semanticKey, rule.key);
   }
   return payload;
 }
@@ -473,34 +531,62 @@ export async function exportCurrentRulePayload(options?: {
       }),
   );
 
-  const exportedTopicRules: RulePackagePayload["topicRules"] = topicRules.map(
-    (rule) => ({
+  const productById = new Map(products.map((product) => [product.id, product]));
+  const campaignById = new Map(
+    campaigns.map((campaign) => [
+      campaign.id,
+      {
+        ...campaign,
+        product: campaign.productId
+          ? productById.get(campaign.productId) || null
+          : null,
+        products: campaign.products.map((link) => ({
+          ...link,
+          product: productById.get(link.productId) || null,
+        })),
+      },
+    ]),
+  );
+  const normalizedTopicRules: RulePackagePayload["topicRules"] = topicRules.map((rule) => {
+    const ownership = resolveTopicRuleOwnership({
+      ...rule,
+      product: rule.productId ? productById.get(rule.productId) || null : null,
+      campaign: rule.campaignId
+        ? campaignById.get(rule.campaignId) || null
+        : null,
+    });
+    return {
       key:
         rule.publishedKey ||
         stableKey("topic", [
           rule.brandName,
-          rule.campaignId ? campaignKeyById.get(rule.campaignId) : "global",
-          rule.productId ? productKeyById.get(rule.productId) : "all-products",
+          ownership.campaignId
+            ? campaignKeyById.get(ownership.campaignId)
+            : "global",
+          ownership.productId
+            ? productKeyById.get(ownership.productId)
+            : "all-products",
           rule.topicCategory,
           rule.applicableStage,
           normalizeTopic(rule.topic),
         ]),
-      contentChannel:
+      contentChannel: (
         rule.contentChannel === "DOUYIN" || rule.contentChannel === "ALL"
           ? rule.contentChannel
-          : "XIAOHONGSHU",
+          : "XIAOHONGSHU"
+      ) as "XIAOHONGSHU" | "DOUYIN" | "ALL",
       brand:
         rule.brandName ||
-        (rule.productId ? productBrandById.get(rule.productId) : null) ||
-        (rule.campaignId ? campaignBrandById.get(rule.campaignId) : null) ||
+        (ownership.productId ? productBrandById.get(ownership.productId) : null) ||
+        (ownership.campaignId ? campaignBrandById.get(ownership.campaignId) : null) ||
         null,
-      campaignKey: rule.campaignId
-        ? campaignKeyById.get(rule.campaignId) || null
+      campaignKey: ownership.campaignId
+        ? campaignKeyById.get(ownership.campaignId) || null
         : null,
-      productKey: rule.productId
-        ? productKeyById.get(rule.productId) || null
+      productKey: ownership.productId
+        ? productKeyById.get(ownership.productId) || null
         : null,
-      scope: rule.scope,
+      scope: ownership.scope,
       ruleType: rule.ruleType,
       topicCategory: rule.topicCategory,
       applicableStage: rule.applicableStage,
@@ -513,9 +599,20 @@ export async function exportCurrentRulePayload(options?: {
       sortOrder: rule.sortOrder,
       revision: rule.version,
       status: rule.status,
-      notes: rule.notes,
-    }),
-  );
+      notes:
+        ownership.status === "UNRESOLVED_ACTIVITY_BINDING"
+          ? "LEGACY_UNRESOLVED_ACTIVITY_BINDING"
+          : rule.notes,
+    };
+  });
+  const semanticTopicKeys = new Set<string>();
+  const exportedTopicRules: RulePackagePayload["topicRules"] =
+    normalizedTopicRules.filter((rule) => {
+      const key = topicRuleSemanticKey(rule);
+      if (semanticTopicKeys.has(key)) return false;
+      semanticTopicKeys.add(key);
+      return true;
+    });
   const normalizedLocalRules = normalizeLocalStageReferences(
     storedStageGroups,
     exportedTopicRules,

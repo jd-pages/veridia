@@ -64,7 +64,7 @@ describe("抖音规则持久化幂等性", () => {
 
     expect(result).toMatchObject({
       sourceCampaigns: 3,
-      expectedTopicRules: 23,
+      expectedTopicRules: 16,
       createdCampaigns: 0,
       createdTopicRules: 0,
       createdProductRelations: 0,

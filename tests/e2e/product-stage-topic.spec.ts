@@ -526,21 +526,20 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
       { exact: true },
     ),
   ).toBeVisible();
-  await page.getByText("活动规则", { exact: true }).first().click();
   await expect(page.getByText("正文允许段位", { exact: true })).toHaveCount(0);
   const stageSummaryCard = page.locator(".ant-card").filter({
-    has: page.getByText("产品阶段与要求话题", { exact: true }),
+    has: page.getByText("阶段通用话题", { exact: true }),
   });
   const stageSummaryRows = stageSummaryCard.locator(
     ".ant-table-tbody .ant-table-row",
   );
   await expect(stageSummaryRows).toHaveCount(3);
-  await expect(stageSummaryRows.nth(0)).toContainText("IFFO 新生儿组（P段/1段）");
+  await expect(stageSummaryRows.nth(0)).toContainText("IFFO：P段/1段");
   await expect(stageSummaryRows.nth(0)).toContainText("#新生儿奶粉");
-  await expect(stageSummaryRows.nth(1)).toContainText("IFFO 二段组（2段）");
+  await expect(stageSummaryRows.nth(1)).toContainText("IFFO：2段");
   await expect(stageSummaryRows.nth(1)).toContainText("#二段奶粉推荐");
   await expect(stageSummaryRows.nth(2)).toContainText(
-    "GUM 成长组（3段/4段/1+段/2+段）",
+    "GUM：3段/4段/1+段/2+段",
   );
   await expect(stageSummaryRows.nth(2)).toContainText("#三段奶粉推荐");
   await expect(
@@ -548,12 +547,9 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
   ).toHaveCount(0);
   await expect(stageSummaryCard).not.toContainText("不校验，仅匹配话题");
   await expect(stageSummaryCard).not.toContainText(/任一命中|任选其一/u);
-  const standardTopicTable = page.locator(".ant-table").filter({
-    has: page.getByText("标准话题词", { exact: true }),
-  });
-  await expect(standardTopicTable).toContainText("#新生儿奶粉");
-  await expect(standardTopicTable).toContainText("#二段奶粉推荐");
-  await expect(standardTopicTable).toContainText("#三段奶粉推荐");
+  await expect(stageSummaryCard).toContainText("#新生儿奶粉");
+  await expect(stageSummaryCard).toContainText("#二段奶粉推荐");
+  await expect(stageSummaryCard).toContainText("#三段奶粉推荐");
   await expect(page.getByTitle("2026年8月")).toBeVisible();
 });
 

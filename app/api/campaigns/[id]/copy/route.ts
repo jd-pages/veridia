@@ -2,6 +2,7 @@ import dayjs from "dayjs";
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
+import { resolveTopicRuleOwnership } from "@/lib/topic-rule-model";
 
 export async function POST(
   request: Request,
@@ -18,7 +19,7 @@ export async function POST(
     where: { id },
     include: {
       products: { include: { product: { select: { brandName: true } } } },
-      topicRules: { where: { status: "ACTIVE" } },
+      topicRules: { where: { status: "ACTIVE" }, include: { product: true } },
     },
   });
   if (!source) return fail("源活动不存在", 404);
@@ -43,6 +44,14 @@ export async function POST(
     /\d{4}年\d{1,2}月/u,
     `${targetYear}年${Number(targetMonthNumber)}月`,
   );
+  const copiedRules = source.topicRules.flatMap((rule) => {
+    const ownership = resolveTopicRuleOwnership({
+      ...rule,
+      campaign: source,
+    });
+    if (ownership.status !== "VALID" || ownership.scope === "GLOBAL") return [];
+    return [{ rule, ownership }];
+  });
   try {
     const copied = await prisma.campaign.create({
       data: {
@@ -74,11 +83,12 @@ export async function POST(
           })),
         },
         topicRules: {
-          create: source.topicRules.map((rule) => ({
+          create: copiedRules.map(({ rule, ownership }) => ({
             ruleSource: "LOCAL_DRAFT",
             brandName: rule.brandName,
-            productId: rule.productId,
-            scope: "CAMPAIGN",
+            productId: ownership.productId,
+            scope: ownership.scope,
+            contentChannel: source.contentChannel,
             ruleType: rule.ruleType,
             topicCategory: rule.topicCategory,
             applicableStage: rule.applicableStage,

@@ -5,6 +5,7 @@ import path from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  createTopicRuleInTransaction,
   deleteMonthlyTopicRulesInTransaction,
   deleteTopicRuleInTransaction,
   monthlyTopicRuleWhere,
@@ -71,6 +72,40 @@ async function createRule(
   });
 }
 
+async function createOwnershipFixture(suffix: string) {
+  const brandName = `三级模型品牌-${suffix}`;
+  const otherBrandName = `其他品牌-${suffix}`;
+  const product = await source.product.create({
+    data: { code: `MODEL-A-${suffix}`, name: `模型产品A-${suffix}`, brandName },
+  });
+  const secondProduct = await source.product.create({
+    data: { code: `MODEL-B-${suffix}`, name: `模型产品B-${suffix}`, brandName },
+  });
+  const otherProduct = await source.product.create({
+    data: { code: `MODEL-X-${suffix}`, name: `其他产品-${suffix}`, brandName: otherBrandName },
+  });
+  const campaign = await createCampaign(source, {
+    id: `model-campaign-${suffix}`,
+    name: `模型活动-${suffix}`,
+    month: "2026-09",
+    contentChannel: "XIAOHONGSHU",
+    productId: product.id,
+    ruleVersion: 5,
+  });
+  const secondCampaign = await createCampaign(source, {
+    id: `model-campaign-2-${suffix}`,
+    name: `模型活动二-${suffix}`,
+    month: "2026-09",
+    contentChannel: "XIAOHONGSHU",
+    productId: secondProduct.id,
+    ruleVersion: 8,
+  });
+  const userId = (
+    await source.user.findFirstOrThrow({ where: { role: "ADMIN" } })
+  ).id;
+  return { brandName, product, secondProduct, otherProduct, campaign, secondCampaign, userId };
+}
+
 beforeAll(async () => {
   temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "veridia-rule-management-"));
   execFileSync(
@@ -96,7 +131,127 @@ afterAll(async () => {
 }, 30_000);
 
 describe.sequential("话题规则启停与永久删除", () => {
-  it("品牌月份视角同时返回通用/产品规则与当前月活动规则", () => {
+  it("PRODUCT create requires product + campaign", async () => {
+    const fixture = await createOwnershipFixture(`required-${Date.now().toString(36)}`);
+    await expect(source.$transaction((tx) => createTopicRuleInTransaction(tx, {
+      userId: fixture.userId,
+      body: {
+        scope: "PRODUCT",
+        brandName: fixture.brandName,
+        productId: fixture.product.id,
+        selectedMonth: "2026-09",
+        contentChannel: "XIAOHONGSHU",
+        ruleType: "MUST_ALL",
+        topic: "#必须双绑定",
+      },
+    }))).rejects.toThrow("必须同时选择所属产品和所属活动");
+    await expect(source.$transaction((tx) => createTopicRuleInTransaction(tx, {
+      userId: fixture.userId,
+      body: {
+        scope: "PRODUCT",
+        brandName: fixture.brandName,
+        productId: fixture.product.id,
+        campaignId: fixture.campaign.id,
+        selectedMonth: "2026-09",
+        contentChannel: "XIAOHONGSHU",
+        ruleType: "MUST_ALL",
+        topic: "#合法双绑定",
+      },
+    }))).resolves.toMatchObject({
+      scope: "PRODUCT",
+      productId: fixture.product.id,
+      campaignId: fixture.campaign.id,
+    });
+  });
+
+  it("PRODUCT rejects product not in campaign", async () => {
+    const fixture = await createOwnershipFixture(`member-${Date.now().toString(36)}`);
+    await expect(source.$transaction((tx) => createTopicRuleInTransaction(tx, {
+      userId: fixture.userId,
+      body: {
+        scope: "PRODUCT",
+        brandName: fixture.brandName,
+        productId: fixture.secondProduct.id,
+        campaignId: fixture.campaign.id,
+        selectedMonth: "2026-09",
+        contentChannel: "XIAOHONGSHU",
+        ruleType: "MUST_ALL",
+        topic: "#错误活动成员",
+      },
+    }))).rejects.toThrow("所选产品不属于当前活动");
+  });
+
+  it("PRODUCT rejects campaign channel mismatch", async () => {
+    const fixture = await createOwnershipFixture(`channel-${Date.now().toString(36)}`);
+    await expect(source.$transaction((tx) => createTopicRuleInTransaction(tx, {
+      userId: fixture.userId,
+      body: {
+        scope: "PRODUCT",
+        brandName: fixture.brandName,
+        productId: fixture.product.id,
+        campaignId: fixture.campaign.id,
+        selectedMonth: "2026-09",
+        contentChannel: "DOUYIN",
+        ruleType: "MUST_ALL",
+        topic: "#错误活动平台",
+      },
+    }))).rejects.toThrow("规则内容平台与所属活动不一致");
+  });
+
+  it("PRODUCT edit preserves and validates campaign/product relation", async () => {
+    const fixture = await createOwnershipFixture(`edit-${Date.now().toString(36)}`);
+    const created = await source.$transaction((tx) => createTopicRuleInTransaction(tx, {
+      userId: fixture.userId,
+      body: {
+        scope: "PRODUCT",
+        brandName: fixture.brandName,
+        productId: fixture.product.id,
+        campaignId: fixture.campaign.id,
+        selectedMonth: "2026-09",
+        contentChannel: "XIAOHONGSHU",
+        ruleType: "MUST_ALL",
+        topic: "#编辑保持关系",
+      },
+    }));
+    await expect(source.$transaction((tx) => updateTopicRuleInTransaction(tx, {
+      id: created.id,
+      userId: fixture.userId,
+      expectedBrandName: fixture.brandName,
+      body: { sortOrder: 25 },
+    }))).resolves.toMatchObject({
+      productId: fixture.product.id,
+      campaignId: fixture.campaign.id,
+      sortOrder: 25,
+    });
+    await expect(source.$transaction((tx) => updateTopicRuleInTransaction(tx, {
+      id: created.id,
+      userId: fixture.userId,
+      expectedBrandName: fixture.brandName,
+      body: {
+        productId: fixture.product.id,
+        campaignId: fixture.secondCampaign.id,
+        selectedMonth: "2026-09",
+      },
+    }))).rejects.toThrow("所选产品不属于当前活动");
+  });
+
+  it("CAMPAIGN rules must not bind a product", async () => {
+    const fixture = await createOwnershipFixture(`campaign-${Date.now().toString(36)}`);
+    await expect(source.$transaction((tx) => createTopicRuleInTransaction(tx, {
+      userId: fixture.userId,
+      body: {
+        scope: "CAMPAIGN",
+        brandName: fixture.brandName,
+        productId: fixture.product.id,
+        campaignId: fixture.campaign.id,
+        contentChannel: "XIAOHONGSHU",
+        ruleType: "MUST_ALL",
+        topic: "#活动不可绑产品",
+      },
+    }))).rejects.toThrow("活动规则不能绑定具体产品");
+  });
+
+  it("品牌视角先读取全部结构规则，再由 API 按有效层级和月份投影", () => {
     expect(
       topicRuleListWhere({
         brandName: "惠氏",
@@ -108,17 +263,13 @@ describe.sequential("话题规则启停与永久删除", () => {
       productId: undefined,
       brandName: "惠氏",
       contentChannel: { in: ["XIAOHONGSHU", "ALL"] },
-      OR: [
-        { campaignId: null },
-        { campaign: { is: { month: "2026-09", deletedAt: null } } },
-      ],
     });
     expect(
       topicRuleListWhere({
         brandName: "惠氏",
         contentChannel: "XIAOHONGSHU",
       }),
-    ).toMatchObject({ brandName: "惠氏", campaignId: null });
+    ).toMatchObject({ brandName: "惠氏", campaignId: undefined });
   });
 
   it("严格解析 selectedMonth 范围并与 GET 的渠道可见性一致", () => {
@@ -232,6 +383,7 @@ describe.sequential("话题规则启停与永久删除", () => {
         ruleSource: "LOCAL_DRAFT",
         scope: "PRODUCT",
         productId: productA.id,
+        campaignId: september.id,
         brandName: brandA,
         contentChannel: "XIAOHONGSHU",
         ruleType: "MUST_ALL",
@@ -239,13 +391,16 @@ describe.sequential("话题规则启停与永久删除", () => {
         topic: `#产品规则${suffix}`,
       },
     });
+    await source.campaignProduct.create({
+      data: { campaignId: september.id, productId: productA2.id, sortOrder: 1 },
+    });
     await expect(
       source.$transaction((tx) =>
         updateTopicRuleInTransaction(tx, {
           id: productRule.id,
           userId,
           expectedBrandName: brandA,
-          body: { productId: productB.id },
+          body: { productId: productB.id, selectedMonth: "2026-09" },
         }),
       ),
     ).rejects.toThrow("所选产品不属于当前品牌");
@@ -254,13 +409,14 @@ describe.sequential("话题规则启停与永久删除", () => {
         id: productRule.id,
         userId,
         expectedBrandName: brandA,
-        body: { productId: productA2.id },
+        body: { productId: productA2.id, selectedMonth: "2026-09" },
       }),
     );
     expect(movedProductRule).toMatchObject({
       id: productRule.id,
       productId: productA2.id,
-      version: 2,
+      campaignId: september.id,
+      version: 11,
       product: { id: productA2.id, brandName: brandA },
     });
 
@@ -276,7 +432,7 @@ describe.sequential("话题规则启停与永久删除", () => {
       id: reversible.id,
       status: "INACTIVE",
       ruleSource: "LOCAL_DRAFT",
-      version: 11,
+      version: 12,
     });
     const enabled = await source.$transaction((tx) =>
       updateTopicRuleInTransaction(tx, {
@@ -289,11 +445,11 @@ describe.sequential("话题规则启停与永久删除", () => {
     expect(enabled).toMatchObject({
       id: reversible.id,
       status: "ACTIVE",
-      version: 12,
+      version: 13,
     });
     expect(
       await source.campaign.findUniqueOrThrow({ where: { id: september.id } }),
-    ).toMatchObject({ ruleVersion: 12 });
+    ).toMatchObject({ ruleVersion: 13 });
 
     const firstPayload = await exportCurrentRulePayload(
       {
@@ -303,10 +459,25 @@ describe.sequential("话题规则启停与永久删除", () => {
       source,
     );
     expect(firstPayload.topicRules.some((rule) => rule.topic === reversible.topic)).toBe(true);
+    expect(firstPayload.topicRules.find((rule) => rule.topic === productRule.topic)).toMatchObject({
+      scope: "PRODUCT",
+      productKey: expect.any(String),
+      campaignKey: expect.any(String),
+    });
     await applyRulePayload(firstPayload, "GITHUB", target);
     expect(
       await target.topicRule.findFirst({ where: { topic: reversible.topic } }),
     ).toMatchObject({ status: "ACTIVE", ruleSource: "GITHUB" });
+    expect(
+      await target.topicRule.findFirst({
+        where: { topic: productRule.topic },
+        include: { product: true, campaign: true },
+      }),
+    ).toMatchObject({
+      scope: "PRODUCT",
+      product: { name: productA2.name },
+      campaign: { name: september.name },
+    });
 
     const deleted = await source.$transaction((tx) =>
       deleteTopicRuleInTransaction(tx, {
@@ -376,7 +547,7 @@ describe.sequential("话题规则启停与永久删除", () => {
       }),
     );
     expect(batch).toMatchObject({
-      deletedCount: 7,
+      deletedCount: 8,
       campaignIds: [september.id],
     });
     expect(
@@ -408,7 +579,7 @@ describe.sequential("话题规则启停与永久删除", () => {
       brandName: brandA,
       month: "2026-09",
       contentChannel: "XIAOHONGSHU",
-      deletedCount: 7,
+      deletedCount: 8,
       campaignIds: [september.id],
     });
 

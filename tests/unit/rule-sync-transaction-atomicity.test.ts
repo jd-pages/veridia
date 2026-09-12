@@ -289,6 +289,21 @@ async function activeEvidence(database: PrismaClientType, payload: RulePackagePa
   };
 }
 
+async function productRuleOwnershipEvidence(
+  database: PrismaClientType,
+  publishedKey: string,
+) {
+  const rule = await database.topicRule.findUniqueOrThrow({
+    where: { publishedKey },
+    include: { product: true, campaign: true },
+  });
+  return {
+    scope: rule.scope,
+    productKey: rule.product?.publishedKey,
+    campaignKey: rule.campaign?.publishedKey,
+  };
+}
+
 async function expectFailedAttemptRollsBack(fault: Fault) {
   await withDatabase(async (database) => {
     const p1 = packagePayload("rules-2026.09.09.1", "P1");
@@ -456,6 +471,14 @@ describe.sequential("RULE_SYNC_ATOMIC_COMMIT", () => {
       const p2 = packagePayload("rules-2026.09.09.2", "P2", "R04-P1-STORE");
       await attemptSync(database, p1);
       await attemptSync(database, p2);
+      const productRule = p2.topicRules.find(
+        (rule) => rule.scope === "PRODUCT" && rule.productKey && rule.campaignKey,
+      )!;
+      await expect(productRuleOwnershipEvidence(database, productRule.key)).resolves.toEqual({
+        scope: "PRODUCT",
+        productKey: productRule.productKey,
+        campaignKey: productRule.campaignKey,
+      });
       const backup = await database.rulePackageBackup.findFirstOrThrow({
         where: { ruleVersion: p1.ruleVersion, restoredAt: null },
         orderBy: { createdAt: "desc" },
@@ -483,6 +506,17 @@ describe.sequential("RULE_SYNC_ATOMIC_COMMIT", () => {
         where: { source: "RESTORE" },
         orderBy: { createdAt: "desc" },
       })).toMatchObject({ ruleVersion: p1.ruleVersion, status: "RESTORED" });
+      await expect(productRuleOwnershipEvidence(database, productRule.key)).resolves.toEqual({
+        scope: "PRODUCT",
+        productKey: productRule.productKey,
+        campaignKey: productRule.campaignKey,
+      });
+      await attemptSync(database, p2);
+      await expect(productRuleOwnershipEvidence(database, productRule.key)).resolves.toEqual({
+        scope: "PRODUCT",
+        productKey: productRule.productKey,
+        campaignKey: productRule.campaignKey,
+      });
     });
   }, 30_000);
 });

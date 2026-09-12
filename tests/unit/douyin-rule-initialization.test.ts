@@ -54,11 +54,11 @@ describe("抖音独立业务规则初始化", () => {
     }
   });
 
-  it("完整复制现存产品和阶段话题，但精确跳过新手爸妈日记", () => {
-    expect(xhsRules).toHaveLength(29);
-    expect(douyinRules).toHaveLength(23);
+  it("保留独立通用规则并复制活动绑定话题，精确跳过新手爸妈日记", () => {
+    expect(xhsRules).toHaveLength(25);
+    expect(douyinRules).toHaveLength(20);
     expect(xhsRules.filter((rule) => isExcludedDouyinRequiredTopic(rule.topic)))
-      .toHaveLength(2);
+      .toHaveLength(1);
     expect(douyinRules.some((rule) => isExcludedDouyinRequiredTopic(rule.topic)))
       .toBe(false);
     expect(douyinRules.map((rule) => rule.applicableStage).filter(Boolean))

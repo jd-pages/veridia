@@ -1,5 +1,9 @@
 import { ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { prisma } from "@/lib/db";
+import {
+  resolveTopicRuleOwnership,
+  topicRuleSemanticKey,
+} from "@/lib/topic-rule-model";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -9,11 +13,33 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     ? "DOUYIN"
     : "XIAOHONGSHU";
 
-  const products = await prisma.product.findMany({
-    where: { deletedAt: null },
-    select: { id: true, name: true, brandName: true, status: true },
-    orderBy: [{ brandName: "asc" }, { name: "asc" }],
-  });
+  const [products, topicRules] = await Promise.all([
+    prisma.product.findMany({
+      where: { deletedAt: null },
+      select: { id: true, name: true, brandName: true, status: true },
+      orderBy: [{ brandName: "asc" }, { name: "asc" }],
+    }),
+    prisma.topicRule.findMany({
+      where: {
+        status: "ACTIVE",
+        contentChannel: { in: [contentChannel, "ALL"] },
+      },
+      include: {
+        product: { select: { id: true, brandName: true } },
+        campaign: {
+          include: {
+            product: { select: { id: true, brandName: true } },
+            products: {
+              select: {
+                productId: true,
+                product: { select: { id: true, brandName: true } },
+              },
+            },
+          },
+        },
+      },
+    }),
+  ]);
   const brandNames = [
     ...new Set(products.map((product) => product.brandName.trim()).filter(Boolean)),
   ];
@@ -22,8 +48,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       const brandProducts = products.filter(
         (product) => product.brandName === brandName,
       );
-      const [campaigns, ruleCount] = await Promise.all([
-        prisma.campaign.findMany({
+      const campaigns = await prisma.campaign.findMany({
           where: {
             deletedAt: null,
             contentChannel,
@@ -33,20 +58,42 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
             ],
           },
           select: { id: true },
-        }),
-        prisma.topicRule.count({
-          where: {
-            brandName,
-            status: "ACTIVE",
-            contentChannel: { in: [contentChannel, "ALL"] },
-          },
-        }),
-      ]);
+        });
+      const seen = new Set<string>();
+      const classifiedRules = topicRules.flatMap((rule) => {
+        if (rule.brandName !== brandName) return [];
+        const ownership = resolveTopicRuleOwnership(rule);
+        const projected = {
+          ...rule,
+          scope: ownership.scope,
+          productId: ownership.productId,
+          campaignId: ownership.campaignId,
+        };
+        const semanticKey = topicRuleSemanticKey(projected);
+        if (seen.has(semanticKey)) return [];
+        seen.add(semanticKey);
+        return [{ ...projected, bindingStatus: ownership.status }];
+      });
+      const generalRuleCount = classifiedRules.filter(
+        (rule) => rule.scope === "GLOBAL",
+      ).length;
+      const productRuleCount = classifiedRules.filter(
+        (rule) => rule.scope === "PRODUCT",
+      ).length;
+      const campaignRuleCount = classifiedRules.filter(
+        (rule) => rule.scope === "CAMPAIGN",
+      ).length;
       return {
         brandName,
         productCount: brandProducts.length,
         campaignCount: campaigns.length,
-        ruleCount,
+        ruleCount: generalRuleCount + productRuleCount + campaignRuleCount,
+        generalRuleCount,
+        productRuleCount,
+        campaignRuleCount,
+        unresolvedRuleCount: classifiedRules.filter(
+          (rule) => rule.bindingStatus !== "VALID",
+        ).length,
         productNames: brandProducts.map((product) => product.name),
         status: brandProducts.some((product) => product.status === "ACTIVE")
           ? "ACTIVE"

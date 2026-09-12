@@ -1,6 +1,13 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTopic } from "@/lib/topic";
+import {
+  campaignContainsProduct,
+  isTopicRuleScope,
+  resolveTopicRuleOwnership,
+  topicRuleSemanticKey,
+  type TopicRuleScope,
+} from "@/lib/topic-rule-model";
 
 export const topicRuleStatuses = ["ACTIVE", "INACTIVE"] as const;
 export const topicRuleContentChannels = ["XIAOHONGSHU", "DOUYIN"] as const;
@@ -16,16 +23,6 @@ export function topicRuleListWhere(input: {
   month?: string;
   contentChannel?: string;
 }): Prisma.TopicRuleWhereInput {
-  const brandRuleWindow = input.brandName && !input.campaignId && !input.productId
-    ? input.month
-      ? {
-          OR: [
-            { campaignId: null },
-            { campaign: { is: { month: input.month, deletedAt: null } } },
-          ],
-        }
-      : { campaignId: null }
-    : {};
   return {
     campaignId: input.campaignId,
     productId: input.productId,
@@ -33,7 +30,6 @@ export function topicRuleListWhere(input: {
     ...(input.contentChannel
       ? { contentChannel: { in: [input.contentChannel, "ALL"] } }
       : {}),
-    ...brandRuleWindow,
   };
 }
 
@@ -74,6 +70,247 @@ function readContentChannel(value: unknown) {
     return value;
   }
   throw new TopicRuleManagementError("规则内容渠道无效");
+}
+
+function readOptionalText(value: unknown) {
+  return typeof value === "string" ? value.trim() || null : null;
+}
+
+async function resolveManagedRuleOwnership(
+  tx: Prisma.TransactionClient,
+  input: {
+    scope: TopicRuleScope;
+    brandName: string;
+    productId?: string | null;
+    campaignId?: string | null;
+    contentChannel?: string;
+    selectedMonth?: string | null;
+  },
+) {
+  const productId = input.productId?.trim() || null;
+  const campaignId = input.campaignId?.trim() || null;
+  if (input.scope === "GLOBAL") {
+    if (productId || campaignId) {
+      throw new TopicRuleManagementError("通用规则不能绑定活动或产品");
+    }
+    return {
+      productId: null,
+      campaignId: null,
+      contentChannel: input.contentChannel || "XIAOHONGSHU",
+      campaign: null,
+    };
+  }
+  if (input.scope === "PRODUCT" && (!productId || !campaignId)) {
+    throw new TopicRuleManagementError("产品规则必须同时选择所属产品和所属活动");
+  }
+  if (input.scope === "PRODUCT" && !input.selectedMonth) {
+    throw new TopicRuleManagementError("产品规则必须提供当前规则月份");
+  }
+  if (input.scope === "CAMPAIGN" && !campaignId) {
+    throw new TopicRuleManagementError("活动规则必须选择所属活动");
+  }
+  if (input.scope === "CAMPAIGN" && productId) {
+    throw new TopicRuleManagementError("活动规则不能绑定具体产品");
+  }
+
+  const [product, campaign] = await Promise.all([
+    productId
+      ? tx.product.findFirst({
+          where: { id: productId, deletedAt: null },
+          select: { id: true, brandName: true },
+        })
+      : null,
+    campaignId
+      ? tx.campaign.findFirst({
+          where: { id: campaignId, deletedAt: null },
+          include: {
+            product: { select: { id: true, brandName: true } },
+            products: {
+              select: {
+                productId: true,
+                product: { select: { id: true, brandName: true } },
+              },
+            },
+          },
+        })
+      : null,
+  ]);
+  if (productId && (!product || product.brandName !== input.brandName)) {
+    throw new TopicRuleManagementError("所选产品不属于当前品牌");
+  }
+  const campaignBrands = new Set([
+    campaign?.product?.brandName,
+    ...(campaign?.products || []).map(({ product: item }) => item.brandName),
+  ].filter(Boolean));
+  if (!campaign || !campaignBrands.has(input.brandName)) {
+    throw new TopicRuleManagementError("所选活动不属于当前品牌");
+  }
+  if (productId && !campaignContainsProduct(campaign, productId)) {
+    throw new TopicRuleManagementError("所选产品不属于当前活动");
+  }
+  const contentChannel = input.contentChannel || campaign.contentChannel;
+  if (contentChannel !== campaign.contentChannel) {
+    throw new TopicRuleManagementError("规则内容平台与所属活动不一致");
+  }
+  if (
+    input.scope === "PRODUCT" &&
+    input.selectedMonth &&
+    input.selectedMonth !== campaign.month
+  ) {
+    throw new TopicRuleManagementError("所属活动与当前规则月份不一致");
+  }
+  return { productId, campaignId, contentChannel, campaign };
+}
+
+async function assertNoTopicRuleDuplicate(
+  tx: Prisma.TransactionClient,
+  input: {
+    id?: string;
+    scope: TopicRuleScope;
+    brandName: string;
+    productId: string | null;
+    campaignId: string | null;
+    contentChannel: string;
+    topic: string;
+    applicableStage: string | null;
+    milkType: string | null;
+  },
+) {
+  const candidates = await tx.topicRule.findMany({
+    where: {
+      ...(input.id ? { id: { not: input.id } } : {}),
+      brandName: input.brandName,
+      contentChannel: input.contentChannel,
+      topic: input.topic,
+      applicableStage: input.applicableStage,
+      milkType: input.milkType,
+    },
+    include: {
+      product: { select: { id: true, brandName: true } },
+      campaign: {
+        include: {
+          product: { select: { id: true, brandName: true } },
+          products: {
+            select: {
+              productId: true,
+              product: { select: { id: true, brandName: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  const requestedKey = topicRuleSemanticKey(input);
+  const duplicate = candidates.find((candidate) => {
+    const ownership = resolveTopicRuleOwnership(candidate);
+    return topicRuleSemanticKey({
+      ...candidate,
+      scope: ownership.scope,
+      productId: ownership.productId,
+      campaignId: ownership.campaignId,
+    }) === requestedKey;
+  });
+  if (duplicate) {
+    throw new TopicRuleManagementError("同一归属、平台、话题和阶段的规则已存在", 409);
+  }
+}
+
+export async function createTopicRuleInTransaction(
+  tx: Prisma.TransactionClient,
+  input: { userId: string; body: Record<string, unknown> },
+) {
+  const brandName = readOptionalText(input.body.brandName);
+  const topic = typeof input.body.topic === "string"
+    ? normalizeTopic(input.body.topic)
+    : "";
+  const scope = input.body.scope ?? "CAMPAIGN";
+  if (!brandName) throw new TopicRuleManagementError("规则必须归属品牌");
+  if (!isTopicRuleScope(scope)) throw new TopicRuleManagementError("规则层级无效");
+  if (typeof input.body.ruleType !== "string" || !topic) {
+    throw new TopicRuleManagementError("规则类型和标准话题为必填项");
+  }
+  const requestedChannel = readContentChannel(input.body.contentChannel);
+  const ownership = await resolveManagedRuleOwnership(tx, {
+    scope,
+    brandName,
+    productId: readOptionalText(input.body.productId),
+    campaignId: readOptionalText(input.body.campaignId),
+    contentChannel: requestedChannel,
+    selectedMonth: readOptionalText(input.body.selectedMonth),
+  });
+  const applicableStage = readOptionalText(input.body.applicableStage);
+  const milkType = readOptionalText(input.body.milkType);
+  await assertNoTopicRuleDuplicate(tx, {
+    scope,
+    brandName,
+    productId: ownership.productId,
+    campaignId: ownership.campaignId,
+    contentChannel: ownership.contentChannel,
+    topic,
+    applicableStage,
+    milkType,
+  });
+  let version = 1;
+  if (ownership.campaignId) {
+    version = (
+      await tx.campaign.update({
+        where: { id: ownership.campaignId },
+        data: { ruleVersion: { increment: 1 } },
+      })
+    ).ruleVersion;
+  }
+  const rule = await tx.topicRule.create({
+    data: {
+      ruleSource: "LOCAL_DRAFT",
+      brandName,
+      contentChannel: ownership.contentChannel,
+      campaignId: ownership.campaignId,
+      productId: ownership.productId,
+      scope,
+      ruleType: input.body.ruleType,
+      topicCategory: readOptionalText(input.body.topicCategory) || "GENERAL",
+      applicableStage,
+      milkType,
+      topic,
+      exactMatch: typeof input.body.exactMatch === "boolean" ? input.body.exactMatch : true,
+      clickableRequired:
+        typeof input.body.clickableRequired === "boolean"
+          ? input.body.clickableRequired
+          : false,
+      caseSensitive:
+        typeof input.body.caseSensitive === "boolean" ? input.body.caseSensitive : false,
+      minCount: typeof input.body.minCount === "number" ? input.body.minCount : 1,
+      sortOrder: typeof input.body.sortOrder === "number" ? input.body.sortOrder : 0,
+      version,
+      notes: readOptionalText(input.body.notes),
+    },
+    include: { campaign: true, product: true },
+  });
+  await tx.operationLog.create({
+    data: {
+      userId: input.userId,
+      action: "CREATE_RULE",
+      entityType: "TOPIC_RULE",
+      entityId: rule.id,
+      summary: `新增规则 ${rule.topic}`,
+      metadata: JSON.stringify({
+        ruleId: rule.id,
+        scope: rule.scope,
+        brandName: rule.brandName,
+        productId: rule.productId,
+        campaignId: rule.campaignId,
+        contentChannel: rule.contentChannel,
+      }),
+    },
+  });
+  return rule;
+}
+
+export function createTopicRule(input: {
+  userId: string;
+  body: Record<string, unknown>;
+}) {
+  return prisma.$transaction((tx) => createTopicRuleInTransaction(tx, input));
 }
 
 export function normalizeMonthlyTopicRuleDeletionInput(value: unknown): {
@@ -130,7 +367,20 @@ export async function updateTopicRuleInTransaction(
 ) {
   const existing = await tx.topicRule.findUnique({
     where: { id: input.id },
-    include: { campaign: true, product: true },
+    include: {
+      campaign: {
+        include: {
+          product: { select: { id: true, brandName: true } },
+          products: {
+            select: {
+              productId: true,
+              product: { select: { id: true, brandName: true } },
+            },
+          },
+        },
+      },
+      product: true,
+    },
   });
   if (!existing) {
     throw new TopicRuleManagementError("规则不存在", 404);
@@ -139,26 +389,22 @@ export async function updateTopicRuleInTransaction(
 
   const requestedStatus = readRequestedStatus(input.body.status);
   const contentChannel = readContentChannel(input.body.contentChannel);
-  let productId: string | undefined;
-  if (existing.scope === "PRODUCT" && hasOwn(input.body, "productId")) {
-    productId =
-      typeof input.body.productId === "string"
-        ? input.body.productId.trim()
-        : "";
-    if (!productId) {
-      throw new TopicRuleManagementError("产品规则必须选择所属产品");
-    }
-    const product = await tx.product.findFirst({
-      where: { id: productId, deletedAt: null },
-      select: { brandName: true },
-    });
-    if (!product || product.brandName !== existing.brandName) {
-      throw new TopicRuleManagementError("所选产品不属于当前品牌");
-    }
+  const existingOwnership = resolveTopicRuleOwnership(existing);
+  const requestedScope = hasOwn(input.body, "scope")
+    ? input.body.scope
+    : existingOwnership.scope;
+  if (!isTopicRuleScope(requestedScope)) {
+    throw new TopicRuleManagementError("规则层级无效");
   }
   const mutableFields = [
+    "scope",
+    "campaignId",
+    "productId",
     "ruleType",
     "contentChannel",
+    "topicCategory",
+    "applicableStage",
+    "milkType",
     "topic",
     "exactMatch",
     "clickableRequired",
@@ -167,7 +413,6 @@ export async function updateTopicRuleInTransaction(
     "sortOrder",
     "status",
     "notes",
-    ...(existing.scope === "PRODUCT" ? ["productId"] : []),
   ];
   if (
     !mutableFields.some((field) => hasOwn(input.body, field)) ||
@@ -187,22 +432,74 @@ export async function updateTopicRuleInTransaction(
     throw new TopicRuleManagementError("标准话题不能为空");
   }
 
+  const brandName = existing.brandName?.trim();
+  if (!brandName) throw new TopicRuleManagementError("规则必须归属品牌");
+  const requestedProductId = hasOwn(input.body, "productId")
+    ? readOptionalText(input.body.productId)
+    : existingOwnership.productId;
+  const requestedCampaignId = hasOwn(input.body, "campaignId")
+    ? readOptionalText(input.body.campaignId)
+    : existingOwnership.campaignId;
+  const ownership = await resolveManagedRuleOwnership(tx, {
+    scope: requestedScope,
+    brandName,
+    productId: requestedProductId,
+    campaignId: requestedCampaignId,
+    contentChannel: contentChannel || existing.contentChannel,
+    selectedMonth:
+      readOptionalText(input.body.selectedMonth) ||
+      (requestedCampaignId === existing.campaignId ? existing.campaign?.month : null),
+  });
+  const nextTopic = normalizedTopic || existing.topic;
+  const applicableStage = hasOwn(input.body, "applicableStage")
+    ? readOptionalText(input.body.applicableStage)
+    : existing.applicableStage;
+  const milkType = hasOwn(input.body, "milkType")
+    ? readOptionalText(input.body.milkType)
+    : existing.milkType;
+  await assertNoTopicRuleDuplicate(tx, {
+    id: existing.id,
+    scope: requestedScope,
+    brandName,
+    productId: ownership.productId,
+    campaignId: ownership.campaignId,
+    contentChannel: ownership.contentChannel,
+    topic: nextTopic,
+    applicableStage,
+    milkType,
+  });
+
   let version = existing.version + 1;
-  if (existing.campaignId) {
+  const affectedCampaignIds = [
+    ...new Set(
+      [existing.campaignId, ownership.campaignId].filter(
+        (value): value is string => Boolean(value),
+      ),
+    ),
+  ];
+  for (const affectedCampaignId of affectedCampaignIds) {
     const campaign = await tx.campaign.update({
-      where: { id: existing.campaignId },
+      where: { id: affectedCampaignId },
       data: { ruleVersion: { increment: 1 } },
     });
-    version = campaign.ruleVersion;
+    if (affectedCampaignId === ownership.campaignId) version = campaign.ruleVersion;
   }
   const rule = await tx.topicRule.update({
     where: { id: input.id },
     data: {
       ruleSource: "LOCAL_DRAFT",
+      scope: requestedScope,
+      campaignId: ownership.campaignId,
+      productId: ownership.productId,
       ...(typeof input.body.ruleType === "string"
         ? { ruleType: input.body.ruleType }
         : {}),
-      ...(contentChannel ? { contentChannel } : {}),
+      contentChannel: ownership.contentChannel,
+      ...(typeof input.body.topicCategory === "string"
+        ? { topicCategory: input.body.topicCategory.trim() }
+        : {}),
+      ...(hasOwn(input.body, "applicableStage") ? { applicableStage } : {}),
+      ...(hasOwn(input.body, "milkType") ? { milkType } : {}),
       ...(normalizedTopic ? { topic: normalizedTopic } : {}),
       ...(typeof input.body.exactMatch === "boolean"
         ? { exactMatch: input.body.exactMatch }
@@ -223,7 +520,6 @@ export async function updateTopicRuleInTransaction(
       ...(typeof input.body.notes === "string"
         ? { notes: input.body.notes.trim() }
         : {}),
-      ...(productId ? { productId } : {}),
       version,
     },
     include: { campaign: true, product: true },

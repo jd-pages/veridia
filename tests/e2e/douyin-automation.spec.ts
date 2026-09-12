@@ -406,7 +406,7 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
     brandName: string | null;
     topicCategory: string;
   }>;
-  expect(douyinRules).toHaveLength(23);
+  expect(douyinRules).toHaveLength(20);
   expect(douyinRules.every((item) => item.contentChannel === "DOUYIN")).toBe(
     true,
   );

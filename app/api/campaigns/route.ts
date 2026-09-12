@@ -16,7 +16,8 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const productId = searchParams.get("productId") || undefined;
   const month = searchParams.get("month") || undefined;
   const contentChannel = searchParams.get("contentChannel") || undefined;
-  const campaigns = await prisma.campaign.findMany({
+  const [campaigns, brandStageRules] = await Promise.all([
+    prisma.campaign.findMany({
     where: {
       deletedAt: null,
       month,
@@ -52,16 +53,43 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       _count: { select: { topicRules: true } },
     },
     orderBy: [{ month: "desc" }, { updatedAt: "desc" }],
-  });
+    }),
+    prisma.topicRule.findMany({
+      where: {
+        status: "ACTIVE",
+        topicCategory: "PRODUCT_STAGE",
+        ...(contentChannel
+          ? { contentChannel: { in: [contentChannel, "ALL"] } }
+          : {}),
+      },
+      select: {
+        brandName: true,
+        campaignId: true,
+        contentChannel: true,
+        topicCategory: true,
+        applicableStage: true,
+        milkType: true,
+        topic: true,
+      },
+    }),
+  ]);
   return ok(
     campaigns.map(({ topicRules, ...campaign }) => {
-      const scopedTopicRules = topicRules.filter((rule) =>
+      const campaignTopicRules = topicRules.filter((rule) =>
         [campaign.contentChannel, "ALL"].includes(
           rule.contentChannel || "XIAOHONGSHU",
         ),
       );
       const brandName = campaign.product?.brandName ||
         campaign.products[0]?.product.brandName || null;
+      const scopedTopicRules = [
+        ...campaignTopicRules.filter((rule) => rule.topicCategory !== "PRODUCT_STAGE"),
+        ...brandStageRules.filter(
+          (rule) =>
+            rule.brandName === brandName &&
+            [campaign.contentChannel, "ALL"].includes(rule.contentChannel),
+        ),
+      ];
       const requiresProductStage = campaignRequiresProductStage(scopedTopicRules);
       const detailed = campaignUsesDetailedProductStages(brandName, campaign.month);
       return {
