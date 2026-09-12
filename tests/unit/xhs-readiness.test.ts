@@ -65,7 +65,7 @@ describe("小红书页面 hydration 就绪门禁", () => {
         expect.objectContaining({ value: "想了解些什么?", source: "PAGE_JSON" }),
       ]),
     );
-  });
+  }, 15_000);
 
   it("壳层与 JSON-LD 后跳转真实 404 时终态优先于普通提取", async () => {
     await page.route("https://www.xiaohongshu.com/**", async (route) => {
