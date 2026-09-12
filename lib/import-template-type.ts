@@ -9,6 +9,7 @@ export const IMPORT_TEMPLATE_TYPES = [
   "DANONE_CUSTOMER",
   "DANONE_AGENCY",
   "KABRITA",
+  "WYETH_NESTLE",
 ] as const;
 
 export type ImportTemplateType = (typeof IMPORT_TEMPLATE_TYPES)[number];
@@ -17,7 +18,20 @@ export const IMPORT_TEMPLATE_TYPE_LABELS: Record<ImportTemplateType, string> = {
   DANONE_CUSTOMER: "达能客户",
   DANONE_AGENCY: "达能代发",
   KABRITA: "佳贝艾特",
+  WYETH_NESTLE: "惠氏/雀巢",
 };
+
+// Excel 工作表名称禁止 ASCII "/"；使用视觉等价的全角斜线。
+export const WYETH_NESTLE_SHEET_NAME = "惠氏／雀巢客户导入";
+
+export const UNIFIED_IMPORT_SHEETS = [
+  { sheetName: "达能客户导入", templateType: "DANONE_CUSTOMER" },
+  { sheetName: "佳贝艾特客户导入", templateType: "KABRITA" },
+  { sheetName: WYETH_NESTLE_SHEET_NAME, templateType: "WYETH_NESTLE" },
+] as const satisfies ReadonlyArray<{
+  sheetName: string;
+  templateType: Exclude<ImportTemplateType, "DANONE_AGENCY">;
+}>;
 
 export const DANONE_CUSTOMER_IMPORT_FIELDS = [
   "commercePlatform",

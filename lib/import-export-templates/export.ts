@@ -1,5 +1,9 @@
 import ExcelJS from "exceljs";
-import { interactionRewardPresentation, type InteractionRewardSnapshot } from "@/lib/interaction-reward";
+import {
+  interactionAtLeastTenExportValue,
+  interactionRewardPresentation,
+  type InteractionRewardSnapshot,
+} from "@/lib/interaction-reward";
 import {
   businessFailureReasonLabel,
   businessSourceLabel,
@@ -50,15 +54,22 @@ import {
   DANONE_CUSTOMER_EXPORT_FIELDS,
   DANONE_CUSTOMER_IMPORT_FIELDS,
   IMPORT_TEMPLATE_TYPE_LABELS,
+  WYETH_NESTLE_SHEET_NAME,
   danoneTemplateFieldDisplayName,
   type ImportTemplateType,
 } from "@/lib/import-template-type";
+import {
+  WYETH_NESTLE_FIELDS,
+  WYETH_NESTLE_FIELD_DEFINITIONS,
+  buildWyethNestleProductOptions,
+  wyethNestleDisplayName,
+} from "./wyeth-nestle";
 
 export type ExportValueRecord = Partial<Record<StandardField, unknown>>;
 
 type DownloadableImportTemplateType = Exclude<
   ImportTemplateType,
-  "DANONE_AGENCY"
+  "DANONE_AGENCY" | "WYETH_NESTLE"
 >;
 
 type WorksheetWithDataValidations = ExcelJS.Worksheet & {
@@ -168,6 +179,8 @@ function columns(
           ? "模板类型"
           : field === "activityMonth"
             ? "活动月份"
+          : templateType === "WYETH_NESTLE"
+            ? wyethNestleDisplayName(field)
             : danoneTemplateFieldDisplayName(
                 field,
                 templateType || "DANONE_CUSTOMER",
@@ -178,10 +191,7 @@ function columns(
   if (kind === "auditResults" && templateBrand === KABRITA_BRAND_NAME) {
     return KABRITA_EXPORT_FIELDS.map((field) => ({
       field,
-      displayName:
-        field === "activityName"
-          ? "活动名称"
-          : KABRITA_FIELD_DEFINITIONS[field].displayName,
+      displayName: KABRITA_FIELD_DEFINITIONS[field].displayName,
     }));
   }
   if (kind === "auditResults" && templateType === "DANONE_AGENCY") {
@@ -442,9 +452,72 @@ export function auditResultToKabritaExportRecord(
       raw.purchaseProductLine ||
       row.task.product.seriesName ||
       row.task.product.name,
-    activityName: raw.activityName || imported.activityName || row.task.campaign?.name || "",
-    selfReview: detailedSelfReview(row),
+    complianceResult: kabritaComplianceResult(row),
     ...rewardExport(row),
+  };
+}
+
+export function kabritaComplianceResult(
+  row: CompactAuditResultExportSourceRow,
+) {
+  let base = detailedSelfReview(row);
+  if (!row.manualReviews.length) {
+    let reasons: string[] = [];
+    try {
+      const parsed = JSON.parse(row.failureReasons) as unknown;
+      reasons = Array.isArray(parsed) ? parsed.map(String) : [String(parsed || "")];
+    } catch {
+      reasons = row.failureReasons ? [row.failureReasons] : [];
+    }
+    const interactionReasons = reasons.filter((reason) =>
+      /基础奖励(?:未达成|互动数据无法确认)|互动合计/iu.test(reason),
+    );
+    const otherReasons = reasons.filter((reason) =>
+      !/基础奖励(?:未达成|互动数据无法确认)|互动合计/iu.test(reason),
+    );
+    if (interactionReasons.length) {
+      base = detailedSelfReview({
+        ...row,
+        autoStatus: otherReasons.length ? row.autoStatus : "PASSED",
+        failureReasons: JSON.stringify(otherReasons),
+      });
+    }
+  }
+  const interaction = interactionAtLeastTenExportValue(row);
+  if (!interaction) return base === "Y" ? "" : base;
+  if (base === "Y") return interaction === "Y" ? "Y" : "N-互动量＜10";
+  if (interaction === "Y" || base.includes("互动量＜10")) return base;
+  return [base, "N-互动量＜10"].filter(Boolean).join("；");
+}
+
+export function auditResultToWyethNestleExportRecord(
+  row: CompactAuditResultExportSourceRow,
+): ExportValueRecord {
+  const imported = importedTaskMetadataFromNotes(row.task.notes);
+  const raw = (importedTemplateMetadataFromNotes(row.task.notes)?.rawValues || {}) as Partial<
+    Record<StandardField, string>
+  >;
+  const commercePlatform =
+    parseCommercePlatform(row.task.commercePlatform) ||
+    parseCommercePlatform(imported.platform);
+  const channel =
+    resolveTaskChannel(row.task) ||
+    parseContentChannel(imported.contentChannel);
+  return {
+    registrant: raw.registrant || "",
+    wechatNickname: raw.wechatNickname || imported.customerName,
+    commercePlatform: commercePlatformLabel(commercePlatform),
+    shopName: raw.shopName || imported.shopName,
+    productName: raw.productName || row.task.product.seriesName || row.task.product.name,
+    orderNumber: raw.orderNumber || imported.orderNumber,
+    contentChannel: contentChannelLabel(channel),
+    noteUrl: resolveResultOriginalLink(row),
+    publishTime: raw.publishTime
+      ? importedPublishTimeValue(raw.publishTime)
+      : row.note.publishedAt,
+    customerServiceComment: raw.customerServiceComment || "",
+    selfReview: detailedSelfReview(row),
+    interactionAtLeastTen: interactionAtLeastTenExportValue(row),
   };
 }
 
@@ -711,7 +784,13 @@ export async function buildConfiguredWorkbook(input: {
     purchaseProductLine: 22,
     complianceResult: 28,
   };
-  if (kind === "auditResults") appendRewardColumns(selected, records);
+  if (
+    kind === "auditResults" &&
+    !section.fields &&
+    templateBrand !== KABRITA_BRAND_NAME
+  ) {
+    appendRewardColumns(selected, records);
+  }
   sheet.columns = selected.map(({ field, displayName }) => ({
     header: displayName,
     key: field,
@@ -751,7 +830,7 @@ export async function buildConfiguredWorkbook(input: {
       row.alignment = { vertical: "top", wrapText: true };
     }
   });
-  for (const field of ["originalUrl", "xiaohongshuPublishLink"] as const) {
+  for (const field of ["originalUrl", "noteUrl", "xiaohongshuPublishLink"] as const) {
     const columnIndex = selected.findIndex((column) => column.field === field) + 1;
     if (columnIndex > 0) {
       sheet.getColumn(columnIndex).alignment = {
@@ -795,13 +874,23 @@ export function buildConfiguredCsv(input: {
   kind: "auditResults" | "auditTasks";
   records: ExportValueRecord[];
   templateBrand?: ImportTemplateBrand;
+  templateType?: ImportTemplateType;
+  fields?: readonly StandardField[];
 }) {
   const selected = columns(
     input.templates,
     input.kind,
     input.templateBrand,
+    input.templateType,
+    input.fields,
   );
-  if (input.kind === "auditResults") appendRewardColumns(selected, input.records);
+  if (
+    input.kind === "auditResults" &&
+    !input.fields &&
+    input.templateBrand !== KABRITA_BRAND_NAME
+  ) {
+    appendRewardColumns(selected, input.records);
+  }
   return utf8BomCsv(
     selected.map((column) => column.displayName),
     input.records.map((record) =>
@@ -1106,6 +1195,220 @@ export async function buildImportTemplateWorkbook(
   return workbook.xlsx.writeBuffer();
 }
 
+export function buildUnifiedAuditResultsWorkbook(input: {
+  templates: ImportExportTemplates;
+  danoneRecords: ExportValueRecord[];
+  kabritaRecords: ExportValueRecord[];
+  wyethNestleRecords: ExportValueRecord[];
+}) {
+  return buildConfiguredWorkbook({
+    templates: input.templates,
+    kind: "auditResults",
+    records: [],
+    sections: [
+      {
+        sheetName: "达能客户导入",
+        records: input.danoneRecords,
+        templateType: "DANONE_CUSTOMER",
+      },
+      {
+        sheetName: "佳贝艾特客户导入",
+        records: input.kabritaRecords,
+        templateBrand: KABRITA_BRAND_NAME,
+      },
+      {
+        sheetName: WYETH_NESTLE_SHEET_NAME,
+        records: input.wyethNestleRecords,
+        templateType: "WYETH_NESTLE",
+        fields: WYETH_NESTLE_FIELDS,
+      },
+    ],
+  });
+}
+
+type UnifiedTemplateActivity = {
+  name: string;
+  contentChannel: "XIAOHONGSHU" | "DOUYIN";
+};
+
+type UnifiedTemplateProduct = {
+  id: string;
+  code?: string | null;
+  name: string;
+  brandName: string;
+};
+
+function styleImportSheet(
+  sheet: ExcelJS.Worksheet,
+  fields: readonly StandardField[],
+) {
+  const widths: Partial<Record<StandardField, number>> = {
+    registrant: 18,
+    wechatNickname: 22,
+    commercePlatform: 18,
+    shopName: 28,
+    customerName: 20,
+    productName: 28,
+    productStage: 14,
+    productStageDetail: 14,
+    orderNumber: 26,
+    contentChannel: 18,
+    noteUrl: 52,
+    publishTime: 22,
+    activityName: 38,
+    customerServiceComment: 32,
+    selfReview: 26,
+    interactionAtLeastTen: 16,
+    registrationTime: 22,
+    channel: 16,
+    customerRemark: 28,
+    buyerPurchaseId: 22,
+    purchaseOrderNumber: 24,
+    purchaseTime: 22,
+    purchaseCanCount: 14,
+    participationCount: 14,
+    xiaohongshuAccount: 22,
+    xiaohongshuPublishLink: 52,
+    purchaseProductLine: 24,
+    complianceResult: 28,
+  };
+  fields.forEach((field, index) => {
+    sheet.getColumn(index + 1).width = widths[field] || 18;
+  });
+  const header = sheet.getRow(1);
+  header.font = { bold: true, color: { argb: "FF000000" } };
+  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFF00" } };
+  header.alignment = { vertical: "middle", wrapText: true };
+  header.height = 32;
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  sheet.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: fields.length },
+  };
+}
+
+export async function buildUnifiedImportTemplateWorkbook(
+  templates: ImportExportTemplates,
+  options: {
+    activities: readonly UnifiedTemplateActivity[];
+    products: readonly UnifiedTemplateProduct[];
+  },
+) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "VERIDIA";
+
+  const danone = workbook.addWorksheet("达能客户导入");
+  danone.addRow(
+    DANONE_CUSTOMER_IMPORT_FIELDS.map((field) =>
+      danoneTemplateFieldDisplayName(field, "DANONE_CUSTOMER"),
+    ),
+  );
+  styleImportSheet(danone, DANONE_CUSTOMER_IMPORT_FIELDS);
+  const danoneStage = DANONE_CUSTOMER_IMPORT_FIELDS.indexOf("productStage") + 1;
+  const danoneStageDetail = DANONE_CUSTOMER_IMPORT_FIELDS.indexOf("productStageDetail") + 1;
+  const danoneChannel = DANONE_CUSTOMER_IMPORT_FIELDS.indexOf("contentChannel") + 1;
+  addDataValidationRange(danone, danoneStage, 2, 10_001, {
+    type: "list", allowBlank: false, formulae: ['"IFFO,GUM"'],
+    showErrorMessage: true, errorTitle: "阶段无效", error: "阶段仅支持 IFFO 或 GUM",
+  });
+  addDataValidationRange(danone, danoneStageDetail, 2, 10_001, {
+    type: "list", allowBlank: false, formulae: ['"P段,1段,2段,3段,4段,1+段,2+段"'],
+    showErrorMessage: true, errorTitle: "段位无效", error: "请选择正式段位值",
+  });
+  addDataValidationRange(danone, danoneChannel, 2, 10_001, {
+    type: "list", allowBlank: false, formulae: ['"小红书,抖音"'],
+    showErrorMessage: true, errorTitle: "内容渠道无效", error: "内容渠道仅支持小红书或抖音",
+  });
+  danone.getColumn(DANONE_CUSTOMER_IMPORT_FIELDS.indexOf("publishTime") + 1).numFmt = "yyyy-mm-dd hh:mm:ss";
+
+  const kabrita = workbook.addWorksheet("佳贝艾特客户导入");
+  kabrita.addRow(
+    KABRITA_IMPORT_FIELDS.map((field) => KABRITA_FIELD_DEFINITIONS[field].displayName),
+  );
+  styleImportSheet(kabrita, KABRITA_IMPORT_FIELDS);
+  kabrita.getColumn(KABRITA_IMPORT_FIELDS.indexOf("registrationTime") + 1).numFmt = "yyyy-mm-dd hh:mm:ss";
+  kabrita.getColumn(KABRITA_IMPORT_FIELDS.indexOf("purchaseTime") + 1).numFmt = "yyyy-mm-dd hh:mm:ss";
+
+  const wyethNestle = workbook.addWorksheet(WYETH_NESTLE_SHEET_NAME);
+  wyethNestle.addRow(
+    WYETH_NESTLE_FIELDS.map((field) => WYETH_NESTLE_FIELD_DEFINITIONS[field].displayName),
+  );
+  styleImportSheet(wyethNestle, WYETH_NESTLE_FIELDS);
+  const wyethChannel = WYETH_NESTLE_FIELDS.indexOf("contentChannel") + 1;
+  addDataValidationRange(wyethNestle, wyethChannel, 2, 10_001, {
+    type: "list", allowBlank: false, formulae: ['"小红书,抖音"'],
+    showErrorMessage: true, errorTitle: "内容渠道无效", error: "内容渠道仅支持小红书或抖音",
+  });
+  wyethNestle.getColumn(WYETH_NESTLE_FIELDS.indexOf("publishTime") + 1).numFmt = "yyyy-mm-dd hh:mm:ss";
+  wyethNestle.getCell(1, WYETH_NESTLE_FIELDS.indexOf("customerServiceComment") + 1).note =
+    "格式：日期-已留言/已修改";
+
+  const activities = [...new Map(
+    options.activities
+      .filter((activity) => activity.name.trim())
+      .map((activity) => [activity.name.trim(), activity]),
+  ).values()];
+  const activitySheet = workbook.addWorksheet("活动列表", { state: "veryHidden" });
+  activitySheet.addRow(["活动名称", "内容渠道"]);
+  activities.forEach((activity) => activitySheet.addRow([
+    activity.name,
+    activity.contentChannel === "DOUYIN" ? "抖音" : "小红书",
+  ]));
+  if (activities.length) {
+    workbook.definedNames.add(`'活动列表'!$A$2:$A$${activities.length + 1}`, "VERIDIA_ACTIVITY_NAMES");
+    addDataValidationRange(
+      danone,
+      DANONE_CUSTOMER_IMPORT_FIELDS.indexOf("activityName") + 1,
+      2,
+      10_001,
+      {
+        type: "list", allowBlank: false, formulae: ["VERIDIA_ACTIVITY_NAMES"],
+        showErrorMessage: true, errorTitle: "活动名称无效", error: "请选择活动管理中当前启用的完整活动名称。",
+      },
+    );
+  }
+
+  const productOptions = buildWyethNestleProductOptions(options.products);
+  const productSheet = workbook.addWorksheet("产品列表", { state: "veryHidden" });
+  productSheet.addRow(["产品选项", "productId", "品牌", "正式产品名"]);
+  productOptions.forEach(({ product, value }) => productSheet.addRow([
+    value,
+    product.id,
+    product.brandName,
+    product.name,
+  ]));
+  if (productOptions.length) {
+    workbook.definedNames.add(`'产品列表'!$A$2:$A$${productOptions.length + 1}`, "VERIDIA_WYETH_NESTLE_PRODUCTS");
+    addDataValidationRange(
+      wyethNestle,
+      WYETH_NESTLE_FIELDS.indexOf("productName") + 1,
+      2,
+      10_001,
+      {
+        type: "list", allowBlank: false, formulae: ["VERIDIA_WYETH_NESTLE_PRODUCTS"],
+        showErrorMessage: true, errorTitle: "产品系列无效", error: "请选择当前有效的惠氏或雀巢产品。",
+      },
+    );
+  }
+
+  const instructions = workbook.addWorksheet("填写说明", { state: "hidden" });
+  instructions.addRow(["业务 Sheet", "填写说明"]);
+  instructions.addRow(["达能客户导入", "沿用达能正式字段；活动名称必须从下拉中选择。"]);
+  instructions.addRow(["佳贝艾特客户导入", "“是否符合”为系统输出列，导入值不参与审核。"]);
+  instructions.addRow([WYETH_NESTLE_SHEET_NAME, "客服修改留言格式：日期-已留言/已修改；内部自审和互动量≥10由系统重新生成。"]);
+  instructions.getRow(1).font = { bold: true };
+
+  const metadata = workbook.addWorksheet("VERIDIA模板信息", { state: "veryHidden" });
+  metadata.addRow(["templateType", "UNIFIED"]);
+  metadata.addRow(["templateVersion", templates.templateVersion]);
+  metadata.addRow(["supportedSheets", JSON.stringify(["达能客户导入", "佳贝艾特客户导入", WYETH_NESTLE_SHEET_NAME])]);
+  metadata.addRow(["sheetName", "templateType"]);
+  metadata.addRow(["达能客户导入", "DANONE_CUSTOMER"]);
+  metadata.addRow(["佳贝艾特客户导入", "KABRITA"]);
+  metadata.addRow([WYETH_NESTLE_SHEET_NAME, "WYETH_NESTLE"]);
+  return workbook.xlsx.writeBuffer();
+}
+
 export function buildImportTemplateCsv(
   templates: ImportExportTemplates,
   options?: {
@@ -1142,6 +1445,8 @@ export function buildBrandedAuditResultsCsv(input: {
     title: string;
     records: ExportValueRecord[];
     templateBrand?: ImportTemplateBrand;
+    templateType?: ImportTemplateType;
+    fields?: readonly StandardField[];
   }>;
 }) {
   const sections = input.sections.map((section) => {
@@ -1150,6 +1455,8 @@ export function buildBrandedAuditResultsCsv(input: {
       kind: "auditResults",
       records: section.records,
       templateBrand: section.templateBrand,
+      templateType: section.templateType,
+      fields: section.fields,
     }).replace(/^\uFEFF/u, "");
     return `${section.title}\r\n${csv}`;
   });

@@ -47,7 +47,6 @@ import PageHeader from "@/components/PageHeader";
 import { apiFetch } from "@/lib/client";
 import {
   downloadImportTemplate,
-  type ImportTemplateBrand,
   type ImportTemplateFormat,
 } from "@/lib/import-template-download-client";
 import {
@@ -231,8 +230,8 @@ interface ImportPreview {
   rowsTruncated?: boolean;
   errorRowsTruncated?: boolean;
   templateVersion: string;
-  templateBrand: "达能" | "佳贝艾特";
-  templateType: "DANONE_CUSTOMER" | "DANONE_AGENCY" | "KABRITA";
+  templateBrand: "达能" | "佳贝艾特" | "惠氏/雀巢" | "多业务";
+  templateType: "DANONE_CUSTOMER" | "DANONE_AGENCY" | "KABRITA" | "WYETH_NESTLE";
   sourceLabel: string;
   sourceType: string;
   recognizedFields: Array<{
@@ -249,6 +248,7 @@ interface ImportPreview {
     errors: string[];
   }>;
   rows: Array<{
+    sheetName?: string;
     rowNumber: number;
     url: string;
     originalLinkContent: string;
@@ -272,6 +272,7 @@ interface ImportPreview {
       kind: "HISTORICAL" | "CURRENT_FILE";
       identity: string;
       batchDuplicateOfRow: number | null;
+      batchDuplicateOfSheet?: string | null;
       historicalCount: number;
       isDuplicate: boolean;
       isReaudit: boolean;
@@ -304,8 +305,12 @@ interface DuplicateHistoryEntry {
 
 function duplicateOverrideKey(row: ImportPreview["rows"][number]) {
   return row.duplicateWarning
-    ? `${row.rowNumber}\u0000${row.duplicateWarning.identity}`
+    ? `${row.sheetName || ""}\u0000${row.rowNumber}\u0000${row.duplicateWarning.identity}`
     : "";
+}
+
+function importPreviewRowKey(row: ImportPreview["rows"][number]) {
+  return `${row.sheetName || ""}\u0000${row.rowNumber}`;
 }
 
 const activeBatchStatuses = new Set([
@@ -508,7 +513,7 @@ export default function TasksPage() {
   const [duplicateOverrides, setDuplicateOverrides] = useState<Set<string>>(
     () => new Set(),
   );
-  const [selectedDuplicateRows, setSelectedDuplicateRows] = useState<Set<number>>(
+  const [selectedDuplicateRows, setSelectedDuplicateRows] = useState<Set<string>>(
     () => new Set(),
   );
   const [confirmAllDuplicateReaudits, setConfirmAllDuplicateReaudits] =
@@ -597,7 +602,7 @@ export default function TasksPage() {
   const selectedHistoricalDuplicateRows = useMemo(
     () =>
       pendingHistoricalDuplicateRows.filter((row) =>
-        selectedDuplicateRows.has(row.rowNumber),
+        selectedDuplicateRows.has(importPreviewRowKey(row)),
       ),
     [pendingHistoricalDuplicateRows, selectedDuplicateRows],
   );
@@ -1119,6 +1124,7 @@ export default function TasksPage() {
           (preview?.rows || [])
             .filter((row) => duplicateOverrides.has(duplicateOverrideKey(row)))
             .map((row) => ({
+              sheetName: row.sheetName,
               rowNumber: row.rowNumber,
               identity: row.duplicateWarning!.identity,
             })),
@@ -1232,7 +1238,7 @@ export default function TasksPage() {
         ? `该作品此前已审核 ${row.duplicateWarning.historicalCount} 次。本次确认只对当前导入有效，以后再次上传仍会提示重复。`
         : row.duplicateWarning.sourceTaskIds.length
           ? "该作品此前已进入过 VERIDIA，但尚无正式审核结果。本次确认只对当前导入有效，以后再次上传仍会提示重复。"
-          : `该作品与本文件第 ${row.duplicateWarning.batchDuplicateOfRow} 行相同。本次确认只对当前导入有效。`,
+          : `该作品与本文件${row.duplicateWarning.batchDuplicateOfSheet ? `${row.duplicateWarning.batchDuplicateOfSheet} ` : ""}第 ${row.duplicateWarning.batchDuplicateOfRow} 行相同。本次确认只对当前导入有效。`,
       okText: "确认重新审核",
       cancelText: "取消",
       onOk: () => {
@@ -1355,12 +1361,11 @@ export default function TasksPage() {
 
   const downloadTemplate = async (
     format: ImportTemplateFormat,
-    brand: ImportTemplateBrand,
   ) => {
     if (templateDownloading) return;
     setTemplateDownloading(true);
     try {
-      const result = await downloadImportTemplate(format, brand);
+      const result = await downloadImportTemplate(format);
       if (result.saved) message.success(`导入模板已保存：${result.fileName}`);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "下载导入模板失败");
@@ -1881,34 +1886,16 @@ export default function TasksPage() {
                     </span>
                     <h2>表格批量导入</h2>
                     <p>
-                      支持 Excel（.xlsx）；请按业务类型下载对应模板。
+                      支持 Excel（.xlsx）；统一模板包含全部业务 Sheet。
                     </p>
                   </div>
-                  <Dropdown
-                    menu={{
-                      items: [
-                        {
-                          key: "danone-customer-xlsx",
-                          label: "下载达能客户 Excel 模板",
-                          onClick: () => void downloadTemplate("xlsx", "danone-customer"),
-                        },
-                        { type: "divider" },
-                        {
-                          key: "kabrita-xlsx",
-                          label: "下载佳贝艾特 Excel 模板",
-                          onClick: () =>
-                            void downloadTemplate("xlsx", "kabrita"),
-                        },
-                      ],
-                    }}
+                  <Button
+                    icon={<DownloadOutlined />}
+                    loading={templateDownloading}
+                    onClick={() => void downloadTemplate("xlsx")}
                   >
-                    <Button
-                      icon={<DownloadOutlined />}
-                      loading={templateDownloading}
-                    >
-                      下载导入模板
-                    </Button>
-                  </Dropdown>
+                    下载导入模板
+                  </Button>
                 </div>
                 <Space
                   className={styles.excelImportStack}
@@ -1998,11 +1985,17 @@ export default function TasksPage() {
                           {preview.templateBrand}
                         </Descriptions.Item>
                         <Descriptions.Item label="模板类型">
-                          {preview.templateType === "DANONE_AGENCY"
+                          {preview.templateBrand === "多业务"
+                            ? "多业务"
+                            : preview.templateType === "DANONE_AGENCY"
                             ? "达能代发"
                             : preview.templateType === "DANONE_CUSTOMER"
                               ? "达能客户"
-                              : "佳贝艾特"}
+                              : preview.templateType === "KABRITA"
+                                ? "佳贝艾特"
+                                : preview.templateType === "WYETH_NESTLE"
+                                  ? "惠氏/雀巢"
+                                  : "多业务"}
                         </Descriptions.Item>
                         <Descriptions.Item label="数据源类型">
                           {preview.sourceLabel || preview.sourceType}
@@ -2126,7 +2119,7 @@ export default function TasksPage() {
                         ) : null}
                         <Table<ImportPreview["rows"][number]>
                           className={styles.enterpriseTable}
-                          rowKey="rowNumber"
+                          rowKey={importPreviewRowKey}
                           size="small"
                           dataSource={
                             previewView === "ERRORS"
@@ -2138,7 +2131,7 @@ export default function TasksPage() {
                             preserveSelectedRowKeys: true,
                             onChange: (keys) =>
                               setSelectedDuplicateRows(
-                                new Set(keys.map((key) => Number(key))),
+                                new Set(keys.map(String)),
                               ),
                             getCheckboxProps: (row) => ({
                               disabled:
@@ -2150,7 +2143,11 @@ export default function TasksPage() {
                           tableLayout="fixed"
                           scroll={{ x: 1500 }}
                         columns={[
-                          { title: "行", dataIndex: "rowNumber", width: 70 },
+                          {
+                            title: "Sheet / 行",
+                            width: 170,
+                            render: (_value, row) => `${row.sheetName || ""} 第 ${row.rowNumber} 行`,
+                          },
                           {
                             title:
                               preview.templateBrand === "佳贝艾特"
@@ -2316,7 +2313,7 @@ export default function TasksPage() {
                                   ) : null}
                                   {row.duplicateWarning.batchDuplicateOfRow ? (
                                     <Tag color="orange">
-                                      本批次重复 · 与第 {row.duplicateWarning.batchDuplicateOfRow} 行相同
+                                      本批次重复 · 与{row.duplicateWarning.batchDuplicateOfSheet ? `${row.duplicateWarning.batchDuplicateOfSheet} ` : ""}第 {row.duplicateWarning.batchDuplicateOfRow} 行相同
                                     </Tag>
                                   ) : null}
                                   {row.duplicateWarning.sourceTaskIds.length ? (

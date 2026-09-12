@@ -20,12 +20,21 @@ import {
 import {
   DANONE_AGENCY_IMPORT_FIELDS,
   DANONE_CUSTOMER_IMPORT_FIELDS,
+  UNIFIED_IMPORT_SHEETS,
   isImportTemplateType,
   type ImportTemplateType,
 } from "@/lib/import-template-type";
+import {
+  WYETH_NESTLE_FIELD_DEFINITIONS,
+  WYETH_NESTLE_FIELDS,
+  WYETH_NESTLE_REQUIRED_FIELDS,
+  isWyethNestleTemplateHeader,
+  wyethNestleDisplayName,
+} from "./wyeth-nestle";
 
 type Matrix = string[][];
 type ParsedMatrix = {
+  sheetName?: string;
   matrix: Matrix;
   hyperlinks: Map<string, string>;
   sourceRowNumbers?: number[];
@@ -125,70 +134,82 @@ function excelCellText(cell: ExcelJS.Cell, preferHyperlink = false) {
   return cell.text.trim();
 }
 
-async function xlsxMatrix(
+async function xlsxMatrices(
   bytes: Uint8Array,
   maximumRelevantRows: number,
-): Promise<ParsedMatrix> {
+): Promise<{ matrices: ParsedMatrix[]; unified: boolean }> {
   const workbook = new ExcelJS.Workbook();
   const excelParseStarted = performance.now();
   await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
   const excelParseMs = performance.now() - excelParseStarted;
-  const sheet = workbook.worksheets[0];
-  if (!sheet) throw new Error("无法读取表格：工作簿中没有工作表");
-  const worksheetParseStarted = performance.now();
-  const rows: Matrix = [];
-  const hyperlinks = new Map<string, string>();
-  const sourceRowNumbers: number[] = [];
-  const meaningfulRowNumbers: number[] = [];
-  sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    const values: string[] = [];
-    let lastMeaningfulColumn = 0;
-    row.eachCell({ includeEmpty: false }, (_cell, columnNumber) => {
-      lastMeaningfulColumn = Math.max(lastMeaningfulColumn, columnNumber);
-    });
-    for (let columnNumber = 1; columnNumber <= lastMeaningfulColumn; columnNumber += 1) {
-      const cell = row.getCell(columnNumber);
-      values.push(excelCellText(cell));
-    }
-    if (!values.some((value) => value.trim())) return;
-    meaningfulRowNumbers.push(rowNumber);
-    if (rows.length >= maximumRelevantRows) return;
-    const matrixRowIndex = rows.length;
-    for (let columnNumber = 1; columnNumber <= lastMeaningfulColumn; columnNumber += 1) {
-      const cell = row.getCell(columnNumber);
-      if (
-        cell.value &&
-        typeof cell.value === "object" &&
-        "hyperlink" in cell.value &&
-        cell.value.hyperlink
-      ) {
-        hyperlinks.set(
-          cellKey(matrixRowIndex, columnNumber - 1),
-          String(cell.value.hyperlink).trim(),
-        );
-      }
-    }
-    rows.push(values);
-    sourceRowNumbers.push(rowNumber);
-  });
-  const effectiveWorksheetRowCount = sourceRowNumbers.at(-1) || 0;
-  const effectiveWorksheetColumnCount = widestRow(rows);
   const metadata = workbook.getWorksheet("VERIDIA模板信息");
   const metadataType = metadata?.getCell("B1").text.trim();
-  return {
-    matrix: rows,
-    hyperlinks,
-    sourceRowNumbers,
-    meaningfulRowNumbers,
-    templateType: isImportTemplateType(metadataType) ? metadataType : undefined,
-    performance: {
-      excelParseMs,
-      worksheetParseMs: performance.now() - worksheetParseStarted,
-      worksheetRowCount: sheet.rowCount,
-      effectiveWorksheetRowCount,
-      effectiveWorksheetColumnCount,
-    },
-  };
+  const metadataTypes = new Map<string, ImportTemplateType>();
+  metadata?.eachRow((row, rowNumber) => {
+    if (rowNumber < 5) return;
+    const sheetName = row.getCell(1).text.trim();
+    const type = row.getCell(2).text.trim();
+    if (sheetName && isImportTemplateType(type)) metadataTypes.set(sheetName, type);
+  });
+  const unified = metadata?.getCell("B1").text.trim() === "UNIFIED" ||
+    UNIFIED_IMPORT_SHEETS.every(({ sheetName }) => Boolean(workbook.getWorksheet(sheetName)));
+  const selectedSheets = unified
+    ? UNIFIED_IMPORT_SHEETS.map(({ sheetName, templateType }) => ({
+        sheet: workbook.getWorksheet(sheetName),
+        templateType: metadataTypes.get(sheetName) || templateType,
+      })).filter((entry): entry is { sheet: ExcelJS.Worksheet; templateType: ImportTemplateType } => Boolean(entry.sheet))
+    : workbook.worksheets.length
+      ? [{
+          sheet: workbook.worksheets[0],
+          templateType: isImportTemplateType(metadataType) ? metadataType : undefined,
+        }]
+      : [];
+  if (!selectedSheets.length) throw new Error("无法读取表格：工作簿中没有工作表");
+  const matrices = selectedSheets.map(({ sheet, templateType }) => {
+    const worksheetParseStarted = performance.now();
+    const rows: Matrix = [];
+    const hyperlinks = new Map<string, string>();
+    const sourceRowNumbers: number[] = [];
+    const meaningfulRowNumbers: number[] = [];
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      const values: string[] = [];
+      let lastMeaningfulColumn = 0;
+      row.eachCell({ includeEmpty: false }, (_cell, columnNumber) => {
+        lastMeaningfulColumn = Math.max(lastMeaningfulColumn, columnNumber);
+      });
+      for (let columnNumber = 1; columnNumber <= lastMeaningfulColumn; columnNumber += 1) {
+        values.push(excelCellText(row.getCell(columnNumber)));
+      }
+      if (!values.some((value) => value.trim())) return;
+      meaningfulRowNumbers.push(rowNumber);
+      if (rows.length >= maximumRelevantRows) return;
+      const matrixRowIndex = rows.length;
+      for (let columnNumber = 1; columnNumber <= lastMeaningfulColumn; columnNumber += 1) {
+        const cell = row.getCell(columnNumber);
+        if (cell.value && typeof cell.value === "object" && "hyperlink" in cell.value && cell.value.hyperlink) {
+          hyperlinks.set(cellKey(matrixRowIndex, columnNumber - 1), String(cell.value.hyperlink).trim());
+        }
+      }
+      rows.push(values);
+      sourceRowNumbers.push(rowNumber);
+    });
+    return {
+      sheetName: sheet.name,
+      matrix: rows,
+      hyperlinks,
+      sourceRowNumbers,
+      meaningfulRowNumbers,
+      templateType,
+      performance: {
+        excelParseMs,
+        worksheetParseMs: performance.now() - worksheetParseStarted,
+        worksheetRowCount: sheet.rowCount,
+        effectiveWorksheetRowCount: sourceRowNumbers.at(-1) || 0,
+        effectiveWorksheetColumnCount: widestRow(rows),
+      },
+    } satisfies ParsedMatrix;
+  });
+  return { matrices, unified };
 }
 
 function legacyExcelMatrix(bytes: Uint8Array): ParsedMatrix {
@@ -233,19 +254,21 @@ function aliasIndex(templates: ImportExportTemplates) {
     ...DANONE_CUSTOMER_IMPORT_FIELDS,
     ...DANONE_AGENCY_IMPORT_FIELDS,
     ...KABRITA_TEMPLATE_FIELDS,
+    ...WYETH_NESTLE_FIELDS,
     "complianceResult",
     // 兼容第三方表格使用“活动名称”；新版正式表头为“活动名称（必填）”。
     "activityName",
   ]);
   for (const field of fields) {
-    const definition =
-      KABRITA_FIELD_DEFINITIONS[
-        field as keyof typeof KABRITA_FIELD_DEFINITIONS
-      ] || templates.fieldDefinitions[field];
-    if (!definition) continue;
+    const definitions = [
+      templates.fieldDefinitions[field],
+      KABRITA_FIELD_DEFINITIONS[field as keyof typeof KABRITA_FIELD_DEFINITIONS],
+      WYETH_NESTLE_FIELD_DEFINITIONS[field as keyof typeof WYETH_NESTLE_FIELD_DEFINITIONS],
+    ].filter((definition): definition is NonNullable<typeof definition> => Boolean(definition));
+    if (!definitions.length) continue;
     for (const alias of [
       field,
-      definition.displayName,
+      ...definitions.map((definition) => definition.displayName),
       ...(templates.fieldAliases[field] || []),
     ]) {
       aliases.set(normalizeTemplateHeader(alias), field);
@@ -278,9 +301,10 @@ function locateHeader(
 function displayName(
   templates: ImportExportTemplates,
   field: string,
-  kabritaTemplate = false,
+  templateType?: ImportTemplateType,
 ) {
-  if (kabritaTemplate) return kabritaDisplayName(field as StandardField);
+  if (templateType === "KABRITA") return kabritaDisplayName(field as StandardField);
+  if (templateType === "WYETH_NESTLE") return wyethNestleDisplayName(field as StandardField);
   return templates.fieldDefinitions[field]?.displayName || field;
 }
 
@@ -289,6 +313,7 @@ function detectTemplateType(
   metadataType?: ImportTemplateType,
 ): ImportTemplateType {
   if (metadataType) return metadataType;
+  if (isWyethNestleTemplateHeader(header)) return "WYETH_NESTLE";
   if (isKabritaTemplateHeader(header)) return "KABRITA";
   const normalized = new Set(header.map(normalizeTemplateHeader));
   const hasSegment = normalized.has(normalizeTemplateHeader("段位")) ||
@@ -319,56 +344,12 @@ function templateField(
   return fallback;
 }
 
-export async function parseTabularPreview(input: {
-  bytes: Uint8Array;
-  fileName: string;
-  sourceType: LocalTabularSourceType;
-  templates: ImportExportTemplates;
-  onPerformance?: (performance: TabularParsePerformance) => void;
-}): Promise<TabularPreview> {
-  const { bytes, sourceType, templates } = input;
-  if (!bytes.byteLength) throw new Error("文件为空");
-  if (bytes.byteLength > templates.dataValidation.maxFileBytes) {
-    throw new Error(
-      `文件不能超过${Math.round(templates.dataValidation.maxFileBytes / 1024 / 1024)}MB`,
-    );
-  }
-  let parsedMatrix: ParsedMatrix;
-  try {
-    parsedMatrix =
-      sourceType === "CSV" ||
-      sourceType === "TENCENT_DOCS_EXPORTED_CSV"
-        ? (() => {
-            const started = performance.now();
-            const matrix = csvMatrix(bytes);
-            return {
-              matrix,
-              hyperlinks: new Map<string, string>(),
-              performance: {
-                excelParseMs: performance.now() - started,
-                worksheetParseMs: 0,
-                worksheetRowCount: matrix.length,
-                effectiveWorksheetRowCount: matrix.length,
-                effectiveWorksheetColumnCount: widestRow(matrix),
-              },
-            };
-          })()
-        : sourceType === "EXCEL_XLS"
-          ? legacyExcelMatrix(bytes)
-          : await xlsxMatrix(
-              bytes,
-              templates.importTemplates.default.headerRowSearchLimit +
-                templates.dataValidation.maxRows,
-            );
-  } catch (error) {
-    if (error instanceof Error && /文件为空|编码|工作表/u.test(error.message)) {
-      throw error;
-    }
-    throw new Error(
-      `无法读取表格：${error instanceof Error ? error.message : "表格格式不支持"}`,
-    );
-  }
+function parseMatrixPreview(
+  parsedMatrix: ParsedMatrix,
+  templates: ImportExportTemplates,
+) {
   const { matrix, hyperlinks: cellHyperlinks } = parsedMatrix;
+  if (!matrix.length) return null;
   const headerRecognitionStarted = performance.now();
   const { rowIndex, aliases } = locateHeader(
     matrix,
@@ -384,14 +365,7 @@ export async function parseTabularPreview(input: {
     : matrix.slice(rowIndex + 1).filter(
         (sourceRow) => sourceRow.some((value) => value.trim()),
       ).length;
-  if (dataRowCount > templates.dataValidation.maxRows) {
-    throw new ImportRowLimitError(
-      dataRowCount,
-      templates.dataValidation.maxRows,
-    );
-  }
   const templateType = detectTemplateType(header, parsedMatrix.templateType);
-  const kabritaTemplate = templateType === "KABRITA";
   const recognizedFields: TabularPreview["recognizedFields"] = [];
   const unknownHeaders: string[] = [];
   const duplicateHeaders: string[] = [];
@@ -411,7 +385,7 @@ export async function parseTabularPreview(input: {
       return;
     }
     if (occupied.has(field)) {
-      duplicateHeaders.push(displayName(templates, field, kabritaTemplate));
+      duplicateHeaders.push(displayName(templates, field, templateType));
       return;
     }
     occupied.set(field, value);
@@ -419,23 +393,29 @@ export async function parseTabularPreview(input: {
       column: columnIndex + 1,
       header: value,
       field,
-      displayName: displayName(templates, field, kabritaTemplate),
+      displayName: displayName(templates, field, templateType),
     });
   });
-  const legacyLayout = !kabritaTemplate && !["customerName", "publishTime"].some(
-    (field) => occupied.has(field as StandardField),
-  );
+  const legacyLayout = templateType !== "KABRITA" &&
+    templateType !== "WYETH_NESTLE" &&
+    !["customerName", "publishTime"].some((field) =>
+      occupied.has(field as StandardField),
+    );
   const requiredFields: StandardField[] = parsedMatrix.templateType
-    ? kabritaTemplate
+    ? templateType === "KABRITA"
       ? [...KABRITA_REQUIRED_FIELDS]
-      : templateType === "DANONE_AGENCY"
-        ? [...DANONE_AGENCY_IMPORT_FIELDS]
-        : [...DANONE_CUSTOMER_IMPORT_FIELDS]
-    : kabritaTemplate
+      : templateType === "WYETH_NESTLE"
+        ? [...WYETH_NESTLE_REQUIRED_FIELDS]
+        : templateType === "DANONE_AGENCY"
+          ? [...DANONE_AGENCY_IMPORT_FIELDS]
+          : [...DANONE_CUSTOMER_IMPORT_FIELDS]
+    : templateType === "KABRITA"
       ? [...KABRITA_REQUIRED_FIELDS]
-      : legacyLayout
-        ? ["noteUrl", "productName", "productStage", "activityName"]
-        : templates.requiredFields;
+      : templateType === "WYETH_NESTLE"
+        ? [...WYETH_NESTLE_REQUIRED_FIELDS]
+        : legacyLayout
+          ? ["noteUrl", "productName", "productStage", "activityName"]
+          : templates.requiredFields;
   const missingRequiredFields = requiredFields.filter(
     (field) => !occupied.has(field),
   );
@@ -443,7 +423,7 @@ export async function parseTabularPreview(input: {
     ...missingRequiredFields.map((field) =>
       field === "activityName"
         ? "当前模板缺少“活动名称（必填）”列，请下载最新版导入模板后重新填写"
-        : `缺少必填字段：${displayName(templates, field, kabritaTemplate)}`,
+        : `缺少必填字段：${displayName(templates, field, templateType)}`,
     ),
     ...duplicateHeaders.map((field) => `表头重复：${field}`),
   ];
@@ -458,15 +438,11 @@ export async function parseTabularPreview(input: {
     const hyperlinks: TabularPreviewRow["values"] = {};
     for (const match of recognizedFields) {
       const rawValue = String(sourceRow[match.column - 1] || "").trim();
-      const hyperlink = cellHyperlinks.get(
-        cellKey(index, match.column - 1),
-      );
+      const hyperlink = cellHyperlinks.get(cellKey(index, match.column - 1));
       rawValues[match.field] = rawValue;
       if (hyperlink) hyperlinks[match.field] = hyperlink;
       values[match.field] =
-        (match.field === "noteUrl" ||
-          match.field === "xiaohongshuPublishLink") &&
-        hyperlink
+        (match.field === "noteUrl" || match.field === "xiaohongshuPublishLink") && hyperlink
           ? hyperlink
           : rawValue;
     }
@@ -480,11 +456,19 @@ export async function parseTabularPreview(input: {
               ? "阶段不能为空"
               : field === "productStageDetail"
                 ? "段位不能为空"
-            : `缺少必填字段：${displayName(templates, field, kabritaTemplate)}`,
+                : `缺少必填字段：${displayName(templates, field, templateType)}`,
         );
       }
     }
+    const templateBrand = templateType === "KABRITA"
+      ? KABRITA_BRAND_NAME
+      : templateType === "WYETH_NESTLE"
+        ? "惠氏/雀巢" as const
+        : DANONE_BRAND_NAME;
     rows.push({
+      sheetName: parsedMatrix.sheetName,
+      templateBrand,
+      templateType,
       rowNumber: parsedMatrix.sourceRowNumbers?.[index] || index + 1,
       values,
       rawValues,
@@ -492,31 +476,131 @@ export async function parseTabularPreview(input: {
       errors: [...new Set(errors)],
     });
   }
-  if (!rows.length) throw new Error("未识别到有效数据行");
-  const rowConversionMs = performance.now() - rowConversionStarted;
-  const validCount = rows.filter((row) => row.errors.length === 0).length;
-  input.onPerformance?.({
-    ...parsedMatrix.performance,
-    headerRecognitionMs,
-    rowConversionMs,
-  });
   return {
-    templateVersion: templates.templateVersion,
-    templateBrand: kabritaTemplate
-      ? KABRITA_BRAND_NAME
-      : DANONE_BRAND_NAME,
     templateType,
-    sourceLabel: kabritaTemplate
-      ? `${KABRITA_BRAND_NAME} Excel`
-      : templateType === "DANONE_AGENCY"
-        ? "达能代发 Excel"
-        : "达能客户 Excel",
-    sourceType,
+    templateBrand: templateType === "KABRITA"
+      ? KABRITA_BRAND_NAME
+      : templateType === "WYETH_NESTLE"
+        ? "惠氏/雀巢" as const
+        : DANONE_BRAND_NAME,
+    sheetName: parsedMatrix.sheetName || "",
     headerRowNumber,
     recognizedFields,
     unknownHeaders: [...new Set(unknownHeaders)],
     missingRequiredFields,
     duplicateHeaders: [...new Set(duplicateHeaders)],
+    rows,
+    dataRowCount,
+    performance: {
+      ...parsedMatrix.performance,
+      headerRecognitionMs,
+      rowConversionMs: performance.now() - rowConversionStarted,
+    },
+  };
+}
+
+export async function parseTabularPreview(input: {
+  bytes: Uint8Array;
+  fileName: string;
+  sourceType: LocalTabularSourceType;
+  templates: ImportExportTemplates;
+  onPerformance?: (performance: TabularParsePerformance) => void;
+}): Promise<TabularPreview> {
+  const { bytes, sourceType, templates } = input;
+  if (!bytes.byteLength) throw new Error("文件为空");
+  if (bytes.byteLength > templates.dataValidation.maxFileBytes) {
+    throw new Error(
+      `文件不能超过${Math.round(templates.dataValidation.maxFileBytes / 1024 / 1024)}MB`,
+    );
+  }
+  let parsedMatrices: ParsedMatrix[];
+  let unified = false;
+  try {
+    const parsed =
+      sourceType === "CSV" ||
+      sourceType === "TENCENT_DOCS_EXPORTED_CSV"
+        ? (() => {
+            const started = performance.now();
+            const matrix = csvMatrix(bytes);
+            return {
+              matrix,
+              hyperlinks: new Map<string, string>(),
+              performance: {
+                excelParseMs: performance.now() - started,
+                worksheetParseMs: 0,
+                worksheetRowCount: matrix.length,
+                effectiveWorksheetRowCount: matrix.length,
+                effectiveWorksheetColumnCount: widestRow(matrix),
+              },
+            };
+          })()
+        : sourceType === "EXCEL_XLS"
+          ? legacyExcelMatrix(bytes)
+          : await xlsxMatrices(
+              bytes,
+              templates.importTemplates.default.headerRowSearchLimit +
+                templates.dataValidation.maxRows,
+            );
+    if ("matrices" in parsed) {
+      parsedMatrices = parsed.matrices;
+      unified = parsed.unified;
+    } else {
+      parsedMatrices = [parsed];
+    }
+  } catch (error) {
+    if (error instanceof Error && /文件为空|编码|工作表/u.test(error.message)) {
+      throw error;
+    }
+    throw new Error(
+      `无法读取表格：${error instanceof Error ? error.message : "表格格式不支持"}`,
+    );
+  }
+  const previews = parsedMatrices
+    .map((parsedMatrix) => parseMatrixPreview(parsedMatrix, templates))
+    .filter((preview): preview is NonNullable<typeof preview> => Boolean(preview));
+  const nonEmptyPreviews = previews.filter((preview) => preview.rows.length > 0);
+  if (!nonEmptyPreviews.length) throw new Error("未识别到有效数据行");
+  const actualRows = nonEmptyPreviews.reduce(
+    (total, preview) => total + preview.dataRowCount,
+    0,
+  );
+  if (actualRows > templates.dataValidation.maxRows) {
+    throw new ImportRowLimitError(actualRows, templates.dataValidation.maxRows);
+  }
+  const rows = nonEmptyPreviews.flatMap((preview) => preview.rows);
+  const first = nonEmptyPreviews[0];
+  const validCount = rows.filter((row) => row.errors.length === 0).length;
+  input.onPerformance?.({
+    excelParseMs: Math.max(...previews.map((preview) => preview.performance.excelParseMs)),
+    worksheetParseMs: previews.reduce((sum, preview) => sum + preview.performance.worksheetParseMs, 0),
+    headerRecognitionMs: previews.reduce((sum, preview) => sum + preview.performance.headerRecognitionMs, 0),
+    rowConversionMs: previews.reduce((sum, preview) => sum + preview.performance.rowConversionMs, 0),
+    worksheetRowCount: previews.reduce((sum, preview) => sum + preview.performance.worksheetRowCount, 0),
+    effectiveWorksheetRowCount: previews.reduce((sum, preview) => sum + preview.performance.effectiveWorksheetRowCount, 0),
+    effectiveWorksheetColumnCount: Math.max(...previews.map((preview) => preview.performance.effectiveWorksheetColumnCount)),
+  });
+  return {
+    templateVersion: templates.templateVersion,
+    workbookType: unified ? "UNIFIED" : "LEGACY",
+    sheets: nonEmptyPreviews.map((preview) => ({
+      sheetName: preview.sheetName,
+      templateBrand: preview.templateBrand,
+      templateType: preview.templateType,
+      total: preview.rows.length,
+    })),
+    templateBrand: unified ? "多业务" : first.templateBrand,
+    templateType: first.templateType,
+    sourceLabel: unified ? "VERIDIA 统一 Excel" : first.templateType === "KABRITA"
+      ? `${KABRITA_BRAND_NAME} Excel`
+      : first.templateType === "DANONE_AGENCY"
+        ? "达能代发 Excel"
+        : "达能客户 Excel",
+    sourceType,
+    headerRowNumber: first.headerRowNumber,
+    recognizedFields: nonEmptyPreviews.flatMap((preview) => preview.recognizedFields),
+    unknownHeaders: [...new Set(nonEmptyPreviews.flatMap((preview) => preview.unknownHeaders))],
+    missingRequiredFields: [...new Set(nonEmptyPreviews.flatMap((preview) => preview.missingRequiredFields))],
+    duplicateHeaders: [...new Set(nonEmptyPreviews.flatMap((preview) => preview.duplicateHeaders))],
     total: rows.length,
     validCount,
     invalidCount: rows.length - validCount,

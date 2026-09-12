@@ -360,35 +360,14 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await openExcelImport(page);
   const pageCountBeforeTemplateDownloads = page.context().pages().length;
   const templateMenuButton = page.getByRole("button", { name: "下载导入模板" });
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await expect(templateMenuButton).toBeEnabled();
-    await expect(templateMenuButton).not.toHaveClass(/ant-btn-loading/u);
-    await templateMenuButton.evaluate((element) => {
-      element.scrollIntoView({ block: "center", inline: "nearest" });
-    });
-    await expect(templateMenuButton).toBeInViewport();
-    await page.mouse.move(1, 1);
-    await templateMenuButton.hover();
-    const visibleTemplateMenu = page.locator(
-      ".ant-dropdown:not(.ant-dropdown-hidden)",
-    );
-    const templateMenuItem = visibleTemplateMenu.getByRole("menuitem", {
-      name: "下载达能客户 Excel 模板",
-    });
-    await expect(templateMenuItem).toBeVisible();
-    await expect(
-      visibleTemplateMenu.getByRole("menuitem", {
-        name: "下载达能代发 Excel 模板",
-      }),
-    ).toHaveCount(0);
-    const [templateDownload] = await Promise.all([
-      page.waitForEvent("download", { timeout: 30_000 }),
-      templateMenuItem.evaluate((element) => (element as HTMLElement).click()),
-    ]);
-    expect(templateDownload.suggestedFilename()).toMatch(
-      /^VERIDIA达能客户导入模板_.+_\d{4}-\d{2}-\d{2}\.xlsx$/u,
-    );
-  }
+  await expect(templateMenuButton).toBeEnabled();
+  await expect(page.getByText("下载达能客户 Excel 模板")).toHaveCount(0);
+  await expect(page.getByText("下载佳贝艾特 Excel 模板")).toHaveCount(0);
+  const [templateDownload] = await Promise.all([
+    page.waitForEvent("download", { timeout: 30_000 }),
+    templateMenuButton.click(),
+  ]);
+  expect(templateDownload.suggestedFilename()).toBe("VERIDIA审核导入模板.xlsx");
   expect(page.context().pages()).toHaveLength(pageCountBeforeTemplateDownloads);
   await expect(page).toHaveURL(/\/tasks(?:\?batchId=[^#]+)?$/u);
 
@@ -413,6 +392,11 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "链接（必填）",
     "发布时间（必填）",
     "活动名称（必填）",
+  ]);
+  expect(noteTemplateWorkbook.worksheets.filter((sheet) => sheet.state === "visible").map((sheet) => sheet.name)).toEqual([
+    "达能客户导入",
+    "佳贝艾特客户导入",
+    "惠氏／雀巢客户导入",
   ]);
   const downloadedTemplateSheet = noteTemplateWorkbook.worksheets[0];
   for (let index = 0; index < 9; index += 1) {
@@ -458,7 +442,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(resultBox!.x + resultBox!.width).toBeLessThanOrEqual(
     tableBox!.x + tableBox!.width + 1,
   );
-  await expect(page.getByRole("cell", { name: "10", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "达能客户导入 第 10 行", exact: true }),
+  ).toBeVisible();
   await expect(page.locator(".ant-pagination-item-2").last()).toHaveCount(0);
   await expect(previewResultHeader).toBeVisible();
 
@@ -1909,7 +1895,9 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     };
     expect(invalid.invalidCount).toBe(1);
     expect(invalid.duplicateWarningCount).toBe(1);
-    expect(invalid.rows[0].errors).toContain("活动名称不能为空");
+    expect(invalid.rows[0].errors).toContain(
+      "达能客户导入 第 2 行：活动名称不能为空",
+    );
     expect(invalid.rows[0].duplicateWarning.identity).toBe(identity);
   }
   const tasksBeforeInvalidBulkConfirm = (

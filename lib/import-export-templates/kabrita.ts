@@ -17,13 +17,10 @@ export const KABRITA_IMPORT_FIELDS = [
   "xiaohongshuAccount",
   "xiaohongshuPublishLink",
   "purchaseProductLine",
-  "activityName",
+  "complianceResult",
 ] as const satisfies readonly StandardField[];
 
-export const KABRITA_EXPORT_FIELDS = [
-  ...KABRITA_IMPORT_FIELDS,
-  "selfReview",
-] as const satisfies readonly StandardField[];
+export const KABRITA_EXPORT_FIELDS = KABRITA_IMPORT_FIELDS;
 
 // 保留旧名称供历史导入代码读取；它现在只代表佳贝艾特导入字段。
 export const KABRITA_TEMPLATE_FIELDS = KABRITA_IMPORT_FIELDS;
@@ -40,7 +37,6 @@ export type KabritaRawValues = Partial<
 export const KABRITA_REQUIRED_FIELDS = [
   "xiaohongshuPublishLink",
   "purchaseProductLine",
-  "activityName",
 ] as const satisfies readonly KabritaTemplateField[];
 
 export const KABRITA_FIELD_DEFINITIONS: Record<
@@ -107,11 +103,6 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
     type: "string",
     description: "用于匹配佳贝艾特荷兰版或港版产品",
   },
-  activityName: {
-    displayName: "活动名称（必填）",
-    type: "string",
-    description: "必须填写活动管理中显示的完整活动名称",
-  },
   selfReview: {
     displayName: "自审",
     type: "string",
@@ -137,7 +128,7 @@ export const KABRITA_TEMPLATE_EXAMPLES: KabritaRawValues = {
   xiaohongshuAccount: "示例账号",
   xiaohongshuPublishLink: "https://xhslink.com/示例短链",
   purchaseProductLine: "荷兰佳贝1",
-  activityName: "",
+  complianceResult: "",
 };
 
 const KABRITA_CORE_HEADERS = [
@@ -145,9 +136,13 @@ const KABRITA_CORE_HEADERS = [
   "小红书发布链接",
 ].map(normalizeTemplateHeader);
 
-const KABRITA_ALL_HEADERS = ([...KABRITA_IMPORT_FIELDS, "complianceResult"] as const).map(
-  (field) => normalizeTemplateHeader(KABRITA_FIELD_DEFINITIONS[field].displayName),
-);
+const KABRITA_ALL_HEADERS = [
+  ...KABRITA_IMPORT_FIELDS.map(
+    (field) => normalizeTemplateHeader(KABRITA_FIELD_DEFINITIONS[field].displayName),
+  ),
+  normalizeTemplateHeader("活动名称（必填）"),
+  normalizeTemplateHeader("活动名称"),
+];
 
 const DANONE_CORE_HEADERS = ["阶段", "阶段（IFFO/GUM）", "产品系列", "产品系列（必填）"]
   .map(normalizeTemplateHeader);

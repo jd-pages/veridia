@@ -2,6 +2,7 @@ import builtinTemplateJson from "@/rules/default-import-export-templates.json";
 import { prisma } from "@/lib/db";
 import type { ImportExportTemplates, StandardField } from "./types";
 import { validateImportExportTemplates } from "./validation";
+import { WYETH_NESTLE_FIELD_DEFINITIONS } from "./wyeth-nestle";
 
 export const RESULT_EXPORT_FIELDS: StandardField[] = [
   "commercePlatform",
@@ -35,7 +36,7 @@ function normalizeBusinessTemplates(
   templates: ImportExportTemplates,
 ): ImportExportTemplates {
   const output = structuredClone(templates);
-  output.templateVersion = "template-2026.08.07.1";
+  output.templateVersion = "template-2026.09.12.1";
   output.fieldDefinitions.failedReasons = {
     displayName: "失败原因",
     type: "stringList",
@@ -142,6 +143,13 @@ function normalizeBusinessTemplates(
     type: "string",
     description: "供客服或运营人工筛选和调整",
   };
+  for (const [field, definition] of Object.entries(
+    WYETH_NESTLE_FIELD_DEFINITIONS,
+  )) {
+    if (!(field in output.fieldDefinitions)) {
+      output.fieldDefinitions[field] = definition;
+    }
+  }
   output.fieldAliases.orderNumber = [
     "订单编号",
     "订单号",
@@ -219,6 +227,14 @@ function normalizeBusinessTemplates(
     ]),
   ];
   output.fieldAliases.activityName = ["活动名称（必填）", "活动名称"];
+  output.fieldAliases.registrant = ["登记人（必填）", "登记人"];
+  output.fieldAliases.wechatNickname = ["微信昵称（必填）", "微信昵称"];
+  output.fieldAliases.customerServiceComment = [
+    "客服修改留言",
+    "客服修改留言\n格式：日期-已留言/已修改",
+  ];
+  output.fieldAliases.selfReview = ["内部自审", "自审"];
+  output.fieldAliases.interactionAtLeastTen = ["互动量≥10", "互动量>=10"];
   output.examples.commercePlatform = "京东";
   output.examples.shopName = "京东健康官方进口超市";
   output.examples.customerName = "示例客户";

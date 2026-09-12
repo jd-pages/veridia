@@ -104,6 +104,7 @@ describe("分层测试门禁", () => {
       "tests/e2e/stage-import.spec.ts",
       "tests/e2e/store-topic-audit.spec.ts",
       "tests/e2e/store-topic-rule-management.spec.ts",
+      "tests/e2e/unified-excel-template.spec.ts",
     ]);
     expect(groupE2eFiles(selection.e2eFiles).map((group) => group.name)).toEqual([
       "DATA_RULES",

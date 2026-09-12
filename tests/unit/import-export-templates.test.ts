@@ -7,10 +7,13 @@ import {
   auditResultToCompactExportRecord,
   auditResultToExportRecord,
   auditResultToKabritaExportRecord,
+  auditResultToWyethNestleExportRecord,
   buildConfiguredCsv,
   buildConfiguredWorkbook,
   buildImportTemplateCsv,
   buildImportTemplateWorkbook,
+  buildUnifiedAuditResultsWorkbook,
+  buildUnifiedImportTemplateWorkbook,
 } from "@/lib/import-export-templates/export";
 import {
   detectLocalSourceType,
@@ -33,6 +36,8 @@ import {
   KABRITA_EXPORT_FIELDS,
   KABRITA_IMPORT_FIELDS,
 } from "@/lib/import-export-templates/kabrita";
+import { WYETH_NESTLE_FIELDS } from "@/lib/import-export-templates/wyeth-nestle";
+import { WYETH_NESTLE_SHEET_NAME } from "@/lib/import-template-type";
 
 const templates = BUILTIN_IMPORT_EXPORT_TEMPLATES;
 
@@ -57,14 +62,10 @@ const kabritaImportHeaders = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
-  "活动名称（必填）",
+  "是否符合",
 ];
 
-const kabritaExportHeaders = [
-  ...kabritaImportHeaders.slice(0, -1),
-  "活动名称",
-  "自审",
-];
+const kabritaExportHeaders = kabritaImportHeaders;
 
 describe("远程表格模板配置", () => {
   it("内置模板包含必填字段、标准别名和本地数据源", () => {
@@ -110,7 +111,7 @@ describe("远程表格模板配置", () => {
 });
 
 describe("佳贝艾特专属导入导出模板", () => {
-  it("严格生成不含是否符合的13列表头并可识别模板品牌", async () => {
+  it("严格生成包含系统是否符合列的13列表头并可识别模板品牌", async () => {
     const bytes = await buildImportTemplateWorkbook(templates, {
       templateBrand: KABRITA_BRAND_NAME,
     });
@@ -144,7 +145,7 @@ describe("佳贝艾特专属导入导出模板", () => {
           "kabrita-user",
           "97【示例笔记】https://www.xiaohongshu.com/explore/kabrita-1",
           "荷兰佳贝1",
-          "佳贝艾特2026年8月小红书种草审核",
+          "",
         ].join(","),
       ].join("\r\n")),
       fileName: "佳贝艾特.csv",
@@ -168,7 +169,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     );
   });
 
-  it("把小红书发布链接、购买产品线和活动名称作为必填字段", async () => {
+  it("把小红书发布链接和购买产品线作为必填字段", async () => {
     const withoutLink = kabritaImportHeaders.filter(
       (header) => header !== "小红书发布链接",
     );
@@ -209,7 +210,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     );
   });
 
-  it("保存13列原值并用系统审核结论生成13列加自审的佳贝艾特导出", async () => {
+  it("保存13列原值并用系统审核结论重写佳贝艾特是否符合", async () => {
     const rawValues = Object.fromEntries(
       KABRITA_IMPORT_FIELDS.map((field, index) => [
         field,
@@ -268,7 +269,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     expect(record.xiaohongshuPublishLink).toBe(
       "标题 https://www.xiaohongshu.com/explore/kabrita-export",
     );
-    expect(record.selfReview).toBe(
+    expect(record.complianceResult).toBe(
       "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张",
     );
 
@@ -278,7 +279,8 @@ describe("佳贝艾特专属导入导出模板", () => {
         autoStatus: "PASSED",
         imageStatus: "COMPLIANT",
         failureReasons: "[]",
-      }).selfReview,
+        interactionTotal: 10,
+      }).complianceResult,
     ).toBe("Y");
     expect(
       auditResultToKabritaExportRecord({
@@ -286,15 +288,26 @@ describe("佳贝艾特专属导入导出模板", () => {
         autoStatus: "FAILED",
         imageStatus: "COMPLIANT",
         failureReasons: '["基础奖励未达成：互动合计 9"]',
-      }).selfReview,
-    ).toBe("N-其他不合规；基础奖励未达成：互动合计 9");
+        interactionTotal: 9,
+      }).complianceResult,
+    ).toBe("N-互动量＜10");
+    expect(
+      auditResultToKabritaExportRecord({
+        ...row,
+        autoStatus: "FAILED",
+        imageStatus: "NON_COMPLIANT",
+        failureReasons: '["图片数量不足（2/3）","基础奖励未达成：互动合计 9"]',
+        interactionTotal: 9,
+      }).complianceResult,
+    ).toContain("N-互动量＜10");
     expect(
       auditResultToKabritaExportRecord({
         ...row,
         autoStatus: "NEEDS_REVIEW",
         imageStatus: "COMPLIANT",
         failureReasons: '["基础奖励互动数据无法确认，需人工复核"]',
-      }).selfReview,
+        interactionTotal: null,
+      }).complianceResult,
     ).toBe("");
     expect(
       auditResultToKabritaExportRecord({
@@ -302,7 +315,7 @@ describe("佳贝艾特专属导入导出模板", () => {
         autoStatus: "FAILED",
         pageStatus: "NO_PERMISSION",
         failureReasons: '["当前账号无权访问笔记"]',
-      }).selfReview,
+      }).complianceResult,
     ).toBe("N-帖子无法查看；页面无法访问：当前账号无权访问笔记");
 
     const exportBytes = await buildConfiguredWorkbook({
@@ -317,9 +330,9 @@ describe("佳贝艾特专属导入导出模板", () => {
     const headers = (sheet.getRow(1).values as unknown[]).slice(1);
     expect(headers).toEqual(kabritaExportHeaders);
     expect(headers).not.toEqual(
-      expect.arrayContaining(["是否符合", "阶段", "IFFO", "GUM", "产品阶段话题"]),
+      expect.arrayContaining(["阶段", "IFFO", "GUM", "产品阶段话题"]),
     );
-    expect(sheet.getCell("N2").text).toBe(
+    expect(sheet.getCell("M2").text).toBe(
       "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张",
     );
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
@@ -347,7 +360,7 @@ describe("佳贝艾特专属导入导出模板", () => {
           records: [{
             purchaseProductLine: "荷兰佳贝1",
             xiaohongshuPublishLink: "https://xhslink.com/kabrita",
-            selfReview: "Y",
+            complianceResult: "Y",
           }],
         },
       ],
@@ -381,6 +394,166 @@ describe("佳贝艾特专属导入导出模板", () => {
     ).toEqual(kabritaExportHeaders);
   });
 
+});
+
+describe("统一 Excel 工作簿", () => {
+  it("统一审核结果始终按固定顺序生成三个业务 Sheet 并保留空 Sheet", async () => {
+    const bytes = await buildUnifiedAuditResultsWorkbook({
+      templates,
+      danoneRecords: [{ orderNumber: "D-001", selfReview: "Y" }],
+      kabritaRecords: [],
+      wyethNestleRecords: [{
+        orderNumber: "WN-001",
+        selfReview: "Y",
+        interactionAtLeastTen: "N",
+      }],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes as ExcelJS.Buffer);
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+      "达能客户导入",
+      "佳贝艾特客户导入",
+      WYETH_NESTLE_SHEET_NAME,
+    ]);
+    expect(workbook.worksheets.map((sheet) => sheet.rowCount)).toEqual([2, 1, 2]);
+    expect((workbook.worksheets[1].getRow(1).values as unknown[]).slice(1))
+      .toEqual(kabritaExportHeaders);
+    expect(workbook.worksheets[2].getCell("K2").text).toBe("Y");
+    expect(workbook.worksheets[2].getCell("L2").text).toBe("N");
+  });
+
+  it("只显示三个业务 Sheet，并为惠氏/雀巢生成严格 12 列与动态产品下拉", async () => {
+    const bytes = await buildUnifiedImportTemplateWorkbook(templates, {
+      activities: [{ name: "达能活动", contentChannel: "XIAOHONGSHU" }],
+      products: [
+        { id: "wyeth-1", name: "启赋未来", brandName: "惠氏" },
+        { id: "nestle-1", name: "超启能恩", brandName: "雀巢" },
+      ],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    expect(
+      workbook.worksheets
+        .filter((sheet) => sheet.state === "visible")
+        .map((sheet) => sheet.name),
+    ).toEqual(["达能客户导入", "佳贝艾特客户导入", WYETH_NESTLE_SHEET_NAME]);
+    expect(
+      (workbook.getWorksheet("佳贝艾特客户导入")!.getRow(1).values as unknown[]).slice(1),
+    ).toEqual(kabritaImportHeaders);
+    expect(
+      (workbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.getRow(1).values as unknown[]).slice(1),
+    ).toEqual([
+      "登记人（必填）",
+      "微信昵称（必填）",
+      "下单平台（必填）",
+      "店铺名称（必填）",
+      "产品系列（必填）",
+      "订单编号（必填）",
+      "内容渠道（必填）",
+      "链接（必填）纯链接",
+      "发帖时间（必填）",
+      "客服修改留言",
+      "内部自审",
+      "互动量≥10",
+    ]);
+    expect(workbook.getWorksheet("产品列表")!.state).toBe("veryHidden");
+    expect(workbook.getWorksheet("活动列表")!.state).toBe("veryHidden");
+    expect(workbook.getWorksheet("填写说明")!.state).toBe("hidden");
+    expect(dataValidationAt(workbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!, "E2")?.formulae)
+      .toEqual(["VERIDIA_WYETH_NESTLE_PRODUCTS"]);
+  });
+
+  it("扫描所有非空业务 Sheet、忽略空 Sheet，并保留 Sheet 与行号", async () => {
+    const bytes = await buildUnifiedImportTemplateWorkbook(templates, {
+      activities: [],
+      products: [],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    workbook.getWorksheet("佳贝艾特客户导入")!.addRow([
+      "2026-09-12", "京东", "佳贝艾特店", "", "buyer", "order-k", "2026-09-12",
+      "1", "1", "account", "https://www.xiaohongshu.com/explore/k", "荷兰佳贝1", "Y",
+    ]);
+    workbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.addRow([
+      "登记人", "微信用户", "京东", "惠氏店", "启赋未来", "order-w", "小红书",
+      "https://www.xiaohongshu.com/explore/w", "2026-09-12", "2026-09-12-已留言", "Y", "Y",
+    ]);
+    const preview = await parseTabularPreview({
+      bytes: new Uint8Array(await workbook.xlsx.writeBuffer()),
+      fileName: "VERIDIA审核导入模板.xlsx",
+      sourceType: "EXCEL_XLSX",
+      templates,
+    });
+    expect(preview.workbookType).toBe("UNIFIED");
+    expect(preview.total).toBe(2);
+    expect(preview.rows.map((row) => [row.sheetName, row.rowNumber, row.templateType]))
+      .toEqual([
+        ["佳贝艾特客户导入", 2, "KABRITA"],
+        [WYETH_NESTLE_SHEET_NAME, 2, "WYETH_NESTLE"],
+      ]);
+    expect(preview.rows[1].values).toMatchObject({
+      wechatNickname: "微信用户",
+      customerServiceComment: "2026-09-12-已留言",
+      selfReview: "Y",
+      interactionAtLeastTen: "Y",
+    });
+  });
+
+  it("惠氏/雀巢内部自审与互动阈值输出彼此独立", () => {
+    const base: Parameters<typeof auditResultToWyethNestleExportRecord>[0] = {
+      autoStatus: "PASSED",
+      pageStatus: "NORMAL",
+      bodyStatus: "PRESENT",
+      topicsCompliant: true,
+      failureReasons: "[]",
+      imageExtractionStatus: "SUCCESS",
+      imageStatus: "COMPLIANT",
+      interactionTotal: 9,
+      task: {
+        url: "https://www.xiaohongshu.com/explore/wyeth",
+        failureCode: null,
+        failureMessage: null,
+        pageTitle: "笔记",
+        pageType: "NOTE_DETAIL",
+        productStage: null,
+        notes: buildImportedTaskNotes({
+          customerName: "微信用户",
+          templateMetadata: {
+            templateType: "WYETH_NESTLE",
+            templateBrand: "惠氏",
+            rawValues: { registrant: "登记人", customerServiceComment: "2026-09-12-已修改" },
+          },
+        }),
+        product: { name: "启赋未来", brandName: "惠氏" },
+      },
+      note: {
+        url: "https://www.xiaohongshu.com/explore/wyeth",
+        finalUrl: null,
+        publishedAt: null,
+        title: "笔记",
+        body: "正文",
+      },
+      manualReviews: [],
+    };
+    expect(auditResultToWyethNestleExportRecord(base)).toMatchObject({
+      selfReview: "Y",
+      interactionAtLeastTen: "N",
+    });
+    expect(auditResultToWyethNestleExportRecord({ ...base, interactionTotal: 10 }))
+      .toMatchObject({ selfReview: "Y", interactionAtLeastTen: "Y" });
+    expect(auditResultToWyethNestleExportRecord({
+      ...base,
+      autoStatus: "FAILED",
+      topicsCompliant: false,
+      failureReasons: '["缺少必带话题"]',
+      interactionTotal: 12,
+    })).toMatchObject({
+      selfReview: expect.stringContaining("N-缺少话题"),
+      interactionAtLeastTen: "Y",
+    });
+    expect(Object.keys(auditResultToWyethNestleExportRecord(base)))
+      .toEqual(WYETH_NESTLE_FIELDS);
+  });
 });
 
 describe("Excel、CSV与腾讯文档导出文件预览", () => {

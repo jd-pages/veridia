@@ -54,10 +54,11 @@ describe("桌面端导入模板下载", () => {
     const tasksPage = source("app/(admin)/tasks/page.tsx");
     const downloadClient = source("lib/import-template-download-client.ts");
 
-    expect(tasksPage).toContain('downloadTemplate("xlsx", "danone-customer")');
-    expect(tasksPage).not.toContain('downloadTemplate("xlsx", "danone-agency")');
+    expect(tasksPage).toContain('downloadTemplate("xlsx")');
+    expect(tasksPage).not.toContain('downloadTemplate("xlsx",');
     expect(tasksPage).not.toContain("下载达能代发 Excel 模板");
-    expect(tasksPage).toContain('downloadTemplate("xlsx", "kabrita")');
+    expect(tasksPage).not.toContain("下载达能客户 Excel 模板");
+    expect(tasksPage).not.toContain("下载佳贝艾特 Excel 模板");
     expect(tasksPage).not.toContain('downloadTemplate("csv"');
     expect(tasksPage).toContain('accept=".xlsx"');
     expect(tasksPage).toContain("暂不支持CSV文件");
@@ -65,7 +66,7 @@ describe("桌面端导入模板下载", () => {
       /window\.open\(\s*["']\/api\/import\/template/iu,
     );
     expect(downloadClient).toContain(
-      "`/api/import/template?format=${format}&brand=${brand}`",
+      "`/api/import/template?format=${format}`",
     );
     expect(downloadClient).not.toContain('"danone-agency"');
     expect(downloadClient).toContain("link.download = fileName");

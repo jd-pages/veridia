@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveImportedActivity } from "@/lib/import-activity-matching";
+import {
+  resolveImplicitImportedActivity,
+  resolveImportedActivity,
+} from "@/lib/import-activity-matching";
 
 const campaign = {
   id: "campaign-aug-danone",
@@ -16,6 +19,23 @@ const campaign = {
 };
 
 describe("导入活动精确匹配", () => {
+  it("无活动列时按产品、渠道与发帖日期唯一解析，拒绝猜测", () => {
+    expect(resolveImplicitImportedActivity({
+      productId: "product-danone",
+      contentChannel: "XIAOHONGSHU",
+      publishTime: "2026-08-12 10:00:00",
+      candidates: [campaign],
+    })).toMatchObject({ status: "MATCHED", campaign: { id: campaign.id } });
+    expect(resolveImplicitImportedActivity({
+      productId: "product-danone",
+      contentChannel: "XIAOHONGSHU",
+      publishTime: "2026-08-12 10:00:00",
+      candidates: [campaign, { ...campaign, id: "another" }],
+    })).toMatchObject({
+      status: "NOT_UNIQUE",
+      error: "无法唯一确定所属活动，请检查产品、内容渠道和活动配置。",
+    });
+  });
   it("只去除首尾空格并返回唯一活动ID", () => {
     const result = resolveImportedActivity({
       activityName: `  ${campaign.name}  `,

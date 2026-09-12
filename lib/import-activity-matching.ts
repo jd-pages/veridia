@@ -6,7 +6,8 @@ export type ImportActivityMatchStatus =
   | "INACTIVE"
   | "CHANNEL_MISMATCH"
   | "PRODUCT_NOT_IN_ACTIVITY"
-  | "NO_RULES";
+  | "NO_RULES"
+  | "NOT_UNIQUE";
 
 export interface ImportActivityCandidate {
   id: string;
@@ -86,4 +87,65 @@ export function resolveImportedActivity(input: {
     return fail("NO_RULES", "该活动尚未配置审核规则", campaign);
   }
   return { status: "MATCHED", inputName, campaign, error: "" };
+}
+
+function importedCampaignDate(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const match = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/u);
+  const parsed = match
+    ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+    : new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export function resolveImplicitImportedActivity(input: {
+  productId: string | null | undefined;
+  contentChannel?: "XIAOHONGSHU" | "DOUYIN";
+  publishTime?: unknown;
+  candidates: readonly ImportActivityCandidate[];
+}): ImportActivityResolution {
+  const requestedChannel = input.contentChannel || "XIAOHONGSHU";
+  const publishedAt = importedCampaignDate(input.publishTime);
+  const eligible = input.candidates.filter((campaign) => {
+    if (campaign.deletedAt || campaign.status !== "ACTIVE") return false;
+    if ((campaign.contentChannel || "XIAOHONGSHU") !== requestedChannel) return false;
+    if (campaign.ruleCount < 1) return false;
+    const productIds = new Set([
+      ...(campaign.productId ? [campaign.productId] : []),
+      ...campaign.productIds,
+    ]);
+    if (!input.productId || !productIds.has(input.productId)) return false;
+    if (!publishedAt) return true;
+    const day = Date.UTC(
+      publishedAt.getUTCFullYear(),
+      publishedAt.getUTCMonth(),
+      publishedAt.getUTCDate(),
+    );
+    const start = Date.UTC(
+      campaign.startDate.getUTCFullYear(),
+      campaign.startDate.getUTCMonth(),
+      campaign.startDate.getUTCDate(),
+    );
+    const end = Date.UTC(
+      campaign.endDate.getUTCFullYear(),
+      campaign.endDate.getUTCMonth(),
+      campaign.endDate.getUTCDate(),
+    );
+    return day >= start && day <= end;
+  });
+  if (eligible.length !== 1) {
+    return {
+      status: "NOT_UNIQUE",
+      inputName: "",
+      campaign: null,
+      error: "无法唯一确定所属活动，请检查产品、内容渠道和活动配置。",
+    };
+  }
+  return {
+    status: "MATCHED",
+    inputName: "",
+    campaign: eligible[0],
+    error: "",
+  };
 }

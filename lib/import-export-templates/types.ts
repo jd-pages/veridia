@@ -22,6 +22,8 @@ export type StandardField =
   | "commercePlatform"
   | "shopName"
   | "customerName"
+  | "registrant"
+  | "wechatNickname"
   | "orderNumber"
   | "productName"
   | "activityName"
@@ -76,6 +78,8 @@ export type StandardField =
   | "manualReviewComment"
   | "auditTime"
   | "selfReview"
+  | "customerServiceComment"
+  | "interactionAtLeastTen"
   | "registrationTime"
   | "channel"
   | "customerRemark"
@@ -90,7 +94,7 @@ export type StandardField =
   | "complianceResult"
   | "templateType";
 
-export type ImportTemplateBrand = "达能" | "佳贝艾特";
+export type ImportTemplateBrand = "达能" | "佳贝艾特" | "惠氏" | "雀巢" | "惠氏/雀巢" | "多业务";
 
 export interface ImportExportTemplates {
   schemaVersion: number;
@@ -144,6 +148,9 @@ export interface TemplateFieldMatch {
 }
 
 export interface TabularPreviewRow {
+  sheetName?: string;
+  templateBrand?: ImportTemplateBrand;
+  templateType?: import("@/lib/import-template-type").ImportTemplateType;
   rowNumber: number;
   values: Partial<Record<StandardField, string>>;
   rawValues?: Partial<Record<StandardField, string>>;
@@ -152,6 +159,13 @@ export interface TabularPreviewRow {
 }
 
 export interface TabularPreview {
+  workbookType?: "UNIFIED" | "LEGACY";
+  sheets?: Array<{
+    sheetName: string;
+    templateBrand: ImportTemplateBrand;
+    templateType: import("@/lib/import-template-type").ImportTemplateType;
+    total: number;
+  }>;
   templateVersion: string;
   templateBrand: ImportTemplateBrand;
   templateType: import("@/lib/import-template-type").ImportTemplateType;

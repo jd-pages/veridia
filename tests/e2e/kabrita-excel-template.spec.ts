@@ -21,10 +21,10 @@ const importHeaders = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
-  "活动名称（必填）",
+  "是否符合",
 ];
 
-const exportHeaders = [...importHeaders.slice(0, -1), "活动名称", "自审"];
+const exportHeaders = importHeaders;
 
 const kabritaStoreAliases = [
   ["天猫", "天猫佳贝艾特海外旗舰店", "kabrita海外旗舰店"],
@@ -83,7 +83,7 @@ test("佳贝艾特13行多平台显式店铺 Alias 预检全部命中 Canonical"
       "",
       `${E2E_ORIGIN}/mock/xhs?case=passed&kabrita-store-alias=${index + 1}`,
       "荷兰佳贝1",
-      "佳贝艾特2026年8月小红书种草审核",
+      "",
     ]);
   });
 
@@ -191,7 +191,7 @@ test("佳贝艾特13列导入模板下载、识别和六种购买产品线预检
       "",
       `标题 ${E2E_ORIGIN}/mock/xhs?case=passed&kabrita=${index + 1}`,
       productLine,
-      "佳贝艾特2026年8月小红书种草审核",
+      "",
     ]);
   });
 
@@ -257,7 +257,7 @@ test("佳贝艾特13列导入模板下载、识别和六种购买产品线预检
   ).toBe(true);
 });
 
-test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导出", async ({
+test("佳贝艾特内容合规与基础奖励共同决定最终结论和13列导出", async ({
   page,
 }) => {
   const login = await page.request.post("/api/auth/login", {
@@ -362,9 +362,9 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
 
   const passed = await audit({
     marker: "passed",
-    likeCount: 176,
-    favoriteCount: 94,
-    commentCount: 4,
+    likeCount: 5,
+    favoriteCount: 2,
+    commentCount: 3,
   });
   expect(passed.autoStatus).toBe("PASSED");
   expect(passed.storeTopicStatus).toBe("NOT_REQUIRED");
@@ -433,6 +433,18 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
     "缺少精确话题 #佳贝艾特荷兰版",
   );
 
+  const combinedFailed = await audit({
+    marker: "combined-failed",
+    likeCount: 4,
+    favoriteCount: 2,
+    commentCount: 3,
+    topics: [
+      "#初见小温柔成长更友好",
+      "#羊奶粉推荐婴儿",
+      "#好消化吸收的奶粉",
+    ],
+  });
+
   const unreadable = await audit({
     marker: "unreadable",
     likeCount: null,
@@ -451,10 +463,14 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
 
   const expectedExports = [
     [passed.id, "Y"],
-    [below.id, "N-其他不合规；基础奖励未达成：互动合计 9"],
+    [below.id, "N-互动量＜10"],
     [
       contentFailed.id,
       "N-缺少话题；缺少必带话题：#佳贝艾特荷兰版",
+    ],
+    [
+      combinedFailed.id,
+      "N-缺少话题；缺少必带话题：#佳贝艾特荷兰版；N-互动量＜10",
     ],
     [unreadable.id, ""],
     [unavailable.id, "N-帖子无法查看；页面无法访问：小红书页面提示“你访问的页面不见了”"],
@@ -469,7 +485,7 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
     expect(
       (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
     ).toEqual(exportHeaders);
-    expect(workbook.worksheets[0].getCell("N2").text).toBe(expected);
+    expect(workbook.worksheets[0].getCell("M2").text).toBe(expected);
   }
 
   await page.goto(`/results/${passed.id}`);
@@ -484,10 +500,10 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
   const rewardCard = page.locator("article", {
     has: page.getByRole("heading", { name: "基础奖励" }),
   });
-  await expect(rewardCard).toContainText("点赞数176");
-  await expect(rewardCard).toContainText("收藏数94");
-  await expect(rewardCard).toContainText("评论数4");
-  await expect(rewardCard).toContainText("合计互动数274");
+  await expect(rewardCard).toContainText("点赞数5");
+  await expect(rewardCard).toContainText("收藏数2");
+  await expect(rewardCard).toContainText("评论数3");
+  await expect(rewardCard).toContainText("合计互动数10");
   await expect(rewardCard).toContainText("基础奖励已达成");
   await expect(rewardCard).toContainText("最终审核结论通过");
 });

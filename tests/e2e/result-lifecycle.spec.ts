@@ -443,11 +443,14 @@ test("重新审核保留历史版本并在原始导入槽位原位替换", async
     await exported.xlsx.load(
       (await exportResponse.body()) as unknown as ExcelJS.Buffer,
     );
-    const resultSheet = exported.worksheets.find((candidate) => {
-      const headers = candidate.getRow(1).values as unknown[];
-      return headers.includes("订单编号");
-    });
-    expect(resultSheet).toBeTruthy();
+    expect(exported.worksheets.map((sheet) => sheet.name)).toEqual([
+      "达能客户导入",
+      "佳贝艾特客户导入",
+      "惠氏／雀巢客户导入",
+    ]);
+    expect(exported.getWorksheet("佳贝艾特客户导入")!.rowCount).toBe(1);
+    expect(exported.getWorksheet("惠氏／雀巢客户导入")!.rowCount).toBe(1);
+    const resultSheet = exported.getWorksheet("达能客户导入")!;
     const headers = resultSheet!.getRow(1).values as unknown[];
     const orderColumn = headers.indexOf("订单编号");
     expect(orderColumn).toBeGreaterThan(0);

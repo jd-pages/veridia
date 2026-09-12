@@ -22,7 +22,10 @@ import {
   productStageTopicLabel,
 } from "@/lib/product-stage";
 import { BASIC_REWARD_MIN_INTERACTIONS } from "@/lib/interaction-metrics";
-import { evaluateInteractionReward } from "@/lib/interaction-reward";
+import {
+  calculateInteractionTotal,
+  evaluateInteractionReward,
+} from "@/lib/interaction-reward";
 
 const pageFailureLabels: Record<string, string> = {
   NOTE_NOT_FOUND: "笔记不存在",
@@ -916,25 +919,14 @@ export function evaluateAudit(
   }
 
   if (context.basicRewardRequired) {
+    const interaction = calculateInteractionTotal(note);
     const counts = {
-      likeCount: Number.isInteger(note.likeCount)
-        ? Math.max(0, Number(note.likeCount))
-        : null,
-      favoriteCount: Number.isInteger(note.favoriteCount)
-        ? Math.max(0, Number(note.favoriteCount))
-        : null,
-      commentCount: Number.isInteger(note.commentCount)
-        ? Math.max(0, Number(note.commentCount))
-        : null,
+      likeCount: interaction.likeCount,
+      favoriteCount: interaction.favoriteCount,
+      commentCount: interaction.commentCount,
     };
-    const interactionReadable =
-      note.interactionExtractionStatus === "SUCCESS" &&
-      Object.values(counts).every((count) => count !== null);
-    const totalCount = interactionReadable
-      ? Number(counts.likeCount) +
-        Number(counts.favoriteCount) +
-        Number(counts.commentCount)
-      : null;
+    const interactionReadable = interaction.readable;
+    const totalCount = interaction.interactionTotal;
     const rewardPassed =
       totalCount !== null && totalCount >= BASIC_REWARD_MIN_INTERACTIONS;
     const contentStatus: AuditEvaluation["autoStatus"] = contentRuleFailed

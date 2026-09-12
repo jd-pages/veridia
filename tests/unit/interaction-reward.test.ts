@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { evaluateInteractionReward, interactionRewardPresentation } from "@/lib/interaction-reward";
+import {
+  calculateInteractionTotal,
+  evaluateInteractionReward,
+  interactionAtLeastTenExportValue,
+  interactionRewardPresentation,
+} from "@/lib/interaction-reward";
 import { extractDouyinInteraction, extractDouyinPublicStatus } from "@/lib/automation/douyin-interaction";
 import { evaluateAudit } from "@/lib/audit-engine";
 import { createMockNote } from "@/lib/mock-data";
@@ -16,6 +21,17 @@ import ExcelJS from "exceljs";
 
 const config = { interactionRewardEnabled: true, interactionRewardThreshold: 10 };
 describe("互动额外奖励", () => {
+  it("所有品牌复用点赞+评论+收藏口径，10/9/未知分别输出 Y/N/空", () => {
+    expect(calculateInteractionTotal({
+      likeCount: 5,
+      commentCount: 3,
+      favoriteCount: 2,
+      interactionExtractionStatus: "SUCCESS",
+    }).interactionTotal).toBe(10);
+    expect(interactionAtLeastTenExportValue({ interactionTotal: 10 })).toBe("Y");
+    expect(interactionAtLeastTenExportValue({ interactionTotal: 9 })).toBe("N");
+    expect(interactionAtLeastTenExportValue({ interactionTotal: null })).toBe("");
+  });
   it.each([[3, 2, 5, "QUALIFIED"], [3, 2, 4, "NOT_QUALIFIED"], [0, 0, 0, "NOT_QUALIFIED"], [null, 3, 2, "PENDING"]] as const)(
     "%s/%s/%s => %s", (likeCount, commentCount, favoriteCount, status) => {
       const result = evaluateInteractionReward({ likeCount, commentCount, favoriteCount, interactionExtractionStatus: "SUCCESS" }, config);
