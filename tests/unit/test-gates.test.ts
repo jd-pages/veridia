@@ -100,6 +100,7 @@ describe("分层测试门禁", () => {
       "tests/e2e/kabrita-excel-template.spec.ts",
       "tests/e2e/product-stage-topic.spec.ts",
       "tests/e2e/rule-brand-navigation.spec.ts",
+      "tests/e2e/rule-sync-status-counts.spec.ts",
       "tests/e2e/stage-import.spec.ts",
       "tests/e2e/store-topic-audit.spec.ts",
       "tests/e2e/store-topic-rule-management.spec.ts",

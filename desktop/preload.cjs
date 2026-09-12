@@ -10,23 +10,10 @@ contextBridge.exposeInMainWorld("veridiaDesktop", {
     ipcRenderer.invoke("veridia:confirm-data-directory", dataDirectory),
   migrateDataDirectory: (dataDirectory) =>
     ipcRenderer.invoke("veridia:migrate-data-directory", dataDirectory),
-  checkForUpdates: () => ipcRenderer.invoke("veridia:check-update"),
-  openUpdateDownloadPage: () =>
-    ipcRenderer.invoke("veridia:open-update-download-page"),
-  downloadUpdate: () => ipcRenderer.invoke("veridia:download-update"),
-  installUpdate: () => ipcRenderer.invoke("veridia:install-update"),
-  setAutoUpdate: (enabled) =>
-    ipcRenderer.invoke("veridia:set-auto-update", Boolean(enabled)),
-  getUpdateStatus: () => ipcRenderer.invoke("veridia:get-update-status"),
   storePersistentSession: (token) =>
     ipcRenderer.invoke("veridia:store-persistent-session", token),
   clearPersistentSession: () =>
     ipcRenderer.invoke("veridia:clear-persistent-session"),
   saveExportFile: (payload) =>
     ipcRenderer.invoke("veridia:save-export-file", payload),
-  onUpdateStatus: (listener) => {
-    const handler = (_event, payload) => listener(payload);
-    ipcRenderer.on("veridia:update-status", handler);
-    return () => ipcRenderer.removeListener("veridia:update-status", handler);
-  },
 });

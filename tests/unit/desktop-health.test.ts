@@ -25,7 +25,7 @@ describe("桌面端健康检查", () => {
     );
     const waitForServerSource = source.slice(
       source.indexOf("function waitForServer"),
-      source.indexOf("function sendUpdateStatus"),
+      source.indexOf("function installDirectory"),
     );
 
     expect(waitForServerSource).toContain('path: HEALTH_PATH');

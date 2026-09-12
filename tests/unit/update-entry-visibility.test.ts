@@ -6,46 +6,39 @@ function source(relativePath: string) {
   return fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
-describe("软件更新入口", () => {
-  it("不向任何角色暴露历史版本入口", () => {
+describe("桌面软件版本入口", () => {
+  it("只保留版本信息和手工安装所需的数据位置能力", () => {
     const settings = source("app/(admin)/settings/page.tsx");
-    const updateCenter = source("components/DesktopUpdateCenter.tsx");
-    const preload = source("desktop/preload.cjs");
-    const desktopMain = source("desktop/main.cjs");
-    const desktopTypes = source("lib/desktop-api.d.ts");
+    const softwareCard = settings.slice(
+      settings.indexOf('title="软件信息"'),
+      settings.indexOf('title="规则同步"'),
+    );
 
-    for (const content of [
-      settings,
-      updateCenter,
-      preload,
-      desktopMain,
-      desktopTypes,
-    ]) {
-      expect(content).not.toContain("openReleaseNotes");
-      expect(content).not.toContain("veridia:open-release-notes");
+    for (const label of ["当前版本", "构建日期", "数据库版本", "数据保存位置"]) {
+      expect(softwareCard).toContain(label);
     }
-    expect(settings).not.toContain("更新日志");
-    expect(settings).not.toContain("查看历史版本");
-    expect(updateCenter).not.toContain("查看更新内容");
+    expect(softwareCard).toContain("更改数据位置");
+    expect(softwareCard).not.toContain("检查更新");
+    expect(softwareCard).not.toContain("自动更新");
+    expect(softwareCard).not.toContain("下载更新");
+    expect(softwareCard).not.toContain("安装更新");
   });
 
-  it("保留版本信息与自动更新能力", () => {
+  it("完整保留远程 Rules 更新入口", () => {
     const settings = source("app/(admin)/settings/page.tsx");
-    const updateCenter = source("components/DesktopUpdateCenter.tsx");
-    const preload = source("desktop/preload.cjs");
+    const rulesCard = settings.slice(settings.indexOf('title="规则同步"'));
 
-    for (const label of ["当前版本", "构建日期", "数据库版本", "自动检查更新"]) {
-      expect(settings).toContain(label);
+    for (const label of [
+      "当前规则版本",
+      "最新远程版本",
+      "检查更新",
+      "立即同步",
+      "查看同步记录",
+      "恢复上一版规则",
+    ]) {
+      expect(rulesCard).toContain(label);
     }
-    expect(settings).toContain("checkForUpdates");
-    expect(preload).toContain("veridia:check-update");
-    expect(preload).toContain("veridia:open-update-download-page");
-    expect(preload).toContain("veridia:download-update");
-    expect(preload).toContain("veridia:install-update");
-    expect(updateCenter).toContain("downloadUpdate");
-    expect(updateCenter).toContain("installUpdate");
-    expect(updateCenter).toContain("检查更新超时，请检查网络或稍后重试。");
-    expect(updateCenter).toContain("重新检查");
-    expect(updateCenter).toContain("打开下载页面");
+    expect(rulesCard).toContain("/api/rule-sync/check?force=true");
+    expect(rulesCard).toContain("/api/rule-sync/apply");
   });
 });

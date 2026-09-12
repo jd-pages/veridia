@@ -9,7 +9,6 @@ const {
   shell,
   Tray,
 } = require("electron");
-const { autoUpdater } = require("electron-updater");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -27,9 +26,6 @@ const {
   writeDataLocation,
 } = require("./data-location.cjs");
 const { createExportSaveHandler } = require("./export-save.cjs");
-const {
-  createUpdateCheckController,
-} = require("./update-check.cjs");
 const { installWindowOpenPolicy } = require("./window-open-policy.cjs");
 const {
   restoreDesktopSessionCookie,
@@ -42,7 +38,6 @@ const {
 } = require("./prisma-environment.cjs");
 
 const APP_NAME = "VERIDIA";
-const UPDATE_REPOSITORY = "jd-pages/veridia";
 const PORT = 3100;
 const HOST = "127.0.0.1";
 const HEALTH_PATH = "/api/health";
@@ -74,13 +69,7 @@ let tray;
 let serverProcess;
 let serverLogStream;
 let quitting = false;
-let lastUpdateInfo = null;
-let lastUpdateStatus = { state: "idle" };
-let updateDownloadMode = "checking";
-let updateCheckController;
-let updateDownloadPromise;
 let applicationStarted = false;
-let updaterConfigured = false;
 let migrationInProgress = false;
 
 function ensureDirectories() {
@@ -155,14 +144,7 @@ function readConfig() {
       current.authSecret || crypto.randomBytes(48).toString("base64url"),
     extensionToken:
       current.extensionToken || crypto.randomBytes(32).toString("base64url"),
-    autoUpdate: current.autoUpdate !== false,
   };
-  fs.writeFileSync(configPath, JSON.stringify(next, null, 2), "utf8");
-  return next;
-}
-
-function saveConfig(patch) {
-  const next = { ...readConfig(), ...patch };
   fs.writeFileSync(configPath, JSON.stringify(next, null, 2), "utf8");
   return next;
 }
@@ -653,145 +635,6 @@ function waitForServer(timeoutMs = 60_000) {
   });
 }
 
-function sendUpdateStatus(payload) {
-  lastUpdateStatus = payload;
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("veridia:update-status", payload);
-  }
-}
-
-function releaseDownloadBaseUrl(version) {
-  return `https://github.com/${UPDATE_REPOSITORY}/releases/download/v${version}/`;
-}
-
-function setUpdateDownloadMode(mode) {
-  updateDownloadMode = mode;
-  if (lastUpdateStatus.state === "downloading") {
-    sendUpdateStatus({ ...lastUpdateStatus, downloadMode: mode });
-  }
-}
-
-function writeUpdaterLog(level, value) {
-  const message = String(value || "");
-  writeLog(`自动更新[${level}] ${message}`);
-  if (/fallback to full download|full download/iu.test(message)) {
-    setUpdateDownloadMode("full");
-  } else if (
-    /download block maps|differential download|to download:/iu.test(message)
-  ) {
-    setUpdateDownloadMode("differential");
-  }
-}
-
-function normalizedReleaseNotes(value) {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) {
-    return value
-      .map((item) =>
-        typeof item === "string"
-          ? item
-          : `${item.version ? `${item.version}\n` : ""}${item.note || ""}`,
-      )
-      .join("\n\n");
-  }
-  return "";
-}
-
-function setupUpdater() {
-  if (updaterConfigured) return;
-  updaterConfigured = true;
-  if (process.platform === "win32" && app.isPackaged) {
-    // Pass the running installation directory to NSIS explicitly. This keeps
-    // updates in the same location even when the user originally chose a
-    // non-default drive and registry discovery is unavailable.
-    autoUpdater.installDirectory = installDirectory();
-  }
-  autoUpdater.previousBlockmapBaseUrlOverride = releaseDownloadBaseUrl(
-    app.getVersion(),
-  );
-  autoUpdater.logger = {
-    debug: (message) => writeUpdaterLog("debug", message),
-    info: (message) => writeUpdaterLog("info", message),
-    warn: (message) => writeUpdaterLog("warn", message),
-    error: (message) => writeUpdaterLog("error", message),
-  };
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.allowDowngrade = false;
-  updateCheckController = createUpdateCheckController({
-    check: () => autoUpdater.checkForUpdates(),
-    currentVersion: () => app.getVersion(),
-    sendStatus: sendUpdateStatus,
-    onResult: (result, manual) => {
-      if (result?.isUpdateAvailable) {
-        const info = result.updateInfo;
-        lastUpdateInfo = {
-          version: info.version,
-          releaseName: info.releaseName || `VERIDIA ${info.version}`,
-          releaseNotes: normalizedReleaseNotes(info.releaseNotes),
-          releaseDate: info.releaseDate,
-        };
-        sendUpdateStatus({ state: "available", info: lastUpdateInfo });
-        mainWindow?.show();
-        mainWindow?.focus();
-        return;
-      }
-      sendUpdateStatus({
-        state: "not-available",
-        version: app.getVersion(),
-        manual,
-      });
-    },
-    writeDiagnostic: (details) =>
-      writeLog(`检查更新诊断 ${JSON.stringify(details)}`),
-  });
-  autoUpdater.on("download-progress", (progress) =>
-    sendUpdateStatus({
-      state: "downloading",
-      percent: Math.round(progress.percent),
-      transferred: progress.transferred,
-      total: progress.total,
-      bytesPerSecond: progress.bytesPerSecond,
-      downloadMode: updateDownloadMode,
-      info: lastUpdateInfo,
-    }),
-  );
-  autoUpdater.on("update-downloaded", (info) => {
-    lastUpdateInfo = {
-      ...lastUpdateInfo,
-      version: info.version,
-      releaseNotes: normalizedReleaseNotes(info.releaseNotes),
-    };
-    sendUpdateStatus({ state: "downloaded", info: lastUpdateInfo });
-    mainWindow?.show();
-    mainWindow?.focus();
-  });
-  autoUpdater.on("error", (error) => {
-    writeLog("自动更新失败", error);
-    if (updateCheckController?.isChecking()) return;
-    sendUpdateStatus({
-      state: "error",
-      message: error?.message || "检查更新失败",
-      manual: false,
-      errorType: typeof error?.code === "string" ? error.code : error?.name,
-      timedOut: false,
-    });
-  });
-}
-
-async function checkForUpdates(manual = false) {
-  if (!app.isPackaged) {
-    sendUpdateStatus({
-      state: "not-available",
-      version: app.getVersion(),
-      message: "开发模式不执行在线更新",
-    });
-    return;
-  }
-  setupUpdater();
-  return updateCheckController.checkForUpdates(manual);
-}
-
 function installDirectory() {
   return app.isPackaged
     ? path.dirname(process.execPath)
@@ -940,9 +783,7 @@ function registerIpc() {
     buildDate: process.env.VERIDIA_BUILD_DATE || buildInfo().buildDate || null,
     databaseVersion: latestMigrationName(),
     dataDirectory: dataRoot,
-    autoUpdate: dataLocationConfirmed ? readConfig().autoUpdate : true,
     packaged: app.isPackaged,
-    updateStatus: lastUpdateStatus,
   }));
   ipcMain.handle("veridia:get-data-location", () => ({
     confirmed: dataLocationConfirmed,
@@ -957,30 +798,6 @@ function registerIpc() {
   ipcMain.handle("veridia:migrate-data-directory", (_event, candidate) =>
     migrateDataDirectory(candidate),
   );
-  ipcMain.handle("veridia:check-update", () => checkForUpdates(true));
-  ipcMain.handle("veridia:open-update-download-page", () =>
-    shell.openExternal(`https://github.com/${UPDATE_REPOSITORY}/releases/latest`),
-  );
-  ipcMain.handle("veridia:download-update", async () => {
-    updateDownloadMode = "checking";
-    updateDownloadPromise ??= autoUpdater.downloadUpdate().finally(() => {
-      updateDownloadPromise = undefined;
-    });
-    await updateDownloadPromise;
-    return true;
-  });
-  ipcMain.handle("veridia:install-update", () => {
-    quitting = true;
-    // Silent NSIS update: do not reopen the assisted installer wizard. The
-    // second flag starts VERIDIA again after installation completes.
-    autoUpdater.quitAndInstall(true, true);
-    return true;
-  });
-  ipcMain.handle("veridia:set-auto-update", (_event, enabled) => {
-    saveConfig({ autoUpdate: Boolean(enabled) });
-    return Boolean(enabled);
-  });
-  ipcMain.handle("veridia:get-update-status", () => lastUpdateStatus);
   ipcMain.handle("veridia:store-persistent-session", (event, token) => {
     if (!isTrustedSessionSender(event, mainWindow, `http://${HOST}:${PORT}`)) {
       throw new Error("当前页面不能保存本地登录凭证。");
@@ -1019,10 +836,6 @@ function createTray() {
           mainWindow?.show();
           mainWindow?.focus();
         },
-      },
-      {
-        label: "检查更新",
-        click: () => void checkForUpdates(true),
       },
       { type: "separator" },
       {
@@ -1100,7 +913,6 @@ async function startApplication() {
   await assertServerPortAvailable();
   startServer();
   await waitForServer();
-  setupUpdater();
   applicationStarted = true;
   try {
     await restoreDesktopSessionCookie({
@@ -1114,9 +926,6 @@ async function startApplication() {
   }
   await mainWindow.loadURL(`http://${HOST}:${PORT}`);
   createTray();
-  if (readConfig().autoUpdate) {
-    setTimeout(() => void checkForUpdates(false), 12_000);
-  }
 }
 
 async function boot() {

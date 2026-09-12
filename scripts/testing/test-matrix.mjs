@@ -207,6 +207,7 @@ export const E2E_MANIFEST = Object.freeze({
   "tests/e2e/results-horizontal-scroll.spec.ts": entry(["RESULTS", "UI_LAYOUT"], "RESULTS_UI", true),
   "tests/e2e/results-workbench.spec.ts": entry(["RESULTS", "RECHECK", "UI_LAYOUT"], "RESULTS_UI"),
   "tests/e2e/rule-brand-navigation.spec.ts": entry(["RULES", "CAMPAIGN", "ADMIN"], "DATA_RULES"),
+  "tests/e2e/rule-sync-status-counts.spec.ts": entry(["RULES", "STORE_TOPIC", "ADMIN"], "DATA_RULES"),
   "tests/e2e/setup-health.spec.ts": entry(["DATABASE", "UPDATE", "AUTH"], "AUTH_ADMIN", true),
   "tests/e2e/stage-import.spec.ts": entry(["IMPORT", "CAMPAIGN", "XHS"], "DATA_RULES"),
   "tests/e2e/store-topic-audit.spec.ts": entry(["STORE_TOPIC", "XHS", "AUTOMATION", "RESULTS"], "AUTOMATION"),

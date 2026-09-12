@@ -6,64 +6,70 @@ function source(relativePath: string) {
   return fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
-describe("Windows desktop automatic updates", () => {
-  it("installs a downloaded update silently and restarts the application", () => {
+describe("Windows desktop manual installer distribution", () => {
+  it("removes every client-side software updater entry point", () => {
     const desktopMain = source("desktop/main.cjs");
-
-    expect(desktopMain).toContain("autoUpdater.quitAndInstall(true, true)");
-    expect(desktopMain).not.toContain("autoUpdater.quitAndInstall(false, true)");
-    expect(desktopMain).not.toContain("shell.openPath(installer");
-  });
-
-  it("passes the running installation directory to the NSIS updater", () => {
-    const desktopMain = source("desktop/main.cjs");
-
-    expect(desktopMain).toContain(
-      "autoUpdater.installDirectory = installDirectory()",
-    );
-    expect(desktopMain).toContain("path.dirname(process.execPath)");
-  });
-
-  it("uses tag-specific GitHub blockmaps and keeps differential updates enabled", () => {
-    const desktopMain = source("desktop/main.cjs");
-    const afterPack = source("scripts/after-pack.mjs");
+    const preload = source("desktop/preload.cjs");
+    const desktopTypes = source("lib/desktop-api.d.ts");
+    const settings = source("app/(admin)/settings/page.tsx");
+    const adminShell = source("components/AdminShell.tsx");
     const packageJson = JSON.parse(source("package.json"));
+    const clientSources = [desktopMain, preload, desktopTypes, settings, adminShell];
+    const removedReferences = [
+      "electron-updater",
+      "autoUpdater",
+      "checkForUpdates",
+      "openUpdateDownloadPage",
+      "downloadUpdate",
+      "installUpdate",
+      "setAutoUpdate",
+      "getUpdateStatus",
+      "onUpdateStatus",
+      "VERIDIA_UPDATE_URL",
+      "veridia:check-update",
+      "veridia:download-update",
+      "veridia:install-update",
+      "veridia:set-auto-update",
+      "veridia:get-update-status",
+      "veridia:update-status",
+      "DesktopUpdateCenter",
+    ];
 
-    expect(packageJson.build.publish).toEqual([
-      { provider: "github", owner: "jd-pages", repo: "veridia" },
-    ]);
-    expect(packageJson.build.nsis.differentialPackage).toBe(true);
-    expect(desktopMain).toContain("previousBlockmapBaseUrlOverride");
-    expect(desktopMain).toContain("releases/download/v${version}/");
-    expect(afterPack).toContain('"provider: github"');
-    expect(afterPack).not.toContain('"provider: generic"');
+    for (const reference of removedReferences) {
+      for (const content of clientSources) expect(content).not.toContain(reference);
+    }
+    expect(packageJson.dependencies).not.toHaveProperty("electron-updater");
+    expect(fs.existsSync(path.resolve(process.cwd(), "desktop/update-check.cjs"))).toBe(false);
+    expect(fs.existsSync(path.resolve(process.cwd(), "components/DesktopUpdateCenter.tsx"))).toBe(false);
   });
 
-  it("persists updater diagnostics and exposes the selected download mode", () => {
+  it("does not perform a software update check during startup or read legacy autoUpdate", () => {
     const desktopMain = source("desktop/main.cjs");
-    const updateCheck = source("desktop/update-check.cjs");
+    const startApplication = desktopMain.slice(
+      desktopMain.indexOf("async function startApplication"),
+      desktopMain.indexOf("async function boot"),
+    );
 
-    expect(desktopMain).toContain("autoUpdater.logger =");
-    expect(desktopMain).toContain("Download block maps".toLowerCase());
-    expect(desktopMain).toContain("fallback to full download");
-    expect(desktopMain).toContain("downloadMode: updateDownloadMode");
-    expect(updateCheck).toContain("const UPDATE_CHECK_TIMEOUT_MS = 30_000");
-    expect(updateCheck).toContain("updateCheckPromise = undefined");
-    expect(updateCheck).toContain("manualUpdateCheck = false");
-    expect(updateCheck).toContain("UPDATE_CHECK_STARTED");
-    expect(updateCheck).toContain("durationMs");
+    expect(startApplication).not.toContain("checkForUpdates");
+    expect(startApplication).not.toContain("setupUpdater");
+    expect(desktopMain).not.toContain("autoUpdate");
+    expect(desktopMain).not.toContain("github.com/jd-pages/veridia");
+    expect(desktopMain).toContain("current.authSecret");
+    expect(desktopMain).toContain("current.extensionToken");
   });
 
-  it("discovers updates from GitHub Published Latest Release, never from the newest raw Tag", () => {
-    const buildDesktop = source("scripts/build-desktop.mjs");
-    const releaseScript = source("scripts/release.mjs");
-    const desktopMain = source("desktop/main.cjs");
+  it("retains Remote Rules update and signature verification", () => {
+    const settings = source("app/(admin)/settings/page.tsx");
+    const adminShell = source("components/AdminShell.tsx");
+    const ruleSync = source("lib/rules/sync.ts");
 
-    expect(buildDesktop).toContain("/releases/latest/download");
-    expect(releaseScript).toContain("/releases/latest/download");
-    expect(desktopMain).toContain("/releases/latest");
-    expect(buildDesktop).not.toContain("git tag");
-    expect(releaseScript).not.toContain("git tag --sort");
+    expect(settings).toContain("/api/rule-sync/check?force=true");
+    expect(settings).toContain("/api/rule-sync/apply");
+    expect(settings).toContain("/api/rule-sync/history");
+    expect(settings).toContain("/api/rule-sync/restore");
+    expect(adminShell).toContain("/api/rule-sync/check");
+    expect(ruleSync).toContain("verifyRuleManifestSignature");
+    expect(ruleSync).toContain("assertRulePackageCompatibleWithApp");
   });
 
   it("keeps a stable installer identity and the existing install mode", () => {
@@ -92,5 +98,16 @@ describe("Windows desktop automatic updates", () => {
     expect(installer).toContain(
       'ReadRegStr $R9 HKLM "${UNINSTALL_REGISTRY_KEY}" InstallLocation',
     );
+  });
+
+  it("keeps local NSIS package metadata generation without a client updater", () => {
+    const packageJson = JSON.parse(source("package.json"));
+
+    expect(packageJson.build.nsis).toMatchObject({
+      differentialPackage: true,
+    });
+    expect(packageJson.build.publish).toEqual([
+      { provider: "github", owner: "jd-pages", repo: "veridia" },
+    ]);
   });
 });

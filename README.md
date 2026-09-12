@@ -21,7 +21,7 @@
 - Playwright 模拟/真实页面 Adapter 与插件 Adapter 共用 `ExtractedNote` 数据结构。
 - Manifest V3 Chrome/Edge 插件用于人工补审、单条重提取和异常页面证据。
 - 模拟页面覆盖通过、规则失败、登录失效、删除、无权限、安全验证和结构异常。
-- Electron + NSIS Windows 桌面应用、单实例后台服务、托盘与自动更新。
+- Electron + NSIS Windows 桌面应用、单实例后台服务、托盘与手工覆盖安装升级。
 - 独立 GitHub 规则仓库同步，支持签名校验、事务导入、备份和失败回滚。
 
 ## 技术架构
@@ -81,9 +81,9 @@ npm.cmd run build
 及纯离线限制见
 [`docs/本地账号开发者说明.md`](docs/本地账号开发者说明.md)。
 
-## 软件更新与规则更新
+## 软件分发与规则更新
 
-- 软件安装包继续从 `jd-pages/veridia` 的软件 Release 更新。
+- 软件版本由管理员分发 `VERIDIA-Setup-x.x.x.exe`，用户手工运行安装包覆盖升级。
 - 审核规则从另行创建的独立公开 GitHub 仓库匿名读取。
 - 规则仓库地址保存在 `rules/config.json`，签名公钥保存在 `rules/public-key.pem`。
 - 普通客户端不包含 GitHub Token、发布私钥或上传逻辑。
@@ -279,13 +279,13 @@ templates/              Excel 导入模板
 tests/unit/             Vitest 单元测试
 tests/e2e/              Playwright 关键流程测试
 scripts/                Windows 启动、数据库和模板脚本
-desktop/                Electron 主进程、更新器与 NSIS 卸载逻辑
+desktop/                Electron 主进程、桌面集成与 NSIS 卸载逻辑
 .github/workflows/       main 检查与版本发布流水线
 ```
 
 ## VERIDIA 固定发布流程
 
-Codex 完成功能修改后不得直接发布，也不得直接上传安装包。软件更新固定分为以下
+Codex 完成功能修改后不得直接发布，也不得直接上传安装包。软件发布固定分为以下
 三个阶段，任何时候都不要跳过本地预览和本地打包验收：
 
 1. 双击 `本地预览测试.bat`。脚本只启动最新源码供浏览器检查，不打包、不升版本，
@@ -319,18 +319,18 @@ Codex 完成功能修改后不得直接发布，也不得直接上传安装包�
 
    软件 Release 的 EXE、同名 `.exe.blockmap` 和 `latest.yml` 缺一不可。发布脚本会在
    本机和 GitHub Actions 中分别校验三件套，并在 Release 创建后再次核对远程文件大小、
-   SHA-256/SHA-512 与匿名下载状态。客户端通过 Published Latest Release 的 `latest.yml`
-   检测版本，并优先使用 blockmap
-   进行差分更新；该流程不会执行 `rules:publish`。
+   SHA-256/SHA-512 与匿名下载状态。`.blockmap` 和 `latest.yml` 作为既有发布产物继续生成，
+   1.1.26 起客户端不再读取这些文件或自动访问软件 Release；该流程不会执行
+   `rules:publish`。
 
    只有 Tag、没有 Published Release 的失败版本属于 `FAILED_RELEASE_TAG`，不会成为自动
-   更新版本。远程 Tag 一旦 Push 即消费版本；Workflow 确定失败时保留 Tag，不移动、不删除、
+   发布版本。远程 Tag 一旦 Push 即消费版本；Workflow 确定失败时保留 Tag，不移动、不删除、
    不补建 Release，修复后准备下一版本。
 
 本地打包后的任何源码变化都会使验收记录失效，必须重新运行
 `本地打包验收.bat`。普通代码保存、预览和测试不会触发正式发布。
 
-规则更新与软件更新必须分开：
+规则更新与软件发布必须分开：
 
 - `RULE_ONLY`：现有软件能力已能表达需求，仅修改产品、活动、阶段、月份、店铺话题、
   现有规则参数或已有能力支持的 alias。通过 `发布规则新版.bat` 发布，不升级 VERIDIA
@@ -343,8 +343,8 @@ Codex 完成功能修改后不得直接发布，也不得直接上传安装包�
 - `发布新版.bat` 不会发布规则；`发布规则新版.bat` 不会发布软件安装包。
 
 底层 `npm run release:patch`、`release:minor` 和 `release:major` 只用于脚本内部的
-本地版本准备与打包，不应绕过正式 BAT 入口单独执行。客户端启动后检查软件更新，发现新版
-时由用户选择下载和重启安装。
+本地版本准备与打包，不应绕过正式 BAT 入口单独执行。1.1.26 起客户端不检查、下载或安装
+软件更新；管理员取得正式安装包后，由用户手工运行并原地覆盖升级。
 
 代码签名通过 GitHub Secrets `WINDOWS_CSC_LINK` 和 `WINDOWS_CSC_KEY_PASSWORD`
 提供，证书不进入仓库。未配置证书仍可生成内部测试包，但 Windows 可能显示“未知发布者”。

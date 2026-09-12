@@ -29,7 +29,6 @@ import { useEffect, useState } from "react";
 import type { SessionUser } from "@/lib/auth";
 import { apiFetch } from "@/lib/client";
 import VeridiaLogo from "@/components/VeridiaLogo";
-import DesktopUpdateCenter from "@/components/DesktopUpdateCenter";
 import { canAccessSystemSettings } from "@/lib/permissions";
 
 const { Sider, Header, Content } = Layout;
@@ -239,7 +238,6 @@ export default function AdminShell({
               </Space>
             </Header>
             <Content className="admin-content">{children}</Content>
-            {canManageSystem && <DesktopUpdateCenter />}
           </Layout>
         </Layout>
       </App>

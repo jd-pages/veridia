@@ -194,16 +194,38 @@ export async function ensureBuiltinDouyinRules(payload: RulePackagePayload) {
     createdTopicRules += 1;
   }
 
-  const [products, activities, stageGroups, topicRules] = await Promise.all([
+  const [
+    products,
+    activities,
+    stageGroups,
+    topicRules,
+    storeTopicRules,
+    storeAliases,
+  ] = await Promise.all([
     prisma.product.count({ where: { deletedAt: null } }),
     prisma.campaign.count({ where: { deletedAt: null } }),
     prisma.ruleStageGroup.count(),
     prisma.topicRule.count(),
+    prisma.storeTopicRule.count({ where: { deletedAt: null } }),
+    prisma.storeTopicEntry.count({
+      where: {
+        topicType: "STORE_ALIAS",
+        deletedAt: null,
+        storeTopicRule: { deletedAt: null },
+      },
+    }),
   ]);
   await prisma.ruleSyncState.updateMany({
     where: { id: "active" },
     data: {
-      countsJson: JSON.stringify({ products, activities, stageGroups, topicRules }),
+      countsJson: JSON.stringify({
+        products,
+        activities,
+        stageGroups,
+        topicRules,
+        storeTopicRules,
+        storeAliases,
+      }),
     },
   });
 

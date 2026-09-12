@@ -9,11 +9,10 @@ import {
   Descriptions,
   Input,
   Space,
-  Switch,
   Table,
   Tag,
 } from "antd";
-import { FolderOpenOutlined, ReloadOutlined } from "@ant-design/icons";
+import { FolderOpenOutlined } from "@ant-design/icons";
 import PageHeader from "@/components/PageHeader";
 import AccountSecurityPanel from "@/components/AccountSecurityPanel";
 import { apiFetch } from "@/lib/client";
@@ -36,8 +35,6 @@ interface VersionInfo {
   buildDate: string | null;
   databaseVersion: string;
   dataDirectory: string;
-  autoUpdate: boolean;
-  packaged: boolean;
 }
 
 interface RuleSyncStatus {
@@ -127,7 +124,6 @@ export default function SettingsPage() {
   const [xhsBusy, setXhsBusy] = useState(false);
   const [douyinSession, setDouyinSession] = useState<XhsSessionDiagnostics | null>(null);
   const [douyinBusy, setDouyinBusy] = useState(false);
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [syncingRules, setSyncingRules] = useState(false);
   const [migratingData, setMigratingData] = useState(false);
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
@@ -417,7 +413,7 @@ export default function SettingsPage() {
           await load();
         }}>保存抖音访问节奏</Button>
       </Card>
-      <Card className="surface-card" title="软件与更新" style={{ marginBottom: 16 }}>
+      <Card className="surface-card" title="软件信息" style={{ marginBottom: 16 }}>
         <Descriptions column={{ xs: 1, md: 2 }}>
           <Descriptions.Item label="当前版本">
             VERIDIA {versionInfo?.version || "—"}
@@ -433,20 +429,6 @@ export default function SettingsPage() {
           <Descriptions.Item label="数据保存位置">
             {versionInfo?.dataDirectory || "—"}
           </Descriptions.Item>
-          <Descriptions.Item label="自动检查更新" span={2}>
-            <Switch
-              checked={versionInfo?.autoUpdate || false}
-              disabled={!desktopAvailable || !canManageSystem}
-              checkedChildren="开启"
-              unCheckedChildren="关闭"
-              onChange={async (checked) => {
-                await window.veridiaDesktop?.setAutoUpdate(checked);
-                setVersionInfo((current) =>
-                  current ? { ...current, autoUpdate: checked } : current,
-                );
-              }}
-            />
-          </Descriptions.Item>
         </Descriptions>
         <Space>
           <Button
@@ -457,24 +439,6 @@ export default function SettingsPage() {
           >
             更改数据位置
           </Button>
-          <Button
-            icon={<ReloadOutlined />}
-            loading={checkingUpdate}
-            disabled={!desktopAvailable}
-            onClick={async () => {
-              setCheckingUpdate(true);
-              try {
-                await window.veridiaDesktop?.checkForUpdates();
-              } finally {
-                setTimeout(() => setCheckingUpdate(false), 800);
-              }
-            }}
-          >
-            检查更新
-          </Button>
-          {!versionInfo?.packaged && (
-            <Tag>浏览器开发模式不执行在线更新</Tag>
-          )}
         </Space>
       </Card>
       <Card

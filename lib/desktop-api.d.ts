@@ -1,35 +1,6 @@
 export {};
 
 declare global {
-  interface VeridiaUpdateInfo {
-    version: string;
-    releaseName?: string;
-    releaseNotes?: string;
-    releaseDate?: string;
-  }
-
-  interface VeridiaUpdateStatus {
-    state:
-      | "idle"
-      | "checking"
-      | "available"
-      | "not-available"
-      | "downloading"
-      | "downloaded"
-      | "error";
-    version?: string;
-    info?: VeridiaUpdateInfo;
-    percent?: number;
-    transferred?: number;
-    total?: number;
-    bytesPerSecond?: number;
-    downloadMode?: "checking" | "differential" | "full";
-    message?: string;
-    manual?: boolean;
-    errorType?: string;
-    timedOut?: boolean;
-  }
-
   interface VeridiaDataLocationResult {
     success: boolean;
     dataDirectory?: string;
@@ -51,9 +22,7 @@ declare global {
         buildDate: string | null;
         databaseVersion: string;
         dataDirectory: string;
-        autoUpdate: boolean;
         packaged: boolean;
-        updateStatus: VeridiaUpdateStatus;
       }>;
       getDataLocation(): Promise<{
         confirmed: boolean;
@@ -68,12 +37,6 @@ declare global {
       migrateDataDirectory(
         dataDirectory: string,
       ): Promise<VeridiaDataLocationResult>;
-      checkForUpdates(): Promise<void>;
-      openUpdateDownloadPage(): Promise<void>;
-      downloadUpdate(): Promise<boolean>;
-      installUpdate(): Promise<boolean>;
-      setAutoUpdate(enabled: boolean): Promise<boolean>;
-      getUpdateStatus(): Promise<VeridiaUpdateStatus>;
       storePersistentSession(token: string): Promise<boolean>;
       clearPersistentSession(): Promise<boolean>;
       saveExportFile(payload: {
@@ -81,9 +44,6 @@ declare global {
         data: Uint8Array;
         kind?: "audit-export" | "import-template";
       }): Promise<VeridiaExportSaveResult>;
-      onUpdateStatus(
-        listener: (status: VeridiaUpdateStatus) => void,
-      ): () => void;
     };
   }
 }

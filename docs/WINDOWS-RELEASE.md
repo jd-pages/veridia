@@ -1,4 +1,4 @@
-# VERIDIA Windows 发布与更新
+# VERIDIA Windows 发布与手工安装
 
 ## 日常开发
 
@@ -32,27 +32,17 @@ GitHub Release Workflow 仍在独立 clean runner 上重新执行一次 FULL、B
 minor 或 major。流水线在测试通过后升级版本、构建、将版本文件写回 `main`，
 然后创建对应 Release。
 
-## 自动更新
+## 手工安装升级
 
-Electron 主进程使用 `electron-updater`：
+VERIDIA 1.1.26 起不再包含客户端软件自动更新能力。桌面端不会检查软件 Release，
+不会读取 `latest.yml` 或 blockmap，也不会自动下载或安装 EXE。管理员取得
+`VERIDIA-Setup-x.x.x.exe` 后，由用户手工运行安装包原地覆盖升级。
 
-- 启动后延迟检查，离线失败不影响本地功能。
-- 发现新版后显示中文更新说明。
-- 用户确认后下载并显示进度。
-- 下载完成后由用户决定何时重启安装。
-- 同一时间只允许一个检查请求和一个下载任务。
-- 更新程序仅覆盖安装目录；`%LOCALAPPDATA%\VERIDIA` 不在更新范围内。
-- GitHub provider 使用带版本 Tag 的 Release URL，并从当前版本 Release 读取旧
-  blockmap、从目标版本 Release 读取新 blockmap；差分失败时自动回退完整 EXE。
-- 更新源使用 GitHub Published Latest Release；只有 Tag、没有 Published Release 的
-  `FAILED_RELEASE_TAG` 不会被客户端识别为更新版本。
-- 下载界面显示已下载大小、总大小、速度、预计剩余时间和差分/完整更新状态。
-- updater 诊断信息写入本地数据目录的 `logs\desktop.log`，可搜索
-  `Download block maps`、`differential` 和 `fallback to full download`。
+安装器只覆盖安装目录；本地数据目录、数据库、账号、审核历史和已同步 Rules 不会被卸载
+或清空。旧 `settings.json` 中的 `autoUpdate` 字段会被安全忽略。
 
-每个软件 Release 必须同时上传 EXE、同名 `.exe.blockmap` 和 `latest.yml`。当前公开
-GitHub 仓库由客户端匿名读取；禁止把 GitHub Token 写入桌面应用。如果未来改为私有仓库，
-需要另行部署客户端可读取且能保留历史版本 blockmap 的 HTTPS 更新服务。
+每个软件 Release 仍按既有发布契约生成并校验 EXE、同名 `.exe.blockmap` 和 `latest.yml`。
+后两项仅作为发布产物保留，客户端不再读取或使用它们。禁止把 GitHub Token 写入桌面应用。
 
 Release 完成前会校验公开、非 Draft、非 Prerelease、Latest 指向、版本、文件名、大小、
 SHA-512、blockmap 和 `latest.yml`。任一项不一致都不能进入 `RELEASE_COMPLETE`。
@@ -60,7 +50,7 @@ SHA-512、blockmap 和 `latest.yml`。任一项不一致都不能进入 `RELEASE
 ## 数据库迁移与回滚
 
 启动新版本前，桌面主进程将当前数据库复制到 `backups`，执行 `prisma migrate deploy`
-并检查迁移状态。失败时恢复备份且不启动业务服务。安装器或更新器不会创建空白数据库覆盖已有数据。
+并检查迁移状态。失败时恢复备份且不启动业务服务。安装器不会创建空白数据库覆盖已有数据。
 
 ## 代码签名
 

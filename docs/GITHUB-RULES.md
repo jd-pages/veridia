@@ -2,7 +2,7 @@
 
 ## 架构边界
 
-- 软件更新仓库：现有 `jd-pages/veridia`，仅用于 Electron 安装包和 `latest.yml`。
+- 软件发布仓库：现有 `jd-pages/veridia`，仅用于发布 Electron 安装包及配套产物；客户端不读取该仓库进行软件更新。
 - 规则更新仓库：由维护者另行创建的独立公开仓库，仅用于规则 Release。
 - 客户端只匿名读取 GitHub Release，不登录 GitHub、不保存 GitHub Token，也不具备发布权限。
 - SQLite、审核内容、Excel、Cookie、小红书会话、日志、本机路径和使用统计不会上传。

@@ -8,6 +8,7 @@ import packageJson from "@/package.json";
 import { prisma } from "@/lib/db";
 import builtinRules from "@/rules/default-rules.json";
 import { ruleSyncConfiguration } from "./config";
+import { resolveRuleCountsFromState } from "./status-counts";
 import {
   applyRulePayload,
   validateRulePayload,
@@ -117,29 +118,6 @@ async function retainBundledLocalRules() {
       data: { ruleSource: "LOCAL_DRAFT" },
     }),
   ]);
-}
-
-function countsFromState(value: string | null | undefined): RuleCounts {
-  try {
-    const parsed = JSON.parse(value || "{}") as Partial<RuleCounts>;
-    return {
-      products: parsed.products ?? 0,
-      activities: parsed.activities ?? 0,
-      stageGroups: parsed.stageGroups ?? 0,
-      topicRules: parsed.topicRules ?? 0,
-      storeTopicRules: parsed.storeTopicRules ?? 0,
-      storeAliases: parsed.storeAliases ?? 0,
-    };
-  } catch {
-    return {
-      products: 0,
-      activities: 0,
-      stageGroups: 0,
-      topicRules: 0,
-      storeTopicRules: 0,
-      storeAliases: 0,
-    };
-  }
 }
 
 function assertAllowedUrl(value: string) {
@@ -559,6 +537,22 @@ export async function ensureBuiltinRules() {
 export async function getRuleSyncStatus() {
   const state = await ensureBuiltinRules();
   const config = ruleSyncConfiguration();
+  const counts = await resolveRuleCountsFromState(
+    state.countsJson,
+    async () => {
+      const [storeTopicRules, storeAliases] = await Promise.all([
+        prisma.storeTopicRule.count({ where: { deletedAt: null } }),
+        prisma.storeTopicEntry.count({
+          where: {
+            topicType: "STORE_ALIAS",
+            deletedAt: null,
+            storeTopicRule: { deletedAt: null },
+          },
+        }),
+      ]);
+      return { storeTopicRules, storeAliases };
+    },
+  );
   return {
     configured: config.configured,
     repository: config.repository || null,
@@ -569,7 +563,7 @@ export async function getRuleSyncStatus() {
     templateSchemaVersion: state.templateSchemaVersion,
     source: state.source,
     status: state.status,
-    counts: countsFromState(state.countsJson),
+    counts,
     lastCheckedAt: state.lastCheckedAt,
     lastSyncedAt: state.lastSyncedAt,
   };

@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   campaignCount: vi.fn(),
   stageGroupCount: vi.fn(),
   topicRuleCount: vi.fn(),
+  storeTopicRuleCount: vi.fn(),
+  storeTopicEntryCount: vi.fn(),
   syncUpdateMany: vi.fn(),
 }));
 
@@ -34,6 +36,8 @@ vi.mock("@/lib/db", () => ({
       count: mocks.topicRuleCount,
     },
     ruleStageGroup: { count: mocks.stageGroupCount },
+    storeTopicRule: { count: mocks.storeTopicRuleCount },
+    storeTopicEntry: { count: mocks.storeTopicEntryCount },
     ruleSyncState: { updateMany: mocks.syncUpdateMany },
   },
 }));
@@ -54,6 +58,8 @@ describe("抖音规则持久化幂等性", () => {
     mocks.campaignCount.mockResolvedValue(6);
     mocks.stageGroupCount.mockResolvedValue(3);
     mocks.topicRuleCount.mockResolvedValue(48);
+    mocks.storeTopicRuleCount.mockResolvedValue(45);
+    mocks.storeTopicEntryCount.mockResolvedValue(9);
     mocks.syncUpdateMany.mockResolvedValue({ count: 1 });
   });
 
