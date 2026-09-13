@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { Popover, Tag } from "antd";
 import { parseJsonArray } from "@/lib/client";
 import { productStageTopicLabel } from "@/lib/product-stage";
@@ -68,7 +69,7 @@ export function getTopicAuditSummary(row: ResultRow) {
   };
 }
 
-export default function TopicAuditCell({ row }: { row: ResultRow }) {
+function TopicAuditCell({ row }: { row: ResultRow }) {
   const unavailableDisplay = auditResultListDisplay(row);
   if (unavailableDisplay) {
     return (
@@ -221,3 +222,5 @@ export default function TopicAuditCell({ row }: { row: ResultRow }) {
     </Popover>
   );
 }
+
+export default memo(TopicAuditCell);

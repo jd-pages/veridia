@@ -324,8 +324,9 @@ export default function AuditFilterPanel({
         }`}
         aria-hidden={!advancedOpen}
       >
-        <div className={styles.advancedInner}>
-          <div className={styles.advancedGrid}>
+        {advancedOpen ? (
+          <div className={styles.advancedInner}>
+            <div className={styles.advancedGrid}>
             <FilterField label="页面状态">
               <Select
                 allowClear
@@ -435,8 +436,9 @@ export default function AuditFilterPanel({
                 onPressEnter={onSearch}
               />
             </FilterField>
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
     </section>
   );

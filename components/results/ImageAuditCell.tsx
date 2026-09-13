@@ -1,11 +1,12 @@
 "use client";
 
+import { memo } from "react";
 import type { ResultRow } from "./types";
 import { auditResultListDisplay } from "@/lib/result-display";
 import AuditStatusTag from "./AuditStatusTag";
 import styles from "./results-workbench.module.css";
 
-export default function ImageAuditCell({ row }: { row: ResultRow }) {
+function ImageAuditCell({ row }: { row: ResultRow }) {
   const unavailableDisplay = auditResultListDisplay(row);
   if (unavailableDisplay) {
     return (
@@ -43,3 +44,5 @@ export default function ImageAuditCell({ row }: { row: ResultRow }) {
     </div>
   );
 }
+
+export default memo(ImageAuditCell);

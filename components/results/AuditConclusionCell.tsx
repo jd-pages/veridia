@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { Tag, Tooltip } from "antd";
 import { auditResultLabels } from "@/lib/zh-CN";
 import {
@@ -28,7 +29,7 @@ const resultMeta: Record<
   PROCESSING: { className: styles.dotInfo, label: "处理中" },
 };
 
-export default function AuditConclusionCell({
+function AuditConclusionCell({
   row,
   detailView = false,
 }: {
@@ -138,3 +139,5 @@ export default function AuditConclusionCell({
     </div>
   );
 }
+
+export default memo(AuditConclusionCell);

@@ -195,9 +195,9 @@ export default function ResultsPage() {
   });
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
-  const [campaignsLoading, setCampaignsLoading] = useState(false);
+  const [campaignsLoading, setCampaignsLoading] = useState(true);
   const [importBatches, setImportBatches] = useState<ImportBatchOption[]>([]);
-  const [importBatchesLoading, setImportBatchesLoading] = useState(false);
+  const [importBatchesLoading, setImportBatchesLoading] = useState(true);
   const campaignRequestRef = useRef(0);
   const loadRequestRef = useRef(0);
   const [filters, setFilters] = useState<ResultFilters>(defaultFilters);

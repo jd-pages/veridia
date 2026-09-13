@@ -1,12 +1,13 @@
 "use client";
 
+import { memo } from "react";
 import { Tooltip } from "antd";
 import { resultDetailLinks } from "@/lib/result-links";
 import ResultDetailLink from "./ResultDetailLink";
 import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
 
-export default function NoteObjectCell({ row }: { row: ResultRow }) {
+function NoteObjectCell({ row }: { row: ResultRow }) {
   const links = resultDetailLinks(row);
 
   return (
@@ -28,3 +29,5 @@ export default function NoteObjectCell({ row }: { row: ResultRow }) {
     </div>
   );
 }
+
+export default memo(NoteObjectCell);

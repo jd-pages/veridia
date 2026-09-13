@@ -121,3 +121,47 @@ describe("Results 请求合并与竞态保护", () => {
     expect(page).toContain("if (requestId !== loadRequestRef.current) return");
   });
 });
+
+describe("Results 首屏渲染", () => {
+  const resultsPage = fs.readFileSync(
+    path.resolve(process.cwd(), "app/(admin)/results/page.tsx"),
+    "utf8",
+  );
+  const filterPanel = fs.readFileSync(
+    path.resolve(process.cwd(), "components/results/AuditFilterPanel.tsx"),
+    "utf8",
+  );
+
+  it("默认关闭时不挂载高级筛选控件", () => {
+    expect(filterPanel).toContain("aria-hidden={!advancedOpen}");
+    expect(filterPanel).toMatch(
+      /\{advancedOpen \? \([\s\S]*advancedInner/u,
+    );
+  });
+
+  it("首帧直接反映筛选项正在加载，避免 mount 后 false 到 true 的空转", () => {
+    expect(resultsPage).toContain(
+      "const [campaignsLoading, setCampaignsLoading] = useState(true)",
+    );
+    expect(resultsPage).toContain(
+      "const [importBatchesLoading, setImportBatchesLoading] = useState(true)",
+    );
+  });
+
+  it("重复筛选状态更新不会重算稳定行的话题与结论单元", () => {
+    for (const component of [
+      "NoteObjectCell.tsx",
+      "TopicAuditCell.tsx",
+      "ImageAuditCell.tsx",
+      "AuditConclusionCell.tsx",
+    ]) {
+      const source = fs.readFileSync(
+        path.resolve(process.cwd(), "components/results", component),
+        "utf8",
+      );
+      expect(source).toContain('import { memo } from "react"');
+      expect(source).toMatch(/export default memo\([A-Za-z]+\);/u);
+    }
+  });
+
+});
