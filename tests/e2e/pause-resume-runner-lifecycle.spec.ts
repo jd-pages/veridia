@@ -5,9 +5,12 @@ import {
   lockValidExecutionLease,
   StaleRunnerCompletionError,
 } from "@/lib/automation/execution-lease";
+import { DEFAULT_BROWSER_LIFECYCLE_CLEANUP_DEADLINE_MS } from "@/lib/automation/generation-lifecycle";
 import { E2E_ORIGIN } from "./e2e-origin";
 
 const cleanupBatchIds: string[] = [];
+const HANDOFF_PROGRESS_TIMEOUT_MS =
+  DEFAULT_BROWSER_LIFECYCLE_CLEANUP_DEADLINE_MS + 15_000;
 
 async function login(page: Page) {
   const response = await page.request.post("/api/auth/login", {
@@ -83,6 +86,96 @@ async function waitForGenerationLifecycleIdle(page: Page) {
       effectiveRunnerCount: 0,
     });
   return latest!;
+}
+
+async function waitForRunnerHandoffProgress(
+  page: Page,
+  input: {
+    firstBatchId: string;
+    secondBatchId: string;
+    startedAt: number;
+  },
+) {
+  const deadline = input.startedAt + HANDOFF_PROGRESS_TIMEOUT_MS;
+  const timeline: Array<{
+    elapsedMs: number;
+    firstStatus: string;
+    secondStatus: string;
+    firstProcessing: number;
+    secondProcessing: number;
+    activeExtractionCount: number;
+    pendingCleanupBarrierCount: number;
+    effectiveRunnerCount: number;
+    lastLifecycleEvent: string | null;
+  }> = [];
+  let previousSignature = "";
+  let peakProcessing = 0;
+
+  while (Date.now() < deadline) {
+    const [firstBatch, secondBatch, firstProcessing, secondProcessing, sessionResponse] =
+      await Promise.all([
+        prisma.auditBatch.findUniqueOrThrow({ where: { id: input.firstBatchId } }),
+        prisma.auditBatch.findUniqueOrThrow({ where: { id: input.secondBatchId } }),
+        prisma.auditTask.count({
+          where: { batchId: input.firstBatchId, status: "PROCESSING" },
+        }),
+        prisma.auditTask.count({
+          where: { batchId: input.secondBatchId, status: "PROCESSING" },
+        }),
+        page.request.get("/api/automation/session?platform=XIAOHONGSHU"),
+      ]);
+    expect(sessionResponse.ok()).toBeTruthy();
+    const lifecycle = (await sessionResponse.json()).data.generationLifecycle as {
+      activeExtractionCount: number;
+      pendingCleanupBarrierCount: number;
+      effectiveRunnerCount: number;
+      recentEvents: Array<{ event: string }>;
+    };
+    const processing = firstProcessing + secondProcessing;
+    peakProcessing = Math.max(peakProcessing, processing);
+    expect(processing).toBeLessThanOrEqual(1);
+    expect(lifecycle.activeExtractionCount).toBeLessThanOrEqual(1);
+    expect(lifecycle.effectiveRunnerCount).toBeLessThanOrEqual(1);
+
+    const snapshot = {
+      elapsedMs: Date.now() - input.startedAt,
+      firstStatus: firstBatch.status,
+      secondStatus: secondBatch.status,
+      firstProcessing,
+      secondProcessing,
+      activeExtractionCount: lifecycle.activeExtractionCount,
+      pendingCleanupBarrierCount: lifecycle.pendingCleanupBarrierCount,
+      effectiveRunnerCount: lifecycle.effectiveRunnerCount,
+      lastLifecycleEvent: lifecycle.recentEvents.at(-1)?.event ?? null,
+    };
+    const signature = JSON.stringify({ ...snapshot, elapsedMs: 0 });
+    if (signature !== previousSignature) {
+      timeline.push(snapshot);
+      previousSignature = signature;
+    }
+    if (firstBatch.status === "RUNNING") {
+      console.info(
+        `[PAUSE_CONTINUE_HANDOFF_TIMELINE] ${JSON.stringify({
+          timeoutMs: HANDOFF_PROGRESS_TIMEOUT_MS,
+          peakProcessing,
+          timeline,
+        })}`,
+      );
+      return { elapsedMs: snapshot.elapsedMs, peakProcessing, timeline };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  console.info(
+    `[PAUSE_CONTINUE_HANDOFF_TIMELINE] ${JSON.stringify({
+      timeoutMs: HANDOFF_PROGRESS_TIMEOUT_MS,
+      peakProcessing,
+      timeline,
+    })}`,
+  );
+  throw new Error(
+    `等待 PAUSE_CONTINUE_RUNNER_HANDOFF 进展超时：${HANDOFF_PROGRESS_TIMEOUT_MS}ms`,
+  );
 }
 
 test.afterEach(async ({ page }) => {
@@ -415,11 +508,13 @@ test("Protected PAUSE_CONTINUE_RUNNER_HANDOFF：旧 extraction 延迟退出仍�
     );
     expect(continueResponse.ok()).toBeTruthy();
   }
-  await expect.poll(
-    async () => (await prisma.auditBatch.findUniqueOrThrow({ where: { id: firstBatchId } })).status,
-    { timeout: 15_000 },
-  ).toBe("RUNNING");
-  expect(Date.now() - continuedAt).toBeLessThan(15_000);
+  const handoff = await waitForRunnerHandoffProgress(page, {
+    firstBatchId,
+    secondBatchId,
+    startedAt: continuedAt,
+  });
+  expect(handoff.elapsedMs).toBeLessThan(HANDOFF_PROGRESS_TIMEOUT_MS);
+  expect(handoff.peakProcessing).toBeLessThanOrEqual(1);
 
   const firstCompleted = await waitForBatchTerminal(firstBatchId);
   const secondCompleted = await waitForBatchTerminal(secondBatchId);
