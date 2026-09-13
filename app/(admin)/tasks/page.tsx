@@ -230,8 +230,8 @@ interface ImportPreview {
   rowsTruncated?: boolean;
   errorRowsTruncated?: boolean;
   templateVersion: string;
-  templateBrand: "达能" | "佳贝艾特" | "惠氏/雀巢" | "多业务";
-  templateType: "DANONE_CUSTOMER" | "DANONE_AGENCY" | "KABRITA" | "WYETH_NESTLE";
+  templateBrand: "达能" | "佳贝艾特" | "惠氏" | "雀巢" | "惠氏/雀巢" | "多业务";
+  templateType: "DANONE_CUSTOMER" | "DANONE_AGENCY" | "KABRITA" | "WYETH" | "NESTLE" | "WYETH_NESTLE";
   sourceLabel: string;
   sourceType: string;
   recognizedFields: Array<{
@@ -260,12 +260,14 @@ interface ImportPreview {
     purchaseProductLine: string;
     campaignName: string;
     importedCampaignName: string;
+    importedActivityMonth: string;
     campaignMatchStatus: string;
     campaignPeriod: string;
     campaignRuleCount: number;
     month: string;
     productStage: string;
     stageGroup: string;
+    normalizations: string[];
     errors: string[];
     duplicateWarning?: {
       status: "DUPLICATE_WARNING";
@@ -1993,6 +1995,10 @@ export default function TasksPage() {
                               ? "达能客户"
                               : preview.templateType === "KABRITA"
                                 ? "佳贝艾特"
+                                : preview.templateType === "WYETH"
+                                  ? "惠氏"
+                                  : preview.templateType === "NESTLE"
+                                    ? "雀巢"
                                 : preview.templateType === "WYETH_NESTLE"
                                   ? "惠氏/雀巢"
                                   : "多业务"}
@@ -2234,13 +2240,13 @@ export default function TasksPage() {
                               ]
                             : []),
                           {
-                            title: "活动名称",
-                            dataIndex: "campaignName",
-                            width: 260,
-                            render: (value: string, row) => (
+                            title: "活动月份 / 内容渠道",
+                            width: 190,
+                            render: (_value: string, row) => (
                               <div className={styles.previewWrap}>
-                                <div title={value || row.importedCampaignName}>
-                                  {value || row.importedCampaignName || "-"}
+                                <div title={row.campaignName || row.importedCampaignName}>
+                                  {row.importedActivityMonth || row.month || "-"}
+                                  <Tag>{row.contentChannel === "DOUYIN" ? "抖音" : "小红书"}</Tag>
                                 </div>
                                 <Tag color={row.campaignMatchStatus === "MATCHED" ? "green" : "red"}>
                                   {row.campaignMatchStatus === "MATCHED" ? "已匹配" : "匹配异常"}
@@ -2249,7 +2255,7 @@ export default function TasksPage() {
                             ),
                           },
                           {
-                            title: "活动月份 / 周期",
+                            title: "活动周期",
                             width: 220,
                             render: (_value, row) => (
                               <span className={styles.previewWrap}>

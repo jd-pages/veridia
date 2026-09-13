@@ -7,6 +7,7 @@ import {
   withDuplicateReauditMetadata,
 } from "@/lib/import-task-metadata";
 import { inferDanoneAgencyProductStage } from "@/lib/import-template-type";
+import { normalizeDanoneStageSegmentInput } from "@/lib/product-stage";
 import { createMockNote } from "@/lib/mock-data";
 import { processingFailurePageFacts } from "@/lib/processing-failure";
 import {
@@ -135,7 +136,15 @@ describe("Protected business invariants", () => {
     expect(duplicateReauditMetadataFromNotes(serialized)).toBeNull();
   });
 
-  it("Danone 阶段 IFFO/GUM 与段位语义不能反向交换", () => {
+  it("Danone 阶段/段位仅在两个值域明确反向时自动纠正", () => {
+    expect(normalizeDanoneStageSegmentInput({ stage: "2段", segment: "IFFO" }))
+      .toMatchObject({
+        status: "NORMALIZED_STAGE_SEGMENT_SWAP",
+        stage: "IFFO",
+        segment: "2段",
+      });
+    expect(normalizeDanoneStageSegmentInput({ stage: "IFFO", segment: "GUM" }).status)
+      .toBe("INVALID_STAGE_SEGMENT");
     expect(inferDanoneAgencyProductStage("澳白2段")).toMatchObject({
       normalizedProductName: "澳白",
       inferredStage: "2段",

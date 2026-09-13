@@ -24,10 +24,12 @@ const customerHeaders = [
   "内容渠道（必填）",
   "链接（必填）",
   "发布时间（必填）",
-  "活动名称（必填）",
+  "活动月份（必填）",
 ];
 
-const agencyHeaders = customerHeaders.filter((header) => header !== "段位（必填）");
+const agencyHeaders = customerHeaders
+  .filter((header) => header !== "段位（必填）")
+  .map((header) => header === "活动月份（必填）" ? "活动名称（必填）" : header);
 
 const templateBytes = new Map<string, Promise<ExcelJS.Buffer>>();
 
@@ -49,7 +51,7 @@ async function customerDownloadWorkbook() {
 }
 
 describe("达能客户与代发 Excel 模板", () => {
-  it("下载生成器只生成达能客户表头、模板元数据并把活动名称放在最后", async () => {
+  it("下载生成器只生成达能客户表头、模板元数据并把活动月份放在最后", async () => {
     const customer = await customerDownloadWorkbook();
 
     expect((customer.workbook.worksheets[0].getRow(1).values as unknown[]).slice(1)).toEqual(
@@ -59,7 +61,7 @@ describe("达能客户与代发 Excel 模板", () => {
     expect(customer.workbook.getWorksheet("VERIDIA模板信息")?.getCell("B1").text).toBe(
       "DANONE_CUSTOMER",
     );
-    expect(DANONE_CUSTOMER_IMPORT_FIELDS.at(-1)).toBe("activityName");
+    expect(DANONE_CUSTOMER_IMPORT_FIELDS.at(-1)).toBe("activityMonth");
     expect(DANONE_AGENCY_IMPORT_FIELDS.at(-1)).toBe("activityName");
   });
 
@@ -82,7 +84,7 @@ describe("达能客户与代发 Excel 模板", () => {
     const customerBytes = await compactWorkbook(
       "DANONE_CUSTOMER",
       customerHeaders,
-      ["京东", "店铺", "客户", "澳白", "2段", "IFFO", "订单", "小红书", "https://xhslink.com/a", "2026-08-01", "达能2026年8月小红书种草审核"],
+      ["京东", "店铺", "客户", "澳白", "2段", "IFFO", "订单", "小红书", "https://xhslink.com/a", "2026-08-01", "8月"],
     );
     const agencyBytes = await compactWorkbook(
       "DANONE_AGENCY",

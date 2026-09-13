@@ -152,6 +152,8 @@ export interface TabularPreviewRow {
   templateBrand?: ImportTemplateBrand;
   templateType?: import("@/lib/import-template-type").ImportTemplateType;
   activityNameColumnPresent?: boolean;
+  activityMonthColumnPresent?: boolean;
+  activityInputMode?: "ACTIVITY_MONTH" | "LEGACY_ACTIVITY_NAME" | "LEGACY_AUTO_RESOLVE";
   rowNumber: number;
   values: Partial<Record<StandardField, string>>;
   rawValues?: Partial<Record<StandardField, string>>;

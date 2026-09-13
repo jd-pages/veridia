@@ -298,7 +298,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "内容渠道",
     "链接",
     "发布时间",
-    "活动名称",
+    "活动月份",
     "自审",
   ]);
   const exportSheet = exportWorkbook.worksheets[0];
@@ -391,12 +391,13 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "内容渠道（必填）",
     "链接（必填）",
     "发布时间（必填）",
-    "活动名称（必填）",
+    "活动月份（必填）",
   ]);
   expect(noteTemplateWorkbook.worksheets.filter((sheet) => sheet.state === "visible").map((sheet) => sheet.name)).toEqual([
     "达能客户导入",
     "佳贝艾特客户导入",
-    "惠氏／雀巢客户导入",
+    "惠氏客户导入",
+    "雀巢客户导入",
   ]);
   const downloadedTemplateSheet = noteTemplateWorkbook.worksheets[0];
   for (let index = 0; index < 9; index += 1) {
@@ -411,7 +412,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       "小红书",
       `${E2E_ORIGIN}/mock/xhs?case=passed&preview-layout=${suffix}-${index}`,
       `${campaign.month}-03 12:00:00`,
-      campaign.name,
+      index === 0 ? `${Number(campaign.month.slice(-2))}月` : "",
     ];
   }
   await page.locator('input[type="file"]').setInputFiles({
@@ -456,11 +457,11 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     buffer: Buffer.from(await noteTemplateWorkbook.xlsx.writeBuffer()),
   });
   await page.getByRole("button", { name: "开始预检查" }).click();
-  await expect(page.getByText("可导入 8 条，异常 1 条")).toBeVisible();
-  await expect(page.getByText("当前仅显示异常记录，共 1 条。")).toBeVisible();
+  await expect(page.getByText("可导入 0 条，异常 9 条")).toBeVisible();
+  await expect(page.getByText("当前仅显示异常记录，共 9 条。")).toBeVisible();
   const errorPreviewTable = page.locator(".ant-table").last();
-  await expect(errorPreviewTable.locator('tbody tr[data-row-key]')).toHaveCount(1);
-  await expect(errorPreviewTable).toContainText("活动名称为空，且没有可继承的上方活动");
+  await expect(errorPreviewTable.locator('tbody tr[data-row-key]')).toHaveCount(9);
+  await expect(errorPreviewTable).toContainText("当前工作表存在业务数据，但未填写活动月份。");
   await page.getByRole("button", { name: "查看全部记录" }).click();
   await expect(errorPreviewTable.locator('tbody tr[data-row-key]')).toHaveCount(9);
 
@@ -482,7 +483,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "小红书",
     `${E2E_ORIGIN}/mock/xhs?case=passed&minimal-template=${suffix}`,
     `${campaign.month}-03 12:00:00`,
-    campaign.name,
+    `${Number(campaign.month.slice(-2))}月`,
   ];
   const minimalTemplateImport = await page.request.post("/api/import/notes", {
     multipart: {
@@ -618,8 +619,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   expect(importPreview.validCount).toBe(4);
   expect(importPreview.invalidCount).toBe(0);
   expect(importPreview.unknownHeaders).toEqual(
-    expect.arrayContaining(["产品编码", "活动月份", "备注"]),
+    expect.arrayContaining(["产品编码", "备注"]),
   );
+  expect(importPreview.unknownHeaders).not.toContain("活动月份");
   expect(importPreview.unknownHeaders).not.toContain("内容渠道");
   expect(importPreview.rows[0].url).toContain("case=no-images");
   expect(importPreview.rows[0].originalLinkContent).toContain("标题 +");
@@ -1390,7 +1392,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       "内容渠道",
       "链接",
       "发帖时间",
-      "活动名称",
+      "活动月份（必填）",
       "自审",
     ].join(","),
   );
@@ -1738,12 +1740,12 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     "小红书",
     duplicateUrl,
     `${campaign.month}-15 12:00:00`,
-    campaign.name,
+    `${Number(campaign.month.slice(-2))}月`,
   ];
   const initialExcel = Buffer.from(await workbook.xlsx.writeBuffer());
   workbook.worksheets[0].getRow(2).getCell(10).value =
     `${currentCampaign.month}-15 12:00:00`;
-  workbook.worksheets[0].getRow(2).getCell(11).value = currentCampaign.name;
+  workbook.worksheets[0].getRow(2).getCell(11).value = `${Number(currentCampaign.month.slice(-2))}月`;
   const excel = Buffer.from(await workbook.xlsx.writeBuffer());
   const multipart = (
     commit: boolean,
@@ -1853,7 +1855,7 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     "小红书",
     duplicateUrl,
     "2026-08-15 12:00:00",
-    currentCampaign.name,
+    `${Number(currentCampaign.month.slice(-2))}月`,
   ];
   const repeatedExcel = Buffer.from(await repeatedWorkbook.xlsx.writeBuffer());
   const repeatedResponse = await page.request.post("/api/import/notes", {
@@ -1898,7 +1900,7 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     expect(invalid.invalidCount).toBe(1);
     expect(invalid.duplicateWarningCount).toBe(1);
     expect(invalid.rows[0].errors).toContain(
-      "达能客户导入 第 2 行：活动名称为空，且没有可继承的上方活动",
+      "达能客户导入 第 2 行：当前工作表存在业务数据，但未填写活动月份。",
     );
     expect(invalid.rows[0].duplicateWarning.identity).toBe(identity);
   }
@@ -2181,7 +2183,7 @@ test("重复历史批量查询在 10 到 1000 行保持固定查询形态", asyn
           ? historicalUrl
           : `${E2E_ORIGIN}/mock/xhs?case=passed&dedup-perf=${suffix}-${rowCount}-${index}`,
         `${campaign.month}-15 12:00:00`,
-        campaign.name,
+        `${Number(campaign.month.slice(-2))}月`,
       ];
     }
     return Buffer.from(await workbook.xlsx.writeBuffer());

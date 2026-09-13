@@ -21,7 +21,7 @@ export const WYETH_NESTLE_FIELDS = [
   "contentChannel",
   "noteUrl",
   "publishTime",
-  "activityName",
+  "activityMonth",
   "customerServiceComment",
   "selfReview",
   "interactionAtLeastTen",
@@ -45,7 +45,7 @@ export const WYETH_NESTLE_FIELD_DEFINITIONS: Record<
   contentChannel: { displayName: "内容渠道（必填）", type: "string", description: "小红书或抖音" },
   noteUrl: { displayName: "链接（必填）纯链接", type: "url", description: "作品纯链接；超链接单元格读取实际目标地址" },
   publishTime: { displayName: "发帖时间（必填）", type: "datetime", description: "用于确定当前适用活动" },
-  activityName: { displayName: "活动名称（必填）", type: "string", description: "同一活动连续填写时，后续空白行继承最近上方活动" },
+  activityMonth: { displayName: "活动月份（必填）", type: "string", description: "当前工作表统一月份，只需填写一次，例如 9月" },
   customerServiceComment: { displayName: "客服修改留言", type: "string", description: "格式：日期-已留言/已修改" },
   selfReview: { displayName: "内部自审", type: "string", description: "由 VERIDIA 审核后重新生成" },
   interactionAtLeastTen: { displayName: "互动量≥10", type: "string", description: "由 VERIDIA 根据正式互动合计重新生成" },
@@ -64,6 +64,16 @@ export function isWyethNestleTemplateHeader(headers: readonly string[]) {
     .every((header) => normalized.has(header));
 }
 
+export function expectedBrandForTemplateType(
+  templateType: "WYETH" | "NESTLE" | "WYETH_NESTLE",
+) {
+  return templateType === "WYETH"
+    ? WYETH_BRAND_NAME
+    : templateType === "NESTLE"
+      ? NESTLE_BRAND_NAME
+      : null;
+}
+
 type ProductOptionSource = {
   id: string;
   name: string;
@@ -73,9 +83,12 @@ type ProductOptionSource = {
 
 export function buildWyethNestleProductOptions<T extends ProductOptionSource>(
   products: readonly T[],
+  expectedBrand?: typeof WYETH_BRAND_NAME | typeof NESTLE_BRAND_NAME | null,
 ) {
   const supported = products.filter((product) =>
-    (WYETH_NESTLE_BRANDS as readonly string[]).includes(product.brandName.trim()),
+    expectedBrand
+      ? product.brandName.trim() === expectedBrand
+      : (WYETH_NESTLE_BRANDS as readonly string[]).includes(product.brandName.trim()),
   );
   const counts = new Map<string, number>();
   for (const product of supported) {

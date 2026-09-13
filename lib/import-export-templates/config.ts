@@ -14,7 +14,7 @@ export const RESULT_EXPORT_FIELDS: StandardField[] = [
   "contentChannel",
   "originalUrl",
   "publishTime",
-  "activityName",
+  "activityMonth",
   "selfReview",
 ];
 
@@ -29,14 +29,14 @@ export const IMPORT_TEMPLATE_FIELDS: StandardField[] = [
   "contentChannel",
   "noteUrl",
   "publishTime",
-  "activityName",
+  "activityMonth",
 ];
 
 function normalizeBusinessTemplates(
   templates: ImportExportTemplates,
 ): ImportExportTemplates {
   const output = structuredClone(templates);
-  output.templateVersion = "template-2026.09.13.1";
+  output.templateVersion = "template-2026.09.13.2";
   output.fieldDefinitions.failedReasons = {
     displayName: "失败原因",
     type: "stringList",
@@ -90,7 +90,7 @@ function normalizeBusinessTemplates(
   output.fieldDefinitions.contentChannel = {
     displayName: "内容渠道",
     type: "string",
-    description: "填写小红书或抖音，必须与所选审核活动及链接平台一致",
+    description: "填写小红书或抖音，系统按产品、活动月份和该渠道匹配正式活动",
   };
   output.fieldDefinitions.noteUrl = {
     displayName: "链接（必填）",
@@ -142,6 +142,12 @@ function normalizeBusinessTemplates(
     displayName: "自审",
     type: "string",
     description: "供客服或运营人工筛选和调整",
+  };
+  output.fieldDefinitions.activityMonth = {
+    displayName: "活动月份（必填）",
+    type: "string",
+    description:
+      "当前工作表统一月份，只需填写一次，例如 9月；系统按产品和内容渠道自动匹配正式活动",
   };
   for (const [field, definition] of Object.entries(
     WYETH_NESTLE_FIELD_DEFINITIONS,
@@ -227,6 +233,11 @@ function normalizeBusinessTemplates(
     ]),
   ];
   output.fieldAliases.activityName = ["活动名称（必填）", "活动名称"];
+  output.fieldAliases.activityMonth = [
+    "活动月份（必填）",
+    "活动月份",
+    "activityMonth",
+  ];
   output.fieldAliases.registrant = ["登记人（必填）", "登记人"];
   output.fieldAliases.wechatNickname = ["微信昵称（必填）", "微信昵称"];
   output.fieldAliases.customerServiceComment = [
@@ -245,6 +256,7 @@ function normalizeBusinessTemplates(
   output.examples.noteUrl = "https://xhslink.com/示例短链";
   output.examples.publishTime = "2026-08-03 12:00:00";
   output.examples.activityName = "";
+  output.examples.activityMonth = "9月";
   output.requiredFields = [
     "shopName",
     "customerName",
@@ -252,7 +264,7 @@ function normalizeBusinessTemplates(
     "productName",
     "productStage",
     "publishTime",
-    "activityName",
+    "activityMonth",
   ];
   output.optionalFields = [
     ...new Set([

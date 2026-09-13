@@ -28,7 +28,7 @@
 
 ## TEMPLATE_ISOLATION_ALL
 
-- [ ] Danone 模板：阶段 IFFO/GUM，段位 P/1/2/3/4/1+/2+，反向输入失败
+- [ ] Danone 模板：阶段 IFFO/GUM，段位 P/1/2/3/4/1+/2+；明确反向输入自动纠正，同值域/未知/缺值失败
 - [ ] Kabrita 模板：仍按独立格式解析，不受 Danone 语义影响
 
 ## AUTOMATION_RUNNER_LIFECYCLE_ALL

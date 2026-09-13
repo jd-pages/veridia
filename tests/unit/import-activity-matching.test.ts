@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  normalizeImportedActivityMonth,
   resolveImplicitImportedActivity,
   resolveImportedActivity,
+  resolveImportedActivityMonth,
 } from "@/lib/import-activity-matching";
 
 const campaign = {
@@ -135,5 +137,80 @@ describe("导入活动精确匹配", () => {
       publishTime: "2026-08-31 23:59:59",
       candidates: [campaign],
     })).toMatchObject({ status: "MATCHED", campaign: { id: campaign.id } });
+  });
+});
+
+describe("活动月份解析与自动匹配", () => {
+  it.each([
+    ["1月", 1, null, "1月"],
+    ["09月", 9, null, "9月"],
+    ["9", 9, null, "9月"],
+    ["09", 9, null, "9月"],
+    ["2026-09", 9, 2026, "2026-09"],
+    ["2026/9", 9, 2026, "2026-09"],
+  ])("标准化 %s", (value, month, year, display) => {
+    expect(normalizeImportedActivityMonth(value)).toMatchObject({ month, year, display });
+  });
+
+  it("按产品、品牌、月份和内容渠道分别解析小红书与抖音活动", () => {
+    const xhs = { ...campaign, year: 2026, brandNames: ["达能"] };
+    const douyin = {
+      ...xhs,
+      id: "campaign-aug-douyin",
+      name: "达能2026年8月抖音种草审核",
+      contentChannel: "DOUYIN",
+    };
+    expect(resolveImportedActivityMonth({
+      activityMonth: "08月",
+      expectedBrand: "达能",
+      productId: "product-danone",
+      contentChannel: "XIAOHONGSHU",
+      publishTime: "2026-08-12",
+      candidates: [xhs, douyin],
+    })).toMatchObject({ status: "MATCHED", campaign: { id: xhs.id } });
+    expect(resolveImportedActivityMonth({
+      activityMonth: "8",
+      expectedBrand: "达能",
+      productId: "product-danone",
+      contentChannel: "DOUYIN",
+      publishTime: "2026-08-12",
+      candidates: [xhs, douyin],
+    })).toMatchObject({ status: "MATCHED", campaign: { id: douyin.id } });
+  });
+
+  it("区分未找到、同年重复与跨年歧义", () => {
+    const current = { ...campaign, year: 2026, brandNames: ["达能"] };
+    expect(resolveImportedActivityMonth({
+      activityMonth: "9月",
+      expectedBrand: "达能",
+      productId: "product-danone",
+      candidates: [current],
+    }).status).toBe("ACTIVITY_NOT_FOUND");
+    expect(resolveImportedActivityMonth({
+      activityMonth: "8月",
+      expectedBrand: "达能",
+      productId: "product-danone",
+      candidates: [current, { ...current, id: "same-year" }],
+    }).status).toBe("ACTIVITY_AMBIGUOUS");
+    const nextYear = {
+      ...current,
+      id: "campaign-2027",
+      year: 2027,
+      month: "2027-08",
+      startDate: new Date("2027-08-01T00:00:00.000Z"),
+      endDate: new Date("2027-08-31T23:59:59.999Z"),
+    };
+    expect(resolveImportedActivityMonth({
+      activityMonth: "8月",
+      expectedBrand: "达能",
+      productId: "product-danone",
+      candidates: [current, nextYear],
+    }).status).toBe("ACTIVITY_YEAR_AMBIGUOUS");
+    expect(resolveImportedActivityMonth({
+      activityMonth: "2027-08",
+      expectedBrand: "达能",
+      productId: "product-danone",
+      candidates: [current, nextYear],
+    })).toMatchObject({ status: "MATCHED", campaign: { id: nextYear.id } });
   });
 });

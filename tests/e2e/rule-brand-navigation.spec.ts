@@ -156,7 +156,10 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
     has: page.getByText("#爱他美奇迹绿罐", { exact: true }),
   });
   await expect(greenRow).toContainText("爱他美奇迹绿罐");
-  await expect(greenRow).toContainText("爱他美2026年8月小红书种草审核");
+  await expect(greenRow).toContainText("2026年8月 · 小红书");
+  await expect(
+    greenRow.getByTitle("爱他美2026年8月小红书种草审核"),
+  ).toBeVisible();
   await page.locator(".ant-segmented").getByText("活动规则", { exact: true }).click();
   await expect(page.getByText("#爱他美新手爸妈日记")).toHaveCount(0);
   await expect(page.getByText("阶段通用话题", { exact: true })).toHaveCount(0);
@@ -315,7 +318,8 @@ test("惠氏按产品进入启赋未来规则并可新增、编辑回显", async
       has: page.getByText(createdTopic, { exact: true }),
     });
     await expect(createdRow).toContainText("启赋未来");
-    await expect(createdRow).toContainText(fixtureCampaign.name);
+    await expect(createdRow).toContainText("2026年9月 · 小红书");
+    await expect(createdRow.getByTitle(fixtureCampaign.name)).toBeVisible();
     await createdRow.getByRole("button", { name: "编辑" }).click();
     const editDialog = page.getByRole("dialog", { name: "编辑话题规则" });
     const editProductField = editDialog.locator(".ant-form-item").filter({
@@ -510,7 +514,7 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
     has: page.getByText("#佳贝艾特荷兰版", { exact: true }),
   });
   await expect(netherlandsRow).toContainText("佳贝艾特荷兰版");
-  await expect(netherlandsRow).toContainText("佳贝艾特2026年8月小红书种草审核");
+  await expect(netherlandsRow).toContainText("2026年8月 · 小红书");
   await page.locator(".ant-segmented").getByText("活动规则", { exact: true }).click();
   await expect(page.getByText("#佳贝艾特荷兰版", { exact: true })).toHaveCount(0);
   await expect(page.getByText("#佳贝艾特港版", { exact: true })).toHaveCount(0);
@@ -535,11 +539,10 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
   await expect(page.getByText("#爱他美新手爸妈日记")).toHaveCount(0);
 
   await page.goto("/campaigns");
-  const campaignRow = page.locator(".ant-table-row").filter({
-    has: page.getByText("佳贝艾特2026年8月小红书种草审核", {
-      exact: true,
-    }),
-  });
+  const campaignRow = page.locator(".ant-table-row")
+    .filter({ hasText: "2026年8月" })
+    .filter({ hasText: "小红书" })
+    .filter({ hasText: "佳贝艾特荷兰版" });
   await campaignRow.getByRole("button", { name: "查看规则" }).click();
   const detailDrawer = page.locator(".ant-drawer-content");
   await expect(detailDrawer).toContainText("佳贝艾特荷兰版");

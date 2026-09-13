@@ -836,11 +836,15 @@ export default function RulesPage() {
               render: (value: string) => ruleTypeLabels[value] || value,
             },
             {
-              title: "所属活动",
+              title: "活动月份 / 渠道",
               width: 200,
-              render: (_value, row) =>
-                row.campaign?.name ||
-                (row.scope === "PRODUCT" ? <Tag color="orange">待绑定活动</Tag> : "-"),
+              render: (_value, row) => row.campaign ? (
+                <Typography.Text title={row.campaign.name}>
+                  {monthLabel(row.campaign.month)} · {row.campaign.contentChannel === "DOUYIN" ? "抖音" : "小红书"}
+                </Typography.Text>
+              ) : row.scope === "PRODUCT" ? (
+                <Tag color="orange">待绑定活动</Tag>
+              ) : "-",
             },
             {
               title: "所属产品",
@@ -1055,7 +1059,8 @@ export default function RulesPage() {
               <Select
                 options={brandCampaigns.map((campaign) => ({
                   value: campaign.id,
-                  label: `${monthLabel(campaign.month)} · ${campaign.name}`,
+                  label: `${monthLabel(campaign.month)} · ${campaign.contentChannel === "DOUYIN" ? "抖音" : "小红书"}`,
+                  title: campaign.name,
                 }))}
               />
             </Form.Item>

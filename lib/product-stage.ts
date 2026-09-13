@@ -254,6 +254,89 @@ export function normalizeImportedProductStageTopicValue(
   return LEGACY_GROUP_LABELS[compact] || null;
 }
 
+export interface DanoneStageSegmentNormalization {
+  status:
+    | "MATCHED"
+    | "NORMALIZED_STAGE_SEGMENT_SWAP"
+    | "MISSING_STAGE"
+    | "MISSING_SEGMENT"
+    | "INVALID_STAGE_SEGMENT";
+  rawStage: string;
+  rawSegment: string;
+  stage: ProductStageTopicValue | null;
+  segment: CanonicalProductStage | null;
+  detailedStage: DetailedProductStageValue | null;
+  error: string;
+}
+
+export function normalizeDanoneStageSegmentInput(input: {
+  stage: unknown;
+  segment: unknown;
+}): DanoneStageSegmentNormalization {
+  const rawStage = String(input.stage ?? "").trim();
+  const rawSegment = String(input.segment ?? "").trim();
+  const stageAsGroup = normalizeImportedProductStageTopicValue(rawStage);
+  const stageAsSegment = normalizeProductStage(rawStage);
+  const segmentAsGroup = normalizeImportedProductStageTopicValue(rawSegment);
+  const segmentAsSegment = normalizeProductStage(rawSegment);
+  const result = (
+    status: DanoneStageSegmentNormalization["status"],
+    stage: ProductStageTopicValue | null,
+    segment: CanonicalProductStage | null,
+    error = "",
+  ): DanoneStageSegmentNormalization => ({
+    status,
+    rawStage,
+    rawSegment,
+    stage,
+    segment,
+    detailedStage: segment ? normalizeDetailedProductStageValue(segment) : null,
+    error,
+  });
+
+  if (!rawStage && !rawSegment) {
+    return result("MISSING_STAGE", null, null, "阶段和段位不能为空");
+  }
+  if (!rawStage) {
+    return result("MISSING_STAGE", null, segmentAsSegment, "阶段不能为空");
+  }
+  if (!rawSegment) {
+    return result("MISSING_SEGMENT", stageAsGroup, null, "段位不能为空");
+  }
+  if (stageAsGroup && segmentAsSegment) {
+    return result("MATCHED", stageAsGroup, segmentAsSegment);
+  }
+  if (stageAsSegment && segmentAsGroup) {
+    return result(
+      "NORMALIZED_STAGE_SEGMENT_SWAP",
+      segmentAsGroup,
+      stageAsSegment,
+    );
+  }
+  if (stageAsGroup && segmentAsGroup) {
+    return result(
+      "INVALID_STAGE_SEGMENT",
+      null,
+      null,
+      "阶段和段位均被识别为阶段组，无法唯一纠正",
+    );
+  }
+  if (stageAsSegment && segmentAsSegment) {
+    return result(
+      "INVALID_STAGE_SEGMENT",
+      null,
+      null,
+      "阶段和段位均被识别为具体段位，无法唯一纠正",
+    );
+  }
+  return result(
+    "INVALID_STAGE_SEGMENT",
+    null,
+    null,
+    "阶段或段位存在无法识别的值",
+  );
+}
+
 export function normalizeProductStageTopicValue(
   value: string | null | undefined,
 ): ProductStageTopicValue | null {

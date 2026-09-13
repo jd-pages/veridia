@@ -18,7 +18,7 @@ const resultExportHeaders = [
   "内容渠道",
   "链接",
   "发布时间",
-  "活动名称",
+  "活动月份",
   "自审",
 ];
 
@@ -35,7 +35,7 @@ const kabritaResultExportHeaders = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
-  "活动名称",
+  "活动月份",
   "自审",
 ];
 

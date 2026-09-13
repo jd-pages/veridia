@@ -98,6 +98,11 @@ interface ImportMetadata {
   endDate: string;
 }
 
+function monthLabel(value: string) {
+  const matched = /^(\d{4})-(\d{2})$/u.exec(value.trim());
+  return matched ? `${matched[1]}年${Number(matched[2])}月` : value;
+}
+
 interface ImportPreview {
   sourceFormat: "RAW_CAMPAIGN" | "STANDARD_TEMPLATE";
   campaign: {
@@ -313,14 +318,18 @@ export default function CampaignsPage() {
           scroll={{ x: 980 }}
           columns={[
             {
-              title: "活动名称",
-              dataIndex: "name",
-              width: 150,
+              title: "活动月份 / 渠道",
+              width: 160,
               fixed: "left",
-              ellipsis: { showTitle: false },
-              render: (value: string) => <Tooltip title={value}><strong>{value}</strong></Tooltip>,
+              render: (_value, row) => (
+                <Tooltip title={row.name}>
+                  <Space size={4}>
+                    <strong>{monthLabel(row.month)}</strong>
+                    <Tag>{row.contentChannel === "DOUYIN" ? "抖音" : "小红书"}</Tag>
+                  </Space>
+                </Tooltip>
+              ),
             },
-            { title: "月份", dataIndex: "month", width: 80 },
             {
               title: "产品系列",
               width: 140,

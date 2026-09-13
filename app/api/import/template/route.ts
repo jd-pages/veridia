@@ -36,7 +36,7 @@ export async function GET(request: Request) {
     prisma.campaign.findMany({
       where: { status: "ACTIVE", deletedAt: null },
       orderBy: [{ startDate: "desc" }, { name: "asc" }],
-      select: { name: true, contentChannel: true },
+      select: { name: true, month: true, year: true, contentChannel: true },
     }),
     prisma.product.findMany({
       where: {
@@ -50,6 +50,8 @@ export async function GET(request: Request) {
   ]);
   const normalizedActivities = activities.map((campaign) => ({
       name: campaign.name,
+      month: campaign.month,
+      year: campaign.year,
       contentChannel: campaign.contentChannel === "DOUYIN"
         ? "DOUYIN" as const
         : "XIAOHONGSHU" as const,

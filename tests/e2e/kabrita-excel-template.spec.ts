@@ -21,13 +21,13 @@ const importHeaders = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
-  "活动名称（必填）",
+  "活动月份（必填）",
   "是否符合",
 ];
 
 const exportHeaders = importHeaders;
 const legacyImportHeaders = importHeaders.filter(
-  (header) => header !== "活动名称（必填）",
+  (header) => header !== "活动月份（必填）",
 );
 
 const kabritaStoreAliases = [
@@ -149,7 +149,7 @@ test("佳贝艾特13行多平台显式店铺 Alias 预检全部命中 Canonical"
   ).toEqual([]);
 });
 
-test("佳贝艾特14列导入模板下载、活动继承和六种购买产品线预检", async ({
+test("佳贝艾特14列导入模板下载、Sheet 月份应用和六种购买产品线预检", async ({
   page,
 }) => {
   const login = await page.request.post("/api/auth/login", {
@@ -195,7 +195,7 @@ test("佳贝艾特14列导入模板下载、活动继承和六种购买产品线
       "",
       `标题 ${E2E_ORIGIN}/mock/xhs?case=passed&kabrita=${index + 1}`,
       productLine,
-      index === 0 ? "佳贝艾特2026年8月小红书种草审核" : "",
+      index === 0 ? "8月" : "",
       "",
     ]);
   });
@@ -490,7 +490,7 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
     expect(
       (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
     ).toEqual(exportHeaders);
-    expect(workbook.worksheets[0].getCell("M2").text).toBe(campaign.name);
+    expect(workbook.worksheets[0].getCell("M2").text).toBe("8月");
     expect(workbook.worksheets[0].getCell("N2").text).toBe(expected);
   }
 

@@ -17,7 +17,7 @@ export const KABRITA_IMPORT_FIELDS = [
   "xiaohongshuAccount",
   "xiaohongshuPublishLink",
   "purchaseProductLine",
-  "activityName",
+  "activityMonth",
   "complianceResult",
 ] as const satisfies readonly StandardField[];
 
@@ -104,10 +104,10 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
     type: "string",
     description: "用于匹配佳贝艾特荷兰版或港版产品",
   },
-  activityName: {
-    displayName: "活动名称（必填）",
+  activityMonth: {
+    displayName: "活动月份（必填）",
     type: "string",
-    description: "同一活动连续填写时，后续空白行继承最近上方活动",
+    description: "当前工作表统一月份，只需填写一次，例如 9月",
   },
   selfReview: {
     displayName: "自审",
@@ -134,7 +134,7 @@ export const KABRITA_TEMPLATE_EXAMPLES: KabritaRawValues = {
   xiaohongshuAccount: "示例账号",
   xiaohongshuPublishLink: "https://xhslink.com/示例短链",
   purchaseProductLine: "荷兰佳贝1",
-  activityName: "",
+  activityMonth: "",
   complianceResult: "",
 };
 
@@ -147,6 +147,8 @@ const KABRITA_ALL_HEADERS = [
   ...KABRITA_IMPORT_FIELDS.map(
     (field) => normalizeTemplateHeader(KABRITA_FIELD_DEFINITIONS[field].displayName),
   ),
+  normalizeTemplateHeader("活动月份"),
+  normalizeTemplateHeader("活动月份（必填）"),
   normalizeTemplateHeader("活动名称（必填）"),
   normalizeTemplateHeader("活动名称"),
 ];

@@ -21,6 +21,7 @@ import {
   DANONE_AGENCY_IMPORT_FIELDS,
   DANONE_CUSTOMER_IMPORT_FIELDS,
   UNIFIED_IMPORT_SHEETS,
+  WYETH_NESTLE_LEGACY_SHEET_NAMES,
   isImportTemplateType,
   type ImportTemplateType,
 } from "@/lib/import-template-type";
@@ -31,6 +32,7 @@ import {
   isWyethNestleTemplateHeader,
   wyethNestleDisplayName,
 } from "./wyeth-nestle";
+import { normalizeImportedActivityMonth } from "@/lib/import-activity-matching";
 
 type Matrix = string[][];
 type ParsedMatrix = {
@@ -40,6 +42,7 @@ type ParsedMatrix = {
   sourceRowNumbers?: number[];
   meaningfulRowNumbers?: number[];
   templateType?: ImportTemplateType;
+  templateVersion?: string;
   performance: {
     excelParseMs: number;
     worksheetParseMs: number;
@@ -144,6 +147,7 @@ async function xlsxMatrices(
   const excelParseMs = performance.now() - excelParseStarted;
   const metadata = workbook.getWorksheet("VERIDIA模板信息");
   const metadataType = metadata?.getCell("B1").text.trim();
+  const templateVersion = metadata?.getCell("B2").text.trim() || undefined;
   const metadataTypes = new Map<string, ImportTemplateType>();
   metadata?.eachRow((row, rowNumber) => {
     if (rowNumber < 5) return;
@@ -152,23 +156,37 @@ async function xlsxMatrices(
     if (sheetName && isImportTemplateType(type)) metadataTypes.set(sheetName, type);
   });
   const declaredUnified = metadataType === "UNIFIED";
-  const resolvedUnifiedSheets = UNIFIED_IMPORT_SHEETS.map((definition) => {
-    const matches = [definition.sheetName, ...definition.aliases]
-      .map((name) => workbook.getWorksheet(name))
-      .filter((sheet): sheet is ExcelJS.Worksheet => Boolean(sheet));
-    if (matches.length > 1) {
-      throw new Error(
-        `统一模板业务工作表重复：${matches.map((sheet) => sheet.name).join("、")}`,
-      );
-    }
-    return { ...definition, sheet: matches[0] };
-  });
-  const unified = declaredUnified ||
-    resolvedUnifiedSheets.every(({ sheet }) => Boolean(sheet));
+  const resolvedUnifiedSheets = UNIFIED_IMPORT_SHEETS.map((definition) => ({
+    ...definition,
+    sheet: workbook.getWorksheet(definition.sheetName),
+  }));
+  const legacySharedMatches = WYETH_NESTLE_LEGACY_SHEET_NAMES
+    .map((name) => workbook.getWorksheet(name))
+    .filter((sheet): sheet is ExcelJS.Worksheet => Boolean(sheet));
+  if (legacySharedMatches.length > 1) {
+    throw new Error(
+      `统一模板业务工作表重复：${legacySharedMatches.map((sheet) => sheet.name).join("、")}`,
+    );
+  }
+  const splitBrandSheetCount = resolvedUnifiedSheets
+    .slice(2)
+    .filter(({ sheet }) => Boolean(sheet)).length;
+  if (legacySharedMatches.length && splitBrandSheetCount) {
+    throw new Error("统一模板同时包含新版惠氏/雀巢独立工作表和旧版共享工作表");
+  }
+  const canonicalUnified = resolvedUnifiedSheets.every(({ sheet }) => Boolean(sheet));
+  const legacyUnified = Boolean(
+    resolvedUnifiedSheets[0]?.sheet &&
+    resolvedUnifiedSheets[1]?.sheet &&
+    legacySharedMatches[0],
+  );
+  const unified = declaredUnified || canonicalUnified || legacyUnified;
   if (declaredUnified) {
-    const missingSheets = resolvedUnifiedSheets
-      .filter(({ sheet }) => !sheet)
-      .map(({ sheetName }) => sheetName);
+    const missingSheets = canonicalUnified || legacyUnified
+      ? []
+      : resolvedUnifiedSheets
+        .filter(({ sheet }) => !sheet)
+        .map(({ sheetName }) => sheetName);
     if (missingSheets.length) {
       throw new Error(`统一模板缺少业务工作表：${missingSheets.join("、")}`);
     }
@@ -179,6 +197,7 @@ async function xlsxMatrices(
         sheetName,
         ...aliases,
       ]),
+      ...WYETH_NESTLE_LEGACY_SHEET_NAMES,
       "活动列表",
       "产品列表",
       "填写说明",
@@ -194,13 +213,30 @@ async function xlsxMatrices(
     }
   }
   const selectedSheets = unified
-    ? resolvedUnifiedSheets.map(({ sheetName, sheet, templateType }) => ({
+    ? (canonicalUnified
+      ? resolvedUnifiedSheets.map(({ sheetName, sheet, templateType }) => ({
         sheet,
         templateType:
           (sheet && metadataTypes.get(sheet.name)) ||
           metadataTypes.get(sheetName) ||
           templateType,
-      })).filter((entry): entry is { sheet: ExcelJS.Worksheet; templateType: ImportTemplateType } => Boolean(entry.sheet))
+      }))
+      : [
+          ...resolvedUnifiedSheets.slice(0, 2).map(({ sheetName, sheet, templateType }) => ({
+            sheet,
+            templateType:
+              (sheet && metadataTypes.get(sheet.name)) ||
+              metadataTypes.get(sheetName) ||
+              templateType,
+          })),
+          {
+            sheet: legacySharedMatches[0],
+            templateType:
+              (legacySharedMatches[0] && metadataTypes.get(legacySharedMatches[0].name)) ||
+              "WYETH_NESTLE" as const,
+          },
+        ]
+      ).filter((entry): entry is { sheet: ExcelJS.Worksheet; templateType: ImportTemplateType } => Boolean(entry.sheet))
     : workbook.worksheets.length
       ? [{
           sheet: workbook.worksheets[0],
@@ -243,6 +279,7 @@ async function xlsxMatrices(
       sourceRowNumbers,
       meaningfulRowNumbers,
       templateType,
+      templateVersion,
       performance: {
         excelParseMs,
         worksheetParseMs: performance.now() - worksheetParseStarted,
@@ -299,6 +336,7 @@ function aliasIndex(templates: ImportExportTemplates) {
     ...KABRITA_TEMPLATE_FIELDS,
     ...WYETH_NESTLE_FIELDS,
     "complianceResult",
+    "activityMonth",
     // 兼容第三方表格使用“活动名称”；新版正式表头为“活动名称（必填）”。
     "activityName",
   ]);
@@ -347,7 +385,9 @@ function displayName(
   templateType?: ImportTemplateType,
 ) {
   if (templateType === "KABRITA") return kabritaDisplayName(field as StandardField);
-  if (templateType === "WYETH_NESTLE") return wyethNestleDisplayName(field as StandardField);
+  if (["WYETH", "NESTLE", "WYETH_NESTLE"].includes(templateType || "")) {
+    return wyethNestleDisplayName(field as StandardField);
+  }
   return templates.fieldDefinitions[field]?.displayName || field;
 }
 
@@ -439,34 +479,50 @@ function parseMatrixPreview(
       displayName: displayName(templates, field, templateType),
     });
   });
+  const isWyethFamilyTemplate = ["WYETH", "NESTLE", "WYETH_NESTLE"].includes(
+    templateType,
+  );
   const legacyLayout = templateType !== "KABRITA" &&
-    templateType !== "WYETH_NESTLE" &&
+    !isWyethFamilyTemplate &&
     !["customerName", "publishTime"].some((field) =>
       occupied.has(field as StandardField),
     );
   const requiredFields: StandardField[] = parsedMatrix.templateType
     ? templateType === "KABRITA"
       ? [...KABRITA_REQUIRED_FIELDS]
-      : templateType === "WYETH_NESTLE"
+      : isWyethFamilyTemplate
         ? [...WYETH_NESTLE_REQUIRED_FIELDS]
         : templateType === "DANONE_AGENCY"
           ? [...DANONE_AGENCY_IMPORT_FIELDS]
           : [...DANONE_CUSTOMER_IMPORT_FIELDS]
     : templateType === "KABRITA"
       ? [...KABRITA_REQUIRED_FIELDS]
-      : templateType === "WYETH_NESTLE"
+      : isWyethFamilyTemplate
         ? [...WYETH_NESTLE_REQUIRED_FIELDS]
         : legacyLayout
           ? ["noteUrl", "productName", "productStage", "activityName"]
           : templates.requiredFields;
-  const missingRequiredFields = requiredFields.filter(
+  const activityMonthColumnPresent = occupied.has("activityMonth");
+  const activityNameColumnPresent = occupied.has("activityName");
+  const activityInputMode = activityMonthColumnPresent
+    ? "ACTIVITY_MONTH" as const
+    : activityNameColumnPresent
+      ? "LEGACY_ACTIVITY_NAME" as const
+      : "LEGACY_AUTO_RESOLVE" as const;
+  const currentTemplate = parsedMatrix.templateVersion === templates.templateVersion;
+  const requiredBusinessFields: StandardField[] = requiredFields.filter(
+    (field) => field !== "activityName" && field !== "activityMonth",
+  );
+  const missingRequiredFields: StandardField[] = requiredBusinessFields.filter(
     (field) => !occupied.has(field),
   );
-  const activityNameColumnPresent = occupied.has("activityName");
+  if (currentTemplate && !activityMonthColumnPresent) {
+    missingRequiredFields.push("activityMonth");
+  }
   const structuralErrors = [
     ...missingRequiredFields.map((field) =>
-      field === "activityName"
-        ? "当前模板缺少“活动名称（必填）”列，请下载最新版导入模板后重新填写"
+      field === "activityMonth"
+        ? "当前模板缺少“活动月份（必填）”列，请下载最新版导入模板后重新填写"
         : `缺少必填字段：${displayName(templates, field, templateType)}`,
     ),
     ...duplicateHeaders.map((field) => `表头重复：${field}`),
@@ -492,7 +548,7 @@ function parseMatrixPreview(
           : rawValue;
     }
     const errors = [...structuralErrors];
-    if (activityNameColumnPresent) {
+    if (activityInputMode === "LEGACY_ACTIVITY_NAME") {
       const currentActivityName = String(values.activityName || "").trim();
       if (currentActivityName) {
         inheritedActivityName = currentActivityName;
@@ -503,13 +559,10 @@ function parseMatrixPreview(
         errors.push("活动名称为空，且没有可继承的上方活动");
       }
     }
-    for (const field of requiredFields) {
-      if (field === "activityName" && activityNameColumnPresent) continue;
+    for (const field of requiredBusinessFields) {
       if (!values[field]) {
         errors.push(
-          field === "activityName"
-            ? "活动名称不能为空"
-            : field === "productStage"
+          field === "productStage"
               ? "阶段不能为空"
               : field === "productStageDetail"
                 ? "段位不能为空"
@@ -519,7 +572,11 @@ function parseMatrixPreview(
     }
     const templateBrand = templateType === "KABRITA"
       ? KABRITA_BRAND_NAME
-      : templateType === "WYETH_NESTLE"
+      : templateType === "WYETH"
+        ? "惠氏" as const
+        : templateType === "NESTLE"
+          ? "雀巢" as const
+          : templateType === "WYETH_NESTLE"
         ? "惠氏/雀巢" as const
         : DANONE_BRAND_NAME;
     rows.push({
@@ -527,6 +584,8 @@ function parseMatrixPreview(
       templateBrand,
       templateType,
       activityNameColumnPresent,
+      activityMonthColumnPresent,
+      activityInputMode,
       rowNumber: parsedMatrix.sourceRowNumbers?.[index] || index + 1,
       values,
       rawValues,
@@ -534,11 +593,48 @@ function parseMatrixPreview(
       errors: [...new Set(errors)],
     });
   }
+  if (activityInputMode === "ACTIVITY_MONTH" && rows.length) {
+    const detected = rows.flatMap((row) => {
+      const raw = String(row.rawValues?.activityMonth || "").trim();
+      if (!raw) return [];
+      const normalized = normalizeImportedActivityMonth(raw);
+      if (!normalized) {
+        row.errors.push(`活动月份“${raw}”格式无效，请填写 9月 或 YYYY-MM`);
+        return [];
+      }
+      return [{ rowNumber: row.rowNumber, normalized }];
+    });
+    const distinct = new Map(
+      detected.map(({ normalized }) => [normalized.key, normalized]),
+    );
+    if (!distinct.size) {
+      for (const row of rows) {
+        row.errors.push("当前工作表存在业务数据，但未填写活动月份。");
+      }
+    } else if (distinct.size > 1) {
+      const detectedMonths = [...distinct.values()].map(({ display }) => display);
+      const conflictRows = detected.map(({ rowNumber }) => rowNumber);
+      const error = [
+        "SHEET_ACTIVITY_MONTH_CONFLICT：",
+        `当前工作表同时检测到 ${detectedMonths.join("、")}；一个业务 Sheet 只能对应一个活动月份。`,
+        `冲突行：${conflictRows.join("、")}`,
+      ].join("");
+      for (const row of rows) row.errors.push(error);
+    } else {
+      const month = [...distinct.values()][0];
+      for (const row of rows) row.values.activityMonth = month.display;
+    }
+    for (const row of rows) row.errors = [...new Set(row.errors)];
+  }
   return {
     templateType,
     templateBrand: templateType === "KABRITA"
       ? KABRITA_BRAND_NAME
-      : templateType === "WYETH_NESTLE"
+      : templateType === "WYETH"
+        ? "惠氏" as const
+        : templateType === "NESTLE"
+          ? "雀巢" as const
+          : templateType === "WYETH_NESTLE"
         ? "惠氏/雀巢" as const
         : DANONE_BRAND_NAME,
     sheetName: parsedMatrix.sheetName || "",

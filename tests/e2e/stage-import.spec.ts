@@ -609,7 +609,9 @@ test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", as
       "2026-08-05",
       campaign.name,
     ]),
-    [...base, "IFFO", "1段", "AUG-CONFLICT", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-conflict`, "2026-08-05", campaign.name],
+    [...base, "IFFO", "1段", "AUG-SWAPPED", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-swapped`, "2026-08-05", campaign.name],
+    [...base, "IFFO", "GUM", "AUG-GROUP-GROUP", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-group-group`, "2026-08-05", campaign.name],
+    [...base, "1段", "2段", "AUG-SEGMENT-SEGMENT", "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&aug-stage=${suffix}-segment-segment`, "2026-08-05", campaign.name],
   ];
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("达能客户导入");
@@ -631,17 +633,21 @@ test("达能8月Excel按阶段与具体段位精确选择单一阶段规则", as
   const preview = (await response.json()).data as {
     validCount: number;
     invalidCount: number;
-    rows: Array<{ productStage: string; stageGroup: string; errors: string[] }>;
+    rows: Array<{ productStage: string; stageGroup: string; normalizations: string[]; errors: string[] }>;
   };
-  expect(preview.validCount).toBe(7);
-  expect(preview.invalidCount).toBe(1);
+  expect(preview.validCount).toBe(8);
+  expect(preview.invalidCount).toBe(2);
   validStageCases.forEach(([, , productStage, stageGroup], index) => {
     expect(preview.rows[index]).toMatchObject({ productStage, stageGroup, errors: [] });
   });
-  expect(preview.rows[7].errors.join("；")).toContain("阶段仅支持 IFFO 或 GUM");
-  expect(preview.rows[7].errors.join("；")).toContain(
-    "段位仅支持 P段、1段、2段、3段、4段、1+或2+",
-  );
+  expect(preview.rows[7]).toMatchObject({
+    productStage: "IFFO_P1",
+    stageGroup: "IFFO 新生儿组（P段/1段）",
+    normalizations: ["NORMALIZED_STAGE_SEGMENT_SWAP"],
+    errors: [],
+  });
+  expect(preview.rows[8].errors.join("；")).toContain("均被识别为阶段组");
+  expect(preview.rows[9].errors.join("；")).toContain("均被识别为具体段位");
 });
 
 test("达能代发模板从产品名末尾识别段数并保存模板来源", async ({ page }) => {

@@ -34,6 +34,7 @@ import {
   importedTaskMetadataFromNotes,
   importedTemplateMetadataFromNotes,
 } from "@/lib/import-task-metadata";
+import { normalizeImportedActivityMonth } from "@/lib/import-activity-matching";
 import type {
   ImportExportTemplates,
   ImportTemplateBrand,
@@ -54,8 +55,9 @@ import {
   DANONE_CUSTOMER_EXPORT_FIELDS,
   DANONE_CUSTOMER_IMPORT_FIELDS,
   IMPORT_TEMPLATE_TYPE_LABELS,
+  NESTLE_SHEET_NAME,
   UNIFIED_IMPORT_SHEET_NAMES,
-  WYETH_NESTLE_SHEET_NAME,
+  WYETH_SHEET_NAME,
   danoneTemplateFieldDisplayName,
   type ImportTemplateType,
 } from "@/lib/import-template-type";
@@ -151,6 +153,15 @@ function importedDateLabel(value: Date) {
   return `${parts.join("-")} ${time.join(":")}`;
 }
 
+function resolvedActivityMonthValue(rawMonth: unknown, campaignMonth: unknown) {
+  const rawSource = String(rawMonth ?? "").trim();
+  const raw = normalizeImportedActivityMonth(rawSource);
+  if (raw) return raw.display;
+  const campaignSource = String(campaignMonth ?? "").trim();
+  const campaign = normalizeImportedActivityMonth(campaignSource);
+  return campaign ? `${campaign.month}月` : rawSource || campaignSource;
+}
+
 const AUDIT_RESULT_EXCEL_PRODUCT_SERIES_NAMES: Record<string, string> = {
   爱他美澳洲白金版: "澳白",
   爱他美德国白金版: "德白",
@@ -180,7 +191,7 @@ function columns(
           ? "模板类型"
           : field === "activityMonth"
             ? "活动月份"
-          : templateType === "WYETH_NESTLE"
+          : ["WYETH", "NESTLE", "WYETH_NESTLE"].includes(templateType || "")
             ? wyethNestleDisplayName(field)
             : danoneTemplateFieldDisplayName(
                 field,
@@ -423,7 +434,7 @@ export function auditResultToCompactExportRecord(
       ? importedPublishTimeValue(importedMetadata.publishTime)
       : row.note.publishedAt,
     activityName: importedMetadata.activityName || row.task.campaign?.name || "",
-    activityMonth: row.task.campaign?.month || "",
+    activityMonth: resolvedActivityMonthValue(raw.activityMonth, row.task.campaign?.month),
     templateType: IMPORT_TEMPLATE_TYPE_LABELS[templateType],
     selfReview: detailedSelfReview(row),
     ...rewardExport(row),
@@ -453,7 +464,7 @@ export function auditResultToKabritaExportRecord(
       raw.purchaseProductLine ||
       row.task.product.seriesName ||
       row.task.product.name,
-    activityName: imported.activityName || row.task.campaign?.name || "",
+    activityMonth: resolvedActivityMonthValue(raw.activityMonth, row.task.campaign?.month),
     complianceResult: kabritaComplianceResult(row),
     ...rewardExport(row),
   };
@@ -517,7 +528,7 @@ export function auditResultToWyethNestleExportRecord(
     publishTime: raw.publishTime
       ? importedPublishTimeValue(raw.publishTime)
       : row.note.publishedAt,
-    activityName: imported.activityName || row.task.campaign?.name || "",
+    activityMonth: resolvedActivityMonthValue(raw.activityMonth, row.task.campaign?.month),
     customerServiceComment: raw.customerServiceComment || "",
     selfReview: detailedSelfReview(row),
     interactionAtLeastTen: interactionAtLeastTenExportValue(row),
@@ -917,6 +928,8 @@ export async function buildImportTemplateWorkbook(
     activityNames?: readonly string[];
     activities?: ReadonlyArray<{
       name: string;
+      month?: string | null;
+      year?: number | null;
       contentChannel: "XIAOHONGSHU" | "DOUYIN";
     }>;
   },
@@ -947,6 +960,7 @@ export async function buildImportTemplateWorkbook(
     contentChannel: 18,
     noteUrl: 52,
     publishTime: 22,
+    activityMonth: 20,
     activityName: 38,
     registrationTime: 22,
     channel: 16,
@@ -992,7 +1006,7 @@ export async function buildImportTemplateWorkbook(
         ] || "";
     }
   }
-  const activityNameColumn = fields.indexOf("activityName") + 1;
+  const activityMonthColumn = fields.indexOf("activityMonth") + 1;
   const activities = options?.activities || (options?.activityNames || []).map(
     (name) => ({
       name,
@@ -1001,15 +1015,7 @@ export async function buildImportTemplateWorkbook(
         : "XIAOHONGSHU" as const,
     }),
   );
-  const activityNames = [...new Set(
-    activities.map((activity) => activity.name.trim()).filter(Boolean),
-  )];
-  if (activityNameColumn > 0) {
-    sheet.getCell(2, activityNameColumn).value = activityNames[0] || "";
-  }
-  const exampleActivity = activities.find(
-    (activity) => activity.name.trim() === activityNames[0],
-  );
+  const exampleActivity = activities[0];
   const publishTimeColumn = fields.indexOf("publishTime") + 1;
   if (publishTimeColumn > 0) {
     sheet.getCell(2, publishTimeColumn).value = importedPublishTimeValue(
@@ -1066,31 +1072,38 @@ export async function buildImportTemplateWorkbook(
       },
     );
   }
-  if (activityNameColumn > 0 && activityNames.length) {
-    const activitySheet = workbook.addWorksheet("活动列表", {
+  if (activityMonthColumn > 0) {
+    const configuredMonths = [...new Set(activities.flatMap((activity) => {
+      const explicit = normalizeImportedActivityMonth(
+        "month" in activity ? activity.month : null,
+      );
+      if (explicit) return [`${explicit.month}月`];
+      const fromName = /(\d{1,2})月/u.exec(activity.name);
+      const parsed = normalizeImportedActivityMonth(fromName?.[1]);
+      return parsed ? [`${parsed.month}月`] : [];
+    }))].sort((left, right) => Number.parseInt(left, 10) - Number.parseInt(right, 10));
+    const activityMonths = configuredMonths.length
+      ? configuredMonths
+      : Array.from({ length: 12 }, (_, index) => `${index + 1}月`);
+    sheet.getCell(2, activityMonthColumn).value = activityMonths[0] || "";
+    const activitySheet = workbook.addWorksheet("活动月份列表", {
       state: "veryHidden",
     });
-    activitySheet.getCell("A1").value = "活动名称";
-    activitySheet.getCell("B1").value = "内容渠道";
-    activityNames.forEach((name, index) => {
-      activitySheet.getCell(index + 2, 1).value = name;
-      activitySheet.getCell(index + 2, 2).value =
-        activities.find((activity) => activity.name.trim() === name)
-          ?.contentChannel === "DOUYIN"
-          ? "抖音"
-          : "小红书";
+    activitySheet.getCell("A1").value = "活动月份";
+    activityMonths.forEach((month, index) => {
+      activitySheet.getCell(index + 2, 1).value = month;
     });
     workbook.definedNames.add(
-      `'活动列表'!$A$2:$A$${activityNames.length + 1}`,
-      "VERIDIA_ACTIVITY_NAMES",
+      `'活动月份列表'!$A$2:$A$${activityMonths.length + 1}`,
+      "VERIDIA_ACTIVITY_MONTHS",
     );
-    addDataValidationRange(sheet, activityNameColumn, 2, 10_000, {
+    addDataValidationRange(sheet, activityMonthColumn, 2, 10_000, {
         type: "list",
         allowBlank: true,
-        formulae: ["VERIDIA_ACTIVITY_NAMES"],
+        formulae: ["VERIDIA_ACTIVITY_MONTHS"],
         showErrorMessage: true,
-        errorTitle: "活动名称无效",
-        error: "请选择活动管理中当前启用的完整活动名称。",
+        errorTitle: "活动月份无效",
+        error: "请选择 1月 至 12月；同一工作表只能填写一个活动月份。",
     });
   }
   const header = sheet.getRow(1);
@@ -1136,22 +1149,19 @@ export async function buildImportTemplateWorkbook(
     aliases: "模板随审核规则同步更新",
   });
   instructions.addRow({
-    field: "活动名称填写要求",
-    displayName: "活动名称（必填）",
+    field: "活动月份填写要求",
+    displayName: "活动月份（必填）",
     required: "是",
     description:
-      "同一活动连续填写时，只需在第一条填写活动名称，后续空白行会自动继承最近上方活动；切换活动时，在新活动第一条重新选择即可。",
-    aliases:
-      "正确示例：XXX2026年8月小红书种草审核、XXX2026年8月抖音种草审核；错误示例：2026年8月-达能-UGC、达能8月活动、8月UGC",
+      "活动月份为当前工作表统一月份，只需填写一次，例如 9月。系统会根据产品及内容渠道自动匹配对应的小红书/抖音活动与审核规则。",
+    aliases: "支持 9月、09月、9、09、YYYY-MM、YYYY/MM",
   });
   instructions.addRow({
     field: "抖音填写示例",
     displayName: "内容渠道：抖音",
     required: "",
-    description: "活动请选择完整的抖音审核活动名称；链接支持 https://www.douyin.com/note/...、https://www.douyin.com/video/... 或 https://v.douyin.com/...。",
-    aliases:
-      activities.find((activity) => activity.contentChannel === "DOUYIN")?.name ||
-      "XXX2026年8月抖音种草审核",
+    description: "内容渠道填写抖音后，系统会按产品和活动月份匹配抖音 Campaign；链接支持 https://www.douyin.com/note/...、https://www.douyin.com/video/... 或 https://v.douyin.com/...。",
+    aliases: "小红书和抖音同月活动互不混用",
   });
   instructions.addRow({
     field: "模板类型",
@@ -1159,9 +1169,9 @@ export async function buildImportTemplateWorkbook(
     required: "",
     description:
       templateType === "DANONE_CUSTOMER"
-        ? "适用于达能客户新格式：阶段填写具体段数，段位填写 IFFO 或 GUM，两列均为必填。"
+        ? "适用于达能客户新格式：阶段填写 IFFO 或 GUM，段位填写 P段、1段、2段、3段、4段、1+段或2+段，两列均为必填；历史模板填反时系统会按值域自动识别。"
         : "适用于佳贝艾特业务模板。",
-    aliases: "活动名称填写活动管理中的完整名称",
+    aliases: "活动月份是 Sheet 级属性",
   });
   for (const field of fields) {
     instructions.addRow({
@@ -1202,7 +1212,8 @@ export function buildUnifiedAuditResultsWorkbook(input: {
   templates: ImportExportTemplates;
   danoneRecords: ExportValueRecord[];
   kabritaRecords: ExportValueRecord[];
-  wyethNestleRecords: ExportValueRecord[];
+  wyethRecords: ExportValueRecord[];
+  nestleRecords: ExportValueRecord[];
 }) {
   return buildConfiguredWorkbook({
     templates: input.templates,
@@ -1220,9 +1231,15 @@ export function buildUnifiedAuditResultsWorkbook(input: {
         templateBrand: KABRITA_BRAND_NAME,
       },
       {
-        sheetName: WYETH_NESTLE_SHEET_NAME,
-        records: input.wyethNestleRecords,
-        templateType: "WYETH_NESTLE",
+        sheetName: WYETH_SHEET_NAME,
+        records: input.wyethRecords,
+        templateType: "WYETH",
+        fields: WYETH_NESTLE_FIELDS,
+      },
+      {
+        sheetName: NESTLE_SHEET_NAME,
+        records: input.nestleRecords,
+        templateType: "NESTLE",
         fields: WYETH_NESTLE_FIELDS,
       },
     ],
@@ -1231,6 +1248,8 @@ export function buildUnifiedAuditResultsWorkbook(input: {
 
 type UnifiedTemplateActivity = {
   name: string;
+  month?: string | null;
+  year?: number | null;
   contentChannel: "XIAOHONGSHU" | "DOUYIN";
 };
 
@@ -1258,6 +1277,7 @@ function styleImportSheet(
     contentChannel: 18,
     noteUrl: 52,
     publishTime: 22,
+    activityMonth: 20,
     activityName: 38,
     customerServiceComment: 32,
     selfReview: 26,
@@ -1363,81 +1383,116 @@ export async function buildUnifiedImportTemplateWorkbook(
   kabrita.getColumn(KABRITA_IMPORT_FIELDS.indexOf("registrationTime") + 1).numFmt = "yyyy-mm-dd hh:mm:ss";
   kabrita.getColumn(KABRITA_IMPORT_FIELDS.indexOf("purchaseTime") + 1).numFmt = "yyyy-mm-dd hh:mm:ss";
 
-  const wyethNestle = workbook.addWorksheet(WYETH_NESTLE_SHEET_NAME);
-  wyethNestle.addRow(
-    WYETH_NESTLE_FIELDS.map((field) => WYETH_NESTLE_FIELD_DEFINITIONS[field].displayName),
-  );
-  styleImportSheet(wyethNestle, WYETH_NESTLE_FIELDS);
-  const wyethChannel = WYETH_NESTLE_FIELDS.indexOf("contentChannel") + 1;
-  addDataValidationRange(wyethNestle, wyethChannel, 2, 10_001, {
-    type: "list", allowBlank: false, formulae: ['"小红书,抖音"'],
-    showErrorMessage: true, errorTitle: "内容渠道无效", error: "内容渠道仅支持小红书或抖音",
-  });
-  wyethNestle.getColumn(WYETH_NESTLE_FIELDS.indexOf("publishTime") + 1).numFmt = "yyyy-mm-dd hh:mm:ss";
-  wyethNestle.getCell(1, WYETH_NESTLE_FIELDS.indexOf("customerServiceComment") + 1).note =
-    "格式：日期-已留言/已修改";
+  const addBrandSheet = (name: string) => {
+    const sheet = workbook.addWorksheet(name);
+    sheet.addRow(
+      WYETH_NESTLE_FIELDS.map((field) => WYETH_NESTLE_FIELD_DEFINITIONS[field].displayName),
+    );
+    styleImportSheet(sheet, WYETH_NESTLE_FIELDS);
+    addDataValidationRange(
+      sheet,
+      WYETH_NESTLE_FIELDS.indexOf("contentChannel") + 1,
+      2,
+      10_001,
+      {
+        type: "list", allowBlank: false, formulae: ['"小红书,抖音"'],
+        showErrorMessage: true, errorTitle: "内容渠道无效", error: "内容渠道仅支持小红书或抖音",
+      },
+    );
+    sheet.getColumn(WYETH_NESTLE_FIELDS.indexOf("publishTime") + 1).numFmt = "yyyy-mm-dd hh:mm:ss";
+    sheet.getCell(1, WYETH_NESTLE_FIELDS.indexOf("customerServiceComment") + 1).note =
+      "格式：日期-已留言/已修改";
+    return sheet;
+  };
+  const wyeth = addBrandSheet(WYETH_SHEET_NAME);
+  const nestle = addBrandSheet(NESTLE_SHEET_NAME);
 
-  const activities = [...new Map(
+  const normalizedActivityMonths = [...new Set(
     options.activities
-      .filter((activity) => activity.name.trim())
-      .map((activity) => [activity.name.trim(), activity]),
-  ).values()];
-  const activitySheet = workbook.addWorksheet("活动列表", { state: "veryHidden" });
-  activitySheet.addRow(["活动名称", "内容渠道"]);
-  activities.forEach((activity) => activitySheet.addRow([
-    activity.name,
-    activity.contentChannel === "DOUYIN" ? "抖音" : "小红书",
-  ]));
-  if (activities.length) {
-    workbook.definedNames.add(`'活动列表'!$A$2:$A$${activities.length + 1}`, "VERIDIA_ACTIVITY_NAMES");
-    for (const [sheet, fields] of [
-      [danone, DANONE_CUSTOMER_IMPORT_FIELDS],
-      [kabrita, KABRITA_IMPORT_FIELDS],
-      [wyethNestle, WYETH_NESTLE_FIELDS],
-    ] as const) {
-      addDataValidationRange(
-        sheet,
-        fields.indexOf("activityName") + 1,
-        2,
-        10_001,
-        {
-          type: "list", allowBlank: true, formulae: ["VERIDIA_ACTIVITY_NAMES"],
-          showErrorMessage: true, errorTitle: "活动名称无效", error: "请选择活动管理中当前启用的完整活动名称。",
-        },
-      );
-    }
+      .map((activity) => normalizeImportedActivityMonth(activity.month))
+      .filter((value): value is NonNullable<typeof value> => Boolean(value))
+      .map((value) => `${value.month}月`),
+  )].sort((left, right) => Number.parseInt(left, 10) - Number.parseInt(right, 10));
+  const activityMonths = normalizedActivityMonths.length
+    ? normalizedActivityMonths
+    : Array.from({ length: 12 }, (_, index) => `${index + 1}月`);
+  const activitySheet = workbook.addWorksheet("活动月份列表", { state: "veryHidden" });
+  activitySheet.addRow(["活动月份"]);
+  activityMonths.forEach((month) => activitySheet.addRow([month]));
+  workbook.definedNames.add(
+    `'活动月份列表'!$A$2:$A$${activityMonths.length + 1}`,
+    "VERIDIA_ACTIVITY_MONTHS",
+  );
+  for (const [sheet, fields] of [
+    [danone, DANONE_CUSTOMER_IMPORT_FIELDS],
+    [kabrita, KABRITA_IMPORT_FIELDS],
+    [wyeth, WYETH_NESTLE_FIELDS],
+    [nestle, WYETH_NESTLE_FIELDS],
+  ] as const) {
+    addDataValidationRange(sheet, fields.indexOf("activityMonth") + 1, 2, 10_001, {
+      type: "list", allowBlank: true, formulae: ["VERIDIA_ACTIVITY_MONTHS"],
+      showErrorMessage: true, errorTitle: "活动月份无效",
+      error: "请选择 1月 至 12月；同一工作表只能填写一个活动月份。",
+    });
   }
 
-  const productOptions = buildWyethNestleProductOptions(options.products);
+  const wyethProductOptions = buildWyethNestleProductOptions(options.products, "惠氏");
+  const nestleProductOptions = buildWyethNestleProductOptions(options.products, "雀巢");
   const productSheet = workbook.addWorksheet("产品列表", { state: "veryHidden" });
-  productSheet.addRow(["产品选项", "productId", "品牌", "正式产品名"]);
-  productOptions.forEach(({ product, value }) => productSheet.addRow([
-    value,
-    product.id,
-    product.brandName,
-    product.name,
-  ]));
-  if (productOptions.length) {
-    workbook.definedNames.add(`'产品列表'!$A$2:$A$${productOptions.length + 1}`, "VERIDIA_WYETH_NESTLE_PRODUCTS");
+  productSheet.addRow(["惠氏产品", "雀巢产品", "productId", "品牌", "正式产品名"]);
+  const optionRows = Math.max(wyethProductOptions.length, nestleProductOptions.length);
+  for (let index = 0; index < optionRows; index += 1) {
+    const wyethOption = wyethProductOptions[index];
+    const nestleOption = nestleProductOptions[index];
+    productSheet.addRow([
+      wyethOption?.value || "",
+      nestleOption?.value || "",
+      wyethOption?.product.id || nestleOption?.product.id || "",
+      wyethOption?.product.brandName || nestleOption?.product.brandName || "",
+      wyethOption?.product.name || nestleOption?.product.name || "",
+    ]);
+  }
+  if (wyethProductOptions.length) {
+    workbook.definedNames.add(
+      `'产品列表'!$A$2:$A$${wyethProductOptions.length + 1}`,
+      "VERIDIA_WYETH_PRODUCTS",
+    );
     addDataValidationRange(
-      wyethNestle,
+      wyeth,
       WYETH_NESTLE_FIELDS.indexOf("productName") + 1,
       2,
       10_001,
       {
-        type: "list", allowBlank: false, formulae: ["VERIDIA_WYETH_NESTLE_PRODUCTS"],
-        showErrorMessage: true, errorTitle: "产品系列无效", error: "请选择当前有效的惠氏或雀巢产品。",
+        type: "list", allowBlank: false, formulae: ["VERIDIA_WYETH_PRODUCTS"],
+        showErrorMessage: true, errorTitle: "产品系列无效", error: "请选择当前有效的惠氏产品。",
+      },
+    );
+  }
+  if (nestleProductOptions.length) {
+    workbook.definedNames.add(
+      `'产品列表'!$B$2:$B$${nestleProductOptions.length + 1}`,
+      "VERIDIA_NESTLE_PRODUCTS",
+    );
+    addDataValidationRange(
+      nestle,
+      WYETH_NESTLE_FIELDS.indexOf("productName") + 1,
+      2,
+      10_001,
+      {
+        type: "list", allowBlank: false, formulae: ["VERIDIA_NESTLE_PRODUCTS"],
+        showErrorMessage: true, errorTitle: "产品系列无效", error: "请选择当前有效的雀巢产品。",
       },
     );
   }
 
   const instructions = workbook.addWorksheet("填写说明", { state: "hidden" });
   instructions.addRow(["业务 Sheet", "填写说明"]);
-  const activityInheritanceInstruction =
-    "同一活动连续填写时，只需在第一条填写活动名称，后续空白行会自动继承最近上方活动；切换活动时，在新活动第一条重新选择即可。";
-  instructions.addRow(["达能客户导入", activityInheritanceInstruction]);
-  instructions.addRow(["佳贝艾特客户导入", `${activityInheritanceInstruction}“是否符合”为系统输出列，导入值不参与审核。`]);
-  instructions.addRow([WYETH_NESTLE_SHEET_NAME, `${activityInheritanceInstruction}客服修改留言格式：日期-已留言/已修改；内部自审和互动量≥10由系统重新生成。`]);
+  const monthInstruction =
+    "活动月份为当前工作表统一月份，只需填写一次，例如 9月。系统会根据产品及内容渠道自动匹配对应的小红书/抖音活动与审核规则。";
+  instructions.addRow(["达能客户导入", monthInstruction]);
+  instructions.addRow(["佳贝艾特客户导入", `${monthInstruction}“是否符合”为系统输出列，导入值不参与审核。`]);
+  instructions.addRow([WYETH_SHEET_NAME, `${monthInstruction}客服修改留言格式：日期-已留言/已修改；内部自审和互动量≥10由系统重新生成。`]);
+  instructions.addRow([NESTLE_SHEET_NAME, `${monthInstruction}客服修改留言格式：日期-已留言/已修改；内部自审和互动量≥10由系统重新生成。`]);
   instructions.getRow(1).font = { bold: true };
 
   const metadata = workbook.addWorksheet("VERIDIA模板信息", { state: "veryHidden" });
@@ -1447,7 +1502,8 @@ export async function buildUnifiedImportTemplateWorkbook(
   metadata.addRow(["sheetName", "templateType"]);
   metadata.addRow(["达能客户导入", "DANONE_CUSTOMER"]);
   metadata.addRow(["佳贝艾特客户导入", "KABRITA"]);
-  metadata.addRow([WYETH_NESTLE_SHEET_NAME, "WYETH_NESTLE"]);
+  metadata.addRow([WYETH_SHEET_NAME, "WYETH"]);
+  metadata.addRow([NESTLE_SHEET_NAME, "NESTLE"]);
   const buffer = await workbook.xlsx.writeBuffer();
   await assertUnifiedImportTemplateInvariant(buffer);
   return buffer;

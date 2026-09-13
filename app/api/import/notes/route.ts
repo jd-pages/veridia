@@ -17,6 +17,7 @@ import {
   detailedProductStageLabel,
   detailedProductStagePhase,
   normalizeDetailedProductStageValue,
+  normalizeDanoneStageSegmentInput,
   normalizeImportedProductStageTopicValue,
   productStageTopicLabel,
 } from "@/lib/product-stage";
@@ -54,12 +55,14 @@ import {
 } from "@/lib/import-task-metadata";
 import {
   resolveImportedActivity,
+  resolveImportedActivityMonth,
   resolveImplicitImportedActivity,
   type ImportActivityMatchStatus,
 } from "@/lib/import-activity-matching";
 import {
   WYETH_NESTLE_BRANDS,
   buildWyethNestleProductOptions,
+  expectedBrandForTemplateType,
 } from "@/lib/import-export-templates/wyeth-nestle";
 import {
   commercePlatformLabel,
@@ -102,6 +105,7 @@ interface CheckedRow {
   purchaseProductLine: string;
   campaignName: string;
   importedCampaignName: string;
+  importedActivityMonth: string;
   campaignMatchStatus: ImportActivityMatchStatus;
   campaignPeriod: string;
   campaignRuleCount: number;
@@ -115,6 +119,7 @@ interface CheckedRow {
   productId?: string;
   campaignId?: string;
   milkType?: string;
+  normalizations: string[];
   errors: string[];
   duplicateWarning?: {
     status: "DUPLICATE_WARNING";
@@ -326,7 +331,13 @@ export async function POST(request: Request) {
         measureDatabase("campaigns", () =>
           prisma.campaign.findMany({
             include: {
-              products: { select: { productId: true } },
+              product: { select: { id: true, brandName: true } },
+              products: {
+                select: {
+                  productId: true,
+                  product: { select: { brandName: true } },
+                },
+              },
               topicRules: {
                 where: { status: "ACTIVE" },
                 select: { contentChannel: true },
@@ -353,12 +364,17 @@ export async function POST(request: Request) {
       id: campaign.id,
       name: campaign.name,
       month: campaign.month,
+      year: campaign.year,
       startDate: campaign.startDate,
       endDate: campaign.endDate,
       status: campaign.status,
       deletedAt: campaign.deletedAt,
       productId: campaign.productId,
       productIds: campaign.products.map((item) => item.productId),
+      brandNames: [...new Set([
+        ...(campaign.product?.brandName ? [campaign.product.brandName.trim()] : []),
+        ...campaign.products.map((item) => item.product.brandName.trim()),
+      ].filter(Boolean))],
       contentChannel: campaign.contentChannel,
       ruleCount: campaign.topicRules.filter((rule) =>
         [campaign.contentChannel, "ALL"].includes(rule.contentChannel),
@@ -392,6 +408,16 @@ export async function POST(request: Request) {
         product,
       ]),
     );
+    const wyethProductOptions = new Map(
+      buildWyethNestleProductOptions(activeProducts, "惠氏").map(
+        ({ product, value }) => [value, product],
+      ),
+    );
+    const nestleProductOptions = new Map(
+      buildWyethNestleProductOptions(activeProducts, "雀巢").map(
+        ({ product, value }) => [value, product],
+      ),
+    );
     const productResolutionCache = new Map<
       string,
       ProductResolution<(typeof activeProducts)[number]>
@@ -411,7 +437,16 @@ export async function POST(request: Request) {
       const values = parsed.values;
       const templateType = parsed.templateType || tabular.templateType;
       const isKabritaTemplate = templateType === "KABRITA";
-      const isWyethNestleTemplate = templateType === "WYETH_NESTLE";
+      const expectedBrand = ["WYETH", "NESTLE", "WYETH_NESTLE"].includes(
+        templateType,
+      )
+        ? expectedBrandForTemplateType(
+            templateType as "WYETH" | "NESTLE" | "WYETH_NESTLE",
+          )
+        : null;
+      const isWyethNestleTemplate = ["WYETH", "NESTLE", "WYETH_NESTLE"].includes(
+        templateType,
+      );
       const isDanoneAgencyTemplate = templateType === "DANONE_AGENCY";
       const isDanoneTemplate = templateType === "DANONE_CUSTOMER" || isDanoneAgencyTemplate;
       const originalLinkContent =
@@ -502,6 +537,7 @@ export async function POST(request: Request) {
         purchaseProductLine,
         campaignName: "",
         importedCampaignName: String(values.activityName || "").trim(),
+        importedActivityMonth: String(values.activityMonth || "").trim(),
         campaignMatchStatus: "EMPTY",
         campaignPeriod: "",
         campaignRuleCount: 0,
@@ -518,6 +554,7 @@ export async function POST(request: Request) {
         productStage: "",
         stageGroup: "",
         notes: "",
+        normalizations: [],
         errors: [...parsed.errors],
       };
       if (
@@ -562,9 +599,9 @@ export async function POST(request: Request) {
       const matchingProducts = isKabritaTemplate
         ? activeProducts.filter((product) => product.brandName.trim() === KABRITA_BRAND_NAME)
         : isWyethNestleTemplate
-          ? activeProducts.filter((product) =>
-              (WYETH_NESTLE_BRANDS as readonly string[]).includes(product.brandName.trim()),
-            )
+          ? activeProducts.filter((product) => expectedBrand
+              ? product.brandName.trim() === expectedBrand
+              : (WYETH_NESTLE_BRANDS as readonly string[]).includes(product.brandName.trim()))
           : activeProducts;
       const productResolutionKey = [
         templateType,
@@ -574,7 +611,11 @@ export async function POST(request: Request) {
       let productResolution = productResolutionCache.get(productResolutionKey);
       if (!productResolution) {
         const selectedProduct = isWyethNestleTemplate
-          ? wyethNestleProductOptions.get(productInputName)
+          ? (templateType === "WYETH"
+              ? wyethProductOptions
+              : templateType === "NESTLE"
+                ? nestleProductOptions
+                : wyethNestleProductOptions).get(productInputName)
           : undefined;
         productResolution = selectedProduct
           ? { status: "MATCHED", product: selectedProduct, matchedBy: "NAME" }
@@ -598,11 +639,14 @@ export async function POST(request: Request) {
             })
           : null;
         checked.errors.push(
-          unrestricted?.status === "MATCHED" &&
-            !(WYETH_NESTLE_BRANDS as readonly string[]).includes(
-              unrestricted.product.brandName.trim(),
-            )
-            ? "该产品不属于惠氏/雀巢导入模板支持范围"
+          unrestricted?.status === "MATCHED" && expectedBrand &&
+            unrestricted.product.brandName.trim() !== expectedBrand
+            ? `PRODUCT_BRAND_SHEET_MISMATCH：${checked.sheetName} 仅允许${expectedBrand}产品`
+            : unrestricted?.status === "MATCHED" &&
+                !(WYETH_NESTLE_BRANDS as readonly string[]).includes(
+                  unrestricted.product.brandName.trim(),
+                )
+              ? "该产品不属于惠氏/雀巢导入模板支持范围"
             : productResolutionError(productResolution),
         );
       } else {
@@ -613,6 +657,12 @@ export async function POST(request: Request) {
           checked.errors.push("产品未配置品牌，无法加载话题规则");
         }
         if (
+          expectedBrand && product.brandName.trim() !== expectedBrand
+        ) {
+          checked.errors.push(
+            `PRODUCT_BRAND_SHEET_MISMATCH：${checked.sheetName} 仅允许${expectedBrand}产品`,
+          );
+        } else if (
           isWyethNestleTemplate &&
           !(WYETH_NESTLE_BRANDS as readonly string[]).includes(product.brandName.trim())
         ) {
@@ -624,45 +674,51 @@ export async function POST(request: Request) {
       const activityChannel = checked.channel === "DOUYIN"
         ? "DOUYIN"
         : "XIAOHONGSHU";
+      const activityInputMode = parsed.activityInputMode ||
+        (parsed.activityMonthColumnPresent
+          ? "ACTIVITY_MONTH"
+          : parsed.activityNameColumnPresent
+            ? "LEGACY_ACTIVITY_NAME"
+            : "LEGACY_AUTO_RESOLVE");
+      const activityPublishTime = isKabritaTemplate
+        ? undefined
+        : checked.publishTime;
+      const activityExpectedBrand = expectedBrand ||
+        (isKabritaTemplate ? KABRITA_BRAND_NAME : isDanoneTemplate ? "达能" : null);
       const campaignResolutionKey = [
         templateType,
-        parsed.activityNameColumnPresent ? "ACTIVITY_COLUMN" : "LEGACY_NO_ACTIVITY_COLUMN",
+        activityInputMode,
         checked.importedCampaignName,
+        checked.importedActivityMonth,
         product?.id || "",
         activityChannel,
-        isKabritaTemplate ? values.purchaseTime || "" : checked.publishTime,
+        activityPublishTime || "",
       ].join("\u0000");
       let campaignResolution = campaignResolutionCache.get(
         campaignResolutionKey,
       );
       if (!campaignResolution) {
-        campaignResolution = parsed.activityNameColumnPresent && !checked.importedCampaignName
-          ? {
-              status: "EMPTY",
-              inputName: "",
-              campaign: null,
-              error: "",
-            }
-          : parsed.activityNameColumnPresent
-          ? resolveImportedActivity({
+        campaignResolution = activityInputMode === "ACTIVITY_MONTH"
+          ? resolveImportedActivityMonth({
+              activityMonth: checked.importedActivityMonth,
+              expectedBrand: activityExpectedBrand,
+              productId: product?.id,
+              contentChannel: activityChannel,
+              publishTime: activityPublishTime,
+              candidates: campaignCandidates,
+            })
+          : activityInputMode === "LEGACY_ACTIVITY_NAME"
+            ? resolveImportedActivity({
               activityName: checked.importedCampaignName,
               productId: product?.id,
               contentChannel: activityChannel,
               publishTime: isKabritaTemplate ? values.purchaseTime : checked.publishTime,
               candidates: campaignCandidates,
             })
-          : (isKabritaTemplate || isWyethNestleTemplate)
-            ? resolveImplicitImportedActivity({
+            : resolveImplicitImportedActivity({
                 productId: product?.id,
                 contentChannel: activityChannel,
                 publishTime: isKabritaTemplate ? values.purchaseTime : checked.publishTime,
-                candidates: campaignCandidates,
-              })
-            : resolveImportedActivity({
-                activityName: checked.importedCampaignName,
-                productId: product?.id,
-                contentChannel: activityChannel,
-                publishTime: checked.publishTime,
                 candidates: campaignCandidates,
               });
         campaignResolutionCache.set(
@@ -676,7 +732,9 @@ export async function POST(request: Request) {
       const campaign = campaignResolution.campaign;
       if (campaignResolution.error) {
         checked.errors.push(
-          `活动“${checked.importedCampaignName || "（空）"}”：${campaignResolution.error}`,
+          activityInputMode === "ACTIVITY_MONTH"
+            ? `活动月份“${checked.importedActivityMonth || "（空）"}”：${campaignResolution.error}`
+            : `活动“${checked.importedCampaignName || "（空）"}”：${campaignResolution.error}`,
         );
       }
       if (campaign) {
@@ -700,12 +758,25 @@ export async function POST(request: Request) {
               campaign.month,
             ))),
       );
-      const importedPhase = normalizeImportedProductStageTopicValue(
-        checked.stageInput,
-      );
-      const importedDetailedStage = usesDetailedProductStages
-        ? normalizeDetailedProductStageValue(checked.stageDetailInput)
+      const stageSegmentNormalization = templateType === "DANONE_CUSTOMER"
+        ? normalizeDanoneStageSegmentInput({
+            stage: checked.stageInput,
+            segment: checked.stageDetailInput,
+          })
         : null;
+      if (
+        stageSegmentNormalization?.status === "NORMALIZED_STAGE_SEGMENT_SWAP"
+      ) {
+        checked.normalizations.push("NORMALIZED_STAGE_SEGMENT_SWAP");
+      }
+      const importedPhase = stageSegmentNormalization
+        ? stageSegmentNormalization.stage
+        : normalizeImportedProductStageTopicValue(checked.stageInput);
+      const importedDetailedStage = stageSegmentNormalization
+        ? stageSegmentNormalization.detailedStage
+        : usesDetailedProductStages
+          ? normalizeDetailedProductStageValue(checked.stageDetailInput)
+          : null;
       const importedStage = usesDetailedProductStages
         ? importedDetailedStage
         : importedPhase;
@@ -715,21 +786,12 @@ export async function POST(request: Request) {
             ? detailedProductStageLabel(importedStage)
             : productStageTopicLabel(importedStage))
         : "";
-      if (isDanoneTemplate && !checked.stageInput.trim()) {
+      if (stageSegmentNormalization?.error) {
+        checked.errors.push(stageSegmentNormalization.error);
+      } else if (isDanoneAgencyTemplate && !checked.stageInput.trim()) {
         checked.errors.push("阶段不能为空");
-      } else if (isDanoneTemplate && !importedPhase) {
+      } else if (isDanoneAgencyTemplate && !importedPhase) {
         checked.errors.push("阶段仅支持 IFFO 或 GUM");
-      }
-      if (
-        templateType === "DANONE_CUSTOMER" &&
-        !checked.stageDetailInput.trim()
-      ) {
-        checked.errors.push("段位不能为空");
-      } else if (
-        templateType === "DANONE_CUSTOMER" &&
-        !importedDetailedStage
-      ) {
-        checked.errors.push("段位仅支持 P段、1段、2段、3段、4段、1+或2+");
       }
       if (
         importedPhase &&
@@ -785,6 +847,18 @@ export async function POST(request: Request) {
         );
       }
       checked.milkType = stageRule?.milkType || undefined;
+      const normalizedRawValues = {
+        ...(parsed.rawValues || values),
+        ...(checked.importedActivityMonth
+          ? { activityMonth: checked.importedActivityMonth }
+          : {}),
+        ...(stageSegmentNormalization?.stage && stageSegmentNormalization.segment
+          ? {
+              productStage: stageSegmentNormalization.stage,
+              productStageDetail: stageSegmentNormalization.segment,
+            }
+          : {}),
+      };
       checked.notes = buildImportedTaskNotes({
         platform: checked.importedPlatform,
         shopName: checked.shopName,
@@ -802,8 +876,8 @@ export async function POST(request: Request) {
               ? { templateBrand: product.brandName.trim() as "惠氏" | "雀巢" }
               : {}),
           rawValues: isKabritaTemplate
-            ? kabritaRawValues(parsed.rawValues || values)
-            : parsed.rawValues || values,
+            ? kabritaRawValues(normalizedRawValues)
+            : normalizedRawValues,
         },
       });
       rowStages.stageRuleMatchMs = performance.now() - ruleMatchStarted;

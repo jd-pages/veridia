@@ -40,7 +40,7 @@ import { sortAuditResultsByImportOrder } from "@/lib/result-export-order";
 import { withAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
 import { resolveAuditEvidenceFilterIds } from "@/lib/audit-evidence-query";
 
-type UnifiedResultSheetType = "DANONE" | "KABRITA" | "WYETH_NESTLE";
+type UnifiedResultSheetType = "DANONE" | "KABRITA" | "WYETH" | "NESTLE";
 
 function unifiedResultSheetType(row: {
   task: { notes: string | null; product: { brandName?: string | null } };
@@ -49,8 +49,16 @@ function unifiedResultSheetType(row: {
   const templateType = importedTemplateMetadataFromNotes(row.task.notes)?.templateType;
   const expected = templateType === "KABRITA"
     ? "KABRITA"
-    : templateType === "WYETH_NESTLE"
-      ? "WYETH_NESTLE"
+    : templateType === "WYETH"
+      ? "WYETH"
+      : templateType === "NESTLE"
+        ? "NESTLE"
+        : templateType === "WYETH_NESTLE"
+          ? brandName === WYETH_BRAND_NAME
+            ? "WYETH"
+            : brandName === NESTLE_BRAND_NAME
+              ? "NESTLE"
+              : null
       : templateType === "DANONE_CUSTOMER" || templateType === "DANONE_AGENCY"
         ? "DANONE"
         : brandName === KABRITA_BRAND_NAME
@@ -58,14 +66,18 @@ function unifiedResultSheetType(row: {
           : brandName === DANONE_BRAND_NAME
             ? "DANONE"
             : brandName === WYETH_BRAND_NAME || brandName === NESTLE_BRAND_NAME
-              ? "WYETH_NESTLE"
+              ? brandName === WYETH_BRAND_NAME
+                ? "WYETH"
+                : "NESTLE"
               : null;
   const valid = expected === "DANONE"
     ? brandName === DANONE_BRAND_NAME
     : expected === "KABRITA"
       ? brandName === KABRITA_BRAND_NAME
-      : expected === "WYETH_NESTLE"
-        ? brandName === WYETH_BRAND_NAME || brandName === NESTLE_BRAND_NAME
+      : expected === "WYETH"
+        ? brandName === WYETH_BRAND_NAME
+        : expected === "NESTLE"
+          ? brandName === NESTLE_BRAND_NAME
         : false;
   return valid
     ? { type: expected, error: "" }
@@ -262,12 +274,16 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       .map(({ row }) => row);
     const unifiedDanoneRows = byType("DANONE");
     const unifiedKabritaRows = byType("KABRITA");
-    const unifiedWyethNestleRows = byType("WYETH_NESTLE");
+    const unifiedWyethRows = byType("WYETH");
+    const unifiedNestleRows = byType("NESTLE");
     const buffer = await buildUnifiedAuditResultsWorkbook({
       templates,
       danoneRecords: unifiedDanoneRows.map(auditResultToCompactExportRecord),
       kabritaRecords: unifiedKabritaRows.map(auditResultToKabritaExportRecord),
-      wyethNestleRecords: unifiedWyethNestleRows.map(
+      wyethRecords: unifiedWyethRows.map(
+        auditResultToWyethNestleExportRecord,
+      ),
+      nestleRecords: unifiedNestleRows.map(
         auditResultToWyethNestleExportRecord,
       ),
     });

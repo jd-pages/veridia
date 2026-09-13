@@ -371,12 +371,13 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
   await login(page);
   const xhsCampaigns = (await (
     await page.request.get("/api/campaigns?contentChannel=XIAOHONGSHU")
-  ).json()).data as Array<{ id: string; name: string; contentChannel: string }>;
+  ).json()).data as Array<{ id: string; name: string; month: string; contentChannel: string }>;
   const douyinCampaigns = (await (
     await page.request.get("/api/campaigns?contentChannel=DOUYIN")
   ).json()).data as Array<{
     id: string;
     name: string;
+    month: string;
     contentChannel: string;
     publicRequired: boolean;
   }>;
@@ -429,13 +430,15 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
   await page.goto("/campaigns");
   await expect(async () => {
     await page.locator(".ant-segmented-item").filter({ hasText: "抖音" }).click();
-    await expect(
-      page.getByText(augustDouyinCampaign!.name, { exact: true }),
-    ).toBeVisible({ timeout: 2_000 });
+    const augustDouyinRow = page.locator(".ant-table-row")
+      .filter({ hasText: "2026年8月" })
+      .filter({ hasText: "抖音" })
+      .first();
+    await expect(augustDouyinRow).toBeVisible({ timeout: 2_000 });
+    await expect(augustDouyinRow).toContainText("2026年8月");
+    await expect(augustDouyinRow).toContainText("抖音");
   }).toPass({ timeout: 20_000 });
-  await expect(
-    page.getByText(augustXhsCampaign!.name, { exact: true }),
-  ).toHaveCount(0);
+  await expect(page.locator(".ant-table-row").filter({ hasText: "小红书" })).toHaveCount(0);
 
   const removedAgencyTemplateResponse = await page.request.get(
     "/api/import/template?brand=danone-agency",
@@ -449,16 +452,18 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
   await workbook.xlsx.load(
     (await templateResponse.body()) as unknown as ExcelJS.Buffer,
   );
-  const activitySheet = workbook.getWorksheet("活动列表")!;
+  const activitySheet = workbook.getWorksheet("活动月份列表")!;
   const activityRows = activitySheet.getRows(2, activitySheet.rowCount - 1) || [];
+  const expectedMonths = [...new Set(
+    [...xhsCampaigns, ...douyinCampaigns]
+      .map((item) => /-(\d{2})$/u.exec(item.month)?.[1])
+      .filter((month): month is string => Boolean(month))
+      .map((month) => `${Number(month)}月`),
+  )];
   expect(activityRows.map((row) => row.getCell(1).text)).toEqual(
-    expect.arrayContaining(douyinCampaigns.map((item) => item.name)),
+    expect.arrayContaining(expectedMonths),
   );
-  expect(
-    activityRows
-      .filter((row) => row.getCell(1).text.includes("抖音"))
-      .every((row) => row.getCell(2).text === "抖音"),
-  ).toBe(true);
+  expect(activityRows.some((row) => row.getCell(1).text.includes("种草审核"))).toBe(false);
   const importSheet = workbook.getWorksheet("达能客户导入")!;
   expect(importSheet.rowCount).toBe(2);
   expect(
@@ -466,6 +471,11 @@ test("规则与活动管理按内容渠道展示独立抖音副本", async ({ pa
       dataValidations: { find(address: string): ExcelJS.DataValidation | undefined };
     }).dataValidations.find("H10000"),
   ).toMatchObject({ type: "list", formulae: ['"小红书,抖音"'] });
+  expect(
+    (importSheet as unknown as {
+      dataValidations: { find(address: string): ExcelJS.DataValidation | undefined };
+    }).dataValidations.find("K10000"),
+  ).toMatchObject({ type: "list", formulae: ["VERIDIA_ACTIVITY_MONTHS"] });
   expect(importSheet.rowCount).toBe(2);
 });
 

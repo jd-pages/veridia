@@ -11,6 +11,7 @@ import {
   campaignUsesDetailedProductStages,
   detailedProductStagePhase,
   normalizeDetailedProductStageValue,
+  normalizeDanoneStageSegmentInput,
   normalizeImportedProductStageTopicValue,
   normalizeProductStage,
   normalizeProductStageTopicValue,
@@ -21,6 +22,29 @@ import {
 } from "@/lib/product-stage";
 
 describe("product stage topic mapping", () => {
+  it("达能阶段/段位按值域接受标准顺序并自动纠正旧反向顺序", () => {
+    expect(normalizeDanoneStageSegmentInput({ stage: "IFFO", segment: "2段" }))
+      .toMatchObject({ status: "MATCHED", stage: "IFFO", segment: "2段" });
+    expect(normalizeDanoneStageSegmentInput({ stage: "2段", segment: "IFFO" }))
+      .toMatchObject({
+        status: "NORMALIZED_STAGE_SEGMENT_SWAP",
+        stage: "IFFO",
+        segment: "2段",
+      });
+  });
+
+  it("达能阶段/段位缺值、同值域和未知值不做猜测", () => {
+    expect(normalizeDanoneStageSegmentInput({ stage: "", segment: "2段" }).status)
+      .toBe("MISSING_STAGE");
+    expect(normalizeDanoneStageSegmentInput({ stage: "IFFO", segment: "" }).status)
+      .toBe("MISSING_SEGMENT");
+    expect(normalizeDanoneStageSegmentInput({ stage: "IFFO", segment: "GUM" }).status)
+      .toBe("INVALID_STAGE_SEGMENT");
+    expect(normalizeDanoneStageSegmentInput({ stage: "1段", segment: "2段" }).status)
+      .toBe("INVALID_STAGE_SEGMENT");
+    expect(normalizeDanoneStageSegmentInput({ stage: "未知", segment: "2段" }).status)
+      .toBe("INVALID_STAGE_SEGMENT");
+  });
   it("用户界面只暴露 IFFO 和 GUM 两个阶段组选项", () => {
     expect(PRODUCT_STAGE_TOPIC_OPTIONS).toEqual([
       { value: "IFFO", label: "IFFO" },

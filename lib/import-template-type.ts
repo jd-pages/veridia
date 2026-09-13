@@ -9,6 +9,8 @@ export const IMPORT_TEMPLATE_TYPES = [
   "DANONE_CUSTOMER",
   "DANONE_AGENCY",
   "KABRITA",
+  "WYETH",
+  "NESTLE",
   "WYETH_NESTLE",
 ] as const;
 
@@ -18,12 +20,21 @@ export const IMPORT_TEMPLATE_TYPE_LABELS: Record<ImportTemplateType, string> = {
   DANONE_CUSTOMER: "达能客户",
   DANONE_AGENCY: "达能代发",
   KABRITA: "佳贝艾特",
+  WYETH: "惠氏",
+  NESTLE: "雀巢",
   WYETH_NESTLE: "惠氏/雀巢",
 };
 
 // Excel 工作表名称禁止 ASCII "/"；使用视觉等价的全角斜线。
 export const WYETH_NESTLE_SHEET_NAME = "惠氏／雀巢客户导入";
 export const WYETH_NESTLE_LEGACY_SHEET_NAME = "惠氏_雀巢客户导入";
+export const WYETH_SHEET_NAME = "惠氏客户导入";
+export const NESTLE_SHEET_NAME = "雀巢客户导入";
+
+export const WYETH_NESTLE_LEGACY_SHEET_NAMES = [
+  WYETH_NESTLE_SHEET_NAME,
+  WYETH_NESTLE_LEGACY_SHEET_NAME,
+] as const;
 
 export const UNIFIED_IMPORT_SHEETS: ReadonlyArray<{
   sheetName: string;
@@ -32,11 +43,8 @@ export const UNIFIED_IMPORT_SHEETS: ReadonlyArray<{
 }> = [
   { sheetName: "达能客户导入", templateType: "DANONE_CUSTOMER", aliases: [] },
   { sheetName: "佳贝艾特客户导入", templateType: "KABRITA", aliases: [] },
-  {
-    sheetName: WYETH_NESTLE_SHEET_NAME,
-    templateType: "WYETH_NESTLE",
-    aliases: [WYETH_NESTLE_LEGACY_SHEET_NAME],
-  },
+  { sheetName: WYETH_SHEET_NAME, templateType: "WYETH", aliases: [] },
+  { sheetName: NESTLE_SHEET_NAME, templateType: "NESTLE", aliases: [] },
 ];
 
 export const UNIFIED_IMPORT_SHEET_NAMES = UNIFIED_IMPORT_SHEETS.map(
@@ -54,7 +62,7 @@ export const DANONE_CUSTOMER_IMPORT_FIELDS = [
   "contentChannel",
   "noteUrl",
   "publishTime",
-  "activityName",
+  "activityMonth",
 ] as const satisfies readonly StandardField[];
 
 export const DANONE_AGENCY_IMPORT_FIELDS = [
@@ -116,7 +124,7 @@ export function danoneTemplateFieldDisplayName(
     originalUrl: "链接",
     publishTime: `发布时间${required}`,
     activityName: `活动名称${required}`,
-    activityMonth: "活动月份",
+    activityMonth: `活动月份${required}`,
     templateType: "模板类型",
     selfReview: "自审",
   };
