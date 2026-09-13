@@ -261,9 +261,16 @@ export default function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="系统设置" description="本地固定规则审核参数" />
+      <PageHeader title="系统设置" description="集中管理账号安全、审核环境、规则同步与本地数据" />
+      <nav className="settings-jump-nav" aria-label="设置分组导航">
+        <a href="#account-security">账号与安全</a>
+        <a href="#audit-environment">审核环境</a>
+        <a href="#rule-sync">规则与数据</a>
+        <a href="#system-status">系统状态</a>
+      </nav>
       <AccountSecurityPanel />
       <Card
+        id="audit-environment"
         className="surface-card"
         title="小红书会话诊断"
         style={{ marginBottom: 16 }}
@@ -413,7 +420,7 @@ export default function SettingsPage() {
           await load();
         }}>保存抖音访问节奏</Button>
       </Card>
-      <Card className="surface-card" title="软件信息" style={{ marginBottom: 16 }}>
+      <Card id="system-status" className="surface-card" title="软件信息" style={{ marginBottom: 16 }}>
         <Descriptions column={{ xs: 1, md: 2 }}>
           <Descriptions.Item label="当前版本">
             VERIDIA {versionInfo?.version || "—"}
@@ -442,6 +449,7 @@ export default function SettingsPage() {
         </Space>
       </Card>
       <Card
+        id="rule-sync"
         className="surface-card"
         title="规则同步"
         style={{ marginBottom: 16 }}

@@ -100,7 +100,7 @@
   border: 1px solid var(--dashboard-line);
   border-radius: 14px;
   background: #fff;
-  box-shadow: 0 5px 18px rgb(30 41 59 / 4%);
+  box-shadow: 0 2px 8px rgb(30 41 59 / 3%);
 }
 
 .loadingCard {
@@ -119,15 +119,15 @@
   align-items: flex-start;
   gap: 13px;
   min-width: 0;
-  min-height: 132px;
-  padding: 18px;
+  min-height: 118px;
+  padding: 16px;
   border: 1px solid var(--dashboard-line);
   border-radius: 14px;
   background: #fff;
   color: #344054;
   text-align: left;
   cursor: pointer;
-  box-shadow: 0 5px 18px rgb(30 41 59 / 4%);
+  box-shadow: 0 2px 8px rgb(30 41 59 / 3%);
   transition:
     border-color 0.18s ease,
     transform 0.18s ease,
@@ -137,7 +137,7 @@
 .metricCard:hover {
   transform: translateY(-1px);
   border-color: color-mix(in srgb, currentColor 24%, #e8ecf2);
-  box-shadow: 0 9px 22px rgb(30 41 59 / 7%);
+  box-shadow: 0 5px 14px rgb(30 41 59 / 6%);
 }
 
 .metricIcon {

@@ -91,6 +91,7 @@ export default function AccountSecurityPanel() {
   return (
     <>
       <Card
+        id="account-security"
         className="surface-card"
         title="账号安全"
         style={{ marginBottom: 16 }}
@@ -126,7 +127,7 @@ export default function AccountSecurityPanel() {
         <Form
           form={passwordForm}
           layout="vertical"
-          style={{ maxWidth: 560 }}
+          style={{ maxWidth: 940 }}
           onFinish={async (values) => {
             setBusy(true);
             try {
@@ -195,7 +196,7 @@ export default function AccountSecurityPanel() {
             </Button>
           </Space>
         </Form>
-        <div style={{ marginTop: 20, maxWidth: 720 }}>
+        <div style={{ marginTop: 20, maxWidth: 940 }}>
           <Input.TextArea
             value={updateCode}
             autoSize={{ minRows: 2, maxRows: 5 }}

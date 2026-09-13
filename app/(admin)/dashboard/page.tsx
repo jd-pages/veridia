@@ -361,7 +361,6 @@ export default function DashboardPage() {
                     <strong>{value.toLocaleString("zh-CN")}</strong>
                     <span className={styles.metricMeta}>
                       <span>占审核总量 {ratio}%</span>
-                      <span>较上周期 —</span>
                     </span>
                   </span>
                   <RightOutlined className={styles.metricArrow} />

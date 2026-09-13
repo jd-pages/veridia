@@ -407,7 +407,7 @@ export default function RulesPage() {
         </Card>
         <Row className="rule-brand-grid" gutter={[16, 16]}>
           {brands.map((brand) => (
-            <Col key={brand.brandName} xs={24} md={12}>
+            <Col key={brand.brandName} xs={24} md={12} xl={8}>
               <Card
                 className="surface-card rule-brand-card"
                 loading={loading}
@@ -727,9 +727,9 @@ export default function RulesPage() {
                 campaignContainsProduct(campaign, product.id),
               ).length;
               return (
-                <Col key={product.id} xs={24} md={12}>
+                <Col key={product.id} xs={24} md={12} xl={8}>
                   <Card
-                    className="surface-card rule-brand-card"
+                    className="surface-card rule-brand-card rule-product-card"
                     title={product.name}
                     extra={(
                       <Space size={4}>
@@ -810,13 +810,13 @@ export default function RulesPage() {
           rowKey="id"
           loading={loading}
           dataSource={ruleView === "GENERAL" ? brandGeneralRules : displayedRules}
-          scroll={{ x: 1300 }}
+          scroll={{ x: 1465 }}
           columns={[
             {
               title: "标准话题词",
               dataIndex: "topic",
               fixed: "left",
-              width: 210,
+              width: 180,
               render: (value: string) => (
                 <Tag color="blue" style={{ fontSize: 14 }}>
                   {value}
@@ -826,25 +826,25 @@ export default function RulesPage() {
             {
               title: "规则层级",
               dataIndex: "scope",
-              width: 110,
+              width: 90,
               render: (value: string) => ruleScopeLabels[value] || value,
             },
             {
               title: "规则类型",
               dataIndex: "ruleType",
-              width: 150,
+              width: 120,
               render: (value: string) => ruleTypeLabels[value] || value,
             },
             {
               title: "所属活动",
-              width: 260,
+              width: 200,
               render: (_value, row) =>
                 row.campaign?.name ||
                 (row.scope === "PRODUCT" ? <Tag color="orange">待绑定活动</Tag> : "-"),
             },
             {
               title: "所属产品",
-              width: 200,
+              width: 160,
               render: (_value, row) => {
                 const campaignProducts = row.campaign?.products
                   ?.map(({ product }) => product.name)
@@ -855,7 +855,7 @@ export default function RulesPage() {
             },
             {
               title: "匹配设置",
-              width: 260,
+              width: 210,
               render: (_value, row) => (
                 <Space wrap size={4}>
                   {row.exactMatch ? <Tag>精确匹配</Tag> : null}
@@ -865,29 +865,29 @@ export default function RulesPage() {
                 </Space>
               ),
             },
-            { title: "排序", dataIndex: "sortOrder", width: 80 },
+            { title: "排序", dataIndex: "sortOrder", width: 65 },
             {
               title: "版本",
               dataIndex: "version",
-              width: 80,
+              width: 65,
               render: (value: number) => `v${value}`,
             },
             {
               title: "状态",
               dataIndex: "status",
-              width: 90,
+              width: 80,
               render: (value: string) => <StatusTag value={value} />,
             },
             {
               title: "来源",
               dataIndex: "ruleSource",
-              width: 110,
+              width: 95,
               render: (value: string) =>
                 value === "LOCAL_DRAFT" ? "本地草稿" : "已发布规则",
             },
             {
               title: "操作",
-              width: 220,
+              width: 200,
               fixed: "right",
               render: (_value, row) => canManageBusiness ? (
                 <Space size={2} wrap>

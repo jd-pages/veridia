@@ -13,7 +13,7 @@ export default function PageHeader({
 }) {
   return (
     <div className="page-heading">
-      <div>
+      <div className="page-heading-copy">
         <Breadcrumb
           items={[
             { title: "笔记合规中心" },
@@ -23,7 +23,7 @@ export default function PageHeader({
         <h1>{title}</h1>
         <div className="page-kicker">{description}</div>
       </div>
-      {actions}
+      {actions ? <div className="page-heading-actions">{actions}</div> : null}
     </div>
   );
 }

@@ -39,7 +39,7 @@ interface ImportRecord {
 }
 
 const IMPORT_PAGE_SIZE = 12;
-const IMPORT_TABLE_SCROLL_WIDTH = 1920;
+const IMPORT_TABLE_SCROLL_WIDTH = 1450;
 const IMPORT_TABLE_SELECTION_WIDTH = 48;
 const noWrapCell = () => ({ style: { whiteSpace: "nowrap" as const } });
 
@@ -195,6 +195,7 @@ export default function ImportsPage() {
             rowKey="id"
             dataSource={items}
             loading={loading}
+            tableLayout="fixed"
             rowSelection={
               currentRole === "ADMIN"
                 ? {
@@ -208,7 +209,7 @@ export default function ImportsPage() {
               {
                 title: "文件名",
                 dataIndex: "fileName",
-                width: 280,
+                width: 220,
                 ellipsis: { showTitle: false },
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
@@ -221,7 +222,7 @@ export default function ImportsPage() {
               {
                 title: "活动名称",
                 dataIndex: "activityNames",
-                width: 260,
+                width: 190,
                 ellipsis: { showTitle: false },
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
@@ -237,7 +238,7 @@ export default function ImportsPage() {
               {
                 title: "导入类型",
                 dataIndex: "importType",
-                width: 140,
+                width: 110,
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
                 render: (value) => <Tag>{businessImportTypeLabel(value)}</Tag>,
@@ -245,34 +246,34 @@ export default function ImportsPage() {
               {
                 title: "总行数",
                 dataIndex: "totalCount",
-                width: 100,
+                width: 72,
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
               },
               {
                 title: "有效",
                 dataIndex: "validCount",
-                width: 90,
+                width: 65,
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
               },
               {
                 title: "异常",
                 dataIndex: "invalidCount",
-                width: 90,
+                width: 65,
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
               },
               {
                 title: "跳过",
                 dataIndex: "skippedCount",
-                width: 90,
+                width: 65,
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
               },
               {
                 title: "审核进度",
-                width: 180,
+                width: 150,
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
                 render: (_, row) =>
@@ -283,7 +284,7 @@ export default function ImportsPage() {
               {
                 title: "状态",
                 dataIndex: "status",
-                width: 120,
+                width: 90,
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
                 render: (value) => <StatusTag value={value} />,
@@ -291,7 +292,7 @@ export default function ImportsPage() {
               {
                 title: "导入时间",
                 dataIndex: "createdAt",
-                width: 180,
+                width: 150,
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
                 render: (value: string) => new Date(value).toLocaleString("zh-CN"),
@@ -299,7 +300,7 @@ export default function ImportsPage() {
               {
                 title: "导入人",
                 dataIndex: "creatorDisplayName",
-                width: 120,
+                width: 90,
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
                 render: (value: string | null) => value || "-",
@@ -307,7 +308,7 @@ export default function ImportsPage() {
               {
                 title: "操作",
                 fixed: "right",
-                width: 220,
+                width: 180,
                 onHeaderCell: noWrapCell,
                 onCell: noWrapCell,
                 render: (_, row) => (
@@ -344,7 +345,11 @@ export default function ImportsPage() {
             }}
           />
         ) : (
-          <Empty description="尚无 Excel 导入记录" />
+          <Empty description="尚无 Excel 导入记录">
+            <Button type="primary" href="/tasks">
+              前往审核任务导入
+            </Button>
+          </Empty>
         )}
       </Card>
     </>

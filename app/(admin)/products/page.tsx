@@ -12,6 +12,7 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Upload,
 } from "antd";
 import {
@@ -149,42 +150,46 @@ export default function ProductsPage() {
           rowKey="id"
           loading={loading}
           dataSource={items}
-          scroll={{ x: 1080 }}
+          scroll={{ x: 1035 }}
           columns={[
-            { title: "产品编码", dataIndex: "code", width: 150, fixed: "left" },
+            { title: "产品编码", dataIndex: "code", width: 110, fixed: "left", ellipsis: true },
             {
               title: "产品名称",
               dataIndex: "name",
-              width: 220,
+              width: 150,
               fixed: "left",
-              render: (value: string) => <strong>{value}</strong>,
+              ellipsis: { showTitle: false },
+              render: (value: string) => <Tooltip title={value}><strong>{value}</strong></Tooltip>,
             },
-            { title: "品牌名称", dataIndex: "brandName", width: 140 },
-            { title: "产品分类", dataIndex: "category", width: 140 },
+            { title: "品牌名称", dataIndex: "brandName", width: 100, ellipsis: true },
+            { title: "产品分类", dataIndex: "category", width: 90, ellipsis: true },
             {
               title: "产品别名",
               dataIndex: "aliases",
-              width: 260,
+              width: 160,
+              ellipsis: { showTitle: false },
               render: (aliases: Product["aliases"]) =>
-                aliases.length
-                  ? aliases.map((item) => <Tag key={item.id}>{item.alias}</Tag>)
-                  : "-",
+                aliases.length ? (
+                  <Tooltip title={aliases.map((item) => item.alias).join("、")}>
+                    <span>{aliases.map((item) => item.alias).join("、")}</span>
+                  </Tooltip>
+                ) : "-",
             },
             {
               title: "活动数",
-              width: 90,
+              width: 70,
               render: (_value, row) => row._count?.campaigns || 0,
             },
             {
               title: "状态",
               dataIndex: "status",
-              width: 90,
+              width: 70,
               render: (value: string) => <StatusTag value={value} />,
             },
             {
               title: "更新时间",
               dataIndex: "updatedAt",
-              width: 170,
+              width: 135,
               render: (value: string) => new Date(value).toLocaleString("zh-CN"),
             },
             {

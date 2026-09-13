@@ -2,7 +2,7 @@
   min-height: calc(100vh - var(--admin-header-height));
   margin: -22px -24px -40px;
   padding: 24px 28px 48px;
-  background: #f7f8fa;
+  background: #f5f7fa;
   color: #1f2937;
   font-family:
     var(--font-noto-sans-sc), "Noto Sans SC", "Source Han Sans SC",
@@ -29,9 +29,7 @@
   border: 1px solid #e8ebf0;
   border-radius: 12px;
   background: #fff;
-  box-shadow:
-    0 1px 2px rgb(16 24 40 / 3%),
-    0 7px 22px rgb(16 24 40 / 4%);
+  box-shadow: 0 2px 8px rgb(16 24 40 / 3%);
 }
 
 .consoleCard :global(.ant-card-body) {
@@ -43,10 +41,30 @@
 }
 
 .sessionCard :global(.ant-card-body) {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
+  gap: 14px 24px;
+}
+
+.sessionCard .sectionHeader {
+  grid-column: 1 / -1;
+  align-items: center;
+  margin-bottom: 2px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.sessionCard .sectionHeader :global(.ant-tabs-nav) {
+  margin-bottom: 0;
+}
+
+.sessionCard > :global(.ant-card-body) > :global(.ant-alert) {
+  grid-column: 1 / -1;
+}
+
+.sessionCard > :global(.ant-card-body) > :global(.ant-space) {
+  justify-content: flex-end;
 }
 
 .sessionIdentity {
@@ -212,7 +230,7 @@
   height: 42px;
   border-radius: 8px;
   font-weight: 650;
-  box-shadow: 0 5px 12px rgb(180 35 42 / 16%);
+  box-shadow: 0 2px 5px rgb(22 60 133 / 14%);
 }
 
 .uploadArea :global(.ant-upload-drag) {
@@ -754,6 +772,20 @@
 
   .statCard strong {
     font-size: 24px;
+  }
+}
+
+@media (max-width: 1380px) {
+  .sessionCard :global(.ant-card-body) {
+    grid-template-columns: 1fr;
+  }
+
+  .sessionCard > :global(.ant-card-body) > :global(.ant-space) {
+    justify-content: flex-start;
+  }
+
+  .sessionTitle {
+    flex-wrap: wrap;
   }
 }
 

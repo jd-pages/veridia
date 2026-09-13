@@ -203,7 +203,7 @@ async function createImportGraph(
   };
 }
 
-test("导入记录表格在桌面窄窗口保持列宽、横向滚动和固定操作列", async ({
+test("导入记录表格在桌面宽屏避免冗余滚动并在窄屏保持固定操作列", async ({
   page,
 }) => {
   await loginAsAdmin(page);
@@ -277,29 +277,34 @@ test("导入记录表格在桌面窄窗口保持列宽、横向滚动和固定�
         };
       }, graph.importRecord.id);
 
-      expect(layout.scrollWidth).toBeGreaterThan(layout.clientWidth);
-      expect(layout.tableWidth).toBeGreaterThanOrEqual(1918);
+      if (width === 1920) {
+        // Chromium may retain a few device pixels for the fixed-column gutter.
+        expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 8);
+      } else {
+        expect(layout.scrollWidth).toBeGreaterThan(layout.clientWidth);
+      }
+      expect(layout.tableWidth).toBeGreaterThanOrEqual(1448);
       expect(layout.headerWhiteSpace).toEqual(Array(12).fill("nowrap"));
       expect(layout.fileCell).toMatchObject({
         whiteSpace: "nowrap",
         textOverflow: "ellipsis",
       });
-      expect(layout.fileCell.width).toBeCloseTo(280, 0);
+      expect(layout.fileCell.width).toBeGreaterThanOrEqual(220);
       expect(layout.activityCell).toMatchObject({
         whiteSpace: "nowrap",
         textOverflow: "ellipsis",
       });
-      expect(layout.activityCell.width).toBeCloseTo(260, 0);
+      expect(layout.activityCell.width).toBeGreaterThanOrEqual(190);
       expect(layout.progressCell).toMatchObject({
         whiteSpace: "nowrap",
         text: "结果 1 条 / 未完成 0 条",
       });
-      expect(layout.progressCell.width).toBeCloseTo(180, 0);
+      expect(layout.progressCell.width).toBeGreaterThanOrEqual(150);
       expect(layout.actionCell).toMatchObject({
         whiteSpace: "nowrap",
         position: "sticky",
       });
-      expect(layout.actionCell.width).toBeCloseTo(220, 0);
+      expect(layout.actionCell.width).toBeGreaterThanOrEqual(180);
       await expect(row.locator('input[type="checkbox"]')).toBeVisible();
       const resultLink = row.getByRole("link", { name: "查看审核结果", exact: true });
       const deleteButton = row.getByRole("button", { name: "删除", exact: true });

@@ -21,6 +21,7 @@ import {
   Table,
   Tag,
   Tabs,
+  Tooltip,
   Upload,
 } from "antd";
 import {
@@ -309,39 +310,44 @@ export default function CampaignsPage() {
           rowKey="id"
           loading={loading}
           dataSource={items}
-          scroll={{ x: 1150 }}
+          scroll={{ x: 980 }}
           columns={[
             {
               title: "活动名称",
               dataIndex: "name",
-              width: 300,
+              width: 150,
               fixed: "left",
-              render: (value: string) => <strong>{value}</strong>,
+              ellipsis: { showTitle: false },
+              render: (value: string) => <Tooltip title={value}><strong>{value}</strong></Tooltip>,
             },
-            { title: "月份", dataIndex: "month", width: 100 },
+            { title: "月份", dataIndex: "month", width: 80 },
             {
               title: "产品系列",
-              width: 280,
-              render: (_value, row) =>
-                row.products?.length
+              width: 140,
+              ellipsis: { showTitle: false },
+              render: (_value, row) => {
+                const label = row.products?.length
                   ? row.products.map(({ product }) => product.name).join("、")
-                  : row.product?.name || "未关联",
+                  : row.product?.name || "未关联";
+                return <Tooltip title={label}><span>{label}</span></Tooltip>;
+              },
             },
             {
               title: "活动周期",
-              width: 220,
+              width: 175,
               render: (_value, row) =>
                 `${dayjs(row.startDate).format("YYYY-MM-DD")} 至 ${dayjs(row.endDate).format("YYYY-MM-DD")}`,
             },
             {
               title: "固定规则",
-              width: 220,
+              width: 150,
+              ellipsis: { showTitle: false },
               render: (_value, row) =>
                 `图文≥${row.minImageCount}张；有效正文≥${row.minBodyLength || 1}字；话题精确且可点击`,
             },
             {
               title: "规则版本",
-              width: 120,
+              width: 105,
               render: (_value, row) => (
                 <Space>
                   <span>{row._count.topicRules} 条</span>
@@ -352,12 +358,12 @@ export default function CampaignsPage() {
             {
               title: "状态",
               dataIndex: "status",
-              width: 90,
+              width: 75,
               render: (value: string) => <StatusTag value={value} />,
             },
             {
               title: "操作",
-              width: 110,
+              width: 105,
               fixed: "right",
               render: (_value, row) => (
                 <Button
