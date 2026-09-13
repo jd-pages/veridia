@@ -33,7 +33,7 @@ test("删除当前审核结果后同日重新导入立即释放单条重复占�
     await page.request.get(
       `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
     )
-  ).json()).data as Array<{ id: string; name: string }>;
+  ).json()).data as Array<{ id: string; name: string; month: string }>;
   const campaign = campaigns.find((item) =>
     item.name.includes("爱他美2026年7月"),
   )!;
@@ -98,7 +98,7 @@ test("删除当前审核结果后同日重新导入立即释放单条重复占�
     `DELETE-RELEASE-${suffix}`,
     "小红书",
     url,
-    "2026-08-23 10:00:00",
+    `${campaign.month}-23 10:00:00`,
     campaign.name,
   ];
   const precheck = await page.request.post("/api/import/notes", {

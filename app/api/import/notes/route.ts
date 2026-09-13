@@ -626,6 +626,7 @@ export async function POST(request: Request) {
         : "XIAOHONGSHU";
       const campaignResolutionKey = [
         templateType,
+        parsed.activityNameColumnPresent ? "ACTIVITY_COLUMN" : "LEGACY_NO_ACTIVITY_COLUMN",
         checked.importedCampaignName,
         product?.id || "",
         activityChannel,
@@ -635,11 +636,19 @@ export async function POST(request: Request) {
         campaignResolutionKey,
       );
       if (!campaignResolution) {
-        campaignResolution = checked.importedCampaignName
+        campaignResolution = parsed.activityNameColumnPresent && !checked.importedCampaignName
+          ? {
+              status: "EMPTY",
+              inputName: "",
+              campaign: null,
+              error: "",
+            }
+          : parsed.activityNameColumnPresent
           ? resolveImportedActivity({
               activityName: checked.importedCampaignName,
               productId: product?.id,
               contentChannel: activityChannel,
+              publishTime: isKabritaTemplate ? values.purchaseTime : checked.publishTime,
               candidates: campaignCandidates,
             })
           : (isKabritaTemplate || isWyethNestleTemplate)
@@ -653,6 +662,7 @@ export async function POST(request: Request) {
                 activityName: checked.importedCampaignName,
                 productId: product?.id,
                 contentChannel: activityChannel,
+                publishTime: checked.publishTime,
                 candidates: campaignCandidates,
               });
         campaignResolutionCache.set(
@@ -665,7 +675,9 @@ export async function POST(request: Request) {
       checked.campaignMatchStatus = campaignResolution.status;
       const campaign = campaignResolution.campaign;
       if (campaignResolution.error) {
-        checked.errors.push(campaignResolution.error);
+        checked.errors.push(
+          `活动“${checked.importedCampaignName || "（空）"}”：${campaignResolution.error}`,
+        );
       }
       if (campaign) {
         checked.campaignName = campaign.name;

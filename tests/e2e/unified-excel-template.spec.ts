@@ -3,7 +3,11 @@ import ExcelJS from "exceljs";
 import { prisma } from "../../lib/db";
 import { E2E_ORIGIN } from "./e2e-origin";
 import { ensureStoreTopicRuleSeeds } from "../../lib/store-topic-rule-service";
-import { WYETH_NESTLE_SHEET_NAME } from "../../lib/import-template-type";
+import { resolveProductReference } from "../../lib/product-matching";
+import {
+  WYETH_NESTLE_LEGACY_SHEET_NAME,
+  WYETH_NESTLE_SHEET_NAME,
+} from "../../lib/import-template-type";
 
 test.describe.configure({ mode: "serial" });
 
@@ -81,7 +85,9 @@ test("统一模板下载、惠氏/雀巢四行解析、Sheet 错误与跨 Sheet 
     const urls = products.map((_, index) =>
       `${E2E_ORIGIN}/mock/xhs?case=passed&unified=${suffix}-${index}`,
     );
-    products.forEach((product, index) => shared.addRow([
+    const previewProducts = [products[0], products[0], products[2], products[2]];
+    const previewCampaigns = [campaigns[0], campaigns[0], campaigns[2], campaigns[2]];
+    previewProducts.forEach((product, index) => shared.addRow([
       `登记人${index + 1}`,
       `微信昵称${index + 1}`,
       "京东",
@@ -91,6 +97,7 @@ test("统一模板下载、惠氏/雀巢四行解析、Sheet 错误与跨 Sheet 
       "小红书",
       urls[index],
       "2026-09-12 10:00:00",
+      index === 0 || index === 2 ? previewCampaigns[index].name : "",
       index === 0 ? "2026-09-12-已留言" : "",
       "Y",
       "Y",
@@ -122,11 +129,97 @@ test("统一模板下载、惠氏/雀巢四行解析、Sheet 错误与跨 Sheet 
       }>;
     };
     expect(preview).toMatchObject({ total: 4, validCount: 4, invalidCount: 0 });
-    expect(preview.rows.map((row) => row.productId)).toEqual(products.map((product) => product.id));
-    expect(preview.rows.map((row) => row.campaignId)).toEqual(campaigns.map((campaign) => campaign.id));
+    expect(preview.rows.map((row) => row.productId)).toEqual(previewProducts.map((product) => product.id));
+    expect(preview.rows.map((row) => row.campaignId)).toEqual(previewCampaigns.map((campaign) => campaign.id));
     expect(preview.rows.every((row) => row.sheetName === WYETH_NESTLE_SHEET_NAME)).toBe(true);
     expect(preview.rows.every((row) => row.contentChannel === "小红书")).toBe(true);
     expect(preview.rows.every((row) => row.matchedStoreName)).toBe(true);
+
+    const uploadPreview = async (candidate: ExcelJS.Workbook, name: string) => {
+      const response = await page.request.post("/api/import/notes", {
+        multipart: {
+          file: {
+            name,
+            mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            buffer: Buffer.from(await candidate.xlsx.writeBuffer()),
+          },
+          commit: "false",
+          skipDuplicates: "true",
+        },
+      });
+      const payload = await response.json();
+      expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
+      return payload.data as {
+        validCount: number;
+        invalidCount: number;
+        rows: Array<{
+          sheetName: string;
+          campaignId?: string;
+          importedCampaignName: string;
+          errors: string[];
+        }>;
+      };
+    };
+
+    const aliasWorkbook = new ExcelJS.Workbook();
+    await aliasWorkbook.xlsx.load((await (await page.request.get("/api/import/template?format=xlsx")).body()) as unknown as ExcelJS.Buffer);
+    const aliasSheet = aliasWorkbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!;
+    aliasSheet.name = WYETH_NESTLE_LEGACY_SHEET_NAME;
+    aliasSheet.addRow([
+      "登记人", "微信", "京东", wyethStore.storeName, products[0].name, `ALIAS-${suffix}`,
+      "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&alias=${suffix}`,
+      "2026-09-12 10:00:00", campaigns[0].name, "", "", "",
+    ]);
+    const aliasPreview = await uploadPreview(aliasWorkbook, "legacy-alias.xlsx");
+    expect(aliasPreview).toMatchObject({ validCount: 1, invalidCount: 0 });
+    expect(aliasPreview.rows[0].sheetName).toBe(WYETH_NESTLE_LEGACY_SHEET_NAME);
+
+    const firstBlankWorkbook = new ExcelJS.Workbook();
+    await firstBlankWorkbook.xlsx.load((await (await page.request.get("/api/import/template?format=xlsx")).body()) as unknown as ExcelJS.Buffer);
+    firstBlankWorkbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.addRow([
+      "登记人", "微信", "京东", wyethStore.storeName, products[0].name, `BLANK-${suffix}`,
+      "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&blank=${suffix}`,
+      "2026-09-12 10:00:00", "", "", "", "",
+    ]);
+    const firstBlankPreview = await uploadPreview(firstBlankWorkbook, "first-blank.xlsx");
+    expect(firstBlankPreview.invalidCount).toBe(1);
+    expect(firstBlankPreview.rows[0].errors.join("\n"))
+      .toContain("活动名称为空，且没有可继承的上方活动");
+
+    const mismatchWorkbook = new ExcelJS.Workbook();
+    await mismatchWorkbook.xlsx.load((await (await page.request.get("/api/import/template?format=xlsx")).body()) as unknown as ExcelJS.Buffer);
+    const mismatchSheet = mismatchWorkbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!;
+    mismatchSheet.addRow([
+      "登记人1", "微信1", "京东", wyethStore.storeName, products[0].name, `MATCH-${suffix}`,
+      "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&match=${suffix}`,
+      "2026-09-12 10:00:00", campaigns[0].name, "", "", "",
+    ]);
+    mismatchSheet.addRow([
+      "登记人2", "微信2", "京东", nestleStore.storeName, products[2].name, `MISMATCH-${suffix}`,
+      "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&mismatch=${suffix}`,
+      "2026-09-12 10:00:00", "", "", "", "",
+    ]);
+    const mismatchPreview = await uploadPreview(mismatchWorkbook, "brand-mismatch.xlsx");
+    expect(mismatchPreview).toMatchObject({ validCount: 1, invalidCount: 1 });
+    expect(mismatchPreview.rows[1].importedCampaignName).toBe(campaigns[0].name);
+    expect(mismatchPreview.rows[1].errors.join("\n"))
+      .toContain("当前产品系列不属于所选活动");
+
+    const legacyWorkbook = new ExcelJS.Workbook();
+    const legacySheet = legacyWorkbook.addWorksheet(WYETH_NESTLE_SHEET_NAME);
+    legacySheet.addRow([
+      "登记人（必填）", "微信昵称（必填）", "下单平台（必填）", "店铺名称（必填）",
+      "产品系列（必填）", "订单编号（必填）", "内容渠道（必填）", "链接（必填）纯链接",
+      "发帖时间（必填）", "客服修改留言", "内部自审", "互动量≥10",
+    ]);
+    legacySheet.addRow([
+      "登记人", "微信", "京东", wyethStore.storeName, products[0].name, `LEGACY-${suffix}`,
+      "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&legacy=${suffix}`,
+      "2026-09-12 10:00:00", "", "", "",
+    ]);
+    const legacyPreview = await uploadPreview(legacyWorkbook, "legacy-no-activity.xlsx");
+    expect(legacyPreview).toMatchObject({ validCount: 1, invalidCount: 0 });
+    expect(legacyPreview.rows[0].campaignId).toBe(campaigns[0].id);
 
     const audit = async (index: number, total: number, includeRequiredTopic: boolean) => {
       const url = `${E2E_ORIGIN}/mock/xhs?case=passed&unified-export=${suffix}-${index}`;
@@ -187,14 +280,14 @@ test("统一模板下载、惠氏/雀巢四行解析、Sheet 错误与跨 Sheet 
       const exported = new ExcelJS.Workbook();
       await exported.xlsx.load((await response.body()) as unknown as ExcelJS.Buffer);
       expect(exported.worksheets[0].name).toBe(WYETH_NESTLE_SHEET_NAME);
-      expect(exported.worksheets[0].getCell("K2").text).toContain(selfReview);
-      expect(exported.worksheets[0].getCell("L2").text).toBe(interaction);
+      expect(exported.worksheets[0].getCell("L2").text).toContain(selfReview);
+      expect(exported.worksheets[0].getCell("M2").text).toBe(interaction);
     }
 
     shared.addRow([
       "登记人5", "微信昵称5", "京东", wyethStore.storeName, "爱他美澳洲白金版",
       `ORDER-${suffix}-unsupported`, "小红书", `${E2E_ORIGIN}/mock/xhs?case=passed&unsupported=${suffix}`,
-      "2026-09-12 10:00:00", "", "", "",
+      "2026-09-12 10:00:00", campaigns[0].name, "", "", "",
     ]);
     const invalidResponse = await page.request.post("/api/import/notes", {
       multipart: {
@@ -222,7 +315,7 @@ test("统一模板下载、惠氏/雀巢四行解析、Sheet 错误与跨 Sheet 
     ]);
     duplicateWorkbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.addRow([
       "登记人", "微信", "京东", wyethStore.storeName, products[0].name, "DUP-WYETH",
-      "小红书", urls[0], "2026-09-12 10:00:00", "", "", "",
+      "小红书", urls[0], "2026-09-12 10:00:00", campaigns[0].name, "", "", "",
     ]);
     const duplicateResponse = await page.request.post("/api/import/notes", {
       multipart: {
@@ -348,6 +441,33 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一三 Sheet 结�
       campaign.month === "2026-08" && campaign.contentChannel === "XIAOHONGSHU",
     )!;
     expect(danoneCampaign).toBeTruthy();
+    const kabritaProducts = await prisma.product.findMany({
+      where: { brandName: "佳贝艾特", status: "ACTIVE", deletedAt: null },
+      include: { aliases: { select: { alias: true } } },
+    });
+    const kabritaProductResolution = resolveProductReference(kabritaProducts, {
+      name: "荷兰佳贝1",
+    });
+    expect(kabritaProductResolution.status).toBe("MATCHED");
+    const kabritaProductId = kabritaProductResolution.status === "MATCHED"
+      ? kabritaProductResolution.product.id
+      : "";
+    const kabritaCampaign = await prisma.campaign.findFirstOrThrow({
+      where: {
+        status: "ACTIVE",
+        deletedAt: null,
+        contentChannel: "XIAOHONGSHU",
+        startDate: { lte: new Date("2026-08-12T00:00:00.000Z") },
+        endDate: { gte: new Date("2026-08-12T00:00:00.000Z") },
+        OR: [
+          { productId: kabritaProductId },
+          { products: { some: { productId: kabritaProductId } } },
+        ],
+        topicRules: {
+          some: { status: "ACTIVE", contentChannel: { in: ["XIAOHONGSHU", "ALL"] } },
+        },
+      },
+    });
     const [wyethStore, nestleStore] = await Promise.all([
       prisma.storeTopicRule.findFirstOrThrow({
         where: { commercePlatform: "JD", enabled: true, deletedAt: null, storeName: { contains: "惠氏" } },
@@ -367,23 +487,26 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一三 Sheet 结�
         "京东", "京东健康官方进口超市", `混合达能${index + 1}`, danoneProduct.name,
         "2段", "IFFO", `MIX-D-${suffix}-${index}`, "小红书",
         `${E2E_ORIGIN}/mock/xhs?case=passed&mixed-danone=${suffix}-${index}`,
-        "2026-08-12 10:00:00", danoneCampaign.name,
+        "2026-08-12 10:00:00", index === 0 ? danoneCampaign.name : "",
       ]);
     }
     const kabrita = workbook.getWorksheet("佳贝艾特客户导入")!;
-    ["荷兰佳贝1", "荷兰佳贝2"].forEach((productLine, index) => kabrita.addRow([
+    ["荷兰佳贝1", "荷兰佳贝1"].forEach((productLine, index) => kabrita.addRow([
       "2026-09-12", "京东", "佳贝艾特(Kabrita)海外专卖店", `混合佳贝${index + 1}`,
       `BUYER-${suffix}-${index}`, `MIX-K-${suffix}-${index}`, "2026-08-12", "1", "1",
       `kabrita-${index + 1}`, `${E2E_ORIGIN}/mock/xhs?case=passed&mixed-kabrita=${suffix}-${index}`,
-      productLine, "Y",
+      productLine, index === 0 ? kabritaCampaign.name : "", "Y",
     ]));
     const shared = workbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!;
-    sharedProducts.forEach((product, index) => shared.addRow([
+    const sharedImportProducts = [sharedProducts[0], sharedProducts[0], sharedProducts[2], sharedProducts[2]];
+    const sharedImportCampaigns = [sharedCampaigns[0], sharedCampaigns[0], sharedCampaigns[2], sharedCampaigns[2]];
+    sharedImportProducts.forEach((product, index) => shared.addRow([
       `登记人${index + 1}`, `混合微信${index + 1}`, "京东",
       product.brandName === "惠氏" ? wyethStore.storeName : nestleStore.storeName,
       product.name, `MIX-WN-${suffix}-${index}`, "小红书",
       `${E2E_ORIGIN}/mock/xhs?case=passed&mixed-wn=${suffix}-${index}`,
-      "2026-09-12 10:00:00", "", "Y", "Y",
+      "2026-09-12 10:00:00", index === 0 || index === 2 ? sharedImportCampaigns[index].name : "",
+      "", "Y", "Y",
     ]));
 
     const importResponse = await page.request.post("/api/import/notes", {
@@ -487,12 +610,16 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一三 Sheet 结�
       .toBe(true);
     expect(exportedOrders(WYETH_NESTLE_SHEET_NAME, "订单编号（必填）").every((order) => order.includes("MIX-WN-")))
       .toBe(true);
-    expect(exported.getWorksheet("佳贝艾特客户导入")!.getCell("M2").text).toBe("Y");
-    expect(exported.getWorksheet("佳贝艾特客户导入")!.getCell("M3").text).toBe("N-互动量＜10");
-    expect(exported.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.getCell("K2").text).toBe("Y");
-    expect(exported.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.getCell("L2").text).toBe("N");
-    expect(exported.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.getCell("K4").text).toBe("Y");
+    expect(exported.getWorksheet("佳贝艾特客户导入")!.getCell("M2").text).toBe(kabritaCampaign.name);
+    expect(exported.getWorksheet("佳贝艾特客户导入")!.getCell("M3").text).toBe(kabritaCampaign.name);
+    expect(exported.getWorksheet("佳贝艾特客户导入")!.getCell("N2").text).toBe("Y");
+    expect(exported.getWorksheet("佳贝艾特客户导入")!.getCell("N3").text).toBe("N-互动量＜10");
+    expect(exported.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.getCell("J2").text).toBe(sharedCampaigns[0].name);
+    expect(exported.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.getCell("J3").text).toBe(sharedCampaigns[0].name);
+    expect(exported.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.getCell("L2").text).toBe("Y");
+    expect(exported.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.getCell("M2").text).toBe("N");
     expect(exported.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.getCell("L4").text).toBe("Y");
+    expect(exported.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.getCell("M4").text).toBe("Y");
 
     const mismatchedTask = await prisma.auditTask.findFirstOrThrow({
       where: { importRecordId, orderNumber: { contains: "MIX-WN-" } },

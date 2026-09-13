@@ -38,7 +38,7 @@ test("Excel 店铺忽略英文大小写完成精确映射", async ({
         `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
       )
     ).json()
-  ).data as Array<{ id: string; name: string }>;
+  ).data as Array<{ id: string; name: string; month: string }>;
   const campaign = campaigns.find((item) => item.name.includes("爱他美2026年7月"))!;
   expect(campaign).toBeTruthy();
 
@@ -68,7 +68,7 @@ test("Excel 店铺忽略英文大小写完成精确映射", async ({
     `STORE-${Date.now()}`,
     "小红书",
     url,
-    "2026-08-05 12:00:00",
+    `${campaign.month}-05 12:00:00`,
     campaign.name,
   ]);
 
@@ -117,7 +117,7 @@ test("爱他美优选店铺新旧 Excel 名称归一到同一 identity", async (
         `/api/campaigns?productId=${product.id}&contentChannel=XIAOHONGSHU`,
       )
     ).json()
-  ).data as Array<{ id: string; name: string }>;
+  ).data as Array<{ id: string; name: string; month: string }>;
   const campaign = campaigns.find((item) =>
     item.name.includes("爱他美2026年7月")
   )!;
@@ -150,7 +150,7 @@ test("爱他美优选店铺新旧 Excel 名称归一到同一 identity", async (
       `APTAMIL-RENAME-${Date.now()}-${index}`,
       "小红书",
       `${E2E_ORIGIN}/mock/xhs?case=passed&aptamil-rename=${Date.now()}-${index}`,
-      "2026-08-05 12:00:00",
+      `${campaign.month}-05 12:00:00`,
       campaign.name,
     ]);
   }

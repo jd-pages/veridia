@@ -151,6 +151,7 @@ export interface TabularPreviewRow {
   sheetName?: string;
   templateBrand?: ImportTemplateBrand;
   templateType?: import("@/lib/import-template-type").ImportTemplateType;
+  activityNameColumnPresent?: boolean;
   rowNumber: number;
   values: Partial<Record<StandardField, string>>;
   rawValues?: Partial<Record<StandardField, string>>;

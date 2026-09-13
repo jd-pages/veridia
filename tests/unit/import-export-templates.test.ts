@@ -37,7 +37,10 @@ import {
   KABRITA_IMPORT_FIELDS,
 } from "@/lib/import-export-templates/kabrita";
 import { WYETH_NESTLE_FIELDS } from "@/lib/import-export-templates/wyeth-nestle";
-import { WYETH_NESTLE_SHEET_NAME } from "@/lib/import-template-type";
+import {
+  WYETH_NESTLE_LEGACY_SHEET_NAME,
+  WYETH_NESTLE_SHEET_NAME,
+} from "@/lib/import-template-type";
 
 const templates = BUILTIN_IMPORT_EXPORT_TEMPLATES;
 
@@ -62,6 +65,7 @@ const kabritaImportHeaders = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
+  "活动名称（必填）",
   "是否符合",
 ];
 
@@ -111,7 +115,7 @@ describe("远程表格模板配置", () => {
 });
 
 describe("佳贝艾特专属导入导出模板", () => {
-  it("严格生成包含系统是否符合列的13列表头并可识别模板品牌", async () => {
+  it("严格生成包含活动名称和系统是否符合列的14列表头并可识别模板品牌", async () => {
     const bytes = await buildImportTemplateWorkbook(templates, {
       templateBrand: KABRITA_BRAND_NAME,
     });
@@ -120,7 +124,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     expect(
       (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
     ).toEqual(kabritaImportHeaders);
-    expect(KABRITA_IMPORT_FIELDS).toHaveLength(13);
+    expect(KABRITA_IMPORT_FIELDS).toHaveLength(14);
 
     const csv = buildImportTemplateCsv(templates, {
       templateBrand: KABRITA_BRAND_NAME,
@@ -145,6 +149,7 @@ describe("佳贝艾特专属导入导出模板", () => {
           "kabrita-user",
           "97【示例笔记】https://www.xiaohongshu.com/explore/kabrita-1",
           "荷兰佳贝1",
+          "佳贝艾特2026年8月小红书种草审核",
           "",
         ].join(","),
       ].join("\r\n")),
@@ -210,7 +215,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     );
   });
 
-  it("保存13列原值并用系统审核结论重写佳贝艾特是否符合", async () => {
+  it("保存14列原值并用系统审核结论重写佳贝艾特是否符合", async () => {
     const rawValues = Object.fromEntries(
       KABRITA_IMPORT_FIELDS.map((field, index) => [
         field,
@@ -223,6 +228,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     );
     const notes = buildImportedTaskNotes({
       platform: "小红书",
+      activityName: "佳贝艾特2026年8月小红书种草审核",
       templateMetadata: {
         templateBrand: "佳贝艾特",
         rawValues,
@@ -266,6 +272,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     const record = auditResultToKabritaExportRecord(row);
     expect(Object.keys(record)).toEqual(KABRITA_EXPORT_FIELDS);
     expect(record.purchaseProductLine).toBe("港版佳贝3");
+    expect(record.activityName).toBe("佳贝艾特2026年8月小红书种草审核");
     expect(record.xiaohongshuPublishLink).toBe(
       "标题 https://www.xiaohongshu.com/explore/kabrita-export",
     );
@@ -332,7 +339,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     expect(headers).not.toEqual(
       expect.arrayContaining(["阶段", "IFFO", "GUM", "产品阶段话题"]),
     );
-    expect(sheet.getCell("M2").text).toBe(
+    expect(sheet.getCell("N2").text).toBe(
       "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张",
     );
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
@@ -418,11 +425,11 @@ describe("统一 Excel 工作簿", () => {
     expect(workbook.worksheets.map((sheet) => sheet.rowCount)).toEqual([2, 1, 2]);
     expect((workbook.worksheets[1].getRow(1).values as unknown[]).slice(1))
       .toEqual(kabritaExportHeaders);
-    expect(workbook.worksheets[2].getCell("K2").text).toBe("Y");
-    expect(workbook.worksheets[2].getCell("L2").text).toBe("N");
+    expect(workbook.worksheets[2].getCell("L2").text).toBe("Y");
+    expect(workbook.worksheets[2].getCell("M2").text).toBe("N");
   });
 
-  it("只显示三个业务 Sheet，并为惠氏/雀巢生成严格 12 列与动态产品下拉", async () => {
+  it("只显示三个 canonical 业务 Sheet，metadata 同步，并为三品牌生成活动下拉", async () => {
     const bytes = await buildUnifiedImportTemplateWorkbook(templates, {
       activities: [{ name: "达能活动", contentChannel: "XIAOHONGSHU" }],
       products: [
@@ -452,6 +459,7 @@ describe("统一 Excel 工作簿", () => {
       "内容渠道（必填）",
       "链接（必填）纯链接",
       "发帖时间（必填）",
+      "活动名称（必填）",
       "客服修改留言",
       "内部自审",
       "互动量≥10",
@@ -461,6 +469,24 @@ describe("统一 Excel 工作簿", () => {
     expect(workbook.getWorksheet("填写说明")!.state).toBe("hidden");
     expect(dataValidationAt(workbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!, "E2")?.formulae)
       .toEqual(["VERIDIA_WYETH_NESTLE_PRODUCTS"]);
+    expect(workbook.getWorksheet("VERIDIA模板信息")!.getCell("B3").text).toBe(
+      JSON.stringify(["达能客户导入", "佳贝艾特客户导入", WYETH_NESTLE_SHEET_NAME]),
+    );
+    expect(workbook.getWorksheet("惠氏_雀巢客户导入")).toBeUndefined();
+    expect(dataValidationAt(workbook.getWorksheet("达能客户导入")!, "K2")?.formulae)
+      .toEqual(["VERIDIA_ACTIVITY_NAMES"]);
+    expect(dataValidationAt(workbook.getWorksheet("佳贝艾特客户导入")!, "M2")?.formulae)
+      .toEqual(["VERIDIA_ACTIVITY_NAMES"]);
+    expect(dataValidationAt(workbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!, "J2")?.formulae)
+      .toEqual(["VERIDIA_ACTIVITY_NAMES"]);
+    expect(workbook.getWorksheet("填写说明")!.getColumn(2).values.join("\n"))
+      .toContain("后续空白行会自动继承最近上方活动");
+    await expect(parseTabularPreview({
+      bytes: new Uint8Array(bytes as ArrayBuffer),
+      fileName: "VERIDIA审核导入模板.xlsx",
+      sourceType: "EXCEL_XLSX",
+      templates,
+    })).rejects.toThrow("未识别到有效数据行");
   });
 
   it("扫描所有非空业务 Sheet、忽略空 Sheet，并保留 Sheet 与行号", async () => {
@@ -472,11 +498,11 @@ describe("统一 Excel 工作簿", () => {
     await workbook.xlsx.load(bytes);
     workbook.getWorksheet("佳贝艾特客户导入")!.addRow([
       "2026-09-12", "京东", "佳贝艾特店", "", "buyer", "order-k", "2026-09-12",
-      "1", "1", "account", "https://www.xiaohongshu.com/explore/k", "荷兰佳贝1", "Y",
+      "1", "1", "account", "https://www.xiaohongshu.com/explore/k", "荷兰佳贝1", "佳贝活动", "Y",
     ]);
     workbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.addRow([
       "登记人", "微信用户", "京东", "惠氏店", "启赋未来", "order-w", "小红书",
-      "https://www.xiaohongshu.com/explore/w", "2026-09-12", "2026-09-12-已留言", "Y", "Y",
+      "https://www.xiaohongshu.com/explore/w", "2026-09-12", "惠氏活动", "2026-09-12-已留言", "Y", "Y",
     ]);
     const preview = await parseTabularPreview({
       bytes: new Uint8Array(await workbook.xlsx.writeBuffer()),
@@ -497,6 +523,115 @@ describe("统一 Excel 工作簿", () => {
       selfReview: "Y",
       interactionAtLeastTen: "Y",
     });
+  });
+
+  it("三个业务 Sheet 独立向下继承活动，切换活动后使用新值", async () => {
+    const bytes = await buildUnifiedImportTemplateWorkbook(templates, {
+      activities: [
+        { name: "活动 A", contentChannel: "XIAOHONGSHU" },
+        { name: "活动 B", contentChannel: "XIAOHONGSHU" },
+      ],
+      products: [],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    const danone = workbook.getWorksheet("达能客户导入")!;
+    danone.addRow(["京东", "达能店", "客户1", "产品1", "2段", "IFFO", "D1", "小红书", "https://xhslink.com/d1", "2026-09-01", "活动 A"]);
+    for (let index = 0; index < 50; index += 1) {
+      danone.addRow(["京东", "达能店", `继承客户${index + 2}`, "产品1", "2段", "IFFO", `D${index + 2}`, "小红书", `https://xhslink.com/d${index + 2}`, "2026-09-02", ""]);
+    }
+    danone.addRow(["京东", "达能店", "切换客户", "产品1", "2段", "IFFO", "D52", "小红书", "https://xhslink.com/d52", "2026-09-03", "活动 B"]);
+    danone.addRow(["京东", "达能店", "切换继承客户", "产品1", "2段", "IFFO", "D53", "小红书", "https://xhslink.com/d53", "2026-09-04", ""]);
+    const kabrita = workbook.getWorksheet("佳贝艾特客户导入")!;
+    kabrita.addRow(["", "京东", "佳贝店", "", "", "K1", "2026-09-01", "1", "1", "账号1", "https://xhslink.com/k1", "荷兰佳贝1", "活动 A", ""]);
+    kabrita.addRow(["", "京东", "佳贝店", "", "", "K2", "2026-09-02", "1", "1", "账号2", "https://xhslink.com/k2", "荷兰佳贝1", "", ""]);
+    const shared = workbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!;
+    shared.addRow(["登记1", "微信1", "京东", "惠氏店", "启赋未来", "W1", "小红书", "https://xhslink.com/w1", "2026-09-01", "活动 B", "", "", ""]);
+    shared.addRow(["登记2", "微信2", "京东", "惠氏店", "启赋未来", "W2", "小红书", "https://xhslink.com/w2", "2026-09-02", "", "", "", ""]);
+
+    const preview = await parseTabularPreview({
+      bytes: new Uint8Array(await workbook.xlsx.writeBuffer()),
+      fileName: "活动继承.xlsx",
+      sourceType: "EXCEL_XLSX",
+      templates,
+    });
+    const danoneActivities = preview.rows
+      .filter((row) => row.sheetName === "达能客户导入")
+      .map((row) => row.values.activityName);
+    expect(danoneActivities.slice(0, 51).every((activity) => activity === "活动 A"))
+      .toBe(true);
+    expect(danoneActivities.slice(51)).toEqual(["活动 B", "活动 B"]);
+    expect(preview.rows
+      .filter((row) => row.sheetName === "佳贝艾特客户导入")
+      .map((row) => row.values.activityName)).toEqual(["活动 A", "活动 A"]);
+    expect(preview.rows
+      .filter((row) => row.sheetName === WYETH_NESTLE_SHEET_NAME)
+      .map((row) => row.values.activityName)).toEqual(["活动 B", "活动 B"]);
+    expect(preview.rows.every((row) => row.activityNameColumnPresent)).toBe(true);
+    expect(preview.invalidCount).toBe(0);
+  });
+
+  it("活动列首条空白明确拒绝，旧无活动列模板保持 legacy 标记", async () => {
+    const bytes = await buildUnifiedImportTemplateWorkbook(templates, {
+      activities: [],
+      products: [],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    workbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!.addRow([
+      "登记", "微信", "京东", "惠氏店", "启赋未来", "W1", "小红书",
+      "https://xhslink.com/w1", "2026-09-01", "", "", "", "",
+    ]);
+    const preview = await parseTabularPreview({
+      bytes: new Uint8Array(await workbook.xlsx.writeBuffer()),
+      fileName: "首行无活动.xlsx",
+      sourceType: "EXCEL_XLSX",
+      templates,
+    });
+    expect(preview.rows[0].errors).toContain("活动名称为空，且没有可继承的上方活动");
+
+    const legacy = new ExcelJS.Workbook();
+    const legacySheet = legacy.addWorksheet(WYETH_NESTLE_SHEET_NAME);
+    legacySheet.addRow([
+      "登记人（必填）", "微信昵称（必填）", "下单平台（必填）", "店铺名称（必填）",
+      "产品系列（必填）", "订单编号（必填）", "内容渠道（必填）", "链接（必填）纯链接",
+      "发帖时间（必填）", "客服修改留言", "内部自审", "互动量≥10",
+    ]);
+    legacySheet.addRow([
+      "登记", "微信", "京东", "惠氏店", "启赋未来", "W1", "小红书",
+      "https://xhslink.com/w1", "2026-09-01", "", "", "",
+    ]);
+    const legacyPreview = await parseTabularPreview({
+      bytes: new Uint8Array(await legacy.xlsx.writeBuffer()),
+      fileName: "旧12列.xlsx",
+      sourceType: "EXCEL_XLSX",
+      templates,
+    });
+    expect(legacyPreview.rows[0].activityNameColumnPresent).toBe(false);
+    expect(legacyPreview.rows[0].errors).not.toContain("活动名称为空，且没有可继承的上方活动");
+  });
+
+  it("明确兼容旧下划线 Sheet alias，但新生成文件只使用 canonical 名称", async () => {
+    const bytes = await buildUnifiedImportTemplateWorkbook(templates, {
+      activities: [{ name: "惠氏活动", contentChannel: "XIAOHONGSHU" }],
+      products: [],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    const legacySheet = workbook.getWorksheet(WYETH_NESTLE_SHEET_NAME)!;
+    legacySheet.name = WYETH_NESTLE_LEGACY_SHEET_NAME;
+    legacySheet.addRow([
+      "登记", "微信", "京东", "惠氏店", "启赋未来", "W1", "小红书",
+      "https://xhslink.com/w1", "2026-09-01", "惠氏活动", "", "", "",
+    ]);
+    const preview = await parseTabularPreview({
+      bytes: new Uint8Array(await workbook.xlsx.writeBuffer()),
+      fileName: "旧错误Sheet名.xlsx",
+      sourceType: "EXCEL_XLSX",
+      templates,
+    });
+    expect(preview.workbookType).toBe("UNIFIED");
+    expect(preview.rows[0].sheetName).toBe(WYETH_NESTLE_LEGACY_SHEET_NAME);
   });
 
   it("拒绝声明为统一模板但缺失业务 Sheet，避免静默漏导", async () => {
@@ -552,6 +687,7 @@ describe("统一 Excel 工作簿", () => {
         productStage: null,
         notes: buildImportedTaskNotes({
           customerName: "微信用户",
+          activityName: "惠氏2026年9月小红书种草审核",
           templateMetadata: {
             templateType: "WYETH_NESTLE",
             templateBrand: "惠氏",
@@ -570,6 +706,7 @@ describe("统一 Excel 工作簿", () => {
       manualReviews: [],
     };
     expect(auditResultToWyethNestleExportRecord(base)).toMatchObject({
+      activityName: "惠氏2026年9月小红书种草审核",
       selfReview: "Y",
       interactionAtLeastTen: "N",
     });
@@ -812,7 +949,7 @@ describe("Excel、CSV与腾讯文档导出文件预览", () => {
       expect(result.validCount).toBe(0);
       expect(result.rows[0].errors).toContain(
         index === 10
-          ? "活动名称不能为空"
+          ? "活动名称为空，且没有可继承的上方活动"
           : index === 4
             ? "阶段不能为空"
             : `缺少必填字段：${displayName}`,

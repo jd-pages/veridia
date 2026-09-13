@@ -54,6 +54,7 @@ import {
   DANONE_CUSTOMER_EXPORT_FIELDS,
   DANONE_CUSTOMER_IMPORT_FIELDS,
   IMPORT_TEMPLATE_TYPE_LABELS,
+  UNIFIED_IMPORT_SHEET_NAMES,
   WYETH_NESTLE_SHEET_NAME,
   danoneTemplateFieldDisplayName,
   type ImportTemplateType,
@@ -452,6 +453,7 @@ export function auditResultToKabritaExportRecord(
       raw.purchaseProductLine ||
       row.task.product.seriesName ||
       row.task.product.name,
+    activityName: imported.activityName || row.task.campaign?.name || "",
     complianceResult: kabritaComplianceResult(row),
     ...rewardExport(row),
   };
@@ -515,6 +517,7 @@ export function auditResultToWyethNestleExportRecord(
     publishTime: raw.publishTime
       ? importedPublishTimeValue(raw.publishTime)
       : row.note.publishedAt,
+    activityName: imported.activityName || row.task.campaign?.name || "",
     customerServiceComment: raw.customerServiceComment || "",
     selfReview: detailedSelfReview(row),
     interactionAtLeastTen: interactionAtLeastTenExportValue(row),
@@ -1083,7 +1086,7 @@ export async function buildImportTemplateWorkbook(
     );
     addDataValidationRange(sheet, activityNameColumn, 2, 10_000, {
         type: "list",
-        allowBlank: false,
+        allowBlank: true,
         formulae: ["VERIDIA_ACTIVITY_NAMES"],
         showErrorMessage: true,
         errorTitle: "活动名称无效",
@@ -1137,7 +1140,7 @@ export async function buildImportTemplateWorkbook(
     displayName: "活动名称（必填）",
     required: "是",
     description:
-      "必须填写“活动管理”中显示的完整活动名称，不能填写简称或自行改写。",
+      "同一活动连续填写时，只需在第一条填写活动名称，后续空白行会自动继承最近上方活动；切换活动时，在新活动第一条重新选择即可。",
     aliases:
       "正确示例：XXX2026年8月小红书种草审核、XXX2026年8月抖音种草审核；错误示例：2026年8月-达能-UGC、达能8月活动、8月UGC",
   });
@@ -1287,6 +1290,37 @@ function styleImportSheet(
   };
 }
 
+function sameOrderedStrings(actual: readonly string[], expected: readonly string[]) {
+  return actual.length === expected.length &&
+    actual.every((value, index) => value === expected[index]);
+}
+
+async function assertUnifiedImportTemplateInvariant(buffer: ExcelJS.Buffer) {
+  const generated = new ExcelJS.Workbook();
+  await generated.xlsx.load(buffer);
+  const visibleBusinessSheets = generated.worksheets
+    .filter((sheet) => sheet.state === "visible")
+    .map((sheet) => sheet.name);
+  const metadata = generated.getWorksheet("VERIDIA模板信息");
+  let supportedSheets: string[] = [];
+  try {
+    const parsed = JSON.parse(metadata?.getCell("B3").text || "null") as unknown;
+    if (Array.isArray(parsed) && parsed.every((value) => typeof value === "string")) {
+      supportedSheets = parsed;
+    }
+  } catch {
+    supportedSheets = [];
+  }
+  if (
+    !sameOrderedStrings(visibleBusinessSheets, UNIFIED_IMPORT_SHEET_NAMES) ||
+    !sameOrderedStrings(supportedSheets, UNIFIED_IMPORT_SHEET_NAMES)
+  ) {
+    throw new Error(
+      `统一模板工作表契约不一致：actual=${JSON.stringify(visibleBusinessSheets)} metadata=${JSON.stringify(supportedSheets)}`,
+    );
+  }
+}
+
 export async function buildUnifiedImportTemplateWorkbook(
   templates: ImportExportTemplates,
   options: {
@@ -1356,16 +1390,22 @@ export async function buildUnifiedImportTemplateWorkbook(
   ]));
   if (activities.length) {
     workbook.definedNames.add(`'活动列表'!$A$2:$A$${activities.length + 1}`, "VERIDIA_ACTIVITY_NAMES");
-    addDataValidationRange(
-      danone,
-      DANONE_CUSTOMER_IMPORT_FIELDS.indexOf("activityName") + 1,
-      2,
-      10_001,
-      {
-        type: "list", allowBlank: false, formulae: ["VERIDIA_ACTIVITY_NAMES"],
-        showErrorMessage: true, errorTitle: "活动名称无效", error: "请选择活动管理中当前启用的完整活动名称。",
-      },
-    );
+    for (const [sheet, fields] of [
+      [danone, DANONE_CUSTOMER_IMPORT_FIELDS],
+      [kabrita, KABRITA_IMPORT_FIELDS],
+      [wyethNestle, WYETH_NESTLE_FIELDS],
+    ] as const) {
+      addDataValidationRange(
+        sheet,
+        fields.indexOf("activityName") + 1,
+        2,
+        10_001,
+        {
+          type: "list", allowBlank: true, formulae: ["VERIDIA_ACTIVITY_NAMES"],
+          showErrorMessage: true, errorTitle: "活动名称无效", error: "请选择活动管理中当前启用的完整活动名称。",
+        },
+      );
+    }
   }
 
   const productOptions = buildWyethNestleProductOptions(options.products);
@@ -1393,20 +1433,24 @@ export async function buildUnifiedImportTemplateWorkbook(
 
   const instructions = workbook.addWorksheet("填写说明", { state: "hidden" });
   instructions.addRow(["业务 Sheet", "填写说明"]);
-  instructions.addRow(["达能客户导入", "沿用达能正式字段；活动名称必须从下拉中选择。"]);
-  instructions.addRow(["佳贝艾特客户导入", "“是否符合”为系统输出列，导入值不参与审核。"]);
-  instructions.addRow([WYETH_NESTLE_SHEET_NAME, "客服修改留言格式：日期-已留言/已修改；内部自审和互动量≥10由系统重新生成。"]);
+  const activityInheritanceInstruction =
+    "同一活动连续填写时，只需在第一条填写活动名称，后续空白行会自动继承最近上方活动；切换活动时，在新活动第一条重新选择即可。";
+  instructions.addRow(["达能客户导入", activityInheritanceInstruction]);
+  instructions.addRow(["佳贝艾特客户导入", `${activityInheritanceInstruction}“是否符合”为系统输出列，导入值不参与审核。`]);
+  instructions.addRow([WYETH_NESTLE_SHEET_NAME, `${activityInheritanceInstruction}客服修改留言格式：日期-已留言/已修改；内部自审和互动量≥10由系统重新生成。`]);
   instructions.getRow(1).font = { bold: true };
 
   const metadata = workbook.addWorksheet("VERIDIA模板信息", { state: "veryHidden" });
   metadata.addRow(["templateType", "UNIFIED"]);
   metadata.addRow(["templateVersion", templates.templateVersion]);
-  metadata.addRow(["supportedSheets", JSON.stringify(["达能客户导入", "佳贝艾特客户导入", WYETH_NESTLE_SHEET_NAME])]);
+  metadata.addRow(["supportedSheets", JSON.stringify(UNIFIED_IMPORT_SHEET_NAMES)]);
   metadata.addRow(["sheetName", "templateType"]);
   metadata.addRow(["达能客户导入", "DANONE_CUSTOMER"]);
   metadata.addRow(["佳贝艾特客户导入", "KABRITA"]);
   metadata.addRow([WYETH_NESTLE_SHEET_NAME, "WYETH_NESTLE"]);
-  return workbook.xlsx.writeBuffer();
+  const buffer = await workbook.xlsx.writeBuffer();
+  await assertUnifiedImportTemplateInvariant(buffer);
+  return buffer;
 }
 
 export function buildImportTemplateCsv(

@@ -115,4 +115,25 @@ describe("导入活动精确匹配", () => {
       candidates: [{ ...douyinCampaign, ruleCount: 0 }],
     }).status).toBe("NO_RULES");
   });
+
+  it("显式或继承活动必须覆盖发帖日期，不能回退到自动活动", () => {
+    expect(resolveImportedActivity({
+      activityName: campaign.name,
+      productId: "product-danone",
+      contentChannel: "XIAOHONGSHU",
+      publishTime: "2026-09-01 10:00:00",
+      candidates: [campaign],
+    })).toMatchObject({
+      status: "OUTSIDE_PERIOD",
+      error: "发布时间不在所选活动适用范围内",
+      campaign: { id: campaign.id },
+    });
+    expect(resolveImportedActivity({
+      activityName: campaign.name,
+      productId: "product-danone",
+      contentChannel: "XIAOHONGSHU",
+      publishTime: "2026-08-31 23:59:59",
+      candidates: [campaign],
+    })).toMatchObject({ status: "MATCHED", campaign: { id: campaign.id } });
+  });
 });

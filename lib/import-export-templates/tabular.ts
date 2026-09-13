@@ -152,11 +152,22 @@ async function xlsxMatrices(
     if (sheetName && isImportTemplateType(type)) metadataTypes.set(sheetName, type);
   });
   const declaredUnified = metadataType === "UNIFIED";
+  const resolvedUnifiedSheets = UNIFIED_IMPORT_SHEETS.map((definition) => {
+    const matches = [definition.sheetName, ...definition.aliases]
+      .map((name) => workbook.getWorksheet(name))
+      .filter((sheet): sheet is ExcelJS.Worksheet => Boolean(sheet));
+    if (matches.length > 1) {
+      throw new Error(
+        `统一模板业务工作表重复：${matches.map((sheet) => sheet.name).join("、")}`,
+      );
+    }
+    return { ...definition, sheet: matches[0] };
+  });
   const unified = declaredUnified ||
-    UNIFIED_IMPORT_SHEETS.every(({ sheetName }) => Boolean(workbook.getWorksheet(sheetName)));
+    resolvedUnifiedSheets.every(({ sheet }) => Boolean(sheet));
   if (declaredUnified) {
-    const missingSheets = UNIFIED_IMPORT_SHEETS
-      .filter(({ sheetName }) => !workbook.getWorksheet(sheetName))
+    const missingSheets = resolvedUnifiedSheets
+      .filter(({ sheet }) => !sheet)
       .map(({ sheetName }) => sheetName);
     if (missingSheets.length) {
       throw new Error(`统一模板缺少业务工作表：${missingSheets.join("、")}`);
@@ -164,7 +175,10 @@ async function xlsxMatrices(
   }
   if (unified) {
     const supportedSheetNames = new Set([
-      ...UNIFIED_IMPORT_SHEETS.map(({ sheetName }) => sheetName),
+      ...UNIFIED_IMPORT_SHEETS.flatMap(({ sheetName, aliases }) => [
+        sheetName,
+        ...aliases,
+      ]),
       "活动列表",
       "产品列表",
       "填写说明",
@@ -180,9 +194,12 @@ async function xlsxMatrices(
     }
   }
   const selectedSheets = unified
-    ? UNIFIED_IMPORT_SHEETS.map(({ sheetName, templateType }) => ({
-        sheet: workbook.getWorksheet(sheetName),
-        templateType: metadataTypes.get(sheetName) || templateType,
+    ? resolvedUnifiedSheets.map(({ sheetName, sheet, templateType }) => ({
+        sheet,
+        templateType:
+          (sheet && metadataTypes.get(sheet.name)) ||
+          metadataTypes.get(sheetName) ||
+          templateType,
       })).filter((entry): entry is { sheet: ExcelJS.Worksheet; templateType: ImportTemplateType } => Boolean(entry.sheet))
     : workbook.worksheets.length
       ? [{
@@ -445,6 +462,7 @@ function parseMatrixPreview(
   const missingRequiredFields = requiredFields.filter(
     (field) => !occupied.has(field),
   );
+  const activityNameColumnPresent = occupied.has("activityName");
   const structuralErrors = [
     ...missingRequiredFields.map((field) =>
       field === "activityName"
@@ -456,6 +474,7 @@ function parseMatrixPreview(
   const headerRecognitionMs = performance.now() - headerRecognitionStarted;
   const rowConversionStarted = performance.now();
   const rows: TabularPreviewRow[] = [];
+  let inheritedActivityName = "";
   for (let index = rowIndex + 1; index < matrix.length; index += 1) {
     const sourceRow = matrix[index];
     if (!sourceRow.some((value) => value.trim())) continue;
@@ -473,7 +492,19 @@ function parseMatrixPreview(
           : rawValue;
     }
     const errors = [...structuralErrors];
+    if (activityNameColumnPresent) {
+      const currentActivityName = String(values.activityName || "").trim();
+      if (currentActivityName) {
+        inheritedActivityName = currentActivityName;
+        values.activityName = currentActivityName;
+      } else if (inheritedActivityName) {
+        values.activityName = inheritedActivityName;
+      } else {
+        errors.push("活动名称为空，且没有可继承的上方活动");
+      }
+    }
     for (const field of requiredFields) {
+      if (field === "activityName" && activityNameColumnPresent) continue;
       if (!values[field]) {
         errors.push(
           field === "activityName"
@@ -495,6 +526,7 @@ function parseMatrixPreview(
       sheetName: parsedMatrix.sheetName,
       templateBrand,
       templateType,
+      activityNameColumnPresent,
       rowNumber: parsedMatrix.sourceRowNumbers?.[index] || index + 1,
       values,
       rawValues,

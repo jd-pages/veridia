@@ -410,7 +410,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
       `PREVIEW-${suffix}-${index}`,
       "小红书",
       `${E2E_ORIGIN}/mock/xhs?case=passed&preview-layout=${suffix}-${index}`,
-      "2026-08-03 12:00:00",
+      `${campaign.month}-03 12:00:00`,
       campaign.name,
     ];
   }
@@ -448,7 +448,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(page.locator(".ant-pagination-item-2").last()).toHaveCount(0);
   await expect(previewResultHeader).toBeVisible();
 
-  downloadedTemplateSheet.getRow(6).getCell(11).value = "";
+  downloadedTemplateSheet.getRow(2).getCell(11).value = "";
   await page.locator('input[type="file"]').setInputFiles({
     name: "preview-errors.xlsx",
     mimeType:
@@ -460,7 +460,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(page.getByText("当前仅显示异常记录，共 1 条。")).toBeVisible();
   const errorPreviewTable = page.locator(".ant-table").last();
   await expect(errorPreviewTable.locator('tbody tr[data-row-key]')).toHaveCount(1);
-  await expect(errorPreviewTable).toContainText("活动名称不能为空");
+  await expect(errorPreviewTable).toContainText("活动名称为空，且没有可继承的上方活动");
   await page.getByRole("button", { name: "查看全部记录" }).click();
   await expect(errorPreviewTable.locator('tbody tr[data-row-key]')).toHaveCount(9);
 
@@ -481,7 +481,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     `MINIMAL-${suffix}`,
     "小红书",
     `${E2E_ORIGIN}/mock/xhs?case=passed&minimal-template=${suffix}`,
-    "2026-08-03 12:00:00",
+    `${campaign.month}-03 12:00:00`,
     campaign.name,
   ];
   const minimalTemplateImport = await page.request.post("/api/import/notes", {
@@ -1737,10 +1737,12 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     `DUPLICATE-${suffix}`,
     "小红书",
     duplicateUrl,
-    "2026-08-15 12:00:00",
+    `${campaign.month}-15 12:00:00`,
     campaign.name,
   ];
   const initialExcel = Buffer.from(await workbook.xlsx.writeBuffer());
+  workbook.worksheets[0].getRow(2).getCell(10).value =
+    `${currentCampaign.month}-15 12:00:00`;
   workbook.worksheets[0].getRow(2).getCell(11).value = currentCampaign.name;
   const excel = Buffer.from(await workbook.xlsx.writeBuffer());
   const multipart = (
@@ -1896,7 +1898,7 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     expect(invalid.invalidCount).toBe(1);
     expect(invalid.duplicateWarningCount).toBe(1);
     expect(invalid.rows[0].errors).toContain(
-      "达能客户导入 第 2 行：活动名称不能为空",
+      "达能客户导入 第 2 行：活动名称为空，且没有可继承的上方活动",
     );
     expect(invalid.rows[0].duplicateWarning.identity).toBe(identity);
   }
@@ -2178,7 +2180,7 @@ test("重复历史批量查询在 10 到 1000 行保持固定查询形态", asyn
         index < historicalRows
           ? historicalUrl
           : `${E2E_ORIGIN}/mock/xhs?case=passed&dedup-perf=${suffix}-${rowCount}-${index}`,
-        "2026-08-15 12:00:00",
+        `${campaign.month}-15 12:00:00`,
         campaign.name,
       ];
     }

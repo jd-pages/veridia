@@ -21,10 +21,14 @@ const importHeaders = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
+  "活动名称（必填）",
   "是否符合",
 ];
 
 const exportHeaders = importHeaders;
+const legacyImportHeaders = importHeaders.filter(
+  (header) => header !== "活动名称（必填）",
+);
 
 const kabritaStoreAliases = [
   ["天猫", "天猫佳贝艾特海外旗舰店", "kabrita海外旗舰店"],
@@ -64,7 +68,7 @@ test("佳贝艾特13行多平台显式店铺 Alias 预检全部命中 Canonical"
 
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("佳贝艾特店铺映射预检");
-  sheet.addRow(importHeaders);
+  sheet.addRow(legacyImportHeaders);
   const samples = [
     ...kabritaStoreAliases,
     ...kabritaStoreAliases.slice(0, 6),
@@ -145,7 +149,7 @@ test("佳贝艾特13行多平台显式店铺 Alias 预检全部命中 Canonical"
   ).toEqual([]);
 });
 
-test("佳贝艾特13列导入模板下载、识别和六种购买产品线预检", async ({
+test("佳贝艾特14列导入模板下载、活动继承和六种购买产品线预检", async ({
   page,
 }) => {
   const login = await page.request.post("/api/auth/login", {
@@ -191,6 +195,7 @@ test("佳贝艾特13列导入模板下载、识别和六种购买产品线预检
       "",
       `标题 ${E2E_ORIGIN}/mock/xhs?case=passed&kabrita=${index + 1}`,
       productLine,
+      index === 0 ? "佳贝艾特2026年8月小红书种草审核" : "",
       "",
     ]);
   });
@@ -257,7 +262,7 @@ test("佳贝艾特13列导入模板下载、识别和六种购买产品线预检
   ).toBe(true);
 });
 
-test("佳贝艾特内容合规与基础奖励共同决定最终结论和13列导出", async ({
+test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导出", async ({
   page,
 }) => {
   const login = await page.request.post("/api/auth/login", {
@@ -485,7 +490,8 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和13列导
     expect(
       (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
     ).toEqual(exportHeaders);
-    expect(workbook.worksheets[0].getCell("M2").text).toBe(expected);
+    expect(workbook.worksheets[0].getCell("M2").text).toBe(campaign.name);
+    expect(workbook.worksheets[0].getCell("N2").text).toBe(expected);
   }
 
   await page.goto(`/results/${passed.id}`);

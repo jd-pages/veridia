@@ -6,6 +6,7 @@ export type ImportActivityMatchStatus =
   | "INACTIVE"
   | "CHANNEL_MISMATCH"
   | "PRODUCT_NOT_IN_ACTIVITY"
+  | "OUTSIDE_PERIOD"
   | "NO_RULES"
   | "NOT_UNIQUE";
 
@@ -34,6 +35,7 @@ export function resolveImportedActivity(input: {
   activityName: unknown;
   productId: string | null | undefined;
   contentChannel?: "XIAOHONGSHU" | "DOUYIN";
+  publishTime?: unknown;
   candidates: readonly ImportActivityCandidate[];
 }): ImportActivityResolution {
   const inputName = String(input.activityName ?? "").trim();
@@ -82,6 +84,31 @@ export function resolveImportedActivity(input: {
       "当前产品系列不属于所选活动",
       campaign,
     );
+  }
+  const publishedAt = importedCampaignDate(input.publishTime);
+  if (publishedAt) {
+    const day = Date.UTC(
+      publishedAt.getUTCFullYear(),
+      publishedAt.getUTCMonth(),
+      publishedAt.getUTCDate(),
+    );
+    const start = Date.UTC(
+      campaign.startDate.getUTCFullYear(),
+      campaign.startDate.getUTCMonth(),
+      campaign.startDate.getUTCDate(),
+    );
+    const end = Date.UTC(
+      campaign.endDate.getUTCFullYear(),
+      campaign.endDate.getUTCMonth(),
+      campaign.endDate.getUTCDate(),
+    );
+    if (day < start || day > end) {
+      return fail(
+        "OUTSIDE_PERIOD",
+        "发布时间不在所选活动适用范围内",
+        campaign,
+      );
+    }
   }
   if (campaign.ruleCount < 1) {
     return fail("NO_RULES", "该活动尚未配置审核规则", campaign);

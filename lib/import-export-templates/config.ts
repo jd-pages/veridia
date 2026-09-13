@@ -36,7 +36,7 @@ function normalizeBusinessTemplates(
   templates: ImportExportTemplates,
 ): ImportExportTemplates {
   const output = structuredClone(templates);
-  output.templateVersion = "template-2026.09.12.1";
+  output.templateVersion = "template-2026.09.13.1";
   output.fieldDefinitions.failedReasons = {
     displayName: "失败原因",
     type: "stringList",
