@@ -499,6 +499,40 @@ describe("统一 Excel 工作簿", () => {
     });
   });
 
+  it("拒绝声明为统一模板但缺失业务 Sheet，避免静默漏导", async () => {
+    const bytes = await buildUnifiedImportTemplateWorkbook(templates, {
+      activities: [],
+      products: [],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    workbook.removeWorksheet(workbook.getWorksheet("佳贝艾特客户导入")!.id);
+
+    await expect(parseTabularPreview({
+      bytes: new Uint8Array(await workbook.xlsx.writeBuffer()),
+      fileName: "缺失业务Sheet.xlsx",
+      sourceType: "EXCEL_XLSX",
+      templates,
+    })).rejects.toThrow("统一模板缺少业务工作表：佳贝艾特客户导入");
+  });
+
+  it("拒绝统一模板中的非法可见 Sheet，避免静默忽略其中数据", async () => {
+    const bytes = await buildUnifiedImportTemplateWorkbook(templates, {
+      activities: [],
+      products: [],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    workbook.addWorksheet("未支持客户导入").addRow(["链接", "产品"]);
+
+    await expect(parseTabularPreview({
+      bytes: new Uint8Array(await workbook.xlsx.writeBuffer()),
+      fileName: "非法业务Sheet.xlsx",
+      sourceType: "EXCEL_XLSX",
+      templates,
+    })).rejects.toThrow("统一模板包含不支持的可见工作表：未支持客户导入");
+  });
+
   it("惠氏/雀巢内部自审与互动阈值输出彼此独立", () => {
     const base: Parameters<typeof auditResultToWyethNestleExportRecord>[0] = {
       autoStatus: "PASSED",

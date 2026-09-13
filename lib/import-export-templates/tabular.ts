@@ -151,8 +151,34 @@ async function xlsxMatrices(
     const type = row.getCell(2).text.trim();
     if (sheetName && isImportTemplateType(type)) metadataTypes.set(sheetName, type);
   });
-  const unified = metadata?.getCell("B1").text.trim() === "UNIFIED" ||
+  const declaredUnified = metadataType === "UNIFIED";
+  const unified = declaredUnified ||
     UNIFIED_IMPORT_SHEETS.every(({ sheetName }) => Boolean(workbook.getWorksheet(sheetName)));
+  if (declaredUnified) {
+    const missingSheets = UNIFIED_IMPORT_SHEETS
+      .filter(({ sheetName }) => !workbook.getWorksheet(sheetName))
+      .map(({ sheetName }) => sheetName);
+    if (missingSheets.length) {
+      throw new Error(`统一模板缺少业务工作表：${missingSheets.join("、")}`);
+    }
+  }
+  if (unified) {
+    const supportedSheetNames = new Set([
+      ...UNIFIED_IMPORT_SHEETS.map(({ sheetName }) => sheetName),
+      "活动列表",
+      "产品列表",
+      "填写说明",
+      "VERIDIA模板信息",
+    ]);
+    const unsupportedVisibleSheets = workbook.worksheets
+      .filter((sheet) => sheet.state === "visible" && !supportedSheetNames.has(sheet.name))
+      .map((sheet) => sheet.name);
+    if (unsupportedVisibleSheets.length) {
+      throw new Error(
+        `统一模板包含不支持的可见工作表：${unsupportedVisibleSheets.join("、")}`,
+      );
+    }
+  }
   const selectedSheets = unified
     ? UNIFIED_IMPORT_SHEETS.map(({ sheetName, templateType }) => ({
         sheet: workbook.getWorksheet(sheetName),
