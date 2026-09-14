@@ -162,18 +162,43 @@ function resolvedActivityMonthValue(rawMonth: unknown, campaignMonth: unknown) {
   return campaign ? `${campaign.month}月` : rawSource || campaignSource;
 }
 
-const AUDIT_RESULT_EXCEL_PRODUCT_SERIES_NAMES: Record<string, string> = {
-  爱他美澳洲白金版: "澳白",
-  爱他美德国白金版: "德白",
-  爱他美奇迹绿罐: "绿罐",
-  爱他美亲熠5HMO: "白罐",
-  爱他美至熠: "至熠",
-};
+function hasRawValue(
+  raw: Partial<Record<StandardField, string>>,
+  field: StandardField,
+) {
+  return Object.prototype.hasOwnProperty.call(raw, field);
+}
 
-function auditResultExcelProductSeriesName(value: unknown) {
-  return typeof value === "string"
-    ? AUDIT_RESULT_EXCEL_PRODUCT_SERIES_NAMES[value] || value
-    : value;
+function preservedRawValue(
+  raw: Partial<Record<StandardField, string>>,
+  field: StandardField,
+  fallback: unknown,
+) {
+  return hasRawValue(raw, field) ? raw[field] ?? "" : fallback;
+}
+
+function preservedRawLink(
+  metadata: ReturnType<typeof importedTemplateMetadataFromNotes>,
+  field: "noteUrl" | "xiaohongshuPublishLink",
+  fallback: unknown,
+) {
+  const raw = (metadata?.rawValues || {}) as Partial<Record<StandardField, string>>;
+  if (!hasRawValue(raw, field)) return fallback;
+  const text = raw[field] ?? "";
+  const hyperlink = metadata?.rawHyperlinks?.[field];
+  return hyperlink ? { text: text || hyperlink, hyperlink } : text;
+}
+
+function exportTextValue(value: unknown) {
+  if (
+    value &&
+    typeof value === "object" &&
+    "hyperlink" in value &&
+    "text" in value
+  ) {
+    return String(value.text ?? "");
+  }
+  return value;
 }
 
 function columns(
@@ -413,28 +438,49 @@ export function auditResultToCompactExportRecord(
     resolveTaskChannel(row.task) ||
     parseContentChannel(importedMetadata.contentChannel);
   return {
-    commercePlatform: commercePlatformLabel(commercePlatform),
-    shopName: importedMetadata.shopName,
-    customerName: importedMetadata.customerName,
-    productName:
-      raw.productName || row.task.product.seriesName || row.task.product.name,
-    productStage:
-      raw.productStage ||
-      (row.task.productStage?.startsWith("GUM") ? "GUM" : "IFFO"),
+    commercePlatform: preservedRawValue(
+      raw,
+      "commercePlatform",
+      preservedRawValue(raw, "platform", commercePlatformLabel(commercePlatform)),
+    ),
+    shopName: preservedRawValue(raw, "shopName", importedMetadata.shopName),
+    customerName: preservedRawValue(raw, "customerName", importedMetadata.customerName),
+    productName: preservedRawValue(
+      raw,
+      "productName",
+      row.task.product.seriesName || row.task.product.name,
+    ),
+    productStage: preservedRawValue(
+      raw,
+      "productStage",
+      row.task.productStage?.startsWith("GUM") ? "GUM" : "IFFO",
+    ),
     productStageDetail:
       templateType === "DANONE_CUSTOMER"
-        ? raw.productStageDetail || ""
+        ? preservedRawValue(raw, "productStageDetail", "")
         : "",
     productStageTopic: productStageTopicLabel(row.task.productStage),
-    orderNumber: importedMetadata.orderNumber,
-    contentChannel: contentChannelLabel(channel),
-    noteUrl: resolveResultOriginalLink(row),
+    orderNumber: preservedRawValue(raw, "orderNumber", importedMetadata.orderNumber),
+    contentChannel: preservedRawValue(
+      raw,
+      "contentChannel",
+      contentChannelLabel(channel),
+    ),
+    noteUrl: preservedRawLink(templateMetadata, "noteUrl", resolveResultOriginalLink(row)),
     originalUrl: resolveResultOriginalLink(row),
-    publishTime: importedMetadata.publishTime
-      ? importedPublishTimeValue(importedMetadata.publishTime)
-      : row.note.publishedAt,
-    activityName: importedMetadata.activityName || row.task.campaign?.name || "",
-    activityMonth: resolvedActivityMonthValue(raw.activityMonth, row.task.campaign?.month),
+    publishTime: hasRawValue(raw, "publishTime")
+      ? raw.publishTime ?? ""
+      : importedMetadata.publishTime
+        ? importedPublishTimeValue(importedMetadata.publishTime)
+        : row.note.publishedAt,
+    activityName: preservedRawValue(
+      raw,
+      "activityName",
+      importedMetadata.activityName || row.task.campaign?.name || "",
+    ),
+    activityMonth: hasRawValue(raw, "activityMonth")
+      ? raw.activityMonth ?? ""
+      : resolvedActivityMonthValue(undefined, row.task.campaign?.month),
     templateType: IMPORT_TEMPLATE_TYPE_LABELS[templateType],
     selfReview: detailedSelfReview(row),
     ...rewardExport(row),
@@ -444,27 +490,34 @@ export function auditResultToCompactExportRecord(
 export function auditResultToKabritaExportRecord(
   row: CompactAuditResultExportSourceRow,
 ): ExportValueRecord {
-  const raw = importedTemplateMetadataFromNotes(row.task.notes)?.rawValues || {};
+  const templateMetadata = importedTemplateMetadataFromNotes(row.task.notes);
+  const raw = templateMetadata?.rawValues || {};
   const imported = importedTaskMetadataFromNotes(row.task.notes);
   return {
-    registrationTime: raw.registrationTime || "",
-    channel: raw.channel || "",
-    shopName: raw.shopName || imported.shopName,
-    customerRemark: raw.customerRemark || "",
-    buyerPurchaseId: raw.buyerPurchaseId || "",
+    registrationTime: preservedRawValue(raw, "registrationTime", ""),
+    channel: preservedRawValue(raw, "channel", ""),
+    shopName: preservedRawValue(raw, "shopName", imported.shopName),
+    customerRemark: preservedRawValue(raw, "customerRemark", ""),
+    buyerPurchaseId: preservedRawValue(raw, "buyerPurchaseId", ""),
     purchaseOrderNumber:
-      raw.purchaseOrderNumber || imported.orderNumber,
-    purchaseTime: raw.purchaseTime || "",
-    purchaseCanCount: raw.purchaseCanCount || "",
-    participationCount: raw.participationCount || "",
-    xiaohongshuAccount: raw.xiaohongshuAccount || "",
-    xiaohongshuPublishLink:
-      raw.xiaohongshuPublishLink || resolveResultOriginalLink(row),
-    purchaseProductLine:
-      raw.purchaseProductLine ||
-      row.task.product.seriesName ||
-      row.task.product.name,
-    activityMonth: resolvedActivityMonthValue(raw.activityMonth, row.task.campaign?.month),
+      preservedRawValue(raw, "purchaseOrderNumber", imported.orderNumber),
+    purchaseTime: preservedRawValue(raw, "purchaseTime", ""),
+    purchaseCanCount: preservedRawValue(raw, "purchaseCanCount", ""),
+    participationCount: preservedRawValue(raw, "participationCount", ""),
+    xiaohongshuAccount: preservedRawValue(raw, "xiaohongshuAccount", ""),
+    xiaohongshuPublishLink: preservedRawLink(
+      templateMetadata,
+      "xiaohongshuPublishLink",
+      resolveResultOriginalLink(row),
+    ),
+    purchaseProductLine: preservedRawValue(
+      raw,
+      "purchaseProductLine",
+      row.task.product.seriesName || row.task.product.name,
+    ),
+    activityMonth: hasRawValue(raw, "activityMonth")
+      ? raw.activityMonth ?? ""
+      : resolvedActivityMonthValue(undefined, row.task.campaign?.month),
     complianceResult: kabritaComplianceResult(row),
     ...rewardExport(row),
   };
@@ -507,7 +560,8 @@ export function auditResultToWyethNestleExportRecord(
   row: CompactAuditResultExportSourceRow,
 ): ExportValueRecord {
   const imported = importedTaskMetadataFromNotes(row.task.notes);
-  const raw = (importedTemplateMetadataFromNotes(row.task.notes)?.rawValues || {}) as Partial<
+  const templateMetadata = importedTemplateMetadataFromNotes(row.task.notes);
+  const raw = (templateMetadata?.rawValues || {}) as Partial<
     Record<StandardField, string>
   >;
   const commercePlatform =
@@ -517,19 +571,33 @@ export function auditResultToWyethNestleExportRecord(
     resolveTaskChannel(row.task) ||
     parseContentChannel(imported.contentChannel);
   return {
-    registrant: raw.registrant || "",
-    wechatNickname: raw.wechatNickname || imported.customerName,
-    commercePlatform: commercePlatformLabel(commercePlatform),
-    shopName: raw.shopName || imported.shopName,
-    productName: raw.productName || row.task.product.seriesName || row.task.product.name,
-    orderNumber: raw.orderNumber || imported.orderNumber,
-    contentChannel: contentChannelLabel(channel),
-    noteUrl: resolveResultOriginalLink(row),
-    publishTime: raw.publishTime
-      ? importedPublishTimeValue(raw.publishTime)
+    registrant: preservedRawValue(raw, "registrant", ""),
+    wechatNickname: preservedRawValue(raw, "wechatNickname", imported.customerName),
+    commercePlatform: preservedRawValue(
+      raw,
+      "commercePlatform",
+      commercePlatformLabel(commercePlatform),
+    ),
+    shopName: preservedRawValue(raw, "shopName", imported.shopName),
+    productName: preservedRawValue(
+      raw,
+      "productName",
+      row.task.product.seriesName || row.task.product.name,
+    ),
+    orderNumber: preservedRawValue(raw, "orderNumber", imported.orderNumber),
+    contentChannel: preservedRawValue(
+      raw,
+      "contentChannel",
+      contentChannelLabel(channel),
+    ),
+    noteUrl: preservedRawLink(templateMetadata, "noteUrl", resolveResultOriginalLink(row)),
+    publishTime: hasRawValue(raw, "publishTime")
+      ? raw.publishTime ?? ""
       : row.note.publishedAt,
-    activityMonth: resolvedActivityMonthValue(raw.activityMonth, row.task.campaign?.month),
-    customerServiceComment: raw.customerServiceComment || "",
+    activityMonth: hasRawValue(raw, "activityMonth")
+      ? raw.activityMonth ?? ""
+      : resolvedActivityMonthValue(undefined, row.task.campaign?.month),
+    customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
     selfReview: detailedSelfReview(row),
     interactionAtLeastTen: interactionAtLeastTenExportValue(row),
   };
@@ -814,12 +882,7 @@ export async function buildConfiguredWorkbook(input: {
     sheet.addRow(
       Object.fromEntries(
         selected.map(({ field }) => {
-          const value =
-            kind === "auditResults" &&
-            templateBrand !== KABRITA_BRAND_NAME &&
-            field === "productName"
-              ? auditResultExcelProductSeriesName(record[field])
-              : record[field];
+          const value = record[field];
           return [
             field,
             value === "" || value == null
@@ -914,7 +977,7 @@ export function buildConfiguredCsv(input: {
           ? field === "publishTime"
             ? importedDateLabel(value)
             : value.toLocaleString("zh-CN", { hour12: false })
-          : value ?? "";
+          : exportTextValue(value) ?? "";
       }),
     ),
   );

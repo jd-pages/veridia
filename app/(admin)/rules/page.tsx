@@ -40,6 +40,7 @@ import {
   productStageTopicLabel,
 } from "@/lib/product-stage";
 import { campaignContainsProduct } from "@/lib/topic-rule-model";
+import { rulesRequireAnyProductStage } from "@/lib/campaign-stage-requirement";
 
 interface Product {
   id: string;
@@ -170,7 +171,9 @@ export default function RulesPage() {
     [brandCampaigns],
   );
   const showProductStageModule = useMemo(
-    () => rules.some((rule) => rule.topicCategory === "PRODUCT_STAGE"),
+    () => rulesRequireAnyProductStage(
+      rules.filter((rule) => rule.status === "ACTIVE"),
+    ),
     [rules],
   );
   const displayedRules = useMemo(() => {

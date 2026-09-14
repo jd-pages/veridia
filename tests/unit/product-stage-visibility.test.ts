@@ -36,6 +36,8 @@ describe("产品阶段话题用户可见口径", () => {
     expect(campaignPage).toContain("productStageTopicLabel(row.applicableStage)");
     expect(rulesPage).toContain('title="阶段通用话题"');
     expect(rulesPage).toContain('productStageTopicLabel(row.applicableStage || "")');
+    expect(rulesPage).toContain("rulesRequireAnyProductStage");
+    expect(rulesPage).toContain('rules.filter((rule) => rule.status === "ACTIVE")');
     for (const hidden of [
       "IFFO：P段/1段",
       "IFFO：2段",

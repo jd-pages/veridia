@@ -617,8 +617,9 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一四 Sheet 结�
     const danone = workbook.getWorksheet("达能客户导入")!;
     for (let index = 0; index < 2; index += 1) {
       danone.addRow([
-        "京东", "京东健康官方进口超市", `混合达能${index + 1}`, danoneProduct.name,
-        "2段", "IFFO", `MIX-D-${suffix}-${index}`, "小红书",
+        "京东", "京东健康官方进口超市", `混合达能${index + 1}`, "澳白",
+        index === 0 ? "2段" : "IFFO", index === 0 ? "IFFO" : "2段",
+        `MIX-D-${suffix}-${index}`, "小红书",
         `${E2E_ORIGIN}/mock/xhs?case=passed&mixed-danone=${suffix}-${index}`,
         "2026-08-12 10:00:00", index === 0 ? "8月" : "",
       ]);
@@ -748,15 +749,23 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一四 Sheet 结�
       .toBe(true);
     const kabritaExportMonth = `${Number(kabritaCampaign.month.slice(-2))}月`;
     expect(exported.getWorksheet("佳贝艾特客户导入")!.getCell("M2").text).toBe(kabritaExportMonth);
-    expect(exported.getWorksheet("佳贝艾特客户导入")!.getCell("M3").text).toBe(kabritaExportMonth);
+    expect(exported.getWorksheet("佳贝艾特客户导入")!.getCell("M3").text).toBe("");
     expect(exported.getWorksheet("佳贝艾特客户导入")!.getCell("N2").text).toBe("Y");
     expect(exported.getWorksheet("佳贝艾特客户导入")!.getCell("N3").text).toBe("N-互动量＜10");
     expect(exported.getWorksheet(WYETH_SHEET_NAME)!.getCell("J2").text).toBe("9月");
-    expect(exported.getWorksheet(WYETH_SHEET_NAME)!.getCell("J3").text).toBe("9月");
+    expect(exported.getWorksheet(WYETH_SHEET_NAME)!.getCell("J3").text).toBe("");
     expect(exported.getWorksheet(WYETH_SHEET_NAME)!.getCell("L2").text).toBe("Y");
     expect(exported.getWorksheet(WYETH_SHEET_NAME)!.getCell("M2").text).toBe("N");
     expect(exported.getWorksheet(NESTLE_SHEET_NAME)!.getCell("L2").text).toBe("Y");
     expect(exported.getWorksheet(NESTLE_SHEET_NAME)!.getCell("M2").text).toBe("Y");
+    const danoneExport = exported.getWorksheet("达能客户导入")!;
+    expect([danoneExport.getCell("D2").text, danoneExport.getCell("D3").text])
+      .toEqual(["澳白", "澳白"]);
+    expect([danoneExport.getCell("E2").text, danoneExport.getCell("F2").text])
+      .toEqual(["2段", "IFFO"]);
+    expect([danoneExport.getCell("E3").text, danoneExport.getCell("F3").text])
+      .toEqual(["IFFO", "2段"]);
+    expect(danoneExport.getCell("K3").text).toBe("");
 
     const mismatchedTask = await prisma.auditTask.findFirstOrThrow({
       where: { importRecordId, orderNumber: `MIX-WN-${suffix}-0` },

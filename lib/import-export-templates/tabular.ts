@@ -133,7 +133,24 @@ function excelCellText(cell: ExcelJS.Cell, preferHyperlink = false) {
       return String(cell.value.result).trim();
     }
   }
-  if (cell.value instanceof Date) return cell.value.toISOString();
+  // ExcelJS exposes Date cell text as a locale-dependent JavaScript Date
+  // string. Keep a stable, user-readable workbook value instead of leaking an
+  // ISO UTC timestamp into raw-value round trips.
+  if (cell.value instanceof Date) {
+    const value = cell.value;
+    const date = `${value.getUTCFullYear()}/${value.getUTCMonth() + 1}/${value.getUTCDate()}`;
+    const format = String(cell.numFmt || "").toLowerCase();
+    const hasTime = /h|s|am\/pm/u.test(format);
+    if (!hasTime) return date;
+    const time = [
+      String(value.getUTCHours()).padStart(2, "0"),
+      String(value.getUTCMinutes()).padStart(2, "0"),
+      ...(format.includes("s")
+        ? [String(value.getUTCSeconds()).padStart(2, "0")]
+        : []),
+    ].join(":");
+    return `${date} ${time}`;
+  }
   return cell.text.trim();
 }
 

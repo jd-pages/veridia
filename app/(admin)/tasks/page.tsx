@@ -265,6 +265,12 @@ interface ImportPreview {
     campaignMatchStatus: string;
     campaignPeriod: string;
     campaignRuleCount: number;
+    effectiveRuleIds: string[];
+    effectiveRuleCounts: {
+      GLOBAL: number;
+      PRODUCT: number;
+      CAMPAIGN: number;
+    };
     month: string;
     productStage: string;
     stageGroup: string;
@@ -2348,7 +2354,15 @@ export default function TasksPage() {
                             title: "关联规则",
                             dataIndex: "campaignRuleCount",
                             width: 110,
-                            render: (value: number) => `${value || 0} 条`,
+                            render: (value: number, row) => (
+                              <Tooltip title={
+                                row.effectiveRuleCounts
+                                  ? `通用 ${row.effectiveRuleCounts.GLOBAL} · 产品 ${row.effectiveRuleCounts.PRODUCT} · 活动 ${row.effectiveRuleCounts.CAMPAIGN}`
+                                  : undefined
+                              }>
+                                <span>{value || 0} 条</span>
+                              </Tooltip>
+                            ),
                           },
                           ...(preview.templateBrand === "佳贝艾特"
                             ? []

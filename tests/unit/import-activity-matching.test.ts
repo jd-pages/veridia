@@ -64,7 +64,7 @@ describe("导入活动精确匹配", () => {
     })).toMatchObject({ status: "EMPTY", error: "活动名称不能为空" });
   });
 
-  it("阻止同名、停用、产品不属于活动和未配置规则", () => {
+  it("阻止同名、停用和产品不属于活动，但不在活动解析器判断规则数量", () => {
     const duplicate = { ...campaign, id: "campaign-duplicate", month: "2026-09" };
     expect(resolveImportedActivity({
       activityName: campaign.name,
@@ -85,10 +85,10 @@ describe("导入活动精确匹配", () => {
       activityName: campaign.name,
       productId: "product-danone",
       candidates: [{ ...campaign, ruleCount: 0 }],
-    }).status).toBe("NO_RULES");
+    }).status).toBe("MATCHED");
   });
 
-  it("内容渠道必须与活动渠道一致，抖音活动也必须配置独立规则", () => {
+  it("内容渠道必须与活动渠道一致，规则有效集由活动匹配后的统一解析器判断", () => {
     expect(resolveImportedActivity({
       activityName: campaign.name,
       productId: "product-danone",
@@ -115,7 +115,7 @@ describe("导入活动精确匹配", () => {
       productId: "product-danone",
       contentChannel: "DOUYIN",
       candidates: [{ ...douyinCampaign, ruleCount: 0 }],
-    }).status).toBe("NO_RULES");
+    }).status).toBe("MATCHED");
   });
 
   it("显式或继承活动必须覆盖发帖日期，不能回退到自动活动", () => {

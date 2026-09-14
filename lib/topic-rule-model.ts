@@ -1,4 +1,6 @@
 import { normalizeTopic } from "@/lib/topic";
+import { normalizeDouyinTopicName } from "@/lib/douyin-topic";
+import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
 
 export const TOPIC_RULE_SCOPES = ["GLOBAL", "PRODUCT", "CAMPAIGN"] as const;
 
@@ -294,4 +296,55 @@ export function effectiveTopicRulesForContext<
     seen.add(key);
     return true;
   });
+}
+
+export function resolveEffectiveAuditTopicRules<
+  T extends TopicRuleOwnershipInput & {
+    status?: string | null;
+    topic: string;
+  },
+>(
+  rules: readonly T[],
+  context: {
+    brandName: string;
+    productId: string;
+    campaignId: string;
+    contentChannel: string;
+    compatibleStages?: readonly string[];
+  },
+) {
+  const stageRequirementRules = effectiveTopicRulesForContext(rules, {
+    ...context,
+    compatibleStages: rules
+      .map((rule) => rule.applicableStage)
+      .filter((value): value is string => Boolean(value)),
+  });
+  const requiresProductStage = campaignRequiresProductStage(
+    stageRequirementRules,
+  );
+  const selectedRules = effectiveTopicRulesForContext(rules, context);
+  const normalizeConfiguredTopic = (value: unknown) =>
+    context.contentChannel === "DOUYIN"
+      ? normalizeDouyinTopicName(value)
+      : normalizeTopic(String(value ?? ""));
+  const uniqueRules = selectedRules.filter((rule, index, allRules) => {
+    if (rule.topicCategory !== "PRODUCT_STAGE") return true;
+    return (
+      allRules.findIndex(
+        (candidate) =>
+          candidate.topicCategory === rule.topicCategory &&
+          candidate.applicableStage === rule.applicableStage &&
+          normalizeConfiguredTopic(candidate.topic) ===
+            normalizeConfiguredTopic(rule.topic),
+      ) === index
+    );
+  });
+
+  return {
+    requiresProductStage,
+    stageRequirementRules,
+    rules: requiresProductStage
+      ? uniqueRules
+      : uniqueRules.filter((rule) => rule.topicCategory !== "PRODUCT_STAGE"),
+  };
 }

@@ -70,6 +70,9 @@ test("100+ 行预检在三种桌面宽度保持首列与 viewport sticky scrollb
       buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
     });
     await page.getByRole("button", { name: "开始预检查" }).click();
+    const showAll = page.getByRole("button", { name: "查看全部记录" });
+    await expect(showAll).toBeVisible();
+    await showAll.click();
     await expect(page.getByRole("columnheader", { name: "预检结果" })).toBeVisible();
 
     const tableWrapper = page.locator(".ant-table-wrapper").last();
@@ -122,7 +125,7 @@ test("100+ 行预检在三种桌面宽度保持首列与 viewport sticky scrollb
 
     const firstResult = table.locator("tbody tr[data-row-key]").first().locator("td").nth(1);
     await firstResult.hover();
-    await expect(page.locator(".ant-tooltip:visible")).toBeVisible();
+    await expect(firstResult).toContainText("预检通过");
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.screenshot({
       path: ".playwright/v1.1.32-preflight-after-1366x768.png",

@@ -7,7 +7,7 @@ export type ImportActivityMatchStatus =
   | "CHANNEL_MISMATCH"
   | "PRODUCT_NOT_IN_ACTIVITY"
   | "OUTSIDE_PERIOD"
-  | "NO_RULES"
+  | "NO_EFFECTIVE_RULES"
   | "NOT_UNIQUE"
   | "ACTIVITY_NOT_FOUND"
   | "ACTIVITY_AMBIGUOUS"
@@ -26,7 +26,7 @@ export interface ImportActivityCandidate {
   productId: string | null;
   productIds: string[];
   brandNames?: string[];
-  ruleCount: number;
+  ruleCount?: number;
 }
 
 export interface ImportActivityResolution {
@@ -114,9 +114,6 @@ export function resolveImportedActivity(input: {
         campaign,
       );
     }
-  }
-  if (campaign.ruleCount < 1) {
-    return fail("NO_RULES", "该活动尚未配置审核规则", campaign);
   }
   return { status: "MATCHED", inputName, campaign, error: "" };
 }
@@ -229,9 +226,6 @@ export function resolveImportedActivityMonth(input: {
     );
   }
   const campaign = scoped[0];
-  if (campaign.ruleCount < 1) {
-    return fail("NO_RULES", "该活动尚未配置审核规则", campaign);
-  }
   const publishedAt = importedCampaignDate(input.publishTime);
   if (publishedAt) {
     const day = Date.UTC(
@@ -277,7 +271,6 @@ export function resolveImplicitImportedActivity(input: {
   const eligible = input.candidates.filter((campaign) => {
     if (campaign.deletedAt || campaign.status !== "ACTIVE") return false;
     if ((campaign.contentChannel || "XIAOHONGSHU") !== requestedChannel) return false;
-    if (campaign.ruleCount < 1) return false;
     const productIds = new Set([
       ...(campaign.productId ? [campaign.productId] : []),
       ...campaign.productIds,

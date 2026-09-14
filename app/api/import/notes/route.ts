@@ -74,6 +74,7 @@ import {
   type StoreMappingStatus,
 } from "@/lib/store-topic-config";
 import { loadActiveStoreTopicRules } from "@/lib/store-topic-rule-service";
+import { resolveEffectiveAuditTopicRules } from "@/lib/topic-rule-model";
 import { Prisma } from "@prisma/client";
 
 interface CheckedRow {
@@ -109,6 +110,12 @@ interface CheckedRow {
   campaignMatchStatus: ImportActivityMatchStatus;
   campaignPeriod: string;
   campaignRuleCount: number;
+  effectiveRuleIds: string[];
+  effectiveRuleCounts: {
+    GLOBAL: number;
+    PRODUCT: number;
+    CAMPAIGN: number;
+  };
   month: string;
   specification: string;
   stageInput: string;
@@ -314,7 +321,13 @@ export async function POST(request: Request) {
     const { templates } = templateState;
     const sourceType = detectLocalSourceType(file.name, declaredTencentExport);
     let tabularPerformance: TabularParsePerformance | undefined;
-    const [tabular, activeProducts, activeStoreTopicRules, rawCampaigns] =
+    const [
+      tabular,
+      activeProducts,
+      activeStoreTopicRules,
+      rawCampaigns,
+      activeTopicRules,
+    ] =
       await Promise.all([
         parseTabularPreview({
           bytes: new Uint8Array(fileBuffer),
@@ -342,11 +355,27 @@ export async function POST(request: Request) {
                   product: { select: { brandName: true } },
                 },
               },
-              topicRules: {
-                where: { status: "ACTIVE" },
-                select: { contentChannel: true },
+            },
+          }),
+        ),
+        measureDatabase("topicRules", () =>
+          prisma.topicRule.findMany({
+            where: { status: "ACTIVE" },
+            include: {
+              product: { select: { id: true, brandName: true } },
+              campaign: {
+                include: {
+                  product: { select: { id: true, brandName: true } },
+                  products: {
+                    select: {
+                      productId: true,
+                      product: { select: { id: true, brandName: true } },
+                    },
+                  },
+                },
               },
             },
+            orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
           }),
         ),
       ]);
@@ -380,32 +409,7 @@ export async function POST(request: Request) {
         ...campaign.products.map((item) => item.product.brandName.trim()),
       ].filter(Boolean))],
       contentChannel: campaign.contentChannel,
-      ruleCount: campaign.topicRules.filter((rule) =>
-        [campaign.contentChannel, "ALL"].includes(rule.contentChannel),
-      ).length,
     }));
-    const allStageRules = campaignCandidates.length
-      ? await measureDatabase("stageRules", () =>
-          prisma.topicRule.findMany({
-            where: {
-              topicCategory: "PRODUCT_STAGE",
-              status: "ACTIVE",
-            },
-            select: {
-              brandName: true,
-              campaignId: true,
-              productId: true,
-              contentChannel: true,
-              applicableStage: true,
-              milkType: true,
-            },
-          }),
-        )
-      : [];
-    const stageRulesCache = new Map<
-      string,
-      Array<{ applicableStage: string | null; milkType: string | null }>
-    >();
     const wyethNestleProductOptions = new Map(
       buildWyethNestleProductOptions(activeProducts).map(({ product, value }) => [
         value,
@@ -545,6 +549,8 @@ export async function POST(request: Request) {
         campaignMatchStatus: "EMPTY",
         campaignPeriod: "",
         campaignRuleCount: 0,
+        effectiveRuleIds: [],
+        effectiveRuleCounts: { GLOBAL: 0, PRODUCT: 0, CAMPAIGN: 0 },
         month: "",
         specification: values.specification || "",
         stageInput: isKabritaTemplate
@@ -753,7 +759,6 @@ export async function POST(request: Request) {
         checked.campaignName = campaign.name;
         checked.month = campaign.month;
         checked.campaignPeriod = `${dateLabel(campaign.startDate)} 至 ${dateLabel(campaign.endDate)}`;
-        checked.campaignRuleCount = campaign.ruleCount;
       }
       if (campaign) {
         checked.campaignId = campaign.id;
@@ -816,23 +821,38 @@ export async function POST(request: Request) {
             : "阶段与段位不匹配",
         );
       }
-      const stageRulesKey = campaign && product
-        ? `${campaign.id}\u0000${product.id}\u0000${checked.channel}`
-        : "";
-      let matchingStageRules = stageRulesCache.get(stageRulesKey) || [];
-      if (
-        campaign &&
-        product?.brandName.trim() &&
-        !stageRulesCache.has(stageRulesKey)
-      ) {
-        matchingStageRules = allStageRules.filter(
-          (rule) =>
-            rule.brandName === product.brandName &&
-            [checked.channel, "ALL"].includes(rule.contentChannel),
-        );
-        stageRulesCache.set(stageRulesKey, matchingStageRules);
-      }
       const compatibleStages = compatibleStageRuleValues(importedStage);
+      const effectiveRuleResolution =
+        campaignResolution?.status === "MATCHED" &&
+        campaign &&
+        product &&
+        activityChannel
+          ? resolveEffectiveAuditTopicRules(activeTopicRules, {
+              brandName: product.brandName.trim(),
+              productId: product.id,
+              campaignId: campaign.id,
+              contentChannel: activityChannel,
+              compatibleStages,
+            })
+          : null;
+      if (effectiveRuleResolution) {
+        checked.effectiveRuleIds = effectiveRuleResolution.rules.map(
+          (rule) => rule.id,
+        );
+        checked.campaignRuleCount = checked.effectiveRuleIds.length;
+        for (const rule of effectiveRuleResolution.rules) {
+          checked.effectiveRuleCounts[rule.scope] += 1;
+        }
+        if (checked.campaignRuleCount === 0) {
+          checked.campaignMatchStatus = "NO_EFFECTIVE_RULES";
+          checked.errors.push(
+            "当前品牌 / 产品 / 活动 / 渠道下没有可用审核规则",
+          );
+        }
+      }
+      const matchingStageRules = effectiveRuleResolution?.rules.filter(
+        (rule) => rule.topicCategory === "PRODUCT_STAGE",
+      ) || [];
       const stageRule = importedStage
         ? matchingStageRules.find(
             (rule) => compatibleStages.includes(rule.applicableStage || ""),
@@ -840,7 +860,7 @@ export async function POST(request: Request) {
         : null;
       if (
         importedStage &&
-        matchingStageRules.length > 0 &&
+        effectiveRuleResolution?.requiresProductStage &&
         !stageRule &&
         campaign &&
         product
@@ -859,18 +879,9 @@ export async function POST(request: Request) {
         );
       }
       checked.milkType = stageRule?.milkType || undefined;
-      const normalizedRawValues = {
-        ...(parsed.rawValues || values),
-        ...(checked.importedActivityMonth
-          ? { activityMonth: checked.importedActivityMonth }
-          : {}),
-        ...(stageSegmentNormalization?.stage && stageSegmentNormalization.segment
-          ? {
-              productStage: stageSegmentNormalization.stage,
-              productStageDetail: stageSegmentNormalization.segment,
-            }
-          : {}),
-      };
+      // Raw workbook values remain the user-visible export source. Normalized
+      // identities stay on the checked row and task relations for audit only.
+      const rawValues = parsed.rawValues || values;
       checked.notes = buildImportedTaskNotes({
         platform: checked.importedPlatform,
         shopName: checked.shopName,
@@ -888,8 +899,9 @@ export async function POST(request: Request) {
               ? { templateBrand: product.brandName.trim() as "惠氏" | "雀巢" }
               : {}),
           rawValues: isKabritaTemplate
-            ? kabritaRawValues(normalizedRawValues)
-            : normalizedRawValues,
+            ? kabritaRawValues(rawValues)
+            : rawValues,
+          rawHyperlinks: parsed.hyperlinks,
         },
       });
       rowStages.stageRuleMatchMs = performance.now() - ruleMatchStarted;

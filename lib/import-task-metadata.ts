@@ -21,6 +21,7 @@ export interface ImportedTemplateMetadata {
   templateType?: ImportTemplateType;
   templateBrand?: "佳贝艾特" | "惠氏" | "雀巢";
   rawValues: KabritaRawValues | Partial<Record<StandardField, string>>;
+  rawHyperlinks?: Partial<Record<StandardField, string>>;
 }
 
 export interface DuplicateReauditMetadata {

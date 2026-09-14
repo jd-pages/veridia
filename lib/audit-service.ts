@@ -6,12 +6,11 @@ import {
 } from "@/lib/audit-engine";
 import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
-import { effectiveTopicRulesForContext } from "@/lib/topic-rule-model";
+import { resolveEffectiveAuditTopicRules } from "@/lib/topic-rule-model";
 import { normalizeDouyinTopicName } from "@/lib/douyin-topic";
 import { classifyTopicClickability } from "@/lib/topic-clickability";
 import { resolveStoreTopicAuditRequirement } from "@/lib/store-topic-rule-service";
 import type { AuditContext, ExtractedNote } from "@/lib/types";
-import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
 import { completedAuditTaskUpdate } from "@/lib/automation/task-lifecycle";
 import {
   campaignUsesDetailedProductStages,
@@ -114,35 +113,22 @@ export async function getAuditContext(
     },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
-  const rules = effectiveTopicRulesForContext(candidateRules, {
+  const effectiveRuleResolution = resolveEffectiveAuditTopicRules(candidateRules, {
     brandName,
     productId,
     campaignId,
     contentChannel: resolvedContentChannel,
     compatibleStages,
   });
-  const campaignStageRequirementRules = effectiveTopicRulesForContext(
-    candidateRules,
-    {
-      brandName,
-      productId,
-      campaignId,
-      contentChannel: resolvedContentChannel,
-      compatibleStages: candidateRules
-        .map((rule) => rule.applicableStage)
-        .filter((value): value is string => Boolean(value)),
-    },
-  );
   const campaignChannelMatches = [resolvedContentChannel, "ALL"].includes(
     campaign.contentChannel,
   );
-  const requiresProductStage = campaignChannelMatches && campaignRequiresProductStage(
-    campaignStageRequirementRules,
-  );
+  const requiresProductStage = campaignChannelMatches &&
+    effectiveRuleResolution.requiresProductStage;
   if (requiresProductStage && !normalizedProductStage) {
     throw new AuditConfigurationError("该活动要求选择产品阶段话题");
   }
-  const selectedStageRule = rules.find(
+  const selectedStageRule = effectiveRuleResolution.rules.find(
     (rule) =>
       rule.topicCategory === "PRODUCT_STAGE" &&
       compatibleStages.includes(rule.applicableStage || ""),
@@ -165,25 +151,7 @@ export async function getAuditContext(
     where: { id: "active" },
     select: { currentVersion: true },
   });
-  const normalizeConfiguredTopic = (value: unknown) =>
-    resolvedContentChannel === "DOUYIN"
-      ? normalizeDouyinTopicName(value)
-      : normalizeTopic(String(value ?? ""));
-  const uniqueRules = rules.filter((rule, index, allRules) => {
-    if (rule.topicCategory !== "PRODUCT_STAGE") return true;
-    return (
-      allRules.findIndex(
-        (candidate) =>
-          candidate.topicCategory === rule.topicCategory &&
-          candidate.applicableStage === rule.applicableStage &&
-          normalizeConfiguredTopic(candidate.topic) ===
-            normalizeConfiguredTopic(rule.topic),
-      ) === index
-    );
-  });
-  const effectiveRules = requiresProductStage
-    ? uniqueRules
-    : uniqueRules.filter((rule) => rule.topicCategory !== "PRODUCT_STAGE");
+  const effectiveRules = effectiveRuleResolution.rules;
 
   return {
     productId,

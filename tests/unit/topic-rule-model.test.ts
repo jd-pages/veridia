@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   effectiveTopicRulesForContext,
+  resolveEffectiveAuditTopicRules,
   resolveTopicRuleOwnership,
   topicRuleSemanticKey,
 } from "@/lib/topic-rule-model";
@@ -142,5 +143,129 @@ describe("话题规则三级模型", () => {
       campaignId: campaign.id,
       contentChannel: "XIAOHONGSHU",
     })).toHaveLength(1);
+  });
+
+  it.each([
+    [["GLOBAL"], ["global"]],
+    [["PRODUCT"], ["product"]],
+    [["CAMPAIGN"], ["campaign"]],
+    [["GLOBAL", "PRODUCT"], ["global", "product"]],
+    [["GLOBAL", "CAMPAIGN"], ["global", "campaign"]],
+    [["PRODUCT", "CAMPAIGN"], ["product", "campaign"]],
+    [["GLOBAL", "PRODUCT", "CAMPAIGN"], ["global", "product", "campaign"]],
+  ] as const)("Effective Rules 支持 %s 组合", (scopes, expectedIds) => {
+    const rules = scopes.map((scope) => rule({
+      id: scope.toLocaleLowerCase(),
+      topic: `#${scope}`,
+      scope,
+      campaignId: scope === "GLOBAL" ? null : campaign.id,
+      campaign: scope === "GLOBAL" ? null : campaign,
+      productId: scope === "PRODUCT" ? product.id : null,
+      product: scope === "PRODUCT" ? product : null,
+    }));
+    expect(resolveEffectiveAuditTopicRules(rules, {
+      brandName: "测试品牌",
+      productId: product.id,
+      campaignId: campaign.id,
+      contentChannel: "XIAOHONGSHU",
+    }).rules.map((item) => item.id)).toEqual(expectedIds);
+  });
+
+  it("全部规则为 0 时返回空 Effective Rules", () => {
+    expect(resolveEffectiveAuditTopicRules([], {
+      brandName: "测试品牌",
+      productId: product.id,
+      campaignId: campaign.id,
+      contentChannel: "XIAOHONGSHU",
+    })).toMatchObject({ rules: [], requiresProductStage: false });
+  });
+
+  it("佳贝艾特兼容阶段副本不会形成阶段要求或进入 Effective Rules", () => {
+    const common = rule({
+      id: "kabrita-common",
+      brandName: "佳贝艾特",
+      scope: "GLOBAL",
+      campaignId: null,
+      campaign: null,
+      topicCategory: "BRAND_COMMON",
+      topic: "#初见小温柔成长更友好",
+    });
+    const stageCopies = ["IFFO_P1", "IFFO_2", "GUM_3_4_1PLUS_2PLUS"].map(
+      (applicableStage) => rule({
+        id: `kabrita-${applicableStage}`,
+        brandName: "佳贝艾特",
+        scope: "GLOBAL",
+        campaignId: null,
+        campaign: null,
+        topicCategory: "PRODUCT_STAGE",
+        topic: common.topic,
+        applicableStage,
+      }),
+    );
+    const result = resolveEffectiveAuditTopicRules([common, ...stageCopies], {
+      brandName: "佳贝艾特",
+      productId: product.id,
+      campaignId: campaign.id,
+      contentChannel: "XIAOHONGSHU",
+      compatibleStages: ["IFFO_2"],
+    });
+    expect(result.requiresProductStage).toBe(false);
+    expect(result.rules.map((item) => item.id)).toEqual(["kabrita-common"]);
+  });
+
+  it("达能阶段规则继续按兼容阶段进入 Effective Rules", () => {
+    const rules = [
+      rule({
+        id: "danone-iffo-2",
+        brandName: "达能",
+        scope: "GLOBAL",
+        campaignId: null,
+        campaign: null,
+        topicCategory: "PRODUCT_STAGE",
+        topic: "#二段奶粉推荐",
+        applicableStage: "IFFO_2",
+      }),
+      rule({
+        id: "danone-gum",
+        brandName: "达能",
+        scope: "GLOBAL",
+        campaignId: null,
+        campaign: null,
+        topicCategory: "PRODUCT_STAGE",
+        topic: "#三段奶粉推荐",
+        applicableStage: "GUM_3_4_1PLUS_2PLUS",
+      }),
+    ];
+    const result = resolveEffectiveAuditTopicRules(rules, {
+      brandName: "达能",
+      productId: product.id,
+      campaignId: campaign.id,
+      contentChannel: "XIAOHONGSHU",
+      compatibleStages: ["IFFO_2"],
+    });
+    expect(result.requiresProductStage).toBe(true);
+    expect(result.rules.map((item) => item.id)).toEqual(["danone-iffo-2"]);
+  });
+
+  it.each(["惠氏", "雀巢"])("%s 无活动规则时仍保留 GLOBAL + PRODUCT", (brandName) => {
+    const brandProduct = { ...product, brandName };
+    const brandCampaign = {
+      ...campaign,
+      product: null,
+      products: [{ productId: product.id, product: brandProduct }],
+    };
+    const rules = [
+      rule({ id: `${brandName}-global`, brandName, scope: "GLOBAL", campaignId: null, campaign: null, topic: `#${brandName}通用` }),
+      rule({ id: `${brandName}-product`, brandName, scope: "PRODUCT", productId: product.id, product: brandProduct, campaign: brandCampaign, topic: `#${brandName}产品` }),
+    ];
+    expect(resolveEffectiveAuditTopicRules(rules, {
+      brandName,
+      productId: product.id,
+      campaignId: campaign.id,
+      contentChannel: "XIAOHONGSHU",
+    }).rules.map((item) => item.id)).toEqual([
+      `${brandName}-global`,
+      `${brandName}-product`,
+    ]);
   });
 });

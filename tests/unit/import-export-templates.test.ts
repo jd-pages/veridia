@@ -1274,7 +1274,7 @@ describe("模板驱动导出", () => {
     );
     expect(
       workbook.worksheets[0].getColumn(4).values.slice(2),
-    ).toEqual(["澳白", "德白", "绿罐", "白罐", "至熠", "未配置简称产品"]);
+    ).toEqual(productNames);
   });
 
   it("自审按单一优先级细分失败原因且订单编号不参与审核", () => {
@@ -1595,6 +1595,150 @@ describe("模板驱动导出", () => {
     expect(legacyChannelOnly.contentChannel).toBe("小红书");
   });
 
+  it("统一结果导出逐字段保留 raw values，内部规范化只用于审核", async () => {
+    const source: Parameters<typeof auditResultToCompactExportRecord>[0] = {
+      autoStatus: "PASSED",
+      pageStatus: "NORMAL",
+      bodyStatus: "PRESENT",
+      topicsCompliant: true,
+      failureReasons: "[]",
+      imageExtractionStatus: "SUCCESS",
+      imageStatus: "COMPLIANT",
+      task: {
+        url: "https://v.douyin.com/resolved/",
+        originalInput: "打开原始作品",
+        normalizedUrl: "https://v.douyin.com/resolved/",
+        finalUrl: null,
+        failureCode: null,
+        failureMessage: null,
+        pageTitle: "作品",
+        pageType: "NOTE_DETAIL",
+        productStage: "IFFO_2",
+        platform: "DOUYIN",
+        channel: "DOUYIN",
+        commercePlatform: "JD",
+        notes: buildImportedTaskNotes({
+          platform: "京东",
+          shopName: "正式店铺",
+          customerName: "正式客户",
+          orderNumber: "123456789",
+          contentChannel: "抖音",
+          publishTime: "2026-09-01T00:00:00.000Z",
+          templateMetadata: {
+            templateType: "DANONE_CUSTOMER",
+            rawValues: {
+              commercePlatform: "京东原填",
+              shopName: "客服原填店铺",
+              customerName: "客服原填客户",
+              productName: "德白",
+              productStage: "2段",
+              productStageDetail: "IFFO",
+              orderNumber: "00123456789",
+              contentChannel: "小红书",
+              noteUrl: "打开原始作品",
+              publishTime: "2026/9/1",
+              activityMonth: "09月",
+            },
+            rawHyperlinks: {
+              noteUrl: "https://v.douyin.com/resolved/",
+            },
+          },
+        }),
+        product: {
+          name: "爱他美德国白金版",
+          seriesName: "爱他美德国白金版",
+          brandName: "达能",
+        },
+        campaign: { name: "达能2026年9月抖音审核", month: "2026-09" },
+      },
+      note: {
+        url: "https://v.douyin.com/resolved/",
+        finalUrl: null,
+        publishedAt: new Date("2026-09-01T00:00:00.000Z"),
+        title: "作品",
+        body: "正文",
+      },
+      manualReviews: [],
+    };
+    const record = auditResultToCompactExportRecord(source);
+    expect(record).toMatchObject({
+      commercePlatform: "京东原填",
+      shopName: "客服原填店铺",
+      customerName: "客服原填客户",
+      productName: "德白",
+      productStage: "2段",
+      productStageDetail: "IFFO",
+      orderNumber: "00123456789",
+      contentChannel: "小红书",
+      publishTime: "2026/9/1",
+      activityMonth: "09月",
+      selfReview: "Y",
+    });
+    expect(record.noteUrl).toEqual({
+      text: "打开原始作品",
+      hyperlink: "https://v.douyin.com/resolved/",
+    });
+
+    for (const activityMonth of ["9月", "09月", "9", "09", "2026-09", "2026/09"]) {
+      const notes = buildImportedTaskNotes({
+        templateMetadata: {
+          templateType: "DANONE_CUSTOMER",
+          rawValues: { activityMonth },
+        },
+      });
+      expect(auditResultToCompactExportRecord({
+        ...source,
+        task: { ...source.task, notes },
+      }).activityMonth).toBe(activityMonth);
+    }
+
+    const sourceWorkbook = new ExcelJS.Workbook();
+    const sourceSheet = sourceWorkbook.addWorksheet("达能客户导入");
+    sourceSheet.addRow([
+      "平台（必填）", "店铺名称（必填）", "客户名（必填）", "产品系列（必填）",
+      "段位（必填）", "阶段（必填）", "订单编号（必填）", "内容渠道（必填）",
+      "链接（必填）", "发布时间（必填）", "活动月份（必填）",
+    ]);
+    sourceSheet.addRow([
+      "京东", "客服原填店铺", "客服原填客户", "德白", "2段", "IFFO",
+      "00123456789", "小红书", "https://xhslink.com/raw-date", null, "2026/09",
+    ]);
+    sourceSheet.getCell("J2").value = new Date("2026-09-01T00:00:00.000Z");
+    sourceSheet.getCell("J2").numFmt = "yyyy/m/d";
+    const parsed = await parseTabularPreview({
+      bytes: new Uint8Array(await sourceWorkbook.xlsx.writeBuffer()),
+      fileName: "raw-date.xlsx",
+      sourceType: "EXCEL_XLSX",
+      templates,
+    });
+    expect(parsed.previewRows[0].rawValues).toMatchObject({
+      orderNumber: "00123456789",
+      publishTime: "2026/9/1",
+      activityMonth: "2026/09",
+    });
+
+    const bytes = await buildUnifiedAuditResultsWorkbook({
+      templates,
+      danoneRecords: [record],
+      kabritaRecords: [],
+      wyethRecords: [],
+      nestleRecords: [],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    const sheet = workbook.getWorksheet("达能客户导入")!;
+    expect(sheet.getCell("D2").text).toBe("德白");
+    expect(sheet.getCell("E2").text).toBe("IFFO");
+    expect(sheet.getCell("F2").text).toBe("2段");
+    expect(sheet.getCell("G2").text).toBe("00123456789");
+    expect(sheet.getCell("H2").text).toBe("小红书");
+    expect(sheet.getCell("I2").text).toBe("打开原始作品");
+    expect((sheet.getCell("I2").value as ExcelJS.CellHyperlinkValue).hyperlink)
+      .toBe("https://v.douyin.com/resolved/");
+    expect(sheet.getCell("J2").text).toBe("2026/9/1");
+    expect(sheet.getCell("K2").text).toBe("09月");
+  });
+
   it("18条当前筛选结果生成包含活动月份的线下处理字段", async () => {
     const records = Array.from({ length: 18 }, (_, index) => ({
       platform: "小红书",
@@ -1635,7 +1779,7 @@ describe("模板驱动导出", () => {
     expect(sheet.getColumn(9).numFmt).toBe("yyyy-mm-dd hh:mm:ss");
     expect(sheet.getColumn(8).alignment?.wrapText).toBe(true);
     expect(sheet.getColumn(headers.indexOf("产品系列")).values).toContain(
-      "澳白",
+      "爱他美澳洲白金版",
     );
     expect(sheet.getCell("F2").text).toBe("");
     expect(sheet.getCell("F3").text).toBe("ORDER-2");
