@@ -51,6 +51,7 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [form] = Form.useForm();
   const importRef = useRef<HTMLInputElement>(null);
@@ -242,10 +243,15 @@ export default function ProductsPage() {
       <Modal
         title={editing ? "编辑产品" : "新增产品"}
         open={open}
-        onCancel={() => setOpen(false)}
+        onCancel={() => {
+          if (!saving) setOpen(false);
+        }}
         okText="保存"
         cancelText="取消"
         onOk={() => form.submit()}
+        confirmLoading={saving}
+        okButtonProps={{ disabled: saving }}
+        cancelButtonProps={{ disabled: saving }}
       >
         <Form
           form={form}
@@ -266,13 +272,20 @@ export default function ProductsPage() {
                 .map((item) => item.trim())
                 .filter(Boolean),
             };
-            await apiFetch(editing ? `/api/products/${editing.id}` : "/api/products", {
-              method: editing ? "PUT" : "POST",
-              body: JSON.stringify(payload),
-            });
-            message.success(editing ? "产品已更新" : "产品已创建");
-            setOpen(false);
-            void load();
+            setSaving(true);
+            try {
+              await apiFetch(editing ? `/api/products/${editing.id}` : "/api/products", {
+                method: editing ? "PUT" : "POST",
+                body: JSON.stringify(payload),
+              });
+              message.success(editing ? "产品已更新" : "产品已创建");
+              setOpen(false);
+              await load();
+            } catch (error) {
+              message.error(error instanceof Error ? error.message : "产品保存失败");
+            } finally {
+              setSaving(false);
+            }
           }}
         >
           <Form.Item

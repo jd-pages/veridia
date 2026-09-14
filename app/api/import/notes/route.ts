@@ -120,6 +120,10 @@ interface CheckedRow {
   campaignId?: string;
   milkType?: string;
   normalizations: string[];
+  warnings: Array<{
+    code: "CHANNEL_NORMALIZED_FROM_URL";
+    message: string;
+  }>;
   errors: string[];
   duplicateWarning?: {
     status: "DUPLICATE_WARNING";
@@ -555,8 +559,17 @@ export async function POST(request: Request) {
         stageGroup: "",
         notes: "",
         normalizations: [],
+        warnings: [],
         errors: [...parsed.errors],
       };
+      if (linkResolution.channelNormalization) {
+        checked.normalizations.push(linkResolution.channelNormalization.code);
+        checked.warnings.push({
+          code: linkResolution.channelNormalization.code,
+          message: linkResolution.channelNormalization.message,
+        });
+        checked.hasPreviewAttention = true;
+      }
       if (
         checked.channel !== "DOUYIN" &&
         storeResolution.status !== "MATCHED"
@@ -671,9 +684,10 @@ export async function POST(request: Request) {
       }
 
       const activityMatchStarted = performance.now();
-      const activityChannel = checked.channel === "DOUYIN"
-        ? "DOUYIN"
-        : "XIAOHONGSHU";
+      const activityChannel = checked.channel === "DOUYIN" ||
+        checked.channel === "XIAOHONGSHU"
+        ? checked.channel
+        : null;
       const activityInputMode = parsed.activityInputMode ||
         (parsed.activityMonthColumnPresent
           ? "ACTIVITY_MONTH"
@@ -685,52 +699,50 @@ export async function POST(request: Request) {
         : checked.publishTime;
       const activityExpectedBrand = expectedBrand ||
         (isKabritaTemplate ? KABRITA_BRAND_NAME : isDanoneTemplate ? "达能" : null);
-      const campaignResolutionKey = [
-        templateType,
-        activityInputMode,
-        checked.importedCampaignName,
-        checked.importedActivityMonth,
-        product?.id || "",
-        activityChannel,
-        activityPublishTime || "",
-      ].join("\u0000");
-      let campaignResolution = campaignResolutionCache.get(
-        campaignResolutionKey,
-      );
-      if (!campaignResolution) {
-        campaignResolution = activityInputMode === "ACTIVITY_MONTH"
-          ? resolveImportedActivityMonth({
-              activityMonth: checked.importedActivityMonth,
-              expectedBrand: activityExpectedBrand,
-              productId: product?.id,
-              contentChannel: activityChannel,
-              publishTime: activityPublishTime,
-              candidates: campaignCandidates,
-            })
-          : activityInputMode === "LEGACY_ACTIVITY_NAME"
-            ? resolveImportedActivity({
-              activityName: checked.importedCampaignName,
-              productId: product?.id,
-              contentChannel: activityChannel,
-              publishTime: isKabritaTemplate ? values.purchaseTime : checked.publishTime,
-              candidates: campaignCandidates,
-            })
-            : resolveImplicitImportedActivity({
-                productId: product?.id,
+      let campaignResolution: ReturnType<typeof resolveImportedActivity> | null = null;
+      if (product && activityChannel && linkResolution.status === "RECOGNIZED") {
+        const campaignResolutionKey = [
+          templateType,
+          activityInputMode,
+          checked.importedCampaignName,
+          checked.importedActivityMonth,
+          product.id,
+          activityChannel,
+          activityPublishTime || "",
+        ].join("\u0000");
+        campaignResolution = campaignResolutionCache.get(campaignResolutionKey) || null;
+        if (!campaignResolution) {
+          campaignResolution = activityInputMode === "ACTIVITY_MONTH"
+            ? resolveImportedActivityMonth({
+                activityMonth: checked.importedActivityMonth,
+                expectedBrand: activityExpectedBrand,
+                productId: product.id,
                 contentChannel: activityChannel,
-                publishTime: isKabritaTemplate ? values.purchaseTime : checked.publishTime,
+                publishTime: activityPublishTime,
                 candidates: campaignCandidates,
-              });
-        campaignResolutionCache.set(
-          campaignResolutionKey,
-          campaignResolution,
-        );
+              })
+            : activityInputMode === "LEGACY_ACTIVITY_NAME"
+              ? resolveImportedActivity({
+                  activityName: checked.importedCampaignName,
+                  productId: product.id,
+                  contentChannel: activityChannel,
+                  publishTime: isKabritaTemplate ? values.purchaseTime : checked.publishTime,
+                  candidates: campaignCandidates,
+                })
+              : resolveImplicitImportedActivity({
+                  productId: product.id,
+                  contentChannel: activityChannel,
+                  publishTime: isKabritaTemplate ? values.purchaseTime : checked.publishTime,
+                  candidates: campaignCandidates,
+                });
+          campaignResolutionCache.set(campaignResolutionKey, campaignResolution);
+        }
       }
       rowStages.activityMatchMs = performance.now() - activityMatchStarted;
       perf.activityMatchMs += rowStages.activityMatchMs;
-      checked.campaignMatchStatus = campaignResolution.status;
-      const campaign = campaignResolution.campaign;
-      if (campaignResolution.error) {
+      checked.campaignMatchStatus = campaignResolution?.status || "EMPTY";
+      const campaign = campaignResolution?.campaign || null;
+      if (campaignResolution?.error) {
         checked.errors.push(
           activityInputMode === "ACTIVITY_MONTH"
             ? `活动月份“${checked.importedActivityMonth || "（空）"}”：${campaignResolution.error}`
@@ -743,7 +755,7 @@ export async function POST(request: Request) {
         checked.campaignPeriod = `${dateLabel(campaign.startDate)} 至 ${dateLabel(campaign.endDate)}`;
         checked.campaignRuleCount = campaign.ruleCount;
       }
-      if (campaignResolution.status === "MATCHED" && campaign) {
+      if (campaign) {
         checked.campaignId = campaign.id;
       }
 
@@ -945,7 +957,7 @@ export async function POST(request: Request) {
           latestHistory: history?.latest || null,
           confirmed,
         };
-        row.hasPreviewAttention = !confirmed;
+        row.hasPreviewAttention = row.hasPreviewAttention || !confirmed;
       }
     }
 

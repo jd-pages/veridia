@@ -80,6 +80,7 @@ describe("分层测试门禁", () => {
       "tests/e2e/audit-topic-boundaries.spec.ts",
       "tests/e2e/douyin-automation.spec.ts",
       "tests/e2e/douyin-response-collector.spec.ts",
+      "tests/e2e/import-channel-normalization.spec.ts",
       "tests/e2e/platform-published-at.spec.ts",
       "tests/e2e/result-lifecycle.spec.ts",
     ]);
@@ -97,6 +98,7 @@ describe("分层测试门禁", () => {
     expect(selection.categories).toEqual(["CAMPAIGN", "RULES"]);
     expect(selection.e2eFiles).toEqual([
       "tests/e2e/audit-topic-boundaries.spec.ts",
+      "tests/e2e/import-channel-normalization.spec.ts",
       "tests/e2e/kabrita-excel-template.spec.ts",
       "tests/e2e/product-stage-topic.spec.ts",
       "tests/e2e/rule-brand-navigation.spec.ts",

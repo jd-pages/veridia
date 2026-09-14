@@ -544,8 +544,17 @@
   background: #fff;
 }
 
+.enterpriseTable :global(.ant-table-cell-fix-left) {
+  background: #fff;
+}
+
 .enterpriseTable
   :global(.ant-table-tbody > tr:hover > .ant-table-cell-fix-right) {
+  background: #fafbfd !important;
+}
+
+.enterpriseTable
+  :global(.ant-table-tbody > tr:hover > .ant-table-cell-fix-left) {
   background: #fafbfd !important;
 }
 
@@ -572,7 +581,7 @@
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
   padding-right: 2px;
 }
 
@@ -773,6 +782,33 @@
   .statCard strong {
     font-size: 24px;
   }
+}
+
+.previewResultSummary {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.previewResultSummary :global(.ant-tag) {
+  flex: 0 0 auto;
+  margin-inline-end: 0;
+}
+
+.previewResultText {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-height: 1.45;
+}
+
+.previewTableShell :global(.ant-table-sticky-scroll) {
+  z-index: 5;
+  margin-bottom: 4px;
 }
 
 @media (max-width: 1380px) {

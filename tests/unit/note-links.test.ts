@@ -119,7 +119,7 @@ describe("表格链接列解析", () => {
     });
   });
 
-  it("拒绝抖音用户页、搜索页、直播页和渠道错配", () => {
+  it("拒绝抖音用户页、搜索页和直播页，并以真实链接纠正渠道", () => {
     for (const url of [
       "https://www.douyin.com/user/abc",
       "https://www.douyin.com/search/奶粉",
@@ -128,8 +128,35 @@ describe("表格链接列解析", () => {
       expect(classifyNoteUrl(url)).toMatchObject({ platform: "DOUYIN", supported: false });
     }
     expect(resolveImportedNoteLink({ rawContent: discoveryUrl, declaredChannel: "抖音" })).toMatchObject({
+      status: "RECOGNIZED",
+      platform: "XIAOHONGSHU",
+      channelNormalization: {
+        code: "CHANNEL_NORMALIZED_FROM_URL",
+        from: "DOUYIN",
+        to: "XIAOHONGSHU",
+      },
+    });
+  });
+
+  it("以 v.douyin.com 的 hostname 覆盖错误声明且不接受伪造域名", () => {
+    expect(resolveImportedNoteLink({
+      rawContent: "https://v.douyin.com/example/",
+      declaredChannel: "小红书",
+    })).toMatchObject({
+      status: "RECOGNIZED",
+      platform: "DOUYIN",
+      channelNormalization: {
+        code: "CHANNEL_NORMALIZED_FROM_URL",
+        to: "DOUYIN",
+      },
+    });
+    expect(resolveImportedNoteLink({
+      rawContent: "https://douyin.com.evil.example/video/123",
+      declaredChannel: "抖音",
+    })).toMatchObject({
       status: "UNRECOGNIZED",
-      failureReason: expect.stringContaining("内容渠道与链接平台不一致"),
+      platform: "UNKNOWN",
+      failureReason: expect.stringContaining("CONTENT_CHANNEL_UNRESOLVED"),
     });
   });
 
@@ -142,7 +169,7 @@ describe("表格链接列解析", () => {
       resolveImportedNoteLink({ rawContent: "https://example.com/a" }),
     ).toMatchObject({
       status: "UNRECOGNIZED",
-      failureReason: "未识别的平台链接",
+      failureReason: expect.stringContaining("CONTENT_CHANNEL_UNRESOLVED"),
     });
   });
 });

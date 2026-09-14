@@ -208,7 +208,7 @@ export function resolveImportedActivityMonth(input: {
   if (!scoped.length) {
     return fail(
       "ACTIVITY_NOT_FOUND",
-      `未找到${normalized.display}对应的当前产品与内容渠道活动`,
+      `未找到${normalized.display}对应的${requestedChannel === "DOUYIN" ? "抖音" : "小红书"}活动`,
     );
   }
   if (normalized.year == null) {

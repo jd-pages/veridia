@@ -26,6 +26,17 @@ export interface NoteLinkExtractionResult {
   unrecognized: UnrecognizedNoteLinkSegment[];
 }
 
+export interface ChannelNormalization {
+  code: "CHANNEL_NORMALIZED_FROM_URL";
+  from: AutomationPlatform;
+  to: AutomationPlatform;
+  message: string;
+}
+
+function platformLabel(platform: AutomationPlatform) {
+  return platform === "DOUYIN" ? "抖音" : "小红书";
+}
+
 const HTTP_URL_PATTERN = /https?:\/\/[^\s<>"'“”‘’]+/giu;
 const TRAILING_PUNCTUATION = /[，。；：！？、\]}>》”’]+$/u;
 
@@ -206,30 +217,47 @@ export function resolveImportedNoteLink(input: {
       : "UNKNOWN";
   const extraction = extractNoteLinksFromText(hyperlinkTarget ? [hyperlinkTarget, rawContent] : rawContent);
   const inferredPlatform = detectContentPlatform([hyperlinkTarget, rawContent].filter(Boolean).join("\n"));
-  const platform = declaredPlatform === "UNKNOWN" ? inferredPlatform : declaredPlatform;
   if (!rawContent && !hyperlinkTarget) {
-    return { originalContent: "", url: "", platform, status: "UNRECOGNIZED" as const, failureReason: "链接（必填）列为空", extraction };
-  }
-  const matchingLink = extraction.links.find((link) => platform === "UNKNOWN" || link.platform === platform);
-  if (!matchingLink) {
-    const mismatch = extraction.links[0] && declaredPlatform !== "UNKNOWN" && extraction.links[0].platform !== declaredPlatform;
     return {
-      originalContent: rawContent || hyperlinkTarget,
+      originalContent: "",
       url: "",
-      platform,
+      platform: "UNKNOWN" as const,
       status: "UNRECOGNIZED" as const,
-      failureReason: mismatch
-        ? `内容渠道与链接平台不一致：填写为${declaredPlatform === "DOUYIN" ? "抖音" : "小红书"}`
-        : extraction.unrecognized[0]?.reason || "未识别到有效作品详情链接",
+      failureReason: "链接（必填）列为空",
+      channelNormalization: null,
       extraction,
     };
   }
+  const matchingLink = extraction.links[0];
+  if (!matchingLink) {
+    return {
+      originalContent: rawContent || hyperlinkTarget,
+      url: "",
+      platform: inferredPlatform,
+      status: "UNRECOGNIZED" as const,
+      failureReason: inferredPlatform === "UNKNOWN"
+        ? "CONTENT_CHANNEL_UNRESOLVED：无法根据链接识别内容渠道"
+        : extraction.unrecognized[0]?.reason || "未识别到有效作品详情链接",
+      channelNormalization: null,
+      extraction,
+    };
+  }
+  const channelNormalization: ChannelNormalization | null =
+    declaredPlatform !== "UNKNOWN" && declaredPlatform !== matchingLink.platform
+      ? {
+          code: "CHANNEL_NORMALIZED_FROM_URL",
+          from: declaredPlatform,
+          to: matchingLink.platform,
+          message: `已根据作品链接将内容渠道从${platformLabel(declaredPlatform)}纠正为${platformLabel(matchingLink.platform)}`,
+        }
+      : null;
   return {
     originalContent: rawContent || hyperlinkTarget,
     url: matchingLink.url,
     platform: matchingLink.platform,
     status: "RECOGNIZED" as const,
     failureReason: "",
+    channelNormalization,
     extraction,
   };
 }

@@ -20,6 +20,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Upload,
 } from "antd";
 import {
@@ -268,6 +269,10 @@ interface ImportPreview {
     productStage: string;
     stageGroup: string;
     normalizations: string[];
+    warnings: Array<{
+      code: "CHANNEL_NORMALIZED_FROM_URL";
+      message: string;
+    }>;
     errors: string[];
     duplicateWarning?: {
       status: "DUPLICATE_WARNING";
@@ -2133,6 +2138,7 @@ export default function TasksPage() {
                               : preview.rows
                           }
                           rowSelection={{
+                            fixed: true,
                             selectedRowKeys: [...selectedDuplicateRows],
                             preserveSelectedRowKeys: true,
                             onChange: (keys) =>
@@ -2147,8 +2153,83 @@ export default function TasksPage() {
                             }),
                           }}
                           tableLayout="fixed"
-                          scroll={{ x: 1500 }}
+                          sticky={{ offsetHeader: 64, offsetScroll: 8 }}
+                          scroll={{ x: 1820 }}
                         columns={[
+                          {
+                            title: "预检结果",
+                            dataIndex: "errors",
+                            width: 320,
+                            fixed: "left",
+                            render: (errors: string[], row) => {
+                              const warningText = row.warnings?.map((item) => item.message).join("；") || "";
+                              if (errors.length) {
+                                const reason = errors.join("；");
+                                return (
+                                  <Tooltip title={reason}>
+                                    <div className={styles.previewResultSummary}>
+                                      <Tag color="red">失败</Tag>
+                                      <span className={`${styles.errorText} ${styles.previewResultText}`}>
+                                        {reason}
+                                      </span>
+                                    </div>
+                                  </Tooltip>
+                                );
+                              }
+                              if (row.duplicateWarning) {
+                                const duplicateReason = row.duplicateWarning.kind === "HISTORICAL"
+                                  ? `历史重复，已审核 ${row.duplicateWarning.historicalCount} 次`
+                                  : `本批次重复，与${row.duplicateWarning.batchDuplicateOfSheet ? `${row.duplicateWarning.batchDuplicateOfSheet} ` : ""}第 ${row.duplicateWarning.batchDuplicateOfRow} 行相同`;
+                                return (
+                                  <Space direction="vertical" size={6}>
+                                    <Tooltip title={duplicateReason}>
+                                      <div className={styles.previewResultSummary}>
+                                        <Tag color="orange">警告</Tag>
+                                        <span className={styles.previewResultText}>{duplicateReason}</span>
+                                      </div>
+                                    </Tooltip>
+                                    {row.duplicateWarning.sourceTaskIds.length ? (
+                                      <Button
+                                        type="link"
+                                        size="small"
+                                        onClick={() => void openDuplicateHistory(
+                                          row.url,
+                                          row.duplicateWarning?.latestHistory,
+                                        )}
+                                      >
+                                        查看历史审核
+                                      </Button>
+                                    ) : null}
+                                    {(confirmAllDuplicateReaudits &&
+                                      row.duplicateWarning.kind === "HISTORICAL") ||
+                                    duplicateOverrides.has(duplicateOverrideKey(row)) ? (
+                                      <Tag color="blue">已确认重新审核</Tag>
+                                    ) : (
+                                      <Button size="small" onClick={() => confirmDuplicateReaudit(row)}>
+                                        仍然新增并重新审核
+                                      </Button>
+                                    )}
+                                  </Space>
+                                );
+                              }
+                              if (warningText) {
+                                return (
+                                  <Tooltip title={warningText}>
+                                    <div className={styles.previewResultSummary}>
+                                      <Tag color="orange">警告</Tag>
+                                      <span className={styles.previewResultText}>{warningText}</span>
+                                    </div>
+                                  </Tooltip>
+                                );
+                              }
+                              return (
+                                <div className={styles.previewResultSummary}>
+                                  <Tag color="green">通过</Tag>
+                                  <span className={styles.previewResultText}>预检通过</span>
+                                </div>
+                              );
+                            },
+                          },
                           {
                             title: "Sheet / 行",
                             width: 170,
@@ -2246,7 +2327,7 @@ export default function TasksPage() {
                               <div className={styles.previewWrap}>
                                 <div title={row.campaignName || row.importedCampaignName}>
                                   {row.importedActivityMonth || row.month || "-"}
-                                  <Tag>{row.contentChannel === "DOUYIN" ? "抖音" : "小红书"}</Tag>
+                                  <Tag>{row.contentChannel || "—"}</Tag>
                                 </div>
                                 <Tag color={row.campaignMatchStatus === "MATCHED" ? "green" : "red"}>
                                   {row.campaignMatchStatus === "MATCHED" ? "已匹配" : "匹配异常"}
@@ -2298,61 +2379,6 @@ export default function TasksPage() {
                                     ),
                                 },
                               ]),
-                          {
-                            title: "预检结果",
-                            dataIndex: "errors",
-                            width: 220,
-                            render: (errors: string[], row) =>
-                              errors.length ? (
-                                <span
-                                  className={`${styles.errorText} ${styles.previewResult}`}
-                                  title={errors.join("；")}
-                                >
-                                  {errors.join("；")}
-                                </span>
-                              ) : row.duplicateWarning ? (
-                                <Space direction="vertical" size={6}>
-                                  {row.duplicateWarning.kind === "HISTORICAL" ? (
-                                    <Tag color="orange">
-                                      历史重复 · 已审核 {row.duplicateWarning.historicalCount} 次
-                                    </Tag>
-                                  ) : null}
-                                  {row.duplicateWarning.batchDuplicateOfRow ? (
-                                    <Tag color="orange">
-                                      本批次重复 · 与{row.duplicateWarning.batchDuplicateOfSheet ? `${row.duplicateWarning.batchDuplicateOfSheet} ` : ""}第 {row.duplicateWarning.batchDuplicateOfRow} 行相同
-                                    </Tag>
-                                  ) : null}
-                                  {row.duplicateWarning.sourceTaskIds.length ? (
-                                    <Button
-                                      type="link"
-                                      size="small"
-                                      onClick={() =>
-                                        void openDuplicateHistory(
-                                          row.url,
-                                          row.duplicateWarning?.latestHistory,
-                                        )
-                                      }
-                                    >
-                                      查看历史审核
-                                    </Button>
-                                  ) : null}
-                                  {(confirmAllDuplicateReaudits &&
-                                    row.duplicateWarning.kind === "HISTORICAL") ||
-                                  duplicateOverrides.has(duplicateOverrideKey(row)) ? (
-                                    <Tag color="blue">已确认重新审核</Tag>
-                                  ) : (
-                                    <Button
-                                      size="small"
-                                      onClick={() => confirmDuplicateReaudit(row)}
-                                    >
-                                      仍然新增并重新审核
-                                    </Button>
-                                  )}
-                                </Space>
-                              ) : (
-                                <GovernanceStatus value="PASSED" domain="audit" />
-                              ),
-                          },
                         ]}
                           pagination={{
                             current: previewPage,

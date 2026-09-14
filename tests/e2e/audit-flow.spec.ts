@@ -425,22 +425,27 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(page.getByText("可导入 9 条，异常 0 条")).toBeVisible();
   await expect(page.getByText("预检查通过，无异常记录")).toBeVisible();
   await page.getByRole("button", { name: "查看全部记录" }).click();
-  const previewTableContent = page.locator(".ant-table-content").last();
-  await previewTableContent.evaluate((element) => {
-    element.scrollLeft = element.scrollWidth;
-  });
-  const previewResultHeader = page.getByRole("columnheader", {
+  const previewTable = page.locator(".ant-table-wrapper").last().locator(".ant-table");
+  const previewTableContent = previewTable.locator(".ant-table-body");
+  const previewResultHeader = previewTable.getByRole("columnheader", {
     name: "预检结果",
   });
+  const resultBoxBeforeScroll = await previewResultHeader.boundingBox();
+  await previewTableContent.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+    element.dispatchEvent(new Event("scroll"));
+  });
   await expect(previewResultHeader).toBeVisible();
-  const [tableBox, resultBox] = await Promise.all([
-    previewTableContent.boundingBox(),
+  const [tableBox, resultBoxAfterScroll] = await Promise.all([
+    previewTable.boundingBox(),
     previewResultHeader.boundingBox(),
   ]);
   expect(tableBox).not.toBeNull();
-  expect(resultBox).not.toBeNull();
-  expect(resultBox!.x).toBeGreaterThanOrEqual(tableBox!.x - 1);
-  expect(resultBox!.x + resultBox!.width).toBeLessThanOrEqual(
+  expect(resultBoxBeforeScroll).not.toBeNull();
+  expect(resultBoxAfterScroll).not.toBeNull();
+  expect(Math.abs(resultBoxAfterScroll!.x - resultBoxBeforeScroll!.x)).toBeLessThanOrEqual(2);
+  expect(resultBoxAfterScroll!.x).toBeGreaterThanOrEqual(tableBox!.x - 1);
+  expect(resultBoxAfterScroll!.x + resultBoxAfterScroll!.width).toBeLessThanOrEqual(
     tableBox!.x + tableBox!.width + 1,
   );
   await expect(
@@ -1957,7 +1962,7 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     buffer: excel,
   });
   await page.getByRole("button", { name: "开始预检查" }).click();
-  await expect(page.getByText("历史重复 · 已审核 1 次")).toBeVisible();
+  await expect(page.getByText("历史重复，已审核 1 次")).toBeVisible();
   await page.reload();
   await openExcelImport(page);
   await page.locator('input[type="file"]').setInputFiles({
@@ -1967,7 +1972,7 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     buffer: excel,
   });
   await page.getByRole("button", { name: "开始预检查" }).click();
-  await expect(page.getByText("历史重复 · 已审核 1 次")).toBeVisible();
+  await expect(page.getByText("历史重复，已审核 1 次")).toBeVisible();
 
   const secondContext = await browser.newContext();
   const secondPage = await secondContext.newPage();
@@ -1981,7 +1986,7 @@ test("历史重复预检查保持幂等并只在本次确认后创建重复重�
     buffer: excel,
   });
   await secondPage.getByRole("button", { name: "开始预检查" }).click();
-  await expect(secondPage.getByText("历史重复 · 已审核 1 次")).toBeVisible();
+  await expect(secondPage.getByText("历史重复，已审核 1 次")).toBeVisible();
   await secondContext.close();
 
   const committedRequestKey = `confirmed-${suffix}`;

@@ -153,6 +153,7 @@ export default function RulesPage() {
   const [deletingMonth, setDeletingMonth] = useState(false);
   const [open, setOpen] = useState(false);
   const [monthOpen, setMonthOpen] = useState(false);
+  const [creatingMonth, setCreatingMonth] = useState(false);
   const [editing, setEditing] = useState<Rule | null>(null);
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
@@ -163,6 +164,11 @@ export default function RulesPage() {
   const scope = Form.useWatch("scope", form);
   const formProductId = Form.useWatch("productId", form);
   const canManageBusiness = canAccessBusiness(currentRole);
+  const copySourceCampaigns = useMemo(
+    () => [...brandCampaigns].sort((left, right) =>
+      right.month.localeCompare(left.month)),
+    [brandCampaigns],
+  );
   const showProductStageModule = useMemo(
     () => rules.some((rule) => rule.topicCategory === "PRODUCT_STAGE"),
     [rules],
@@ -492,10 +498,10 @@ export default function RulesPage() {
                   setMonthOpen(true);
                   window.setTimeout(() => {
                     monthForm.resetFields();
+                    const sourceCampaign = copySourceCampaigns[0];
                     monthForm.setFieldsValue({
-                      copyExisting: true,
-                      sourceCampaignId:
-                        campaigns[0]?.id || brandCampaigns[0]?.id,
+                      copyExisting: Boolean(sourceCampaign),
+                      sourceCampaignId: sourceCampaign?.id,
                     });
                   });
                 }}
@@ -992,7 +998,12 @@ export default function RulesPage() {
         open={monthOpen}
         title="新增月份规则"
         okText="创建"
-        onCancel={() => setMonthOpen(false)}
+        confirmLoading={creatingMonth}
+        okButtonProps={{ disabled: creatingMonth }}
+        cancelButtonProps={{ disabled: creatingMonth }}
+        onCancel={() => {
+          if (!creatingMonth) setMonthOpen(false);
+        }}
         onOk={() => monthForm.submit()}
       >
         <Form
@@ -1003,33 +1014,40 @@ export default function RulesPage() {
             copyExisting?: boolean;
             sourceCampaignId?: string;
           }) => {
-            if (values.copyExisting) {
-              if (!values.sourceCampaignId) {
-                message.error("请选择复制来源月份");
-                return;
+            setCreatingMonth(true);
+            try {
+              if (values.copyExisting) {
+                if (!values.sourceCampaignId) {
+                  message.error("请选择复制来源月份");
+                  return;
+                }
+                await apiFetch(`/api/campaigns/${values.sourceCampaignId}/copy`, {
+                  method: "POST",
+                  body: JSON.stringify({ month: values.month }),
+                });
+              } else {
+                const namePrefix = selectedBrand === "达能" ? "爱他美" : selectedBrand;
+                await apiFetch("/api/campaigns", {
+                  method: "POST",
+                  body: JSON.stringify({
+                    name: `${namePrefix}${monthLabel(values.month)}${selectedChannel === "DOUYIN" ? "抖音" : "小红书"}种草审核`,
+                    month: values.month,
+                    productIds: products.map((product) => product.id),
+                    contentChannel: selectedChannel,
+                  }),
+                });
               }
-              await apiFetch(`/api/campaigns/${values.sourceCampaignId}/copy`, {
-                method: "POST",
-                body: JSON.stringify({ month: values.month }),
-              });
-            } else {
-              const namePrefix = selectedBrand === "达能" ? "爱他美" : selectedBrand;
-              await apiFetch("/api/campaigns", {
-                method: "POST",
-                body: JSON.stringify({
-                  name: `${namePrefix}${monthLabel(values.month)}${selectedChannel === "DOUYIN" ? "抖音" : "小红书"}种草审核`,
-                  month: values.month,
-                  productIds: products.map((product) => product.id),
-                  contentChannel: selectedChannel,
-                }),
-              });
+              message.success(`${monthLabel(values.month)}规则已独立创建`);
+              setMonthOpen(false);
+              setCampaignId(undefined);
+              setSelectedMonth(values.month);
+              updateRulePageUrl(selectedBrand, values.month, selectedChannel);
+              await load({ brand: selectedBrand, month: values.month });
+            } catch (error) {
+              message.error(error instanceof Error ? error.message : "月份规则创建失败");
+            } finally {
+              setCreatingMonth(false);
             }
-            message.success(`${monthLabel(values.month)}规则已独立创建`);
-            setMonthOpen(false);
-            setCampaignId(undefined);
-            setSelectedMonth(values.month);
-            updateRulePageUrl(selectedBrand, values.month, selectedChannel);
-            await load({ brand: selectedBrand, month: values.month });
           }}
         >
           <Form.Item
@@ -1047,8 +1065,17 @@ export default function RulesPage() {
             label="复制已有月份规则"
             valuePropName="checked"
           >
-            <Switch checkedChildren="复制" unCheckedChildren="空白" />
+            <Switch
+              checkedChildren="复制"
+              unCheckedChildren="空白"
+              disabled={!copySourceCampaigns.length}
+            />
           </Form.Item>
+          {!copySourceCampaigns.length ? (
+            <Typography.Text type="secondary">
+              当前暂无可复制的{selectedChannel === "DOUYIN" ? "抖音" : "小红书"}月份，可空白创建。
+            </Typography.Text>
+          ) : null}
           {copyExistingMonth ? (
             <Form.Item
               name="sourceCampaignId"
@@ -1057,7 +1084,7 @@ export default function RulesPage() {
               extra="复制会创建新的活动和规则 ID；修改新月份不会影响来源月份。"
             >
               <Select
-                options={brandCampaigns.map((campaign) => ({
+                options={copySourceCampaigns.map((campaign) => ({
                   value: campaign.id,
                   label: `${monthLabel(campaign.month)} · ${campaign.contentChannel === "DOUYIN" ? "抖音" : "小红书"}`,
                   title: campaign.name,

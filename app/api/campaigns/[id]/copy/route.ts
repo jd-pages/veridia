@@ -30,6 +30,7 @@ export async function POST(
   const existing = await prisma.campaign.findFirst({
     where: {
       month: targetMonth,
+      contentChannel: source.contentChannel,
       deletedAt: null,
       OR: [
         { product: { is: { brandName } } },
@@ -60,6 +61,7 @@ export async function POST(
         name: body.name?.trim() || defaultName,
         month: targetMonth,
         year: Number(targetMonth.slice(0, 4)),
+        contentChannel: source.contentChannel,
         startDate: dayjs(`${targetMonth}-01`).startOf("month").toDate(),
         endDate: dayjs(`${targetMonth}-01`).endOf("month").toDate(),
         minImageCount: source.minImageCount,

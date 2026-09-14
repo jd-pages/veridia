@@ -167,6 +167,127 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   await expect(page.getByRole("button", { name: "返回品牌列表" })).toBeVisible();
 });
 
+test("月度规则复制按品牌月份和渠道隔离并继承源渠道", async ({ page }) => {
+  expect((await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  })).ok()).toBeTruthy();
+  const suffix = `${Date.now()}`;
+  const brandName = `E2E渠道隔离品牌${suffix}`;
+  const product = await prisma.product.create({
+    data: {
+      publishedKey: `e2e-copy-product-${suffix}`,
+      name: `E2E渠道隔离产品${suffix}`,
+      brandName,
+    },
+  });
+  const campaignIds: string[] = [];
+  try {
+    const createCampaign = async (input: {
+      id: string;
+      name: string;
+      month: string;
+      channel: "XIAOHONGSHU" | "DOUYIN";
+    }) => {
+      const campaign = await prisma.campaign.create({
+        data: {
+          id: input.id,
+          name: input.name,
+          month: input.month,
+          year: Number(input.month.slice(0, 4)),
+          contentChannel: input.channel,
+          startDate: new Date(`${input.month}-01T00:00:00.000Z`),
+          endDate: new Date(`${input.month}-28T23:59:59.000Z`),
+          products: { create: [{ productId: product.id }] },
+        },
+      });
+      campaignIds.push(campaign.id);
+      return campaign;
+    };
+    const xhsSeptember = await createCampaign({
+      id: `e2e-copy-xhs-sep-${suffix}`,
+      name: `${brandName}2026年9月小红书审核`,
+      month: "2026-09",
+      channel: "XIAOHONGSHU",
+    });
+    const douyinAugust = await createCampaign({
+      id: `e2e-copy-dy-aug-${suffix}`,
+      name: `${brandName}2026年8月抖音审核`,
+      month: "2026-08",
+      channel: "DOUYIN",
+    });
+    const xhsAugust = await createCampaign({
+      id: `e2e-copy-xhs-aug-${suffix}`,
+      name: `${brandName}2026年8月小红书审核`,
+      month: "2026-08",
+      channel: "XIAOHONGSHU",
+    });
+    await Promise.all([
+      prisma.topicRule.create({
+        data: {
+          campaignId: douyinAugust.id,
+          productId: product.id,
+          brandName,
+          scope: "PRODUCT",
+          contentChannel: "DOUYIN",
+          ruleType: "MUST_ALL",
+          topic: `#抖音复制${suffix}`,
+        },
+      }),
+      prisma.topicRule.create({
+        data: {
+          campaignId: xhsAugust.id,
+          productId: product.id,
+          brandName,
+          scope: "PRODUCT",
+          contentChannel: "XIAOHONGSHU",
+          ruleType: "MUST_ALL",
+          topic: `#小红书复制${suffix}`,
+        },
+      }),
+    ]);
+
+    const douyinCopy = await page.request.post(
+      `/api/campaigns/${douyinAugust.id}/copy`,
+      { data: { month: "2026-09" } },
+    );
+    expect(douyinCopy.status()).toBe(201);
+    const douyinTarget = (await douyinCopy.json()).data as {
+      id: string;
+      contentChannel: string;
+      topicRules: Array<{ contentChannel: string }>;
+    };
+    campaignIds.push(douyinTarget.id);
+    expect(douyinTarget.contentChannel).toBe("DOUYIN");
+    expect(douyinTarget.topicRules).toHaveLength(1);
+    expect(douyinTarget.topicRules.every((rule) => rule.contentChannel === "DOUYIN")).toBe(true);
+    expect(xhsSeptember.contentChannel).toBe("XIAOHONGSHU");
+
+    const duplicate = await page.request.post(
+      `/api/campaigns/${douyinAugust.id}/copy`,
+      { data: { month: "2026-09" } },
+    );
+    expect(duplicate.status()).toBe(409);
+
+    const xhsCopy = await page.request.post(
+      `/api/campaigns/${xhsAugust.id}/copy`,
+      { data: { month: "2026-10" } },
+    );
+    expect(xhsCopy.status()).toBe(201);
+    const xhsTarget = (await xhsCopy.json()).data as {
+      id: string;
+      contentChannel: string;
+      topicRules: Array<{ contentChannel: string }>;
+    };
+    campaignIds.push(xhsTarget.id);
+    expect(xhsTarget.contentChannel).toBe("XIAOHONGSHU");
+    expect(xhsTarget.topicRules.every((rule) => rule.contentChannel === "XIAOHONGSHU")).toBe(true);
+  } finally {
+    await prisma.topicRule.deleteMany({ where: { campaignId: { in: campaignIds } } });
+    await prisma.campaign.deleteMany({ where: { id: { in: campaignIds } } });
+    await prisma.product.delete({ where: { id: product.id } });
+  }
+});
+
 test("惠氏按产品进入启赋未来规则并可新增、编辑回显", async ({ page }) => {
   test.setTimeout(90_000);
   const login = await page.request.post("/api/auth/login", {
@@ -926,5 +1047,77 @@ test("话题规则可逆启停、永久删除并按 selectedMonth 隔离批量�
     await prisma.product.deleteMany({
       where: { id: { in: [productA.id, productB.id] } },
     });
+  }
+});
+
+test("无同渠道来源时抖音月份默认空白创建且失败保留弹窗", async ({ page }) => {
+  expect((await page.request.post("/api/auth/login", {
+    data: { username: "admin", password: "Admin123!" },
+  })).ok()).toBeTruthy();
+  const suffix = `${Date.now()}`;
+  const brandName = `E2E无抖音来源${suffix}`;
+  const product = await prisma.product.create({
+    data: {
+      publishedKey: `e2e-no-douyin-source-${suffix}`,
+      name: `E2E空白抖音产品${suffix}`,
+      brandName,
+    },
+  });
+  const xhsCampaign = await prisma.campaign.create({
+    data: {
+      id: `e2e-no-douyin-xhs-${suffix}`,
+      name: `${brandName}2026年8月小红书审核`,
+      month: "2026-08",
+      year: 2026,
+      contentChannel: "XIAOHONGSHU",
+      startDate: new Date("2026-08-01T00:00:00.000Z"),
+      endDate: new Date("2026-08-31T23:59:59.000Z"),
+      products: { create: [{ productId: product.id }] },
+    },
+  });
+  const campaignIds = [xhsCampaign.id];
+  try {
+    const ruleUpdateCheck = waitForRuleUpdateCheck(page);
+    await page.goto(`/rules?brand=${encodeURIComponent(brandName)}&channel=DOUYIN`);
+    await expect(page.getByRole("heading", { name: `${brandName}话题规则` })).toBeVisible();
+    await dismissRuleUpdateNoticeIfPresent(page, await ruleUpdateCheck);
+    await page.getByRole("button", { name: "新增月份规则" }).click();
+    let modal = page.locator(".ant-modal:visible");
+    const copySwitch = modal.locator(".ant-switch");
+    await expect(copySwitch).toHaveAttribute("aria-checked", "false");
+    await expect(copySwitch).toBeDisabled();
+    await expect(modal).toContainText("当前暂无可复制的抖音月份，可空白创建。");
+    await modal.getByLabel("规则月份").fill("2026-09");
+    await modal.locator(".ant-modal-footer .ant-btn-primary").click();
+    await expect(modal).toBeHidden();
+
+    const created = await prisma.campaign.findFirstOrThrow({
+      where: {
+        month: "2026-09",
+        contentChannel: "DOUYIN",
+        products: { some: { productId: product.id } },
+      },
+      include: { topicRules: true, products: true },
+    });
+    campaignIds.push(created.id);
+    expect(created.contentChannel).toBe("DOUYIN");
+    expect(created.products.map((link) => link.productId)).toContain(product.id);
+    expect(created.topicRules).toHaveLength(0);
+
+    await page.getByRole("button", { name: "新增月份规则" }).click();
+    modal = page.locator(".ant-modal:visible");
+    await modal.getByLabel("规则月份").fill("2026-09");
+    const enabledCopySwitch = modal.locator(".ant-switch");
+    await expect(enabledCopySwitch).toHaveAttribute("aria-checked", "true");
+    await enabledCopySwitch.click();
+    await modal.locator(".ant-modal-footer .ant-btn-primary").click();
+    await expect(modal).toBeVisible();
+    await expect(modal.getByLabel("规则月份")).toHaveValue("2026-09");
+    await expect(page.locator(".ant-message-error")).toBeVisible();
+    await expect(modal.locator(".ant-modal-footer .ant-btn-primary")).toBeEnabled();
+  } finally {
+    await prisma.topicRule.deleteMany({ where: { campaignId: { in: campaignIds } } });
+    await prisma.campaign.deleteMany({ where: { id: { in: campaignIds } } });
+    await prisma.product.delete({ where: { id: product.id } });
   }
 });
