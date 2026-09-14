@@ -1040,12 +1040,12 @@ export default function RulesPage() {
                   }),
                 });
               }
-              message.success(`${monthLabel(values.month)}规则已独立创建`);
-              setMonthOpen(false);
               setCampaignId(undefined);
               setSelectedMonth(values.month);
               updateRulePageUrl(selectedBrand, values.month, selectedChannel);
               await load({ brand: selectedBrand, month: values.month });
+              setMonthOpen(false);
+              message.success(`${monthLabel(values.month)}规则已独立创建`);
             } catch (error) {
               message.error(error instanceof Error ? error.message : "月份规则创建失败");
             } finally {
