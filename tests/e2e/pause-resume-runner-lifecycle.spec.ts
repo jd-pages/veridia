@@ -153,15 +153,30 @@ async function waitForRunnerHandoffProgress(
       timeline.push(snapshot);
       previousSignature = signature;
     }
-    if (firstBatch.status === "RUNNING") {
+    const firstBatchHasActiveWork =
+      firstBatch.status === "RUNNING" && firstProcessing === 1;
+    const secondBatchHasActiveWork =
+      secondBatch.status === "RUNNING" && secondProcessing === 1;
+    const handoffProgressed =
+      lifecycle.pendingCleanupBarrierCount === 0 &&
+      lifecycle.activeExtractionCount === 1 &&
+      lifecycle.effectiveRunnerCount === 1 &&
+      (firstBatchHasActiveWork || secondBatchHasActiveWork);
+    if (handoffProgressed) {
       console.info(
         `[PAUSE_CONTINUE_HANDOFF_TIMELINE] ${JSON.stringify({
           timeoutMs: HANDOFF_PROGRESS_TIMEOUT_MS,
           peakProcessing,
+          progressedBatch: firstBatchHasActiveWork ? "FIRST" : "SECOND",
           timeline,
         })}`,
       );
-      return { elapsedMs: snapshot.elapsedMs, peakProcessing, timeline };
+      return {
+        elapsedMs: snapshot.elapsedMs,
+        peakProcessing,
+        progressedBatch: firstBatchHasActiveWork ? "FIRST" : "SECOND",
+        timeline,
+      };
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
