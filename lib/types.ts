@@ -12,6 +12,7 @@ export type AuditStatus =
   | "FAILED"
   | "NOTE_NOT_FOUND"
   | "NEEDS_REVIEW"
+  | "PENDING_RETENTION"
   | "READ_FAILED";
 export type NoteType = "IMAGE_TEXT" | "VIDEO" | "VIDEO_NOTE" | "UNKNOWN";
 export type ImageExtractionStatus =
@@ -189,7 +190,8 @@ export interface AuditEvaluation {
     | "NOT_REQUIRED"
     | "PENDING"
     | "SATISFIED"
-    | "NOT_SATISFIED";
+    | "NOT_SATISFIED"
+    | "UNKNOWN";
   retentionDueAt?: string | null;
   missingTopics: string[];
   forbiddenTopics: string[];

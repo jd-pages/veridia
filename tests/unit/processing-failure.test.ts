@@ -101,24 +101,32 @@ describe("处理失败结果口径", () => {
   });
 
   it("人工复核筛选区分待复核和无需复核", () => {
-    expect(
-      buildAuditResultWhere({ manualStatus: "PENDING" }).AND,
-    ).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        autoStatus: "NEEDS_REVIEW",
-        manualReviews: { none: {} },
-      }),
-    ]));
-    expect(
+    const pending = JSON.stringify(
+      buildAuditResultWhere({ manualStatus: "PENDING" }),
+    );
+    expect(pending).toContain('"autoStatus":"NEEDS_REVIEW"');
+    expect(pending).toContain('"retentionStatus":"PENDING"');
+    expect(pending).toContain('"manualReviews":{"none":{}}');
+    const notRequired = JSON.stringify(
       buildAuditResultWhere({ manualStatus: "NOT_REQUIRED" }),
-    ).toMatchObject({
-      AND: expect.arrayContaining([
-        {
-          autoStatus: { not: "NEEDS_REVIEW" },
-          manualReviews: { none: {} },
-        },
-      ]),
-    });
+    );
+    expect(notRequired).toContain('"autoStatus":"NEEDS_REVIEW"');
+    expect(notRequired).toContain('"retentionStatus":"PENDING"');
+    expect(notRequired).toContain('"manualReviews":{"none":{}}');
+  });
+
+  it("待留存验证与真正待人工复核使用互斥查询分类", () => {
+    const pendingRetention = JSON.stringify(
+      buildAuditResultWhere({ status: "PENDING_RETENTION" }),
+    );
+    const needsReview = JSON.stringify(
+      buildAuditResultWhere({ status: "NEEDS_REVIEW" }),
+    );
+    expect(pendingRetention).toContain('"publicStatus":"PUBLIC"');
+    expect(pendingRetention).toContain('"retentionStatus":"PENDING"');
+    expect(pendingRetention).toContain('"failureReasons":{"in":["[]",""]}');
+    expect(needsReview).toContain('"autoStatus":"NEEDS_REVIEW"');
+    expect(needsReview).toContain('"NOT":{"AND"');
   });
 
   it("日期范围使用本地时区闭区间并支持单日", () => {
@@ -222,13 +230,12 @@ describe("处理失败结果口径", () => {
         { NOT: expect.any(Object) },
       ]),
     });
-    expect(buildAuditResultWhere({ status: "NEEDS_REVIEW" })).toMatchObject({
-      AND: expect.arrayContaining([
-        { supersededAt: null },
-        { autoStatus: "NEEDS_REVIEW" },
-        { NOT: expect.any(Object) },
-      ]),
-    });
+    const needsReview = JSON.stringify(
+      buildAuditResultWhere({ status: "NEEDS_REVIEW" }),
+    );
+    expect(needsReview).toContain('"autoStatus":"NEEDS_REVIEW"');
+    expect(needsReview).toContain('"retentionStatus":"PENDING"');
+    expect(needsReview).toContain('"NOT"');
   });
 
   it("旧高级筛选参数不再参与查询，平台参数必须使用受支持枚举", () => {

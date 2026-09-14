@@ -1,9 +1,10 @@
 import { fail, ok, requireApiUser } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
-import { createAutomaticBatch } from "@/lib/automation/batch-service";
 import { kickAutomaticAuditQueue } from "@/lib/automation/queue";
-import { parseStoredStringArray } from "@/lib/stored-json";
+import { runRetentionRecheckSweep } from "@/lib/automation/retention-recheck";
+import { withAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
+import { resolveRetentionDueAt } from "@/lib/retention-status";
 
 export async function POST(
   _request: Request,
@@ -14,64 +15,46 @@ export async function POST(
   const { id } = await params;
   const result = await prisma.auditResult.findFirst({
     where: { id, supersededAt: null },
-    include: { note: true, task: true },
+    include: { note: { select: { id: true } }, task: true, extractionRecord: true },
   });
   if (!result) return fail("审核结果不存在", 404);
-  if (!result.retentionDueAt) return fail("该结果没有待复查的留存日期");
-  if (result.retentionDueAt.getTime() > Date.now()) {
+  const snapshot = withAuditExtractionSnapshot(result);
+  const retentionDueAt = resolveRetentionDueAt({
+    retentionDueAt: result.retentionDueAt,
+    retentionStatus: result.retentionStatus,
+    ruleSnapshot: result.ruleSnapshot,
+    note: snapshot.note,
+  });
+  if (!retentionDueAt) return fail("该结果没有可确认的留存复查日期");
+  if (new Date(retentionDueAt).getTime() > Date.now()) {
     return fail(
-      `尚未到留存复查日期：${result.retentionDueAt.toLocaleString("zh-CN")}`,
+      `尚未到留存复查日期：${new Date(retentionDueAt).toLocaleString("zh-CN")}`,
       409,
     );
   }
 
-  const batch = await createAutomaticBatch({
-    name: `留存复查 ${result.note.platformNoteId || result.note.id}`,
-    source: "RETENTION_RECHECK",
-    createdBy: user.id,
-    productId: result.task.productId,
-    campaignId: result.task.campaignId,
-    productStage: result.task.productStage || undefined,
-    tasks: [
-      {
-        importRecordId: result.task.importRecordId,
-        url: result.note.url,
-        productId: result.task.productId,
-        campaignId: result.task.campaignId,
-        productStage: result.task.productStage,
-        milkType: result.task.milkType,
-        source: "RETENTION_RECHECK",
-        platform: result.task.platform,
-        channel: result.task.channel,
-        commercePlatform: result.task.commercePlatform,
-        storeName: result.task.storeName,
-        storeTopicRuleId: result.task.storeTopicRuleId,
-        matchedStoreName: result.task.matchedStoreName,
-        expectedStoreTopic: result.task.expectedStoreTopic,
-        expectedStoreTopics: parseStoredStringArray(
-          result.task.expectedStoreTopics,
-        ),
-        requiredStoreTopics: parseStoredStringArray(
-          result.task.requiredStoreTopics,
-        ),
-        storeMappingStatus: result.task.storeMappingStatus,
-        orderNumber: result.task.orderNumber,
-        notes: `基于历史审核结果 ${result.id} 的公开留存复查`,
-        replacesResultId: result.id,
-        queueOrder: result.resultSlotOrder,
+  const existing = await prisma.auditTask.findFirst({
+    where: { replacesResultId: result.id },
+    select: { batchId: true },
+  });
+  await runRetentionRecheckSweep();
+  const replacement = existing || await prisma.auditTask.findFirst({
+    where: { replacesResultId: result.id },
+    select: { batchId: true },
+  });
+  if (!replacement?.batchId) return fail("该结果当前不满足自动留存复查条件", 409);
+  if (!existing) {
+    await prisma.operationLog.create({
+      data: {
+        userId: user.id,
+        action: "CREATE_RETENTION_RECHECK",
+        entityType: "AUDIT_RESULT",
+        entityId: result.id,
+        summary: "创建公开留存复查任务，原历史结果保持不变",
+        metadata: JSON.stringify({ batchId: replacement.batchId }),
       },
-    ],
-  });
-  await prisma.operationLog.create({
-    data: {
-      userId: user.id,
-      action: "CREATE_RETENTION_RECHECK",
-      entityType: "AUDIT_RESULT",
-      entityId: result.id,
-      summary: `创建公开留存复查任务，原历史结果保持不变`,
-      metadata: JSON.stringify({ batchId: batch.id }),
-    },
-  });
+    });
+  }
   kickAutomaticAuditQueue();
-  return ok({ batchId: batch.id });
+  return ok({ batchId: replacement.batchId });
 }

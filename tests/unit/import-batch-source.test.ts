@@ -169,9 +169,9 @@ describe("审核结果导入批次来源", () => {
     expect(source("app/api/results/bulk/route.ts")).toContain(
       "importRecordId: result.task.importRecordId",
     );
-    expect(
-      source("app/api/results/[id]/retention/recheck/route.ts"),
-    ).toContain("importRecordId: result.task.importRecordId");
+    expect(source("lib/automation/retention-recheck.ts")).toContain(
+      "importRecordId: candidate.task.importRecordId",
+    );
     const batchService = source("lib/automation/batch-service.ts");
     expect(batchService).toContain(
       "importRecordId: task.importRecordId || input.importRecordId || null",

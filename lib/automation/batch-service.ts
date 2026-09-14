@@ -245,11 +245,16 @@ function batchStats(
 async function countPendingManualReviewsByBatch(batchIds: string[]) {
   const counts = new Map<string, number>();
   if (!batchIds.length) return counts;
+  const { resolveRetentionBusinessClassificationIds } = await import(
+    "@/lib/retention-pending-resolver"
+  );
+  const retentionClassification =
+    await resolveRetentionBusinessClassificationIds();
   const rows = await prisma.auditTask.groupBy({
     by: ["batchId"],
     where: {
       batchId: { in: batchIds },
-      ...buildTaskExecutionFilterWhere("NEEDS_REVIEW"),
+      ...buildTaskExecutionFilterWhere("NEEDS_REVIEW", retentionClassification),
     },
     _count: { _all: true },
   });

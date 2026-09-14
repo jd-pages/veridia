@@ -321,7 +321,7 @@ test("重新审核保留历史版本并在原始导入槽位原位替换", async
     const originalSecond = initial.items.find(
       (item) => item.task.orderNumber === orderNumbers.second,
     )!;
-    expect(originalSecond.autoStatus).toBe("NEEDS_REVIEW");
+    expect(originalSecond.autoStatus).toBe("FAILED");
 
     const manualReview = await page.request.post(
       `/api/results/${originalSecond.id}/review`,
@@ -363,7 +363,7 @@ test("重新审核保留历史版本并在原始导入槽位原位替换", async
     )!;
     expect(latestSecond.autoStatus).toBe("PASSED");
     expect(latestSecond.manualReviews).toHaveLength(0);
-    const failedFilter = await readImportResults("&status=NEEDS_REVIEW");
+    const failedFilter = await readImportResults("&status=FAILED");
     expect(
       failedFilter.items.some(
         (item) => item.task.orderNumber === orderNumbers.second,

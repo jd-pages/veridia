@@ -58,7 +58,10 @@ export async function createAuditIngestFixture(db: PrismaClient) {
       });
     },
     async task(patch: Partial<Prisma.AuditTaskUncheckedCreateInput> = {}) {
-      const noteId = randomUUID().replaceAll("-", "").slice(0, 24);
+      // Do not accidentally generate a syntactically valid XHS snowflake ID.
+      // Its leading hex bytes encode a timestamp and can conflict with the
+      // structured publication time supplied by a test case.
+      const noteId = `fixture-${randomUUID().replaceAll("-", "").slice(0, 16)}`;
       const url = `https://www.xiaohongshu.com/explore/${noteId}`;
       return db.auditTask.create({ data: {
         productId: product.id, campaignId: campaign.id,

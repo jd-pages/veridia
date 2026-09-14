@@ -10,6 +10,10 @@ import {
   type DashboardRiskSummaryRow,
 } from "@/lib/dashboard-risk-summary";
 import { withHeavyAuditReadSlot } from "@/lib/audit-read-concurrency";
+import {
+  legacyPendingWhere,
+} from "@/lib/retention-pending-query";
+import { resolveRetentionBusinessClassificationIds } from "@/lib/retention-pending-resolver";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -28,14 +32,38 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     where: monthScope,
     _count: { _all: true },
   });
+  const retentionClassification =
+    await resolveRetentionBusinessClassificationIds();
   const [
     statusGroups,
+    legacyRetentionPendingGroups,
+    retentionManualReviewGroups,
     manuallyReviewed,
     resultsWithReasons,
     riskRows,
   ] = await withHeavyAuditReadSlot(() =>
     prisma.$transaction([
       prisma.auditResult.groupBy(statusGroupArgs),
+      prisma.auditResult.groupBy({
+        by: ["autoStatus"],
+        where: {
+          AND: [
+            monthScope,
+            legacyPendingWhere(retentionClassification),
+          ],
+        },
+        _count: { _all: true },
+      }),
+      prisma.auditResult.groupBy({
+        by: ["autoStatus"],
+        where: {
+          AND: [
+            monthScope,
+            { id: { in: retentionClassification.retentionManualReviewIds } },
+          ],
+        },
+        _count: { _all: true },
+      }),
       prisma.auditResult.count({
         where: { AND: [monthScope, { manualReviews: { some: {} } }] },
       }),
@@ -56,7 +84,21 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     ]),
   );
   const counts = {
-    ...summarizeDashboardStatusGroups(statusGroups),
+    ...summarizeDashboardStatusGroups(
+      statusGroups,
+      Object.fromEntries(
+        legacyRetentionPendingGroups.map((group) => [
+          group.autoStatus,
+          group._count._all,
+        ]),
+      ),
+      Object.fromEntries(
+        retentionManualReviewGroups.map((group) => [
+          group.autoStatus,
+          group._count._all,
+        ]),
+      ),
+    ),
     manuallyReviewed,
   };
   const reasonMap = new Map<string, number>();

@@ -51,6 +51,29 @@ export function assertAuditEvaluationConsistency(evaluation: AuditEvaluation) {
     throw new Error("AUDIT_EVALUATION_INCONSISTENT: PASSED 包含失败的强制审核事实");
   }
 
+  if (evaluation.autoStatus === "PENDING_RETENTION") {
+    if (
+      evaluation.publicStatus !== "PUBLIC" ||
+      evaluation.retentionStatus !== "PENDING" ||
+      evaluation.failureReasons.length > 0 ||
+      evaluation.pageStatus !== "NORMAL" ||
+      evaluation.bodyStatus === "UNKNOWN" ||
+      evaluation.imageCompliant === false ||
+      ["IMAGES_READ_FAILED", "NOT_CHECKED"].includes(evaluation.imageStatus) ||
+      !evaluation.bodyCompliant ||
+      !evaluation.topicsCompliant ||
+      !evaluation.clickableCompliant ||
+      ["NON_COMPLIANT", "UNREVIEWABLE"].includes(evaluation.storeTopicStatus) ||
+      evaluation.interactionReward?.interactionRewardStatus === "PENDING" ||
+      evaluation.ruleResults.some(isFailedMandatoryResult)
+    ) {
+      throw new Error(
+        "AUDIT_EVALUATION_INCONSISTENT: PENDING_RETENTION 包含失败或人工复核事实",
+      );
+    }
+    return;
+  }
+
   if (evaluation.autoStatus !== "NEEDS_REVIEW") return;
   const hasSignal =
     evaluation.failureReasons.length > 0 ||
@@ -58,7 +81,7 @@ export function assertAuditEvaluationConsistency(evaluation: AuditEvaluation) {
     evaluation.bodyStatus === "UNKNOWN" ||
     ["IMAGES_READ_FAILED", "NOT_CHECKED"].includes(evaluation.imageStatus) ||
     evaluation.publicStatus === "UNKNOWN" ||
-    evaluation.retentionStatus === "PENDING" ||
+    evaluation.retentionStatus === "UNKNOWN" ||
     evaluation.storeTopicStatus === "UNREVIEWABLE" ||
     evaluation.interactionReward?.interactionRewardStatus === "PENDING" ||
     evaluation.ruleResults.some((result) =>

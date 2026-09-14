@@ -67,7 +67,10 @@ export function createMockNote(
     authorName: "营养记录员小安",
     publishedAt: "2026-07-08T08:30:00.000Z",
     publishedAtRaw: "2026-07-08 16:30:00",
-    publishedAtSource: "MOCK_PLATFORM",
+    // The explicit E2E adapter models a structured platform response. Keep the
+    // source inside the same trusted family as production JSON evidence so
+    // retention checks exercise a known publication time instead of UNKNOWN.
+    publishedAtSource: "NETWORK_JSON:mock.note.publish_time",
     isPublic: true,
     extractedAt: new Date().toISOString(),
     adapterName: "mock-xhs",

@@ -177,7 +177,7 @@ describe("immutable audit result presentation", () => {
     expect(presentation.automaticConclusion.label).toBe("审核通过");
   });
 
-  it("surfaces the persisted retention PENDING review signal", () => {
+  it("normalizes legacy retention-only NEEDS_REVIEW to PENDING_RETENTION", () => {
     const presentation = buildAuditResultPresentation(base({
       autoStatus: "NEEDS_REVIEW",
       retentionStatus: "PENDING",
@@ -196,7 +196,29 @@ describe("immutable audit result presentation", () => {
     }));
 
     expect(presentation.consistency.status).toBe("CONSISTENT");
-    expect(presentation.failureReasons).toContain("公开留存待验证");
+    expect(presentation.automaticConclusion).toMatchObject({
+      status: "PENDING_RETENTION",
+      label: "待留存验证",
+      tone: "info",
+    });
+    expect(presentation.failureReasons).toEqual([]);
+    expect(presentation.reviewReasons).toEqual([]);
+    expect(presentation.pendingReasons).toContain("当前公开，公开留存期限尚未到期");
+    expect(presentation.isManualReviewRequired).toBe(false);
+    expect(presentation.retentionDisplay.dueAt).toBe("2026-09-20T00:00:00.000Z");
+  });
+
+  it("keeps true review evidence dominant while retention remains separately pending", () => {
+    const presentation = buildAuditResultPresentation(base({
+      autoStatus: "NEEDS_REVIEW",
+      retentionStatus: "PENDING",
+      retentionDueAt: "2026-09-20T00:00:00.000Z",
+      publicStatus: "UNKNOWN",
+    }));
+    expect(presentation.automaticConclusion.status).toBe("NEEDS_REVIEW");
+    expect(presentation.isManualReviewRequired).toBe(true);
+    expect(presentation.reviewReasons).toContain("公开状态待确认");
+    expect(presentation.retentionDisplay.label).toBe("待留存验证");
   });
 
   it("lets manual review override the main conclusion without changing automatic evidence", () => {
@@ -309,12 +331,20 @@ describe("audit evaluation persistence invariant", () => {
     })).toThrow(/AUDIT_EVALUATION_INCONSISTENT/u);
   });
 
-  it("accepts NEEDS_REVIEW when retention is pending", () => {
+  it("accepts PENDING_RETENTION when retention is the only pending fact", () => {
+    expect(() => assertAuditEvaluationConsistency({
+      ...evaluation,
+      autoStatus: "PENDING_RETENTION",
+      retentionStatus: "PENDING",
+    })).not.toThrow();
+  });
+
+  it("rejects NEEDS_REVIEW when retention pending is the only signal", () => {
     expect(() => assertAuditEvaluationConsistency({
       ...evaluation,
       autoStatus: "NEEDS_REVIEW",
       retentionStatus: "PENDING",
-    })).not.toThrow();
+    })).toThrow(/缺少复核信号/u);
   });
 
   it("rejects NEEDS_REVIEW without any review signal", () => {

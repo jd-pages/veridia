@@ -10,6 +10,8 @@ import {
   PRIMARY_LOCAL_DEVICE_ID,
 } from "./device-id";
 import { currentAuditResultWhere } from "@/lib/audit-result-lifecycle";
+import { manualReviewWhere } from "@/lib/retention-pending-query";
+import { resolveRetentionBusinessClassificationIds } from "@/lib/retention-pending-resolver";
 
 function localDate(value: Date) {
   const year = value.getFullYear();
@@ -51,6 +53,8 @@ export async function refreshLocalUsageSummary(
   localUserId: string,
   now = new Date(),
 ) {
+  const retentionClassification =
+    await resolveRetentionBusinessClassificationIds();
   const device = await getOrCreateLocalDevice();
   const { start, end } = localDayBounds(now);
   const date = localDate(now);
@@ -82,7 +86,9 @@ export async function refreshLocalUsageSummary(
       where: { ...resultFilter, autoStatus: "FAILED" },
     }),
     prisma.auditResult.count({
-      where: { ...resultFilter, autoStatus: "NEEDS_REVIEW" },
+      where: {
+        AND: [resultFilter, manualReviewWhere(retentionClassification)],
+      },
     }),
     prisma.auditTask.count({
       where: {

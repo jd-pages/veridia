@@ -325,6 +325,7 @@ function compactSelfReview(row: CompactAuditResultExportSourceRow) {
   const finalStatus = row.presentation?.conclusion.status ||
     row.manualReviews[0]?.result || row.autoStatus;
   if (finalStatus === "PASSED") return "Y";
+  if (finalStatus === "PENDING_RETENTION") return "待留存验证";
 
   const unavailable = isUnavailableNoteResult({
     pageStatus: row.pageStatus,
@@ -408,7 +409,7 @@ function compactSelfReview(row: CompactAuditResultExportSourceRow) {
 
 export function detailedSelfReview(row: CompactAuditResultExportSourceRow) {
   const summary = compactSelfReview(row);
-  if (!summary || summary === "Y") return summary;
+  if (!summary || summary === "Y" || summary === "待留存验证") return summary;
   let details = (row.presentation?.failureReasons ||
     auditConclusionFailureReasons(row)).filter(
     (reason) =>
@@ -698,9 +699,10 @@ export function auditResultToExportRecord(row: InteractionRewardSnapshot & {
   const separator =
     templates.exportTemplates.auditResults?.multiValueSeparator || "、";
   const manual = row.manualReviews[0];
-  const requiresManualReview =
-    row.autoStatus === "NEEDS_REVIEW" ||
-    ["FAILED", "READ_FAILED", "LOGIN_EXPIRED"].includes(row.task.status);
+  const requiresManualReview = row.presentation
+    ? row.presentation.isManualReviewRequired
+    : row.autoStatus === "NEEDS_REVIEW" ||
+      ["FAILED", "READ_FAILED", "LOGIN_EXPIRED"].includes(row.task.status);
   const manualReviewStatus = manual
     ? manual.result === "PASSED"
       ? "已人工通过"
@@ -717,7 +719,9 @@ export function auditResultToExportRecord(row: InteractionRewardSnapshot & {
         row.task.productStage,
       )
     : null;
-  const failureReasonList = list(row.failureReasons, separator);
+  const failureReasonList = row.presentation
+    ? row.presentation.failureReasons.join(separator)
+    : list(row.failureReasons, separator);
   const detailedFailureReasonList = (row.presentation?.failureReasons ||
     auditConclusionFailureReasons(row)).join(
     separator,
@@ -831,7 +835,7 @@ export function auditResultToExportRecord(row: InteractionRewardSnapshot & {
         : "审核完成时间",
     failedReasons: unavailable
       ? detailedFailureReasonList
-      : detailedFailureReasonList || list(row.failureReasons, separator),
+      : detailedFailureReasonList || failureReasonList,
     selfReview,
     matchedRules: row.ruleResults
       .filter((rule) => rule.passed)

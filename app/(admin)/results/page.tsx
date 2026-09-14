@@ -190,6 +190,7 @@ export default function ResultsPage() {
       failed: 0,
       notFound: 0,
       review: 0,
+      pendingRetention: 0,
       statusCounts: {},
     },
   });
@@ -214,6 +215,7 @@ export default function ResultsPage() {
     failed: 0,
     notFound: 0,
     review: 0,
+    pendingRetention: 0,
     statusCounts: {},
   });
   const [loading, setLoading] = useState(true);

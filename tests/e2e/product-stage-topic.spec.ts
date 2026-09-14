@@ -400,7 +400,7 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
           isPublic: true,
           publishedAt: "2026-07-08T08:30:00.000Z",
           publishedAtRaw: "2026-07-08 16:30:00",
-          publishedAtSource: "MOCK_PLATFORM",
+          publishedAtSource: "NETWORK_JSON:mock.note.publish_time",
           extractedAt: new Date().toISOString(),
           adapterName: "playwright-xiaohongshu",
           adapterVersion: "1.6.0",

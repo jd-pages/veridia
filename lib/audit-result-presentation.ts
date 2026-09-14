@@ -9,11 +9,20 @@ import { isUnavailableNoteResult } from "@/lib/result-display";
 import { parseStoredStringArray } from "@/lib/stored-json";
 import { normalizeTopic } from "@/lib/topic";
 import { topicAuditRuleSummary } from "@/lib/topic-audit-summary";
+import {
+  deriveAuditBusinessStatus,
+  retentionReviewReasons,
+} from "@/lib/retention-pending-classification";
+import {
+  resolveRetentionDueAt,
+  retentionDaysFromRuleSnapshot,
+} from "@/lib/retention-status";
 
 export type AuditResultPresentationTone =
   | "success"
   | "danger"
   | "warning"
+  | "info"
   | "neutral";
 
 export type AuditResultConsistencyStatus =
@@ -64,6 +73,17 @@ export interface AuditResultPresentation {
     source: "AUTOMATIC" | "MANUAL";
   };
   failureReasons: string[];
+  reviewReasons: string[];
+  pendingReasons: string[];
+  isManualReviewRequired: boolean;
+  isPendingRetention: boolean;
+  publicDisplay: { status: string; label: string };
+  retentionDisplay: {
+    status: string;
+    label: string;
+    requirementDays: number;
+    dueAt: string | null;
+  };
   topic: AuditResultPresentationTopic;
   body: { status: string; compliant: boolean; label: string };
   image: { status: string; compliant: boolean | null; label: string };
@@ -98,6 +118,7 @@ interface PresentationInput {
   clickableCompliant: boolean;
   publicStatus: string;
   retentionStatus: string;
+  retentionDueAt?: Date | string | null;
   storeTopicStatus?: string;
   failureReasons: string;
   missingTopics: string;
@@ -113,6 +134,10 @@ interface PresentationInput {
   evidenceMessage?: string | null;
   ruleResults?: PresentationRuleResult[];
   note: {
+    contentChannel?: unknown;
+    platformNoteId?: unknown;
+    publishedAt?: unknown;
+    publishedAtSource?: unknown;
     url?: string | null;
     title?: string | null;
     body?: string | null;
@@ -129,6 +154,7 @@ interface PresentationInput {
 }
 
 interface ParsedRuleEvidence {
+  dueAt?: unknown;
   expected?: unknown;
   expectedTopics?: unknown;
   matchedCount?: unknown;
@@ -453,6 +479,7 @@ function automaticLabel(status: string, unavailable: boolean) {
   if (status === "FAILED") return "审核不通过";
   if (status === "READ_FAILED") return "读取失败";
   if (status === "PROCESSING") return "处理中";
+  if (status === "PENDING_RETENTION") return "待留存验证";
   return "待人工复核";
 }
 
@@ -460,13 +487,14 @@ function conclusionTone(status: string, unavailable: boolean): AuditResultPresen
   if (unavailable) return "neutral";
   if (status === "PASSED") return "success";
   if (status === "FAILED") return "danger";
+  if (status === "PENDING_RETENTION") return "info";
   return "warning";
 }
 
 function reviewSignals(input: PresentationInput, results: PresentationRuleResult[]) {
   const signals: string[] = [];
   if (input.publicStatus === "UNKNOWN") signals.push("公开状态待确认");
-  if (input.retentionStatus === "PENDING") signals.push("公开留存待验证");
+  if (input.retentionStatus === "UNKNOWN") signals.push("公开留存期限无法确认");
   if (input.bodyStatus === "UNKNOWN") signals.push("正文读取结果待确认");
   if (["IMAGES_READ_FAILED", "NOT_CHECKED"].includes(input.imageStatus)) {
     signals.push("图片读取结果待确认");
@@ -518,9 +546,30 @@ export function buildAuditResultPresentation(
         : unavailableTopic(input);
   const duplicate = duplicateReauditMetadataFromNotes(input.task.notes);
   const legacyDuplicate = legacyZeroHistoryDuplicateMetadataFromNotes(input.task.notes);
-  const automaticStatus = duplicate?.automaticResult ||
+  const persistedAutomaticStatus = duplicate?.automaticResult ||
     legacyDuplicate?.automaticResult || input.autoStatus;
-  const persistedContradiction = automaticStatus === "PASSED" && (
+  const retentionRule = results.find((result) => result.ruleKey === "GLOBAL_RETENTION");
+  const retentionEvidenceDueAt = retentionRule
+    ? parseEvidence(retentionRule.evidence).dueAt
+    : null;
+  const retentionDueAt = resolveRetentionDueAt({
+    retentionDueAt: input.retentionDueAt ||
+      (typeof retentionEvidenceDueAt === "string" ? retentionEvidenceDueAt : null),
+    retentionStatus: input.retentionStatus,
+    ruleSnapshot: input.ruleSnapshot,
+    note: input.note,
+  });
+  const effectiveRetentionStatus = input.retentionStatus === "PENDING" && !retentionDueAt
+    ? "UNKNOWN"
+    : input.retentionStatus;
+  const classificationInput = {
+    ...input,
+    autoStatus: persistedAutomaticStatus,
+    retentionStatus: effectiveRetentionStatus,
+    ruleResults: results,
+  };
+  const automaticStatus = deriveAuditBusinessStatus(classificationInput);
+  const persistedContradiction = persistedAutomaticStatus === "PASSED" && (
     !input.bodyCompliant || input.imageCompliant === false ||
     !input.topicsCompliant || !input.clickableCompliant ||
     input.pageStatus !== "NORMAL" ||
@@ -529,9 +578,15 @@ export function buildAuditResultPresentation(
     input.storeTopicStatus === "NON_COMPLIANT" ||
     results.some(isFailedMandatoryResult)
   );
-  const baseReasons = auditConclusionFailureReasons(input);
+  const baseReasons = auditConclusionFailureReasons(input).filter(
+    (reason) => !(
+      input.retentionStatus === "PENDING" &&
+      /^(?:公开)?留存(?:待验证|尚未到期)$/u.test(reason)
+    ),
+  );
+  const reviewReasons = retentionReviewReasons(classificationInput);
   const derivedReviewSignals = automaticStatus === "NEEDS_REVIEW"
-    ? reviewSignals(input, results)
+    ? [...new Set([...reviewSignals({ ...input, retentionStatus: effectiveRetentionStatus }, results), ...reviewReasons])]
     : [];
   const missingReviewSignal = automaticStatus === "NEEDS_REVIEW" &&
     !baseReasons.length && !derivedReviewSignals.length && !duplicate;
@@ -571,9 +626,28 @@ export function buildAuditResultPresentation(
     : { ...automaticConclusion, source: "AUTOMATIC" as const };
   const failureReasons = [...new Set([
     ...baseReasons,
-    ...derivedReviewSignals,
     ...(consistencyMessage ? [consistencyMessage] : []),
   ])];
+  const pendingReasons = automaticStatus === "PENDING_RETENTION"
+    ? ["当前公开，公开留存期限尚未到期"]
+    : [];
+  const retentionDays = retentionDaysFromRuleSnapshot(input.ruleSnapshot);
+  const retentionLabel = effectiveRetentionStatus === "PENDING"
+    ? "待留存验证"
+    : effectiveRetentionStatus === "SATISFIED"
+      ? "已满足"
+      : effectiveRetentionStatus === "NOT_SATISFIED"
+        ? "未满足"
+        : effectiveRetentionStatus === "UNKNOWN"
+          ? "无法确认"
+          : "不要求";
+  const publicLabel = input.publicStatus === "PUBLIC"
+    ? "当前公开"
+    : input.publicStatus === "NOT_PUBLIC"
+      ? "当前不公开"
+      : input.publicStatus === "UNKNOWN"
+        ? "无法确认"
+        : "不要求";
 
   return {
     source: "PERSISTED_AUDIT_RESULT",
@@ -585,6 +659,19 @@ export function buildAuditResultPresentation(
     automaticConclusion,
     conclusion,
     failureReasons,
+    reviewReasons: automaticStatus === "NEEDS_REVIEW"
+      ? derivedReviewSignals
+      : [],
+    pendingReasons,
+    isManualReviewRequired: automaticStatus === "NEEDS_REVIEW" && !manual,
+    isPendingRetention: automaticStatus === "PENDING_RETENTION",
+    publicDisplay: { status: input.publicStatus, label: publicLabel },
+    retentionDisplay: {
+      status: effectiveRetentionStatus,
+      label: retentionLabel,
+      requirementDays: retentionDays,
+      dueAt: retentionDueAt,
+    },
     topic,
     body: {
       status: input.bodyStatus,

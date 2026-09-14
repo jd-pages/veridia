@@ -12,6 +12,7 @@ export const processStatusLabels: Record<string, string> = {
   PAUSED: "已暂停",
   CANCELLED: "已取消",
   NEEDS_REVIEW: "待人工复核",
+  PENDING_RETENTION: "待留存验证",
   LOGIN_EXPIRED: "登录失效",
   SECURITY_RESTRICTED: "等待安全验证",
 };
@@ -21,6 +22,7 @@ export const auditResultLabels: Record<string, string> = {
   FAILED: "审核不通过",
   NOTE_NOT_FOUND: "笔记不存在",
   NEEDS_REVIEW: "待人工复核",
+  PENDING_RETENTION: "待留存验证",
   READ_FAILED: "暂无结论",
   PENDING: "暂无结论",
   UNKNOWN: "暂无结论",

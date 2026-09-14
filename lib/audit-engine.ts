@@ -26,6 +26,10 @@ import {
   calculateInteractionTotal,
   evaluateInteractionReward,
 } from "@/lib/interaction-reward";
+import {
+  evaluateRetentionStatus,
+  resolveReliablePublishedAt,
+} from "@/lib/retention-status";
 
 const pageFailureLabels: Record<string, string> = {
   NOTE_NOT_FOUND: "笔记不存在",
@@ -469,29 +473,12 @@ export function evaluateAudit(
   });
   if (!publicPassed) failures.push("笔记当前未公开");
 
-  let retentionStatus: AuditEvaluation["retentionStatus"] = "NOT_REQUIRED";
-  let retentionDueAt: string | null = null;
-  if (context.retentionDays > 0 && publicStatus !== "NOT_PUBLIC") {
-    if (note.publishedAt) {
-      const publishedAt = new Date(note.publishedAt);
-      if (!Number.isNaN(publishedAt.getTime())) {
-        const dueAt = new Date(
-          publishedAt.getTime() + context.retentionDays * 24 * 60 * 60 * 1000,
-        );
-        retentionDueAt = dueAt.toISOString();
-        retentionStatus =
-          publicStatus === "PUBLIC" && Date.now() >= dueAt.getTime()
-            ? "SATISFIED"
-            : "PENDING";
-      } else {
-        retentionStatus = "PENDING";
-      }
-    } else {
-      retentionStatus = "PENDING";
-    }
-  } else if (context.retentionDays > 0 && publicStatus === "NOT_PUBLIC") {
-    retentionStatus = "NOT_SATISFIED";
-  }
+  const reliablePublishedAt = resolveReliablePublishedAt(note);
+  const { retentionStatus, retentionDueAt } = evaluateRetentionStatus({
+    publicStatus,
+    retentionDays: context.retentionDays,
+    publishedAt: reliablePublishedAt,
+  });
   evaluations.push({
     ruleKey: "GLOBAL_RETENTION",
     ruleName: "公开留存",
@@ -502,6 +489,8 @@ export function evaluateAudit(
         ? "已满足"
         : retentionStatus === "PENDING"
           ? "待验证"
+          : retentionStatus === "UNKNOWN"
+            ? "无法确认"
           : retentionStatus === "NOT_SATISFIED"
             ? "未满足"
             : "不要求",
@@ -898,24 +887,29 @@ export function evaluateAudit(
   if (topicsReadIncomplete) failures.push("未识别到话题内容，需人工复核");
 
   const contentRuleFailed = evaluations.some((item) => !item.passed);
+  const hasExplicitBusinessFailure = failures.some(
+    (reason) => !/需人工复核|待人工|无法确认/u.test(reason),
+  );
   let autoStatus: AuditEvaluation["autoStatus"] = "PASSED";
   if (!pagePassed) {
     autoStatus =
       note.pageStatus === "READ_FAILED" ? "READ_FAILED" : "NEEDS_REVIEW";
+  } else if (hasExplicitBusinessFailure) {
+    autoStatus = "FAILED";
   } else if (
     unresolvedTechnicalWarnings.size > 0 ||
     clickabilityNeedsReview ||
     storeTopicAudit.needsReview
   ) {
     autoStatus = "NEEDS_REVIEW";
-  } else if (failures.length) {
-    autoStatus = "FAILED";
   } else if (
     publicStatus === "UNKNOWN" ||
-    (publicAuditRequired && retentionStatus === "PENDING") ||
+    retentionStatus === "UNKNOWN" ||
     imageStatus === "IMAGES_READ_FAILED"
   ) {
     autoStatus = "NEEDS_REVIEW";
+  } else if (publicAuditRequired && retentionStatus === "PENDING") {
+    autoStatus = "PENDING_RETENTION";
   }
 
   if (context.basicRewardRequired) {
@@ -935,7 +929,7 @@ export function evaluateAudit(
 
     if (contentRuleFailed) {
       autoStatus = "FAILED";
-    } else if (contentStatus !== "PASSED") {
+    } else if (contentStatus === "NEEDS_REVIEW") {
       autoStatus = "NEEDS_REVIEW";
     } else if (!interactionReadable) {
       autoStatus = "NEEDS_REVIEW";
@@ -944,7 +938,7 @@ export function evaluateAudit(
       autoStatus = "FAILED";
       failures.push(`基础奖励未达成：互动合计 ${totalCount}`);
     } else {
-      autoStatus = "PASSED";
+      autoStatus = contentStatus;
     }
 
     evaluations.push({

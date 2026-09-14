@@ -9,6 +9,11 @@ import {
   parseContentChannel,
 } from "@/lib/result-source";
 import { currentAuditResultWhere } from "@/lib/audit-result-lifecycle";
+import {
+  manualReviewWhere,
+  pendingRetentionWhere,
+  type RetentionBusinessClassificationIds,
+} from "@/lib/retention-pending-query";
 
 export interface ResultQueryFilters {
   ids?: string[];
@@ -142,7 +147,11 @@ export function buildAuditResultWhere(
   filters: ResultQueryFilters,
   // Legacy callers can still construct the original task-based filter. Result
   // APIs supply resolved evidence IDs so bound rows use the recorded task state.
-  evidenceFilters?: { keywordIds: string[]; processingFailureIds: string[] },
+  evidenceFilters?: {
+    keywordIds: string[];
+    processingFailureIds: string[];
+    retentionClassification?: RetentionBusinessClassificationIds;
+  },
 ): Prisma.AuditResultWhereInput {
   const and: Prisma.AuditResultWhereInput[] = [currentAuditResultWhere];
 
@@ -199,16 +208,27 @@ export function buildAuditResultWhere(
     } : { task: { status: { in: [...processingFailureTaskStatuses] } } });
   } else if (filters.status === "NOTE_NOT_FOUND") {
     and.push(noteNotFoundWhere);
+  } else if (filters.status === "PENDING_RETENTION") {
+    and.push(pendingRetentionWhere(evidenceFilters?.retentionClassification));
+    and.push({ NOT: noteNotFoundStoredStatusWhere });
+  } else if (filters.status === "NEEDS_REVIEW") {
+    and.push(manualReviewWhere(evidenceFilters?.retentionClassification));
+    and.push({ NOT: noteNotFoundStoredStatusWhere });
   } else if (filters.status) {
     and.push({ autoStatus: filters.status });
-    if (["PASSED", "FAILED", "NEEDS_REVIEW"].includes(filters.status)) {
+    if (filters.status === "PASSED") {
+      and.push({
+        NOT: pendingRetentionWhere(evidenceFilters?.retentionClassification),
+      });
+    }
+    if (["PASSED", "FAILED"].includes(filters.status)) {
       and.push({ NOT: noteNotFoundStoredStatusWhere });
     }
   }
 
   if (filters.manualStatus === "PENDING") {
     and.push({
-      autoStatus: "NEEDS_REVIEW",
+      ...manualReviewWhere(evidenceFilters?.retentionClassification),
       manualReviews: { none: {} },
       NOT: noteNotFoundStoredStatusWhere,
     });
@@ -221,7 +241,7 @@ export function buildAuditResultWhere(
     });
   } else if (filters.manualStatus === "NOT_REQUIRED") {
     and.push({
-      autoStatus: { not: "NEEDS_REVIEW" },
+      NOT: manualReviewWhere(evidenceFilters?.retentionClassification),
       manualReviews: { none: {} },
     });
   }

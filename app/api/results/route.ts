@@ -11,6 +11,7 @@ import { withXhsOriginalPublishedAt } from "@/lib/xhs-original-published-at";
 import { withAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
 import { withAuditResultPresentation } from "@/lib/audit-result-presentation";
 import { resolveAuditEvidenceFilterIds } from "@/lib/audit-evidence-query";
+import { legacyPendingWhere } from "@/lib/retention-pending-query";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -22,9 +23,10 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   let where;
   let summaryWhere;
   let filters;
+  let evidenceFilters: Awaited<ReturnType<typeof resolveAuditEvidenceFilterIds>>;
   try {
     filters = readResultQueryFilters(searchParams);
-    const evidenceFilters = await resolveAuditEvidenceFilterIds({
+    evidenceFilters = await resolveAuditEvidenceFilterIds({
       keyword: filters.keyword,
       includeProcessingFailures: filters.status === "PROCESS_FAILED",
     });
@@ -87,6 +89,31 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       where: summaryWhere,
       _count: { _all: true },
     });
+    const legacyRetentionPendingGroups = await tx.auditResult.groupBy({
+      by: ["autoStatus"],
+      where: {
+        AND: [
+          summaryWhere,
+          legacyPendingWhere(evidenceFilters.retentionClassification),
+        ],
+      },
+      _count: { _all: true },
+    });
+    const retentionManualReviewGroups = await tx.auditResult.groupBy({
+      by: ["autoStatus"],
+      where: {
+        AND: [
+          summaryWhere,
+          {
+            id: {
+              in: evidenceFilters.retentionClassification
+                .retentionManualReviewIds,
+            },
+          },
+        ],
+      },
+      _count: { _all: true },
+    });
     let additionalNotFound = 0;
     const taskIds = notFoundTasks.map((task) => task.id);
     for (let offset = 0; offset < taskIds.length; offset += 5_000) {
@@ -116,6 +143,18 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     const summary = summarizeResultStatusGroups(
       statusGroups,
       additionalNotFound,
+      Object.fromEntries(
+        legacyRetentionPendingGroups.map((group) => [
+          group.autoStatus,
+          group._count._all,
+        ]),
+      ),
+      Object.fromEntries(
+        retentionManualReviewGroups.map((group) => [
+          group.autoStatus,
+          group._count._all,
+        ]),
+      ),
     );
     const total = filters.status
       ? await tx.auditResult.count({ where })

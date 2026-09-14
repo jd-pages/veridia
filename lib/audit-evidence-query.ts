@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { withAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
 import { currentAuditResultWhere } from "@/lib/audit-result-lifecycle";
 import { processingFailureTaskStatuses } from "@/lib/processing-failure";
+import { resolveRetentionBusinessClassificationIds } from "@/lib/retention-pending-resolver";
 
 // SQLite's default LIKE folds ASCII case only. Keep that existing search
 // behavior without depending on the production database's collation.
@@ -19,7 +20,10 @@ export async function resolveAuditEvidenceFilterIds(input: {
   const keywordIds: string[] = [];
   const processingFailureIds: string[] = [];
   const keyword = input.keyword ? foldAsciiCase(input.keyword) : "";
-  if (!keyword && !input.includeProcessingFailures) return { keywordIds, processingFailureIds };
+  const retentionClassification = await resolveRetentionBusinessClassificationIds();
+  if (!keyword && !input.includeProcessingFailures) {
+    return { keywordIds, processingFailureIds, retentionClassification };
+  }
 
   let cursor: string | undefined;
   while (true) {
@@ -49,7 +53,9 @@ export async function resolveAuditEvidenceFilterIds(input: {
         processingFailureIds.push(result.id);
       }
     }
-    if (results.length < 500) return { keywordIds, processingFailureIds };
+    if (results.length < 500) {
+      return { keywordIds, processingFailureIds, retentionClassification };
+    }
     cursor = results[results.length - 1].id;
   }
 }

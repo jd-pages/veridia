@@ -258,7 +258,12 @@ export async function runAuditTask(
       ? parsedPublishedAt
       : null;
   const evaluation = evaluateAudit(
-    { ...payload, topics: auditedTopics, publishedAt: platformPublishedAt?.toISOString() ?? null },
+    {
+      ...payload,
+      contentChannel,
+      topics: auditedTopics,
+      publishedAt: platformPublishedAt?.toISOString() ?? null,
+    },
     context,
   );
   assertAuditEvaluationConsistency(evaluation);

@@ -25,6 +25,7 @@ import {
   parseTaskExecutionFilter,
 } from "@/lib/automation/task-execution-filter";
 import { visibleAuditTaskWhere } from "@/lib/automation/task-view";
+import { resolveRetentionBusinessClassificationIds } from "@/lib/retention-pending-resolver";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -54,7 +55,13 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     searchParams.has("pageSize") ||
     searchParams.has("executionStatus") ||
     batchIds.length > 0;
-  const executionWhere = buildTaskExecutionFilterWhere(executionStatus);
+  const retentionClassification = executionStatus === "NEEDS_REVIEW"
+    ? await resolveRetentionBusinessClassificationIds()
+    : undefined;
+  const executionWhere = buildTaskExecutionFilterWhere(
+    executionStatus,
+    retentionClassification,
+  );
   const filters: Prisma.AuditTaskWhereInput[] = [visibleAuditTaskWhere];
   if (status) filters.push({ status });
   if (Object.keys(executionWhere).length) filters.push(executionWhere);

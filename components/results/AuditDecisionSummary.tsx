@@ -62,14 +62,8 @@ function parseBasicRewardEvidence(value?: string | null) {
 function auditStatusText(value?: string) {
   if (value === "PASSED") return "通过";
   if (value === "FAILED" || value === "READ_FAILED") return "不通过";
+  if (value === "PENDING_RETENTION") return "待留存验证";
   return "待人工复核";
-}
-
-function publicStatusText(value?: string) {
-  if (value === "PUBLIC") return "当前公开";
-  if (value === "NOT_PUBLIC") return "当前不公开";
-  if (value === "NOT_REQUIRED") return "无需审核";
-  return "待确认";
 }
 
 export default function AuditDecisionSummary({
@@ -85,6 +79,8 @@ export default function AuditDecisionSummary({
   const conclusion = row.presentation.conclusion.label;
   const conclusionTone = row.presentation.conclusion.tone;
   const failureReasons = row.presentation.failureReasons;
+  const reviewReasons = row.presentation.reviewReasons;
+  const pendingReasons = row.presentation.pendingReasons;
   const topicSummary = row.presentation.topic;
   const expectedTopicCount = topicSummary.expectedCount;
   const matchedTopicCount = topicSummary.matchedCount;
@@ -265,24 +261,40 @@ export default function AuditDecisionSummary({
               图片数量：{row.imageCount === null ? "未能确认" : `${row.imageCount} 张`}
             </span>
             <span>
-              公开状态：{publicStatusText(row.publicStatus)}
+              公开状态：{row.presentation.publicDisplay.label}
             </span>
           </div>
         ) : null}
       </section>
 
-      <section className={styles.decisionSection} aria-label="失败原因">
-        <h3>失败原因</h3>
-        {failureReasons.length ? (
+      {failureReasons.length ? (
+        <section className={styles.decisionSection} aria-label="失败原因">
+          <h3>失败原因</h3>
           <ul className={styles.failureReasonList}>
             {failureReasons.map((reason) => (
               <li key={reason}>{reason}</li>
             ))}
           </ul>
-        ) : (
-          <div className={styles.decisionEmpty}>无异常</div>
-        )}
-      </section>
+        </section>
+      ) : null}
+
+      {reviewReasons.length ? (
+        <section className={styles.decisionSection} aria-label="待人工复核事项">
+          <h3>待人工复核事项</h3>
+          <ul className={styles.failureReasonList}>
+            {reviewReasons.map((reason) => <li key={reason}>{reason}</li>)}
+          </ul>
+        </section>
+      ) : null}
+
+      {pendingReasons.length ? (
+        <section className={styles.decisionSection} aria-label="待验证事项">
+          <h3>待验证事项</h3>
+          <ul className={styles.pendingReasonList}>
+            {pendingReasons.map((reason) => <li key={reason}>{reason}</li>)}
+          </ul>
+        </section>
+      ) : null}
 
       <section className={styles.decisionSection} aria-label="审核明细">
         <h3>审核明细</h3>
@@ -293,6 +305,34 @@ export default function AuditDecisionSummary({
               <strong>笔记不存在</strong>
             </article>
           ) : null}
+          <article className={styles.auditDetailCard}>
+            <h4>公开状态</h4>
+            <strong>{row.presentation.publicDisplay.label}</strong>
+          </article>
+
+          <article className={styles.auditDetailCard}>
+            <h4>公开留存</h4>
+            <div className={styles.auditDetailList}>
+              <div>
+                <span>留存状态</span>
+                <strong>{row.presentation.retentionDisplay.label}</strong>
+              </div>
+              <div>
+                <span>留存要求</span>
+                <strong>
+                  {row.presentation.retentionDisplay.requirementDays > 0
+                    ? `${row.presentation.retentionDisplay.requirementDays} 天`
+                    : "不要求"}
+                </strong>
+              </div>
+              {row.presentation.retentionDisplay.dueAt ? (
+                <div>
+                  <span>留存到期</span>
+                  <strong>{formatAuditTime(row.presentation.retentionDisplay.dueAt)}</strong>
+                </div>
+              ) : null}
+            </div>
+          </article>
           <article className={styles.auditDetailCard}>
             <h4>话题审核</h4>
             {unavailable || topicUnavailable ? (
@@ -486,10 +526,6 @@ export default function AuditDecisionSummary({
                 <h4>正文审核</h4>
                 <strong>未审核</strong>
               </article>
-              <article className={styles.auditDetailCard}>
-                <h4>公开状态</h4>
-                <strong>无法确认</strong>
-              </article>
             </>
           ) : null}
 
@@ -506,17 +542,6 @@ export default function AuditDecisionSummary({
                     <span>状态</span>
                     <strong>
                       {row.presentation.body.label}
-                    </strong>
-                  </div>
-                </div>
-              </article>
-              <article className={styles.auditDetailCard}>
-                <h4>公开状态</h4>
-                <div className={styles.auditDetailList}>
-                  <div>
-                    <span>状态</span>
-                    <strong>
-                      {publicStatusText(row.publicStatus)}
                     </strong>
                   </div>
                 </div>

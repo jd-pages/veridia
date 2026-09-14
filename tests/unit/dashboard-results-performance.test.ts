@@ -42,6 +42,7 @@ describe("Dashboard / Results 聚合语义", () => {
       readFailed: 1,
       topicMissing: 4,
       clickableAbnormal: 5,
+      pendingRetention: 0,
     });
   });
 
@@ -59,6 +60,7 @@ describe("Dashboard / Results 聚合语义", () => {
       failed: 5,
       notFound: 7,
       review: 4,
+      pendingRetention: 0,
       statusCounts: {
         ALL: 22,
         PASSED: 7,
@@ -66,7 +68,33 @@ describe("Dashboard / Results 聚合语义", () => {
         NOTE_NOT_FOUND: 7,
         NEEDS_REVIEW: 4,
         READ_FAILED: 1,
+        PENDING_RETENTION: 0,
       },
+    });
+  });
+
+  it("normalizes legacy pending rows out of pass/review into retention summary", () => {
+    expect(summarizeResultStatusGroups([
+      { autoStatus: "PASSED", pageStatus: "NORMAL", _count: { _all: 3 } },
+      { autoStatus: "NEEDS_REVIEW", pageStatus: "NORMAL", _count: { _all: 2 } },
+      { autoStatus: "PENDING_RETENTION", pageStatus: "NORMAL", _count: { _all: 1 } },
+    ], 0, { PASSED: 1, NEEDS_REVIEW: 1 })).toMatchObject({
+      total: 6,
+      passed: 2,
+      review: 1,
+      pendingRetention: 3,
+    });
+  });
+
+  it("normalizes legacy pending rows without reliable due evidence into true manual review", () => {
+    expect(summarizeResultStatusGroups([
+      { autoStatus: "PASSED", pageStatus: "NORMAL", _count: { _all: 4 } },
+      { autoStatus: "NEEDS_REVIEW", pageStatus: "NORMAL", _count: { _all: 2 } },
+    ], 0, {}, { PASSED: 3, NEEDS_REVIEW: 1 })).toMatchObject({
+      total: 6,
+      passed: 1,
+      review: 5,
+      pendingRetention: 0,
     });
   });
 });

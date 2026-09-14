@@ -1,4 +1,9 @@
 import type { Prisma } from "@prisma/client";
+import { currentAuditResultWhere } from "@/lib/audit-result-lifecycle";
+import {
+  manualReviewWhere,
+  type RetentionBusinessClassificationIds,
+} from "@/lib/retention-pending-query";
 
 export const taskExecutionFilters = [
   "ALL",
@@ -39,6 +44,7 @@ export function parseTaskExecutionFilter(
 
 export function buildTaskExecutionFilterWhere(
   filter: TaskExecutionFilter,
+  retentionClassification?: RetentionBusinessClassificationIds,
 ): Prisma.AuditTaskWhereInput {
   if (filter === "ALL") return {};
   if (filter === "NEEDS_REVIEW") {
@@ -50,25 +56,39 @@ export function buildTaskExecutionFilterWhere(
         {
           status: "NEEDS_REVIEW",
           auditResults: {
-            some: { manualReviews: hasNoTerminalManualReview },
+            some: {
+              AND: [
+                currentAuditResultWhere,
+                manualReviewWhere(retentionClassification),
+                { manualReviews: hasNoTerminalManualReview },
+              ],
+            },
           },
         },
         {
           status: { in: ["FAILED", "READ_FAILED", "LOGIN_EXPIRED"] },
           auditResults: {
             some: {
-              autoStatus: "NEEDS_REVIEW",
-              manualReviews: hasNoTerminalManualReview,
+              AND: [
+                currentAuditResultWhere,
+                manualReviewWhere(retentionClassification),
+                { manualReviews: hasNoTerminalManualReview },
+              ],
             },
           },
         },
         {
           auditResults: {
             some: {
-              manualReviews: {
-                some: { result: "NEEDS_REVIEW" },
-                ...hasNoTerminalManualReview,
-              },
+              AND: [
+                currentAuditResultWhere,
+                {
+                  manualReviews: {
+                    some: { result: "NEEDS_REVIEW" },
+                    ...hasNoTerminalManualReview,
+                  },
+                },
+              ],
             },
           },
         },

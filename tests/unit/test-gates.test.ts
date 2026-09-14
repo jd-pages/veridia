@@ -304,13 +304,13 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // v1.1.34 adds the user-approved immutable result presentation contract.
-      behaviorCount: 32,
+      // v1.1.35 adds the user-approved retention pending workflow contract.
+      behaviorCount: 33,
       groupCount: 14,
       triggerFiles: {
-        totalEntryCount: 116,
-        exactFileEntryCount: 103,
-        directoryEntryCount: 13,
+        totalEntryCount: 125,
+        exactFileEntryCount: 110,
+        directoryEntryCount: 15,
         patternEntryCount: 0,
         duplicateEntryCount: 0,
         missingEntryCount: 0,
