@@ -1,5 +1,6 @@
 import type { Key } from "react";
 import type { InteractionRewardSnapshot } from "@/lib/interaction-reward";
+import type { AuditResultPresentation } from "@/lib/audit-result-presentation";
 
 export interface ProductOption {
   id: string;
@@ -71,6 +72,9 @@ export interface ResultRow extends InteractionRewardSnapshot {
   retentionDueAt: string | null;
   failureReasons: string;
   auditedAt: string;
+  evidenceStatus?: "RESULT_BOUND" | "LEGACY_UNAVAILABLE";
+  evidenceMessage?: string | null;
+  presentation: AuditResultPresentation;
   note: {
     url: string;
     finalUrl: string | null;
@@ -133,6 +137,16 @@ export interface ResultRow extends InteractionRewardSnapshot {
     createdAt?: string;
     reviewer?: { displayName: string };
   }>;
+  ruleResults: Array<{
+    id?: string;
+    ruleKey: string;
+    ruleName: string;
+    expectedValue: string;
+    actualValue: string;
+    passed: boolean;
+    failureReason: string | null;
+    evidence: string;
+  }>;
 }
 
 export interface ResultPageData {
@@ -180,8 +194,6 @@ export interface ResultSummary {
 
 export interface ResultDetail extends ResultRow {
   extractionRecordId?: string | null;
-  evidenceStatus?: "RESULT_BOUND" | "LEGACY_UNAVAILABLE";
-  evidenceMessage?: string | null;
   note: ResultRow["note"] & {
     authorName: string | null;
     isPublic: boolean | null;
@@ -192,16 +204,6 @@ export interface ResultDetail extends ResultRow {
       adapterVersion: string;
     }>;
   };
-  ruleResults: Array<{
-    id: string;
-    ruleKey: string;
-    ruleName: string;
-    expectedValue: string;
-    actualValue: string;
-    passed: boolean;
-    failureReason: string | null;
-    evidence: string;
-  }>;
   operationLogs: Array<{
     id: string;
     summary: string;

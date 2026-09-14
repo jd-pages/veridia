@@ -4,6 +4,7 @@ import {
   evaluateAudit,
   topicsForPlatformAudit,
 } from "@/lib/audit-engine";
+import { assertAuditEvaluationConsistency } from "@/lib/audit-evaluation-consistency";
 import { evaluateSemanticRelevance } from "@/lib/ai";
 import { normalizeTopic } from "@/lib/topic";
 import { resolveEffectiveAuditTopicRules } from "@/lib/topic-rule-model";
@@ -260,6 +261,7 @@ export async function runAuditTask(
     { ...payload, topics: auditedTopics, publishedAt: platformPublishedAt?.toISOString() ?? null },
     context,
   );
+  assertAuditEvaluationConsistency(evaluation);
   const duplicateReauditOutcome = resolveDuplicateReauditAutomaticOutcome(
     task.notes,
     evaluation.autoStatus,

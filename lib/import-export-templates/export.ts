@@ -4,6 +4,7 @@ import {
   interactionRewardPresentation,
   type InteractionRewardSnapshot,
 } from "@/lib/interaction-reward";
+import type { AuditResultPresentation } from "@/lib/audit-result-presentation";
 import {
   businessFailureReasonLabel,
   businessSourceLabel,
@@ -137,6 +138,7 @@ export interface CompactAuditResultExportSourceRow extends InteractionRewardSnap
     topics?: Array<{ displayText: string }>;
   };
   manualReviews: Array<{ result: string }>;
+  presentation?: AuditResultPresentation;
 }
 
 function importedDateLabel(value: Date) {
@@ -314,7 +316,14 @@ function list(value: string, separator: string) {
 }
 
 function compactSelfReview(row: CompactAuditResultExportSourceRow) {
-  const finalStatus = row.manualReviews[0]?.result || row.autoStatus;
+  if (
+    row.presentation?.consistency.status ===
+    "RESULT_CONSISTENCY_VIOLATION"
+  ) {
+    return "N-结果一致性异常";
+  }
+  const finalStatus = row.presentation?.conclusion.status ||
+    row.manualReviews[0]?.result || row.autoStatus;
   if (finalStatus === "PASSED") return "Y";
 
   const unavailable = isUnavailableNoteResult({
@@ -330,7 +339,8 @@ function compactSelfReview(row: CompactAuditResultExportSourceRow) {
     },
   });
   const importedMetadata = importedTaskMetadataFromNotes(row.task.notes);
-  const failureReasonList = list(row.failureReasons, " ");
+  const failureReasonList = row.presentation?.failureReasons.join(" ") ||
+    list(row.failureReasons, " ");
   const evidence = [
     row.pageStatus,
     row.bodyStatus,
@@ -399,7 +409,8 @@ function compactSelfReview(row: CompactAuditResultExportSourceRow) {
 export function detailedSelfReview(row: CompactAuditResultExportSourceRow) {
   const summary = compactSelfReview(row);
   if (!summary || summary === "Y") return summary;
-  let details = auditConclusionFailureReasons(row).filter(
+  let details = (row.presentation?.failureReasons ||
+    auditConclusionFailureReasons(row)).filter(
     (reason) =>
       !/^(?:话题缺少|缺少话题|缺少指定话题|话题未命中|字数不足|图片不足|阶段不符|不合规|审核失败)$/u.test(
         reason,
@@ -542,10 +553,33 @@ export function kabritaComplianceResult(
       !/基础奖励(?:未达成|互动数据无法确认)|互动合计/iu.test(reason),
     );
     if (interactionReasons.length) {
+      const contentStatus = otherReasons.length ? row.autoStatus : "PASSED";
+      const contentPresentation = row.presentation &&
+        row.presentation.consistency.status === "CONSISTENT"
+        ? {
+            ...row.presentation,
+            automaticConclusion: {
+              ...row.presentation.automaticConclusion,
+              status: contentStatus,
+              label: contentStatus === "PASSED" ? "审核通过" : row.presentation.automaticConclusion.label,
+              tone: contentStatus === "PASSED" ? "success" as const : row.presentation.automaticConclusion.tone,
+            },
+            conclusion: {
+              ...row.presentation.conclusion,
+              status: contentStatus,
+              label: contentStatus === "PASSED" ? "审核通过" : row.presentation.conclusion.label,
+              tone: contentStatus === "PASSED" ? "success" as const : row.presentation.conclusion.tone,
+            },
+            failureReasons: row.presentation.failureReasons.filter((reason) =>
+              !/基础奖励(?:未达成|互动数据无法确认)|互动合计/iu.test(reason),
+            ),
+          }
+        : row.presentation;
       base = detailedSelfReview({
         ...row,
-        autoStatus: otherReasons.length ? row.autoStatus : "PASSED",
+        autoStatus: contentStatus,
         failureReasons: JSON.stringify(otherReasons),
+        presentation: contentPresentation,
       });
     }
   }
@@ -657,6 +691,7 @@ export function auditResultToExportRecord(row: InteractionRewardSnapshot & {
     createdAt: Date;
     reviewer?: { displayName: string } | null;
   }>;
+  presentation?: AuditResultPresentation;
 }, templates: ImportExportTemplates, options?: {
   dateType?: string;
 }): ExportValueRecord {
@@ -683,14 +718,17 @@ export function auditResultToExportRecord(row: InteractionRewardSnapshot & {
       )
     : null;
   const failureReasonList = list(row.failureReasons, separator);
-  const detailedFailureReasonList = auditConclusionFailureReasons(row).join(
+  const detailedFailureReasonList = (row.presentation?.failureReasons ||
+    auditConclusionFailureReasons(row)).join(
     separator,
   );
-  const autoAuditResult = businessStatusLabel(row.autoStatus, "audit");
+  const autoAuditResult = row.presentation?.automaticConclusion.label ||
+    businessStatusLabel(row.autoStatus, "audit");
   const manualAuditResult = manual
     ? businessStatusLabel(manual.result, "audit")
     : "";
-  const finalAuditConclusion = manualAuditResult || autoAuditResult;
+  const finalAuditConclusion = row.presentation?.conclusion.label ||
+    manualAuditResult || autoAuditResult;
   const unavailable = isUnavailableNoteResult({
     pageStatus: row.pageStatus,
     failureReasons: row.failureReasons,

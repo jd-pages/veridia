@@ -714,24 +714,13 @@ export default function ResultsPage() {
       key: "body",
       width: 130,
       render: (_value, row) => {
-        const unavailable =
-          row.autoStatus === "NOTE_NOT_FOUND" ||
-          ["NOTE_NOT_FOUND", "NOT_FOUND", "DELETED"].includes(row.pageStatus) ||
-          ["NOTE_NOT_FOUND", "PAGE_NOT_FOUND", "NOTE_DELETED"].includes(
-            row.task.failureCode || "",
-          );
+        const unavailable = row.presentation.body.label === "未审核";
         return (
           <div className={styles.stack}>
             <strong className={styles.cellPrimary}>
-              {unavailable
-                ? "未审核"
-                : row.bodyStatus === "UNKNOWN"
-                  ? "待人工确认"
-                  : row.bodyCompliant
-                    ? "合规"
-                    : "不合规"}
+              {row.presentation.body.label}
             </strong>
-            {!unavailable && row.bodyStatus !== "UNKNOWN" ? (
+            {!unavailable && row.presentation.body.status !== "UNKNOWN" ? (
               <span className={styles.cellSecondary}>
                 {row.effectiveBodyLength} 个字符
               </span>

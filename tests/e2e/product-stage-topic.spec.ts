@@ -464,7 +464,10 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
   const plainResultRow = page.locator(
     `.ant-table-row[data-row-key="${plainResult.id}"]`,
   );
-  await expect(plainResultRow).toContainText("0 / 3");
+  // Persisted RuleResults record the two required topics as present but with
+  // unresolved clickability. The presentation must show that immutable 2/3
+  // fact instead of recomputing 0/3 from a later/latest topic projection.
+  await expect(plainResultRow).toContainText("2 / 3");
   const resultRow = page.locator(
     `.ant-table-row[data-row-key="${result.id}"]`,
   );

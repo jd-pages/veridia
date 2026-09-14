@@ -2,100 +2,43 @@
 
 import { memo } from "react";
 import { Tag, Tooltip } from "antd";
-import { auditResultLabels } from "@/lib/zh-CN";
-import {
-  auditDetailStatusLabel,
-} from "@/lib/audit-detail-visibility";
-import { auditConclusionFailureReasons } from "@/lib/result-detail-presentation";
-import { auditResultListDisplay } from "@/lib/result-display";
 import {
   duplicateReauditMetadataFromNotes,
-  legacyZeroHistoryDuplicateMetadataFromNotes,
 } from "@/lib/import-task-metadata";
 import AuditStatusTag from "./AuditStatusTag";
 import InteractionReward from "./InteractionReward";
 import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
 
-const resultMeta: Record<
-  string,
-  { className: string; label: string }
-> = {
-  PASSED: { className: styles.dotSuccess, label: "审核通过" },
-  FAILED: { className: styles.dotDanger, label: "审核不通过" },
-  NOTE_NOT_FOUND: { className: styles.dotInfo, label: "笔记不存在" },
-  NEEDS_REVIEW: { className: styles.dotWarning, label: "待人工复核" },
-  READ_FAILED: { className: styles.dotWarning, label: "读取失败" },
-  PROCESSING: { className: styles.dotInfo, label: "处理中" },
-};
-
-function AuditConclusionCell({
-  row,
-  detailView = false,
-}: {
+function AuditConclusionCell(props: {
   row: ResultRow;
   detailView?: boolean;
 }) {
+  const { row } = props;
   const duplicateReaudit = duplicateReauditMetadataFromNotes(row.task.notes);
-  const legacyZeroHistory = legacyZeroHistoryDuplicateMetadataFromNotes(
-    row.task.notes,
-  );
-  const unavailableDisplay = auditResultListDisplay(row);
-  if (unavailableDisplay) {
-    const reasons = auditConclusionFailureReasons(row);
-    return (
-      <div className={styles.stack}>
-        <InteractionReward snapshot={row} />
-        {duplicateReaudit ? (
-          <div>
-            <Tag color="orange">
-              重复重审 · 历史 {duplicateReaudit.historicalCount} 次
-            </Tag>
-          </div>
-        ) : null}
-        <div className={styles.conclusionLine}>
-          <span
-            className={`${styles.conclusionDot} ${styles.dotInfo}`}
-            aria-hidden="true"
-          />
-          <strong className={styles.cellPrimary}>
-            {unavailableDisplay.auditConclusion}
-          </strong>
-        </div>
-        {reasons.length ? (
-          <Tooltip title={reasons.join("；")}>
-            <div className={styles.reasonText}>{reasons.join("；")}</div>
-          </Tooltip>
-        ) : null}
-      </div>
-    );
-  }
-
-  const reasons = auditConclusionFailureReasons(row);
+  const reasons = row.presentation.failureReasons;
   const manual = row.manualReviews[0];
-  const automaticResult =
-    duplicateReaudit?.automaticResult ||
-    legacyZeroHistory?.automaticResult ||
-    row.autoStatus;
-  const autoMeta = resultMeta[automaticResult] || {
-    className: styles.dotInfo,
-    label: detailView
-      ? auditDetailStatusLabel(automaticResult, "audit")
-      : auditResultLabels[automaticResult] || "暂无结论",
+  const dotClass = (tone: string) => tone === "success"
+    ? styles.dotSuccess
+    : tone === "danger"
+      ? styles.dotDanger
+      : tone === "warning"
+        ? styles.dotWarning
+        : styles.dotInfo;
+  const autoMeta = {
+    className: dotClass(row.presentation.automaticConclusion.tone),
+    label: row.presentation.automaticConclusion.label,
   };
-  const mainValue = manual?.result || automaticResult;
+  const mainValue = row.presentation.conclusion.status;
   const processingFailed = [
     "FAILED",
     "READ_FAILED",
     "LOGIN_EXPIRED",
   ].includes(row.task.status);
-  const mainMeta = manual
-    ? {
-        className:
-          manual.result === "PASSED" ? styles.dotSuccess : styles.dotDanger,
-        label: manual.result === "PASSED" ? "人工通过" : "人工不通过",
-      }
-    : autoMeta;
+  const mainMeta = {
+    className: dotClass(row.presentation.conclusion.tone),
+    label: row.presentation.conclusion.label,
+  };
 
   return (
     <div className={styles.stack}>

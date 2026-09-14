@@ -38,6 +38,7 @@ import {
 import { auditResultExportFileName } from "@/lib/result-export-file-name";
 import { sortAuditResultsByImportOrder } from "@/lib/result-export-order";
 import { withAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
+import { withAuditResultPresentation } from "@/lib/audit-result-presentation";
 import { resolveAuditEvidenceFilterIds } from "@/lib/audit-evidence-query";
 
 type UnifiedResultSheetType = "DANONE" | "KABRITA" | "WYETH" | "NESTLE";
@@ -120,6 +121,18 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     include: {
       note: { select: { id: true } },
       extractionRecord: true,
+      ruleResults: {
+        select: {
+          ruleKey: true,
+          ruleName: true,
+          expectedValue: true,
+          actualValue: true,
+          passed: true,
+          failureReason: true,
+          evidence: true,
+        },
+        orderBy: { createdAt: "asc" },
+      },
       task: {
         include: {
           product: true,
@@ -134,7 +147,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   });
   const rows = sortAuditResultsByImportOrder(foundRows.map((result) => {
     const snapshot = withAuditExtractionSnapshot(result);
-    return {
+    return withAuditResultPresentation({
       ...snapshot,
       note: {
         ...snapshot.note,
@@ -142,7 +155,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
         // Imported registration dates continue to take precedence in the mapper.
         publishedAt: snapshot.note.publishedAt ? new Date(snapshot.note.publishedAt) : null,
       },
-    };
+    });
   }));
   if (!rows.length) {
     console.info(

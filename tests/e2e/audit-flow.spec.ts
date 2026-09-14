@@ -1151,7 +1151,10 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   const unavailableRow = page.locator(".ant-table-tbody .ant-table-row").first();
   await expect(unavailableRow).toBeVisible();
   const unavailableCells = unavailableRow.locator("td");
-  await expect(unavailableCells.nth(4)).toHaveText("未审核");
+  await expect(unavailableCells.nth(4)).toContainText("历史明细不可用");
+  await expect(unavailableCells.nth(4)).toContainText(
+    "页面不可用，本次未执行话题审核。",
+  );
   await expect(unavailableCells.nth(5)).toHaveText("未审核");
   await expect(unavailableCells.nth(6)).toContainText(
     "未审核",
@@ -1176,7 +1179,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     "小红书页面提示",
   );
   await expect(unavailableRow).not.toContainText(
-    /ERROR_PAGE|APP_LAUNCH|页面失效|未提取到正文|暂无结论|未执行话题审核|未执行图片数量审核|处理失败|待人工复核|项异常|缺少精准话题|有效正文字符不足|图片数量不足/u,
+    /ERROR_PAGE|APP_LAUNCH|页面失效|未提取到正文|暂无结论|未执行图片数量审核|处理失败|待人工复核|项异常|缺少精准话题|有效正文字符不足|图片数量不足/u,
   );
 
   await unavailableRow.getByRole("button", { name: /查看详情/u }).click();

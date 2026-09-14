@@ -9,6 +9,7 @@ import { summarizeResultStatusGroups } from "@/lib/result-summary";
 import { withHeavyAuditReadSlot } from "@/lib/audit-read-concurrency";
 import { withXhsOriginalPublishedAt } from "@/lib/xhs-original-published-at";
 import { withAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
+import { withAuditResultPresentation } from "@/lib/audit-result-presentation";
 import { resolveAuditEvidenceFilterIds } from "@/lib/audit-evidence-query";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
@@ -51,6 +52,18 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
         include: {
           note: { select: { id: true } },
           extractionRecord: true,
+          ruleResults: {
+            select: {
+              ruleKey: true,
+              ruleName: true,
+              expectedValue: true,
+              actualValue: true,
+              passed: true,
+              failureReason: true,
+              evidence: true,
+            },
+            orderBy: { createdAt: "asc" },
+          },
           task: {
             include: { product: true, campaign: true, importRecord: true },
           },
@@ -118,13 +131,13 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       pageSize,
       items: items.map((item) => {
         const snapshot = withAuditExtractionSnapshot(item);
-        return withXhsOriginalPublishedAt({
+        return withXhsOriginalPublishedAt(withAuditResultPresentation({
           ...snapshot,
           // The list needs business evidence, not the full diagnostic payload.
           extractionRecord: undefined,
           task: { ...snapshot.task, failureEvidence: null },
           note: { ...snapshot.note, extractions: [] },
-        }, presentationNow);
+        }), presentationNow);
       }),
       summary,
     },

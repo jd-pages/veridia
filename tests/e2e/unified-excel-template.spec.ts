@@ -702,6 +702,16 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一四 Sheet 结�
         where: { id: result.id },
         data: {
           autoStatus: kabritaLow ? "FAILED" : "PASSED",
+          pageStatus: "NORMAL",
+          bodyStatus: "PRESENT",
+          bodyCompliant: true,
+          imageStatus: "COMPLIANT",
+          imageCompliant: true,
+          topicsCompliant: true,
+          clickableCompliant: true,
+          publicStatus: "PUBLIC",
+          retentionStatus: "SATISFIED",
+          storeTopicStatus: "COMPLIANT",
           failureReasons: kabritaLow
             ? JSON.stringify(["基础奖励未达成：互动合计 9"])
             : "[]",
@@ -711,6 +721,29 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一四 Sheet 结�
           interactionTotal: total,
         },
       });
+      // This fixture deliberately synthesizes the final interaction outcome
+      // after the deterministic audit. Keep every persisted audit fact in the
+      // same coherent state so the export is not testing an impossible
+      // PASSED + failed RuleResult combination.
+      await prisma.ruleResult.updateMany({
+        where: { auditResultId: result.id },
+        data: { passed: true, failureReason: null },
+      });
+      if (kabritaIndex >= 0) {
+        await prisma.ruleResult.updateMany({
+          where: {
+            auditResultId: result.id,
+            ruleKey: "KABRITA_BASIC_REWARD",
+          },
+          data: {
+            passed: !kabritaLow,
+            actualValue: `点赞 ${Math.max(total - 5, 0)} + 收藏 ${Math.min(Math.max(total - 3, 0), 2)} + 评论 ${Math.min(total, 3)} = ${total}`,
+            failureReason: kabritaLow
+              ? `基础奖励未达成：互动合计 ${total}`
+              : null,
+          },
+        });
+      }
       await prisma.auditTask.update({
         where: { id: result.task.id },
         data: { status: "SUCCEEDED", failureCode: null, failureMessage: null },

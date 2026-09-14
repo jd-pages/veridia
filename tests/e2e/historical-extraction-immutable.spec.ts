@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
+import ExcelJS from "exceljs";
 import { createAuditIngestFixture, auditIngestExtraction } from "../helpers/audit-ingest-fixture";
 
 test("HISTORICAL_EXTRACTION_IMMUTABLE: 成功、失败和多次重审后历史证据不漂移", async ({ page }) => {
@@ -54,5 +55,79 @@ test("HISTORICAL_EXTRACTION_IMMUTABLE: 成功、失败和多次重审后历史�
     expect(legacy.note).toMatchObject({ title: null, body: null, publishedAt: null, topics: [], extractions: [] });
   } finally {
     try { await fixture?.cleanup(); } finally { await db.$disconnect(); }
+  }
+});
+
+test("Protected AUDIT_RESULT_PRESENTATION_IMMUTABLE：List、Detail 与 Export 使用同一历史事实", async ({ page }) => {
+  test.setTimeout(60_000);
+  const databaseUrl = process.env.E2E_DATABASE_URL?.trim();
+  if (!databaseUrl) throw new Error("必须通过 isolated E2E runner 提供 E2E_DATABASE_URL");
+  const db = new PrismaClient({ datasourceUrl: databaseUrl });
+  let fixture: Awaited<ReturnType<typeof createAuditIngestFixture>> | undefined;
+  try {
+    const login = await page.request.post("/api/auth/login", {
+      data: { username: "admin", password: "Admin123!" },
+    });
+    expect(login.status()).toBe(200);
+    fixture = await createAuditIngestFixture(db);
+    const task = await fixture.task();
+    const audit = await page.request.post(`/api/tasks/${task.id}/audit`, {
+      data: { extraction: auditIngestExtraction(task) },
+    });
+    expect(audit.status(), await audit.text()).toBe(200);
+    const result = (await audit.json()).data as { id: string; noteId: string };
+
+    const listResponse = await page.request.get(
+      `/api/results?ids=${result.id}&pageSize=100`,
+    );
+    expect(listResponse.status(), await listResponse.text()).toBe(200);
+    const listItem = (await listResponse.json()).data.items.find(
+      (item: { id: string }) => item.id === result.id,
+    );
+    const detailResponse = await page.request.get(`/api/results/${result.id}`);
+    expect(detailResponse.status(), await detailResponse.text()).toBe(200);
+    const detail = (await detailResponse.json()).data;
+    expect(listItem.presentation).toEqual(detail.presentation);
+    expect(detail.presentation).toMatchObject({
+      consistency: { status: "CONSISTENT" },
+      conclusion: { label: "审核通过" },
+      topic: { status: "COMPLIANT", expectedCount: 1, matchedCount: 1 },
+    });
+
+    await db.$transaction([
+      db.noteTopic.deleteMany({ where: { noteId: result.noteId } }),
+      db.noteRecord.update({
+        where: { id: result.noteId },
+        data: { title: "后来标题", body: "后来正文" },
+      }),
+      db.topicRule.updateMany({
+        where: { productId: fixture.product.id, campaignId: fixture.campaign.id },
+        data: { topic: "#后来规则" },
+      }),
+    ]);
+    const immutableDetail = (
+      await (await page.request.get(`/api/results/${result.id}`)).json()
+    ).data;
+    expect(immutableDetail.presentation).toEqual(detail.presentation);
+
+    const exportResponse = await page.request.get(
+      `/api/results/export?ids=${result.id}`,
+    );
+    expect(exportResponse.status(), await exportResponse.text()).toBe(200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      (await exportResponse.body()) as unknown as ExcelJS.Buffer,
+    );
+    const sheet = workbook.worksheets[0];
+    const headers = sheet.getRow(1).values as string[];
+    const selfReviewColumn = headers.findIndex((value) => value === "自审");
+    expect(selfReviewColumn).toBeGreaterThan(0);
+    expect(sheet.getRow(2).getCell(selfReviewColumn).text).toBe("Y");
+  } finally {
+    try {
+      await fixture?.cleanup();
+    } finally {
+      await db.$disconnect();
+    }
   }
 });

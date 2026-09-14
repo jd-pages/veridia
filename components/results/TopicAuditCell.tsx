@@ -2,97 +2,27 @@
 
 import { memo } from "react";
 import { Popover, Tag } from "antd";
-import { parseJsonArray } from "@/lib/client";
 import { productStageTopicLabel } from "@/lib/product-stage";
-import { auditResultListDisplay } from "@/lib/result-display";
-import { normalizeTopic } from "@/lib/topic";
-import { topicAuditRuleSummary } from "@/lib/topic-audit-summary";
-import { classifyTopicCandidates } from "@/lib/topic-clickability";
 import type { ResultRow } from "./types";
 import styles from "./results-workbench.module.css";
 
-export function getTopicAuditSummary(row: ResultRow) {
-  const actual = row.note.topics.map((topic) =>
-    normalizeTopic(topic.displayText),
-  );
-  const ruleSummary = topicAuditRuleSummary(row.ruleSnapshot, actual);
-  const required = ruleSummary.requiredTopics;
-  const matched = ruleSummary.matchedRequiredTopics;
-  const { stageCandidates, matchedStageCandidates } = ruleSummary;
-  const missing = parseJsonArray(row.missingTopics).filter(
-    (expected) => !actual.includes(normalizeTopic(expected)),
-  );
-  const forbidden = parseJsonArray(row.forbiddenTopics);
-  const clickabilityFor = (expected: string) => {
-    const topics = row.note.topics.filter(
-      (candidate) => normalizeTopic(candidate.displayText) === expected,
-    );
-    return topics.length
-      ? classifyTopicCandidates(topics, { pageUrl: row.note.url })
-      : null;
-  };
-  const unclickable = required.filter(
-    (expected) => clickabilityFor(expected) === "NOT_CLICKABLE",
-  );
-  const uncertain = required.filter(
-    (expected) => clickabilityFor(expected) === "UNKNOWN",
-  );
-  const stageClickabilities = matchedStageCandidates.map(clickabilityFor);
-  const stageGroupMissing =
-    stageCandidates.length > 0 && matchedStageCandidates.length === 0;
-  const stageGroupUnclickable =
-    matchedStageCandidates.length > 0 &&
-    stageClickabilities.every((value) => value === "NOT_CLICKABLE");
-  const stageGroupUncertain =
-    matchedStageCandidates.length > 0 &&
-    !stageClickabilities.includes("CLICKABLE") &&
-    stageClickabilities.some((value) => value === "UNKNOWN");
-  return {
-    required,
-    matched,
-    anyCandidates: ruleSummary.anyCandidates,
-    anyMinimum: ruleSummary.anyMinimum,
-    matchedAnyCandidates: ruleSummary.matchedAnyCandidates,
-    unmatchedAnyCandidates: ruleSummary.unmatchedAnyCandidates,
-    anyMissingCount: ruleSummary.anyMissingCount,
-    expectedCount: ruleSummary.expectedCount,
-    matchedCount: ruleSummary.matchedCount,
-    stageCandidates,
-    matchedStageCandidates,
-    stageGroupMissing,
-    stageGroupUnclickable,
-    stageGroupUncertain,
-    missing,
-    forbidden,
-    unclickable,
-    uncertain,
-  };
-}
-
 function TopicAuditCell({ row }: { row: ResultRow }) {
-  const unavailableDisplay = auditResultListDisplay(row);
-  if (unavailableDisplay) {
+  const summary = row.presentation.topic;
+  if (summary.status === "UNAVAILABLE") {
     return (
-      <span className={styles.cellPrimary}>
-        {unavailableDisplay.topicAudit}
-      </span>
+      <div className={styles.stack}>
+        <span className={styles.cellPrimary}>
+          {summary.source === "LEGACY_UNAVAILABLE" ? "历史明细不可用" : "未审核"}
+        </span>
+        {summary.message ? <span className={styles.cellSecondary}>{summary.message}</span> : null}
+      </div>
     );
   }
 
-  const summary = getTopicAuditSummary(row);
   const expectedCount = summary.expectedCount;
   const matchedCount = summary.matchedCount;
-  const needsReview =
-    summary.uncertain.length > 0 || summary.stageGroupUncertain;
-  const compliant =
-    row.topicsCompliant &&
-    row.clickableCompliant &&
-    !summary.missing.length &&
-    !summary.anyMissingCount &&
-    !summary.forbidden.length &&
-    !summary.stageGroupMissing &&
-    !summary.stageGroupUnclickable &&
-    !needsReview;
+  const needsReview = summary.status === "NEEDS_REVIEW";
+  const compliant = summary.status === "COMPLIANT";
 
   const detail = (
     <div className={styles.topicDetail}>
@@ -199,13 +129,15 @@ function TopicAuditCell({ row }: { row: ResultRow }) {
               ? "要求话题缺失，可点击不适用"
               : needsReview
                 ? "可点击状态需人工确认"
-                : row.clickableCompliant
-                  ? "全部可点击"
-                  : `不可点击 ${Math.max(
-                      summary.unclickable.length +
-                        (summary.stageGroupUnclickable ? 1 : 0),
-                      1,
-                    )} 个`}
+                 : compliant
+                   ? "全部可点击"
+                   : summary.unclickable.length || summary.stageGroupUnclickable
+                     ? `不可点击 ${Math.max(
+                       summary.unclickable.length +
+                         (summary.stageGroupUnclickable ? 1 : 0),
+                       1,
+                     )} 个`
+                     : "话题规则不合规"}
         </div>
         {summary.missing.length ||
         summary.anyMissingCount ||

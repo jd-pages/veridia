@@ -2,20 +2,18 @@
 
 import { memo } from "react";
 import type { ResultRow } from "./types";
-import { auditResultListDisplay } from "@/lib/result-display";
 import AuditStatusTag from "./AuditStatusTag";
 import styles from "./results-workbench.module.css";
 
 function ImageAuditCell({ row }: { row: ResultRow }) {
-  const unavailableDisplay = auditResultListDisplay(row);
-  if (unavailableDisplay) {
+  if (row.presentation.image.label === "未审核") {
     return (
       <span className={styles.cellPrimary}>
-        {unavailableDisplay.imageStatus}
+        {row.presentation.image.label}
       </span>
     );
   }
-  if (["VIDEO", "VIDEO_NOTE"].includes(row.noteType) || row.imageStatus === "VIDEO_NOTE") {
+  if (row.presentation.image.status === "VIDEO_NOTE") {
     return (
       <div className={styles.stack}>
         <AuditStatusTag value="VIDEO_NOTE" />
@@ -23,7 +21,7 @@ function ImageAuditCell({ row }: { row: ResultRow }) {
       </div>
     );
   }
-  if (row.imageStatus === "IMAGES_READ_FAILED") {
+  if (row.presentation.image.status === "IMAGES_READ_FAILED") {
     return (
       <div className={styles.stack}>
         <span className={styles.cellPrimary}>未能确认</span>
@@ -31,15 +29,14 @@ function ImageAuditCell({ row }: { row: ResultRow }) {
       </div>
     );
   }
-  const compliant = row.imageStatus === "COMPLIANT";
   return (
     <div className={styles.stack}>
       <span className={styles.cellPrimary}>
         {row.imageCount === null ? "未能确认" : `${row.imageCount} 张`}
       </span>
       <AuditStatusTag
-        value={row.imageStatus}
-        label={compliant ? "数量合规" : "数量不足"}
+        value={row.presentation.image.status}
+        label={row.presentation.image.label}
       />
     </div>
   );

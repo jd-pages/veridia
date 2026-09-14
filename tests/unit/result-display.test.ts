@@ -110,15 +110,14 @@ describe("页面不存在类审核结果展示", () => {
     const detailPage = source("app/(admin)/results/[id]/page.tsx");
     const detailDrawer = source("components/results/AuditDetailDrawer.tsx");
     const decision = source("components/results/AuditDecisionSummary.tsx");
-    const presentation = source("lib/result-detail-presentation.ts");
+    const presentation = source("lib/audit-result-presentation.ts");
 
-    for (const item of [topicCell, imageCell, conclusionCell]) {
-      expect(item).toContain("auditResultListDisplay");
+    for (const item of [topicCell, imageCell, conclusionCell, decision]) {
+      expect(item).toContain("row.presentation");
     }
     for (const item of [detailPage, detailDrawer]) {
       expect(item).toContain("AuditDecisionSummary");
     }
-    expect(decision).toContain("isUnavailableNoteResult");
     expect(presentation).toContain("笔记不存在");
   });
 });

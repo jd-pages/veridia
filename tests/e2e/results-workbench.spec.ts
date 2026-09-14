@@ -35,8 +35,8 @@ const kabritaResultExportHeaders = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
-  "活动月份",
-  "自审",
+  "活动月份（必填）",
+  "是否符合",
 ];
 
 const removedResultExportHeaders = [

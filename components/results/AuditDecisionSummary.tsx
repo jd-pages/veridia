@@ -3,9 +3,6 @@
 import { Alert, Tag, Tooltip, Typography } from "antd";
 import { productStageTopicLabel } from "@/lib/product-stage";
 import {
-  auditConclusionCardLabel,
-  auditConclusionCardTone,
-  auditConclusionFailureReasons,
   minimumImageCountFromRuleSnapshot,
 } from "@/lib/result-detail-presentation";
 import { isUnavailableNoteResult } from "@/lib/result-display";
@@ -14,7 +11,6 @@ import { parseStoredStringArray } from "@/lib/stored-json";
 import { formatPlatformPublishedAt } from "@/lib/platform-published-at";
 import {
   duplicateReauditMetadataFromNotes,
-  legacyZeroHistoryDuplicateMetadataFromNotes,
 } from "@/lib/import-task-metadata";
 import {
   formatOriginalPublishedAt,
@@ -25,7 +21,6 @@ import {
   formatAuditTime,
   resolveTaskChannel,
 } from "@/lib/result-source";
-import { getTopicAuditSummary } from "./TopicAuditCell";
 import InteractionReward from "./InteractionReward";
 import ResultDetailLink from "./ResultDetailLink";
 import type { ResultDetail, ResultRow } from "./types";
@@ -86,37 +81,23 @@ export default function AuditDecisionSummary({
 }) {
   // Detail is projected from this result's extraction; list note data is only a cache.
   const row = detail ?? listRow;
-  const legacyZeroHistory = legacyZeroHistoryDuplicateMetadataFromNotes(
-    row.task.notes,
-  );
-  const displayRow = legacyZeroHistory?.automaticResult
-    ? { ...row, autoStatus: legacyZeroHistory.automaticResult }
-    : row;
-  const unavailable = isUnavailableNoteResult(displayRow);
-  const conclusion = auditConclusionCardLabel(displayRow);
-  const conclusionTone = auditConclusionCardTone(displayRow);
-  const failureReasons = auditConclusionFailureReasons(displayRow);
-  const topicSummary = getTopicAuditSummary(row);
+  const unavailable = isUnavailableNoteResult(row);
+  const conclusion = row.presentation.conclusion.label;
+  const conclusionTone = row.presentation.conclusion.tone;
+  const failureReasons = row.presentation.failureReasons;
+  const topicSummary = row.presentation.topic;
   const expectedTopicCount = topicSummary.expectedCount;
   const matchedTopicCount = topicSummary.matchedCount;
-  const topicNeedsReview =
-    topicSummary.uncertain.length > 0 || topicSummary.stageGroupUncertain;
-  const topicCompliant =
-    row.topicsCompliant &&
-    row.clickableCompliant &&
-    !topicSummary.missing.length &&
-    !topicSummary.anyMissingCount &&
-    !topicSummary.forbidden.length &&
-    !topicSummary.stageGroupMissing &&
-    !topicSummary.stageGroupUnclickable &&
-    !topicNeedsReview;
+  const topicNeedsReview = topicSummary.status === "NEEDS_REVIEW";
+  const topicCompliant = topicSummary.status === "COMPLIANT";
+  const topicUnavailable = topicSummary.status === "UNAVAILABLE";
   const links = resultDetailLinks(row);
   const minimumImageCount = minimumImageCountFromRuleSnapshot(
     row.ruleSnapshot,
   );
   const reviews = detail?.manualReviews || row.manualReviews;
   const duplicateReaudit = duplicateReauditMetadataFromNotes(row.task.notes);
-  const basicRewardRule = detail?.ruleResults.find(
+  const basicRewardRule = row.ruleResults.find(
     (item) => item.ruleKey === "KABRITA_BASIC_REWARD",
   );
   const basicReward = parseBasicRewardEvidence(basicRewardRule?.evidence);
@@ -151,8 +132,23 @@ export default function AuditDecisionSummary({
 
   return (
     <div className={styles.decisionLayout}>
-      {detail?.evidenceStatus === "LEGACY_UNAVAILABLE" ? (
-        <Alert type="warning" showIcon message="历史采集证据未能确认" description={detail.evidenceMessage} />
+      {row.evidenceStatus === "LEGACY_UNAVAILABLE" ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="历史采集证据未能确认"
+          description={row.evidenceMessage}
+        />
+      ) : null}
+      {row.presentation.consistency.status !== "CONSISTENT" ? (
+        <Alert
+          type="warning"
+          showIcon
+          message={row.presentation.consistency.status === "RESULT_CONSISTENCY_VIOLATION"
+            ? "结果一致性异常"
+            : "历史审核明细不可用"}
+          description={row.presentation.consistency.message}
+        />
       ) : null}
       <InteractionReward snapshot={row} detail />
       <section
@@ -299,8 +295,8 @@ export default function AuditDecisionSummary({
           ) : null}
           <article className={styles.auditDetailCard}>
             <h4>话题审核</h4>
-            {unavailable ? (
-              <strong>未审核</strong>
+            {unavailable || topicUnavailable ? (
+              <strong>{unavailable ? "未审核" : "历史审核明细不可用"}</strong>
             ) : (
               <div className={styles.auditDetailList}>
                 <div>
@@ -355,15 +351,9 @@ export default function AuditDecisionSummary({
                 <div>
                   <span>状态</span>
                   <strong>
-                    {["VIDEO", "VIDEO_NOTE"].includes(row.noteType) || row.imageStatus === "VIDEO_NOTE"
-                      ? "视频笔记，不参与图片数量审核"
-                      : row.imageStatus === "COMPLIANT"
-                        ? "数量合规"
-                        : row.imageStatus === "NON_COMPLIANT"
-                          ? minimumImageCount === null
-                            ? "数量不足"
-                            : `数量不足，要求至少 ${minimumImageCount} 张`
-                          : "待人工复核"}
+                    {row.presentation.image.status === "NON_COMPLIANT" && minimumImageCount !== null
+                      ? `数量不足，要求至少 ${minimumImageCount} 张`
+                      : row.presentation.image.label}
                   </strong>
                 </div>
               </div>
@@ -515,11 +505,7 @@ export default function AuditDecisionSummary({
                   <div>
                     <span>状态</span>
                     <strong>
-                      {row.bodyStatus === "UNKNOWN"
-                        ? "待人工确认"
-                        : row.bodyCompliant
-                          ? "合规"
-                          : "不合规"}
+                      {row.presentation.body.label}
                     </strong>
                   </div>
                 </div>
