@@ -9,6 +9,13 @@ import {
   ensurePackageFullGate,
   runLocalPackageFull,
 } from "../../scripts/package-full-gate.mjs";
+import {
+  assertLocalPackageGitState,
+  assertSoftwarePublishGitState,
+  LocalPackageGitStateError,
+  prepareLocalPackageGitState,
+  SOURCE_SYNC_MODES,
+} from "../../scripts/local-package-git-state.mjs";
 
 const HEAD = "a".repeat(40);
 const BASE_HEAD = "b".repeat(40);
@@ -93,6 +100,117 @@ function expectCode(action: () => unknown, code: string) {
   }
 }
 
+function packageGitStub({
+  branch = "main",
+  status = "",
+  head = HEAD,
+  cachedOriginMain = HEAD,
+  originMain = HEAD,
+  fetch = { status: 0, stdout: "", stderr: "" },
+} = {}) {
+  return vi.fn((_root: string, args: string[], options?: { timeoutMs?: number }) => {
+    void options;
+    const command = args.join(" ");
+    if (command === "branch --show-current") return { status: 0, stdout: branch, stderr: "" };
+    if (command === "-c core.quotepath=false status --short") return { status: 0, stdout: status, stderr: "" };
+    if (command === "rev-parse HEAD") return { status: 0, stdout: head, stderr: "" };
+    if (command === "rev-parse --verify refs/remotes/origin/main") {
+      return cachedOriginMain
+        ? { status: 0, stdout: cachedOriginMain, stderr: "" }
+        : { status: 128, stdout: "", stderr: "fatal: Needed a single revision" };
+    }
+    if (command === "fetch --quiet origin main") {
+      return fetch;
+    }
+    if (command === "rev-parse origin/main") return { status: 0, stdout: originMain, stderr: "" };
+    throw new Error(`unexpected git command: ${command}`);
+  });
+}
+
+function expectLocalGitCode(action: () => unknown, code: string) {
+  try {
+    action();
+    throw new Error("expected LocalPackageGitStateError");
+  } catch (error) {
+    expect(error).toBeInstanceOf(LocalPackageGitStateError);
+    expect((error as LocalPackageGitStateError).code).toBe(code);
+  }
+}
+
+describe("本地 Package 在线优先与受控离线 Git 门禁", () => {
+  const credential = { commitSha: HEAD, sourceFingerprint: "source-fingerprint" };
+  const offlineFetch = { status: 128, stdout: "", stderr: "fatal: unable to access: Failed to connect to github.com port 443" };
+
+  it("非 main 分支阻断", () => {
+    expectLocalGitCode(() => prepareLocalPackageGitState({ root: "C:\\veridia", runGit: packageGitStub({ branch: "feature" }) }), "BRANCH_NOT_MAIN");
+  });
+
+  it("dirty worktree 阻断", () => {
+    expectLocalGitCode(() => prepareLocalPackageGitState({ root: "C:\\veridia", runGit: packageGitStub({ status: " M scripts/a.mjs" }) }), "WORKTREE_DIRTY");
+  });
+
+  it("在线 fetch 成功且 HEAD 等于实时 origin/main 时 PASS", () => {
+    const runGit = packageGitStub();
+    expect(prepareLocalPackageGitState({ root: "C:\\veridia", runGit })).toMatchObject({
+      head: HEAD,
+      originMain: HEAD,
+      mode: SOURCE_SYNC_MODES.FETCH_VERIFIED,
+    });
+    const fetchCall = runGit.mock.calls.find((call) => (call[1] as string[]).join(" ") === "fetch --quiet origin main");
+    expect(fetchCall?.[2]).toEqual({ timeoutMs: 10_000 });
+  });
+
+  it("在线 fetch 成功但 HEAD 不等于实时 origin/main 时阻断", () => {
+    expectLocalGitCode(() => prepareLocalPackageGitState({ root: "C:\\veridia", runGit: packageGitStub({ originMain: OLD_HEAD }) }), "ORIGIN_MAIN_MISMATCH");
+  });
+
+  it("明确网络不可达时可用匹配的缓存 origin/main 和 exact-head FULL 凭证", () => {
+    const state = prepareLocalPackageGitState({ root: "C:\\veridia", runGit: packageGitStub({ fetch: offlineFetch }) });
+    expect(assertLocalPackageGitState({ state, fullCredential: credential, currentSourceFingerprint: "source-fingerprint" })).toMatchObject({
+      mode: SOURCE_SYNC_MODES.CACHED_ORIGIN_FALLBACK,
+      head: HEAD,
+      originMain: HEAD,
+    });
+  });
+
+  it("离线且 HEAD 不等于缓存 origin/main 时阻断", () => {
+    expectLocalGitCode(() => prepareLocalPackageGitState({ root: "C:\\veridia", runGit: packageGitStub({ cachedOriginMain: OLD_HEAD, fetch: offlineFetch }) }), "ORIGIN_MAIN_MISMATCH");
+  });
+
+  it("离线且缓存 origin/main 缺失时阻断", () => {
+    expectLocalGitCode(() => prepareLocalPackageGitState({ root: "C:\\veridia", runGit: packageGitStub({ cachedOriginMain: "", fetch: offlineFetch }) }), "CACHED_ORIGIN_MAIN_MISSING");
+  });
+
+  it("离线且 FULL credential commit 不匹配时阻断", () => {
+    const state = prepareLocalPackageGitState({ root: "C:\\veridia", runGit: packageGitStub({ fetch: offlineFetch }) });
+    expectLocalGitCode(() => assertLocalPackageGitState({ state, fullCredential: { ...credential, commitSha: OLD_HEAD }, currentSourceFingerprint: "source-fingerprint" }), "FULL_CREDENTIAL_COMMIT_MISMATCH");
+  });
+
+  it("离线且 source fingerprint 不匹配时阻断", () => {
+    const state = prepareLocalPackageGitState({ root: "C:\\veridia", runGit: packageGitStub({ fetch: offlineFetch }) });
+    expectLocalGitCode(() => assertLocalPackageGitState({ state, fullCredential: credential, currentSourceFingerprint: "changed" }), "SOURCE_FINGERPRINT_MISMATCH");
+  });
+
+  it("认证与权限失败不得伪装成网络不可达", () => {
+    const authFailure = { status: 128, stdout: "", stderr: "remote: HTTP 403\nfatal: Authentication failed" };
+    expectLocalGitCode(() => prepareLocalPackageGitState({ root: "C:\\veridia", runGit: packageGitStub({ fetch: authFailure }) }), "FETCH_FAILED");
+  });
+
+  it("正式 publish 遇到网络失败必须阻断且无离线 fallback", () => {
+    expectLocalGitCode(() => assertSoftwarePublishGitState({ root: "C:\\veridia", runGit: packageGitStub({ fetch: offlineFetch }) }), "PUBLISH_FETCH_FAILED");
+  });
+
+  it("正式 publish 在线 fetch 后才允许 exact-head PASS", () => {
+    const runGit = packageGitStub();
+    expect(assertSoftwarePublishGitState({ root: "C:\\veridia", runGit })).toMatchObject({
+      mode: SOURCE_SYNC_MODES.FETCH_VERIFIED,
+      head: HEAD,
+      originMain: HEAD,
+    });
+    expect(runGit.mock.calls.some((call) => (call[1] as string[]).join(" ") === "fetch --quiet origin main")).toBe(true);
+  });
+});
+
 describe("本地 Package 的发布级验证凭证", () => {
   it("exact HEAD 手动 RELEASE_FULL SUCCESS 时允许 Package", () => {
     expect(run()).toMatchObject({
@@ -172,10 +290,15 @@ describe("本地 Package 的发布级验证凭证", () => {
     expect(workflow).toContain('"--stage=package"');
     expect(workflow).toContain("resolvePackageFullGate");
     const localPackage = workflow.slice(workflow.indexOf("async function localPackage()"), workflow.indexOf("function readAcceptance()"));
+    expect(localPackage).toContain("prepareLocalPackageGitState");
+    expect(localPackage).toContain("assertLocalPackageGitState");
     expect(localPackage).toContain("ensurePackageFullGate");
     expect(localPackage).toContain("VERIDIA_REUSE_FULL_BUILD: String(reuseBuild)");
     expect(localPackage).toContain("writeReleaseArtifactManifest");
     expect(localPackage).not.toMatch(/remoteTagExists|gh.*release|git.*tag|上传发布包|发布新版|发布规则新版/u);
+    const publish = workflow.slice(workflow.indexOf("async function publish()"));
+    expect(publish).toContain("assertSoftwarePublishGitState({ root })");
+    expect(publish).not.toContain("CACHED_ORIGIN_FALLBACK");
   });
 });
 

@@ -17,6 +17,12 @@ import {
   ensurePackageFullGate,
   resolvePackageFullGate,
 } from "./package-full-gate.mjs";
+import {
+  assertLocalPackageGitState,
+  assertSoftwarePublishGitState,
+  prepareLocalPackageGitState,
+  writeLocalPackageGitState,
+} from "./local-package-git-state.mjs";
 import { validateSoftwareReleaseArtifacts, writeReleaseArtifactManifest } from "./software-release-artifacts.mjs";
 import { collectSourceFingerprint } from "./source-fingerprint.mjs";
 
@@ -91,36 +97,6 @@ function git(args, allowFailure = false) {
     stdout: (result.stdout || "").trim(),
     stderr: (result.stderr || "").trim(),
   };
-}
-
-function assertSoftwarePublishGitState() {
-  const branch = git(["branch", "--show-current"]).stdout;
-  if (branch !== "main") {
-    throw new Error("软件正式发布只能从 main 分支执行。");
-  }
-  const status = git([
-    "-c",
-    "core.quotepath=false",
-    "status",
-    "--short",
-  ]).stdout;
-  if (status) {
-    throw new Error(
-      `软件发布要求工作区干净，请先提交或处理以下文件：\n${status}`,
-    );
-  }
-  git(["fetch", "--quiet", "origin", "main"]);
-  const [ahead, behind] = git([
-    "rev-list",
-    "--left-right",
-    "--count",
-    "main...origin/main",
-  ]).stdout.split(/\s+/u);
-  if (ahead !== "0" || behind !== "0") {
-    throw new Error(
-      `main 与 origin/main 未同步（ahead ${ahead || "?"} / behind ${behind || "?"}），发布已停止。`,
-    );
-  }
 }
 
 function sourceFingerprint() {
@@ -557,7 +533,7 @@ async function localPackage() {
       [
         "本地打包验收 dry-run 通过。",
         `当前版本：${info.version}`,
-        "将验证当前 main、clean worktree、HEAD=origin/main，以及发布级验证凭证。",
+        "将优先在线验证当前 main、clean worktree、HEAD=origin/main；GitHub 临时不可达时，仅允许缓存 origin/main + Exact-HEAD FULL 凭证的受控离线校验。",
         "凭证来源可为 exact-HEAD 本地 FULL、手动 RELEASE_FULL，或生产范围未变化的 TEST_ONLY_RECOVERY chain。",
         "凭证通过后将执行 Production Build、Desktop/Electron 准备、Windows NSIS 构建及安装包三件套 hash/manifest 验证。",
         "缺少有效凭证时自动执行一次本地 FULL，PASS 后写入凭证并复用本次 Build；FAIL 停止打包。",
@@ -568,12 +544,18 @@ async function localPackage() {
     return;
   }
   process.stdout.write("VERIDIA 一键正式打包\n[1/5] 检查源码状态\n");
-  assertSoftwarePublishGitState();
+  const packageGitState = prepareLocalPackageGitState({ root });
   process.stdout.write("[2/5] 检查正式 FULL 门禁\n");
   const { credential: fullGate, reuseBuild } = ensurePackageFullGate({
     root,
     resolve: () => resolvePackageFullGate({ root }),
   });
+  assertLocalPackageGitState({
+    state: packageGitState,
+    fullCredential: fullGate,
+    currentSourceFingerprint: sourceFingerprint(),
+  });
+  writeLocalPackageGitState(packageGitState);
   process.stdout.write(`[3/5] 构建正式版本${reuseBuild ? "（复用本次 FULL 的 Production Build）" : ""}\n`);
   const version = await withLocalPackageFileRestore(root, () => {
     run("node", [
@@ -633,7 +615,7 @@ function readAcceptance() {
 async function publish() {
   ensureLocalPrerequisites();
   const info = packageInfo();
-  if (!dryRun) assertSoftwarePublishGitState();
+  if (!dryRun) assertSoftwarePublishGitState({ root });
   const acceptance = dryRun
     ? {
         version: info.version,
