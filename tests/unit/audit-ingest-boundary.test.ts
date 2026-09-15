@@ -263,6 +263,9 @@ describe("审核提交边界：真实 Prisma 与 API", () => {
       extractedAt: new Date(startedAt.getTime() - 1).toISOString(),
     }), { source: "MANUAL" })).rejects.toMatchObject({ code: "STALE_EXTRACTION" });
     await unchanged(processing, previous);
+    await expect(runAuditTask(processing.id, auditIngestExtraction(processing), {
+      source: "MANUAL",
+    })).resolves.toMatchObject({ autoStatus: "PASSED" });
   });
 
   it("同一作品的旧任务证据不能提交到更新任务", async () => {

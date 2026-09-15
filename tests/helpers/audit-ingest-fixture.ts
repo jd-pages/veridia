@@ -71,9 +71,17 @@ export async function createAuditIngestFixture(db: PrismaClient) {
   };
 }
 
-export function auditIngestExtraction(task: Pick<AuditTask, "url" | "finalUrl">, patch: Partial<ExtractedNote> = {}): ExtractedNote {
+type AuditIngestFixtureTask = Pick<AuditTask, "url" | "finalUrl"> &
+  Partial<Pick<AuditTask, "id" | "createdAt" | "startedAt">>;
+
+export function auditIngestExtraction(task: AuditIngestFixtureTask, patch: Partial<ExtractedNote> = {}): ExtractedNote {
   const url = task.finalUrl || task.url;
   const noteId = new URL(url).pathname.match(/\/explore\/([^/]+)/u)?.[1] ?? null;
+  const fixtureExtractionTime = Math.max(
+    Date.now(),
+    task.createdAt?.getTime() ?? 0,
+    task.startedAt?.getTime() ?? 0,
+  ) + 1;
   const topic = {
     displayText: "#inne多维锌", isClickable: true, isLinkElement: true, hasHref: true,
     href: "https://www.xiaohongshu.com/search_result?keyword=inne%E5%A4%9A%E7%BB%B4%E9%94%8C",
@@ -86,7 +94,7 @@ export function auditIngestExtraction(task: Pick<AuditTask, "url" | "finalUrl">,
     imageExtractionStatus: "SUCCESS", imageCount: 2,
     topics: [topic], verifiedPlatformTopics: [topic], topicEvidenceCollected: true,
     publishedAt: "2026-08-01T00:00:00.000Z", isPublic: true,
-    extractedAt: new Date().toISOString(), adapterName: "xhs-ingest-fixture", adapterVersion: "1.0.0",
+    extractedAt: new Date(fixtureExtractionTime).toISOString(), adapterName: "xhs-ingest-fixture", adapterVersion: "1.0.0",
     ...patch,
   };
 }
