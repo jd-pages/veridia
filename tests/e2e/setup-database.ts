@@ -205,7 +205,19 @@ async function main() {
           orderNumber: `ORDER-${payload.noteId}`,
         },
       });
-      await runAuditTask(task.id, { ...payload, extractedAt: new Date().toISOString() }, { source: "MANUAL" });
+      const freshnessFloor = Math.max(
+        Date.now(),
+        task.createdAt.getTime(),
+        task.startedAt?.getTime() ?? 0,
+      );
+      await runAuditTask(
+        task.id,
+        {
+          ...payload,
+          extractedAt: new Date(freshnessFloor + 1).toISOString(),
+        },
+        { source: "MANUAL" },
+      );
     }
   }
   await prisma.$disconnect();

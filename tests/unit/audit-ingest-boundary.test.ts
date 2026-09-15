@@ -243,10 +243,41 @@ describe("审核提交边界：真实 Prisma 与 API", () => {
     expect((await runAuditTask(task.id, auditIngestExtraction(task), { source: "MANUAL" })).autoStatus).toBe("PASSED");
   });
 
-  it("新任务拒绝任务创建前的旧 extraction", async () => {
+  it("合法 fresh extraction 通过且任务创建前的旧 extraction 被拒绝", async () => {
     const task = await fixture.task();
     const previous = await counts();
     await expect(runAuditTask(task.id, auditIngestExtraction(task, { extractedAt: new Date(task.createdAt.getTime() - 60_000).toISOString() }), { source: "MANUAL" })).rejects.toMatchObject({ code: "STALE_EXTRACTION" });
     await unchanged(task, previous);
+    await expect(runAuditTask(task.id, auditIngestExtraction(task, { extractedAt: new Date(Math.max(Date.now(), task.createdAt.getTime()) + 1).toISOString() }), { source: "MANUAL" })).resolves.toMatchObject({ autoStatus: "PASSED" });
+  });
+
+  it("startedAt 之后才允许提交 extraction", async () => {
+    const task = await fixture.task();
+    const startedAt = new Date(task.createdAt.getTime() + 60_000);
+    const processing = await db.auditTask.update({
+      where: { id: task.id },
+      data: { startedAt },
+    });
+    const previous = await counts();
+    await expect(runAuditTask(processing.id, auditIngestExtraction(processing, {
+      extractedAt: new Date(startedAt.getTime() - 1).toISOString(),
+    }), { source: "MANUAL" })).rejects.toMatchObject({ code: "STALE_EXTRACTION" });
+    await unchanged(processing, previous);
+  });
+
+  it("同一作品的旧任务证据不能提交到更新任务", async () => {
+    const oldTask = await fixture.task();
+    const oldExtractedAt = new Date(Math.max(Date.now(), oldTask.createdAt.getTime()) + 1);
+    const newTask = await fixture.task({
+      url: oldTask.url,
+      normalizedUrl: oldTask.normalizedUrl,
+      finalUrl: oldTask.finalUrl,
+      createdAt: new Date(oldExtractedAt.getTime() + 1),
+    });
+    const previous = await counts();
+    await expect(runAuditTask(newTask.id, auditIngestExtraction(oldTask, {
+      extractedAt: oldExtractedAt.toISOString(),
+    }), { source: "MANUAL" })).rejects.toMatchObject({ code: "STALE_EXTRACTION" });
+    await unchanged(newTask, previous);
   });
 });
