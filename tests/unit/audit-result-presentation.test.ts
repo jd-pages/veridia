@@ -63,6 +63,7 @@ function base(overrides: Record<string, unknown> = {}) {
       failureMessage: null,
       pageTitle: null,
       pageType: null,
+      product: { brandName: "达能" },
     },
     manualReviews: [],
     ruleResults: [
@@ -91,6 +92,88 @@ function base(overrides: Record<string, unknown> = {}) {
 }
 
 describe("immutable audit result presentation", () => {
+  it("Protected STORE_TOPIC_BRAND_SCOPE：雀巢和惠氏历史店铺话题误判只在展示层归一化", () => {
+    const storeFailure = {
+      ruleKey: "STORE_TOPIC",
+      ruleName: "店铺话题审核",
+      expectedValue: "#FOLO海外专营店",
+      actualValue: "未命中",
+      passed: false,
+      failureReason: "未命中任何可接受店铺话题：#FOLO海外专营店",
+      evidence: JSON.stringify({ status: "NON_COMPLIANT" }),
+    };
+    for (const brandName of ["雀巢", "惠氏"] as const) {
+      const row = base({
+        autoStatus: "FAILED",
+        topicsCompliant: false,
+        storeTopicStatus: "NON_COMPLIANT",
+        storeTopicFailureReason: storeFailure.failureReason,
+        failureReasons: JSON.stringify([storeFailure.failureReason]),
+        task: { ...base().task, product: { brandName } },
+        ruleResults: [...base().ruleResults, storeFailure],
+      });
+      const original = structuredClone(row);
+      const presentation = buildAuditResultPresentation(row);
+      expect(presentation.automaticConclusion.status).toBe("PASSED");
+      expect(presentation.storeTopic).toEqual({
+        applicable: false,
+        status: "NOT_APPLICABLE",
+        label: "不适用",
+      });
+      expect(presentation.failureReasons).toEqual([]);
+      expect(detailedSelfReview({
+        ...row,
+        presentation,
+        manualReviews: [],
+      } as never)).toBe("Y");
+      expect(row).toEqual(original);
+    }
+  });
+
+  it("非适用品牌仍保留正文失败与真实 UNKNOWN", () => {
+    const common = {
+      storeTopicStatus: "NON_COMPLIANT",
+      storeTopicFailureReason: "未命中任何可接受店铺话题：#BJF海外专营店",
+      task: { ...base().task, product: { brandName: "雀巢" } },
+      ruleResults: [
+        ...base().ruleResults,
+        {
+          ruleKey: "STORE_TOPIC",
+          ruleName: "店铺话题审核",
+          expectedValue: "#BJF海外专营店",
+          actualValue: "未命中",
+          passed: false,
+          failureReason: "未命中任何可接受店铺话题：#BJF海外专营店",
+          evidence: "{}",
+        },
+      ],
+    };
+    const bodyFailed = buildAuditResultPresentation(base({
+      ...common,
+      autoStatus: "FAILED",
+      bodyCompliant: false,
+      failureReasons: JSON.stringify([
+        "未命中任何可接受店铺话题：#BJF海外专营店",
+        "有效正文字数不足：要求至少 100 个，实际 20 个",
+      ]),
+    }));
+    expect(bodyFailed.automaticConclusion.status).toBe("FAILED");
+    expect(bodyFailed.failureReasons).toEqual([
+      "正文字数不足：当前 20 字，要求 ≥100 字",
+    ]);
+
+    const trueUnknown = buildAuditResultPresentation(base({
+      ...common,
+      autoStatus: "NEEDS_REVIEW",
+      publicStatus: "UNKNOWN",
+      failureReasons: JSON.stringify([
+        "未命中任何可接受店铺话题：#BJF海外专营店",
+      ]),
+    }));
+    expect(trueUnknown.automaticConclusion.status).toBe("NEEDS_REVIEW");
+    expect(trueUnknown.reviewReasons).toContain("公开状态待确认");
+  });
+
   it("uses complete persisted RuleResults for a legacy extraction instead of showing 0/N", () => {
     const presentation = buildAuditResultPresentation(base());
 

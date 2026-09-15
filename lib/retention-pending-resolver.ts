@@ -18,6 +18,15 @@ export async function resolveRetentionBusinessClassificationIds(): Promise<Reten
               autoStatus: "NEEDS_REVIEW",
               retentionStatus: { in: ["PENDING", "UNKNOWN"] },
             },
+            {
+              task: {
+                product: { brandName: { in: ["雀巢", "惠氏"] } },
+              },
+              OR: [
+                { storeTopicStatus: { in: ["NON_COMPLIANT", "UNREVIEWABLE"] } },
+                { ruleResults: { some: { ruleKey: "STORE_TOPIC" } } },
+              ],
+            },
           ],
         },
       ],
@@ -47,6 +56,7 @@ export async function resolveRetentionBusinessClassificationIds(): Promise<Reten
           failureMessage: true,
           pageTitle: true,
           pageType: true,
+          product: { select: { brandName: true } },
         },
       },
       manualReviews: {

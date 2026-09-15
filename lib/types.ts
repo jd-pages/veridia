@@ -145,7 +145,11 @@ export interface AuditContext {
     expectedTopic: string | null;
     expectedTopics: string[];
     requiredTopics: string[];
-    mappingStatus: "MATCHED" | "STORE_NAME_MISSING" | "STORE_NOT_MAPPED";
+    mappingStatus:
+      | "MATCHED"
+      | "STORE_NAME_MISSING"
+      | "STORE_NOT_MAPPED"
+      | "NOT_APPLICABLE";
   } | null;
 }
 

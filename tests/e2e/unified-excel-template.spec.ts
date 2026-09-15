@@ -152,6 +152,8 @@ test("统一模板下载、惠氏/雀巢四行解析、Sheet 错误与跨 Sheet 
         productId: string;
         campaignId: string;
         matchedStoreName: string;
+        storeMappingStatus: string;
+        expectedStoreTopics: string[];
         contentChannel: string;
         errors: string[];
       }>;
@@ -169,6 +171,12 @@ test("统一模板下载、惠氏/雀巢四行解析、Sheet 错误与跨 Sheet 
       "小红书", "抖音", "小红书", "小红书",
     ]);
     expect(preview.rows.every((row) => row.matchedStoreName)).toBe(true);
+    expect(preview.rows.every((row) => row.storeMappingStatus === "NOT_APPLICABLE"))
+      .toBe(true);
+    expect(preview.rows.every((row) => row.expectedStoreTopics.length === 0))
+      .toBe(true);
+    expect(preview.rows.flatMap((row) => row.errors).join("；"))
+      .not.toMatch(/店铺话题|STORE_NOT_MAPPED|未命中任何可接受店铺话题/u);
 
     const uploadPreview = async (candidate: ExcelJS.Workbook, name: string) => {
       const response = await page.request.post("/api/import/notes", {
@@ -680,8 +688,167 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一四 Sheet 结�
 
     const results = await prisma.auditResult.findMany({
       where: { task: { importRecordId } },
-      include: { task: { select: { id: true, orderNumber: true } } },
+      include: {
+        task: {
+          select: {
+            id: true,
+            orderNumber: true,
+            product: { select: { brandName: true } },
+          },
+        },
+        ruleResults: true,
+      },
     });
+    const wyethNestleResults = results.filter((result) =>
+      ["惠氏", "雀巢"].includes(result.task.product.brandName),
+    );
+    expect(wyethNestleResults).toHaveLength(4);
+    for (const result of wyethNestleResults) {
+      expect(result.storeTopicStatus).toBe("NOT_REQUIRED");
+      expect(result.ruleResults.some((rule) => rule.ruleKey === "STORE_TOPIC"))
+        .toBe(false);
+    }
+    const [storeOnly, storeAndBody, storeAndUnknown] = wyethNestleResults;
+    const legacyStoreReason = "未命中任何可接受店铺话题：#FOLO海外专营店";
+    await prisma.ruleResult.updateMany({
+      where: {
+        auditResultId: {
+          in: [storeOnly.id, storeAndBody.id, storeAndUnknown.id],
+        },
+        ruleKey: { startsWith: "TOPIC_" },
+      },
+      data: {
+        actualValue: "精确出现且为可点击话题",
+        passed: true,
+        failureReason: null,
+        evidence: JSON.stringify({
+          dom: { finalClickability: "CLICKABLE" },
+        }),
+      },
+    });
+    await prisma.ruleResult.createMany({
+      data: [storeOnly, storeAndBody, storeAndUnknown].map((result) => ({
+        auditResultId: result.id,
+        ruleKey: "STORE_TOPIC",
+        ruleName: "店铺话题审核",
+        expectedValue: "#FOLO海外专营店",
+        actualValue: "未命中",
+        passed: false,
+        failureReason: legacyStoreReason,
+        evidence: JSON.stringify({ status: "NON_COMPLIANT" }),
+      })),
+    });
+    await Promise.all([
+      prisma.auditResult.update({
+        where: { id: storeOnly.id },
+        data: {
+          autoStatus: "FAILED",
+          pageStatus: "NORMAL",
+          bodyStatus: "PRESENT",
+          bodyCompliant: true,
+          imageStatus: "COMPLIANT",
+          imageCompliant: true,
+          topicsCompliant: false,
+          clickableCompliant: true,
+          missingTopics: "[]",
+          forbiddenTopics: "[]",
+          publicStatus: "PUBLIC",
+          storeTopicStatus: "NON_COMPLIANT",
+          storeTopicFailureReason: legacyStoreReason,
+          failureReasons: JSON.stringify([legacyStoreReason]),
+        },
+      }),
+      prisma.auditResult.update({
+        where: { id: storeAndBody.id },
+        data: {
+          autoStatus: "FAILED",
+          pageStatus: "NORMAL",
+          bodyStatus: "PRESENT",
+          bodyCompliant: false,
+          imageStatus: "COMPLIANT",
+          imageCompliant: true,
+          topicsCompliant: false,
+          clickableCompliant: true,
+          missingTopics: "[]",
+          forbiddenTopics: "[]",
+          publicStatus: "PUBLIC",
+          storeTopicStatus: "NON_COMPLIANT",
+          storeTopicFailureReason: legacyStoreReason,
+          failureReasons: JSON.stringify([
+            legacyStoreReason,
+            "有效正文字数不足：要求至少 100 个，实际 20 个",
+          ]),
+        },
+      }),
+      prisma.auditResult.update({
+        where: { id: storeAndUnknown.id },
+        data: {
+          autoStatus: "NEEDS_REVIEW",
+          pageStatus: "NORMAL",
+          bodyStatus: "PRESENT",
+          bodyCompliant: true,
+          imageStatus: "COMPLIANT",
+          imageCompliant: true,
+          topicsCompliant: false,
+          clickableCompliant: true,
+          missingTopics: "[]",
+          forbiddenTopics: "[]",
+          publicStatus: "UNKNOWN",
+          storeTopicStatus: "NON_COMPLIANT",
+          storeTopicFailureReason: legacyStoreReason,
+          failureReasons: JSON.stringify([legacyStoreReason]),
+        },
+      }),
+    ]);
+    const legacyIds = [storeOnly.id, storeAndBody.id, storeAndUnknown.id];
+    const legacyListResponse = await page.request.get(
+      `/api/results?ids=${legacyIds.join(",")}&pageSize=10`,
+    );
+    const legacyList = (await legacyListResponse.json()).data.items as Array<{
+      id: string;
+      presentation: {
+        automaticConclusion: { status: string };
+        storeTopic: { status: string };
+      };
+    }>;
+    expect(legacyListResponse.ok()).toBeTruthy();
+    const presentedStatus = (id: string) =>
+      legacyList.find((result) => result.id === id)!.presentation;
+    expect(presentedStatus(storeOnly.id)).toMatchObject({
+      automaticConclusion: { status: "PASSED" },
+      storeTopic: { status: "NOT_APPLICABLE" },
+    });
+    expect(presentedStatus(storeAndBody.id).automaticConclusion.status)
+      .toBe("FAILED");
+    expect(presentedStatus(storeAndUnknown.id).automaticConclusion.status)
+      .toBe("NEEDS_REVIEW");
+
+    const legacyDetail = (await (
+      await page.request.get(`/api/results/${storeOnly.id}`)
+    ).json()).data;
+    expect(legacyDetail.presentation).toMatchObject({
+      automaticConclusion: { status: "PASSED" },
+      storeTopic: { status: "NOT_APPLICABLE" },
+    });
+    const normalizedPassed = await page.request.get(
+      `/api/results?ids=${storeOnly.id}&status=PASSED&pageSize=10`,
+    );
+    expect((await normalizedPassed.json()).data.total).toBe(1);
+
+    const legacyExportResponse = await page.request.get(
+      `/api/results/export?format=xlsx&ids=${storeOnly.id}`,
+    );
+    expect(legacyExportResponse.ok()).toBeTruthy();
+    const legacyExport = new ExcelJS.Workbook();
+    await legacyExport.xlsx.load(
+      (await legacyExportResponse.body()) as unknown as ExcelJS.Buffer,
+    );
+    const legacySheet = legacyExport.worksheets[0];
+    const selfReviewColumn = (legacySheet.getRow(1).values as unknown[])
+      .indexOf("内部自审");
+    expect(selfReviewColumn).toBeGreaterThan(0);
+    expect(legacySheet.getCell(2, selfReviewColumn).text).toBe("Y");
+
     for (const result of results) {
       const order = result.task.orderNumber || "";
       const kabritaIndex = order.includes("MIX-K-") ? Number(order.endsWith("-1")) : -1;

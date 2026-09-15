@@ -13,11 +13,39 @@ import {
   safePageLogUrl,
 } from "../../lib/automation/page-classification";
 import {
+  classifyDouyinFailureDisposition,
   isBrowserControlInfrastructureError,
   toAutomaticExtractionError,
 } from "../../lib/automation/failure";
 
 describe("自动批量审核提取分类", () => {
+  it("Protected DOUYIN_TECHNICAL_FAILURE_FAIL_STOP：仅明确作品不存在继续，其他失败全部 fail closed", () => {
+    expect(classifyDouyinFailureDisposition("NOTE_NOT_FOUND"))
+      .toBe("CONTINUE_CONTENT_TERMINAL");
+    for (const code of [
+      "REDIRECT_FAILED",
+      "LOAD_TIMEOUT",
+      "STRUCTURE_MISMATCH",
+      "NETWORK_ERROR",
+      "PAGE_READ_FAILED",
+      "BODY_NOT_RECOGNIZED",
+      "TOPICS_NOT_RECOGNIZED",
+      "NO_PERMISSION",
+      "PLATFORM_ROUTING_MISMATCH",
+    ] as const) {
+      expect(classifyDouyinFailureDisposition(code)).toBe("PAUSE_TECHNICAL");
+    }
+    for (const code of [
+      "BROWSER_CONTROL_ERROR",
+      "LOGIN_EXPIRED",
+      "LOGIN_REQUIRED",
+      "SECURITY_VERIFICATION",
+      "SECURITY_CHECK",
+    ] as const) {
+      expect(classifyDouyinFailureDisposition(code)).toBe("PAUSE_SESSION");
+    }
+  });
+
   it("将 CDP 与浏览器生命周期故障归为批次级控制异常", () => {
     const errors = [
       "cdpSession.send: Protocol error (Target.createTarget): Hidden target can be created only when remote debugging is enabled",

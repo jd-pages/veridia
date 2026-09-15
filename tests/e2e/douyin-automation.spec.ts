@@ -1101,7 +1101,8 @@ test("抖音不存在作品使用独立终态且不阻断后续作品", async ({
   await page.request.post(`/api/automation/batches/${batchId}/clear`);
 });
 
-test("抖音临时网络错误最多重试两次且不创建新页面", async ({ page }) => {
+test("Protected DOUYIN_TECHNICAL_FAILURE_FAIL_STOP：网络失败保存证据、暂停后续任务且只允许显式恢复", async ({ page }) => {
+  test.setTimeout(90_000);
   await login(page);
   const { productId, campaignId } = await getDouyinAutomationFixture(page);
   const before = (await (await page.request.get("/api/automation/session?platform=DOUYIN")).json()).data;
@@ -1110,7 +1111,11 @@ test("抖音临时网络错误最多重试两次且不创建新页面", async ({
       contentChannel: "DOUYIN",
       productId,
       campaignId,
-      urls: [`${E2E_ORIGIN}/mock/douyin?case=network-error&dy=${Date.now()}`],
+      urls: [
+        `${E2E_ORIGIN}/mock/douyin?case=network-error&dy=${Date.now()}-failed`,
+        `${E2E_ORIGIN}/mock/douyin?case=video&dy=${Date.now()}-later-1`,
+        `${E2E_ORIGIN}/mock/douyin?case=video&dy=${Date.now()}-later-2`,
+      ],
     },
   });
   expect(response.ok()).toBeTruthy();
@@ -1118,7 +1123,7 @@ test("抖音临时网络错误最多重试两次且不创建新页面", async ({
   await expect.poll(async () => {
     const payload = await (await page.request.get(`/api/automation/batches?batchId=${batchId}`)).json();
     return payload.data[0]?.status;
-  }, { timeout: 30_000 }).toMatch(/^COMPLETED_WITH_ERRORS$/u);
+  }, { timeout: 30_000 }).toBe("PAUSED");
   const payload = await (await page.request.get(`/api/automation/batches?batchId=${batchId}`)).json();
   expect(payload.data[0].tasks[0]).toMatchObject({
     status: "READ_FAILED",
@@ -1137,6 +1142,34 @@ test("抖音临时网络错误最多重试两次且不创建新页面", async ({
   expect(JSON.parse(failedResult.failureReasons).join("；")).not.toContain(
     "小红书页面打开失败",
   );
+  for (const task of payload.data[0].tasks.slice(1)) {
+    expect(task).toMatchObject({ status: "PENDING", attempts: 0 });
+    expect(task.auditResults).toHaveLength(0);
+  }
+  await page.waitForTimeout(1_000);
+  await page.request.get("/api/automation/session?platform=DOUYIN");
+  await page.waitForTimeout(5_000);
+  const stillPaused = (await (
+    await page.request.get(`/api/automation/batches?batchId=${batchId}`)
+  ).json()).data[0];
+  expect(stillPaused.status).toBe("PAUSED");
+  expect(stillPaused.tasks.slice(1).map((task: AutomationBatchTaskSnapshot) => [
+    task.status,
+    task.attempts,
+  ])).toEqual([["PENDING", 0], ["PENDING", 0]]);
+
+  const resumed = await page.request.post(
+    `/api/automation/batches/${batchId}/control`,
+    { data: { action: "CONTINUE" } },
+  );
+  expect(resumed.ok(), JSON.stringify(await resumed.json())).toBeTruthy();
+  const completed = await waitForTerminalBatch(page, batchId);
+  expect(completed.tasks[0]).toMatchObject({
+    status: "READ_FAILED",
+    failureCode: "NETWORK_ERROR",
+  });
+  expect(completed.tasks.slice(1).every((task) => task.attempts === 1)).toBe(true);
+  expect(completed.tasks.slice(1).every((task) => task.status !== "PENDING")).toBe(true);
   const after = (await (await page.request.get("/api/automation/session?platform=DOUYIN")).json()).data;
   expect(after.auditPageCreateCount).toBe(before.auditPageCreateCount);
   expect(after.pageCount).toBeLessThanOrEqual(2);

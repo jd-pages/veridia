@@ -20,6 +20,10 @@ import {
 import { removeTemporaryDirectoryWithRetry } from "../helpers/remove-temporary-directory";
 import type { OwnedExtractionHandle } from "@/lib/automation/generation-lifecycle";
 import type { PlatformAutomationRuntime } from "@/lib/automation/platform-runtime";
+import {
+  AutomaticExtractionError,
+  type AutomaticFailureCode,
+} from "@/lib/automation/failure";
 
 const isolated = vi.hoisted(() => {
   const extract: PlatformAutomationRuntime["extract"] = (task, lifecycle) => {
@@ -31,6 +35,7 @@ const isolated = vi.hoisted(() => {
     db: undefined as PrismaClient | undefined,
     extract,
     extractionCalls: 0,
+    platform: "XIAOHONGSHU" as "XIAOHONGSHU" | "DOUYIN",
   };
 });
 
@@ -42,14 +47,14 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/automation/platform-runtime", () => ({
   automationRuntime: () => ({
-    platform: "XIAOHONGSHU",
+    platform: isolated.platform,
     sessionId: "queue-timeout-invariant",
     browserSessionType: "XHS_PERSISTENT_CONTEXT",
-    browserPlatform: "XIAOHONGSHU",
+    browserPlatform: isolated.platform,
     adapterName: "playwright-xiaohongshu",
-    adapterPlatform: "XIAOHONGSHU",
+    adapterPlatform: isolated.platform,
     classifierName: "classifyAutomaticPage",
-    classifierPlatform: "XIAOHONGSHU",
+    classifierPlatform: isolated.platform,
     profilePath: () => "isolated-test-profile",
     extract: (task: AuditTask, lifecycle: OwnedExtractionHandle) =>
       isolated.extract(task, lifecycle),
@@ -112,10 +117,11 @@ beforeAll(async () => {
   fixture = await createAuditIngestFixture(db);
 }, 120_000);
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.stubEnv("AUTOMATION_EXTRACTION_DEADLINE_MS", "100");
   vi.stubEnv("AUTOMATION_BROWSER_CLEANUP_DEADLINE_MS", "100");
   isolated.extractionCalls = 0;
+  isolated.platform = "XIAOHONGSHU";
   isolated.extract = (task, lifecycle) => {
     void lifecycle;
     isolated.extractionCalls += 1;
@@ -133,6 +139,10 @@ beforeEach(() => {
     activeExtraction: undefined,
   });
   resetGenerationLifecycleForTesting();
+  await db.campaign.update({
+    where: { id: fixture.campaign.id },
+    data: { contentChannel: "XIAOHONGSHU" },
+  });
 });
 
 afterEach(() => {
@@ -232,5 +242,151 @@ describe("automatic queue extraction deadline invariant", () => {
       pendingCleanupBarrierCount: 0,
       activeBrowserOwnerGenerations: [],
     });
+  });
+
+  async function expectDouyinTechnicalFailureStops(
+    failureCode: AutomaticFailureCode,
+  ) {
+      isolated.platform = "DOUYIN";
+      await db.campaign.update({
+        where: { id: fixture.campaign.id },
+        data: { contentChannel: "DOUYIN" },
+      });
+      isolated.extract = async () => {
+        isolated.extractionCalls += 1;
+        throw new AutomaticExtractionError(failureCode, `测试 ${failureCode}`);
+      };
+      const suffix = `${failureCode}-${Date.now()}`;
+      const batch = await db.auditBatch.create({
+        data: {
+          name: `Queue timeout invariant DOUYIN ${suffix}`,
+          productId: fixture.product.id,
+          campaignId: fixture.campaign.id,
+          source: "AUTOMATIC",
+          channel: "DOUYIN",
+          status: "QUEUED",
+          totalCount: 3,
+          intervalMs: 1,
+          tasks: {
+            create: [0, 1, 2].map((queueOrder) => {
+              const url = `http://localhost/mock/douyin?case=video&fail-stop=${suffix}-${queueOrder}`;
+              return {
+                url,
+                normalizedUrl: url,
+                productId: fixture.product.id,
+                campaignId: fixture.campaign.id,
+                source: "AUTOMATIC",
+                platform: "DOUYIN",
+                channel: "DOUYIN",
+                queueOrder,
+                status: "PENDING",
+              };
+            }),
+          },
+        },
+      });
+
+      kickAutomaticAuditQueue();
+      await automaticAuditQueueState.runner;
+
+      const stopped = await db.auditBatch.findUniqueOrThrow({
+        where: { id: batch.id },
+        include: {
+          tasks: {
+            orderBy: { queueOrder: "asc" },
+            include: { auditResults: true, extractions: true },
+          },
+        },
+      });
+      expect(stopped).toMatchObject({ status: "PAUSED", currentTaskId: null });
+      expect(stopped.tasks[0]).toMatchObject({
+        status: "READ_FAILED",
+        failureCode,
+        attempts: 1,
+        claimEpoch: null,
+      });
+      expect(stopped.tasks[0].auditResults).toHaveLength(1);
+      expect(stopped.tasks[0].extractions).toHaveLength(1);
+      for (const task of stopped.tasks.slice(1)) {
+        expect(task).toMatchObject({
+          status: "PENDING",
+          attempts: 0,
+          startedAt: null,
+          claimEpoch: null,
+        });
+        expect(task.auditResults).toHaveLength(0);
+        expect(task.extractions).toHaveLength(0);
+      }
+      expect(isolated.extractionCalls).toBe(1);
+
+      kickAutomaticAuditQueue();
+      await automaticAuditQueueState.runner;
+      const afterWake = await db.auditBatch.findUniqueOrThrow({
+        where: { id: batch.id },
+        include: { tasks: { orderBy: { queueOrder: "asc" } } },
+      });
+      expect(afterWake.status).toBe("PAUSED");
+      expect(afterWake.tasks.slice(1).map((task) => [task.status, task.attempts]))
+        .toEqual([["PENDING", 0], ["PENDING", 0]]);
+  }
+
+  it(
+    "Protected DOUYIN_TECHNICAL_FAILURE_FAIL_STOP：STRUCTURE_MISMATCH 保存当前失败并暂停后续任务",
+    () => expectDouyinTechnicalFailureStops("STRUCTURE_MISMATCH"),
+  );
+
+  it.each([
+    "REDIRECT_FAILED",
+    "LOAD_TIMEOUT",
+    "NETWORK_ERROR",
+    "PAGE_READ_FAILED",
+    "BODY_NOT_RECOGNIZED",
+    "TOPICS_NOT_RECOGNIZED",
+    "NO_PERMISSION",
+  ] as AutomaticFailureCode[])(
+    "抖音其他技术失败 %s 同样 fail closed",
+    expectDouyinTechnicalFailureStops,
+  );
+
+  it("未知抖音 extraction exception 默认 fail closed", async () => {
+    isolated.platform = "DOUYIN";
+    await db.campaign.update({
+      where: { id: fixture.campaign.id },
+      data: { contentChannel: "DOUYIN" },
+    });
+    isolated.extract = async () => {
+      isolated.extractionCalls += 1;
+      throw new Error("unknown synthetic platform failure");
+    };
+    const suffix = Date.now();
+    const batch = await db.auditBatch.create({
+      data: {
+        name: `Queue timeout invariant DOUYIN UNKNOWN ${suffix}`,
+        productId: fixture.product.id,
+        campaignId: fixture.campaign.id,
+        source: "AUTOMATIC",
+        channel: "DOUYIN",
+        status: "QUEUED",
+        totalCount: 1,
+        intervalMs: 1,
+        tasks: { create: {
+          url: `http://localhost/mock/douyin?unknown=${suffix}`,
+          normalizedUrl: `http://localhost/mock/douyin?unknown=${suffix}`,
+          productId: fixture.product.id,
+          campaignId: fixture.campaign.id,
+          source: "AUTOMATIC",
+          platform: "DOUYIN",
+          channel: "DOUYIN",
+          queueOrder: 0,
+          status: "PENDING",
+        } },
+      },
+    });
+    kickAutomaticAuditQueue();
+    await automaticAuditQueueState.runner;
+    expect(await db.auditBatch.findUniqueOrThrow({ where: { id: batch.id } }))
+      .toMatchObject({ status: "PAUSED", lastErrorCode: "NETWORK_ERROR" });
+    expect(await db.auditTask.findFirstOrThrow({ where: { batchId: batch.id } }))
+      .toMatchObject({ status: "READ_FAILED", failureCode: "NETWORK_ERROR" });
   });
 });

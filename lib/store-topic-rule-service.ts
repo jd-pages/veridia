@@ -6,6 +6,7 @@ import {
   normalizeStoreNameForMatch,
   normalizeStoreTopicForMatch,
   resolveStoreTopicConfig,
+  brandUsesStoreTopicAudit,
   storeTopicWithHash,
   type StoreAliasConfig,
   type StoreAcceptedTopicConfig,
@@ -530,6 +531,7 @@ export async function resolveStoreTopicRule(input: {
 }
 
 export async function resolveStoreTopicAuditRequirement(input: {
+  brandName?: unknown;
   source?: unknown;
   channel?: unknown;
   platform?: unknown;
@@ -538,6 +540,7 @@ export async function resolveStoreTopicAuditRequirement(input: {
   expectedStoreTopic?: unknown;
   storeMappingStatus?: unknown;
 }) {
+  if (!brandUsesStoreTopicAudit(input.brandName)) return null;
   if (
     String(input.source ?? "") !== "EXCEL" &&
     !String(input.storeName ?? "").trim() &&

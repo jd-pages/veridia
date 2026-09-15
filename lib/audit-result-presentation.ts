@@ -14,6 +14,7 @@ import {
   retentionReviewReasons,
 } from "@/lib/retention-pending-classification";
 import { retentionDaysFromRuleSnapshot } from "@/lib/retention-status";
+import { brandUsesStoreTopicAudit } from "@/lib/store-topic-config";
 
 export type AuditResultPresentationTone =
   | "success"
@@ -92,6 +93,11 @@ export interface AuditResultPresentation {
     total: number | null;
     threshold: number | null;
   };
+  storeTopic: {
+    applicable: boolean;
+    status: string;
+    label: string;
+  };
 }
 
 interface PresentationRuleResult {
@@ -117,6 +123,7 @@ interface PresentationInput {
   retentionStatus: string;
   retentionDueAt?: Date | string | null;
   storeTopicStatus?: string;
+  storeTopicFailureReason?: string | null;
   failureReasons: string;
   missingTopics: string;
   forbiddenTopics: string;
@@ -146,6 +153,7 @@ interface PresentationInput {
     failureMessage?: string | null;
     pageTitle?: string | null;
     pageType?: string | null;
+    product?: { brandName?: string | null };
   };
   manualReviews?: Array<{ result: string }>;
 }
@@ -215,6 +223,72 @@ function object(value: unknown): Record<string, unknown> {
 
 function unique(values: string[]) {
   return [...new Set(values.map(normalizeTopic).filter(Boolean))];
+}
+
+const storeTopicFailurePattern =
+  /店铺话题|未命中任何可接受店铺话题|可接受店铺话题|附加必需话题|导入数据未填写店铺名称|导入店铺名称未匹配/u;
+
+function storeTopicScopedPresentationInput(input: PresentationInput) {
+  const applicable = brandUsesStoreTopicAudit(input.task.product?.brandName);
+  if (applicable) {
+    return {
+      applicable,
+      input,
+      results: input.ruleResults || [],
+    };
+  }
+
+  const storeResults = (input.ruleResults || []).filter(
+    (result) => result.ruleKey === "STORE_TOPIC",
+  );
+  const exactStoreReasons = new Set(
+    [input.storeTopicFailureReason, ...storeResults.map((result) => result.failureReason)]
+      .flatMap((reason) => String(reason || "").split("；"))
+      .map((reason) => reason.trim())
+      .filter(Boolean),
+  );
+  const isStoreReason = (reason: string) =>
+    exactStoreReasons.has(reason.trim()) || storeTopicFailurePattern.test(reason);
+  const failureReasons = parseStoredStringArray(input.failureReasons).filter(
+    (reason) => !isStoreReason(reason),
+  );
+  const results = (input.ruleResults || []).filter(
+    (result) => result.ruleKey !== "STORE_TOPIC",
+  );
+  const nonStoreTopicFailure = results.some(
+    (result) =>
+      !result.passed &&
+      (result.ruleKey.startsWith("TOPIC_") ||
+        result.ruleKey === "PRODUCT_STAGE_BODY"),
+  ) || parseStoredStringArray(input.missingTopics).length > 0 ||
+    parseStoredStringArray(input.forbiddenTopics).length > 0;
+  const taskFailureMessage = input.task.failureMessage &&
+      isStoreReason(input.task.failureMessage)
+    ? null
+    : input.task.failureMessage;
+  const normalizedAutomaticStatus =
+    ["FAILED", "NEEDS_REVIEW"].includes(input.autoStatus) &&
+      failureReasons.length === 0 &&
+      !taskFailureMessage
+      ? "PASSED"
+      : input.autoStatus;
+
+  return {
+    applicable,
+    results,
+    input: {
+      ...input,
+      autoStatus: normalizedAutomaticStatus,
+      topicsCompliant:
+        input.topicsCompliant ||
+        (input.storeTopicStatus === "NON_COMPLIANT" && !nonStoreTopicFailure),
+      storeTopicStatus: "NOT_REQUIRED",
+      storeTopicFailureReason: null,
+      failureReasons: JSON.stringify(failureReasons),
+      ruleResults: results,
+      task: { ...input.task, failureMessage: taskFailureMessage },
+    } satisfies PresentationInput,
+  };
 }
 
 function topicRuleCoverage(ruleSnapshot: string) {
@@ -519,48 +593,50 @@ function imageLabel(input: PresentationInput) {
 export function buildAuditResultPresentation(
   input: PresentationInput,
 ): AuditResultPresentation {
-  const results = input.ruleResults || [];
+  const scoped = storeTopicScopedPresentationInput(input);
+  const presentationInput = scoped.input;
+  const results = scoped.results;
   const topicResults = results.filter((result) => result.ruleKey.startsWith("TOPIC_"));
-  const unavailable = isUnavailableNoteResult(input);
+  const unavailable = isUnavailableNoteResult(presentationInput);
   const processingTopicUnavailable = topicResults.length === 0 && Boolean(
-    input.task.failureCode || input.task.failureMessage,
+    presentationInput.task.failureCode || presentationInput.task.failureMessage,
   );
   const topic = unavailable
-    ? { ...unavailableTopic(input), message: "页面不可用，本次未执行话题审核。" }
+    ? { ...unavailableTopic(presentationInput), message: "页面不可用，本次未执行话题审核。" }
     : processingTopicUnavailable
       ? {
-          ...unavailableTopic(input, "RESULT_BOUND_EXTRACTION"),
+          ...unavailableTopic(presentationInput, "RESULT_BOUND_EXTRACTION"),
           message: "本次审核未形成可确认的话题规则明细，需人工复核或重新审核。",
         }
-    : completePersistedTopicEvidence(input.ruleSnapshot, topicResults)
-      ? topicFromPersistedResults(input, topicResults)
-      : input.evidenceStatus === "RESULT_BOUND"
-        ? topicFromBoundExtraction(input)
-        : unavailableTopic(input);
-  const duplicate = duplicateReauditMetadataFromNotes(input.task.notes);
-  const legacyDuplicate = legacyZeroHistoryDuplicateMetadataFromNotes(input.task.notes);
+    : completePersistedTopicEvidence(presentationInput.ruleSnapshot, topicResults)
+      ? topicFromPersistedResults(presentationInput, topicResults)
+      : presentationInput.evidenceStatus === "RESULT_BOUND"
+        ? topicFromBoundExtraction(presentationInput)
+        : unavailableTopic(presentationInput);
+  const duplicate = duplicateReauditMetadataFromNotes(presentationInput.task.notes);
+  const legacyDuplicate = legacyZeroHistoryDuplicateMetadataFromNotes(presentationInput.task.notes);
   const persistedAutomaticStatus = duplicate?.automaticResult ||
-    legacyDuplicate?.automaticResult || input.autoStatus;
+    legacyDuplicate?.automaticResult || presentationInput.autoStatus;
   const classificationInput = {
-    ...input,
+    ...presentationInput,
     autoStatus: persistedAutomaticStatus,
     ruleResults: results,
   };
   const automaticStatus = deriveAuditBusinessStatus(classificationInput);
   const persistedContradiction = persistedAutomaticStatus === "PASSED" && (
-    !input.bodyCompliant || input.imageCompliant === false ||
-    !input.topicsCompliant || !input.clickableCompliant ||
-    input.pageStatus !== "NORMAL" ||
-    input.publicStatus === "NOT_PUBLIC" ||
-    input.storeTopicStatus === "NON_COMPLIANT" ||
+    !presentationInput.bodyCompliant || presentationInput.imageCompliant === false ||
+    !presentationInput.topicsCompliant || !presentationInput.clickableCompliant ||
+    presentationInput.pageStatus !== "NORMAL" ||
+    presentationInput.publicStatus === "NOT_PUBLIC" ||
+    presentationInput.storeTopicStatus === "NON_COMPLIANT" ||
     results.some(isFailedMandatoryResult)
   );
-  const baseReasons = auditConclusionFailureReasons(input).filter(
+  const baseReasons = auditConclusionFailureReasons(presentationInput).filter(
     (reason) => !/^(?:公开)?留存|留存期限/u.test(reason),
   );
   const reviewReasons = retentionReviewReasons(classificationInput);
   const derivedReviewSignals = automaticStatus === "NEEDS_REVIEW"
-    ? [...new Set([...reviewSignals(input, results), ...reviewReasons])]
+    ? [...new Set([...reviewSignals(presentationInput, results), ...reviewReasons])]
     : [];
   const missingReviewSignal = automaticStatus === "NEEDS_REVIEW" &&
     !baseReasons.length && !derivedReviewSignals.length && !duplicate;
@@ -603,12 +679,12 @@ export function buildAuditResultPresentation(
     ...(consistencyMessage ? [consistencyMessage] : []),
   ])];
   const pendingReasons: string[] = [];
-  const retentionDays = retentionDaysFromRuleSnapshot(input.ruleSnapshot);
-  const publicLabel = input.publicStatus === "PUBLIC"
+  const retentionDays = retentionDaysFromRuleSnapshot(presentationInput.ruleSnapshot);
+  const publicLabel = presentationInput.publicStatus === "PUBLIC"
     ? "当前公开"
-    : input.publicStatus === "NOT_PUBLIC"
+    : presentationInput.publicStatus === "NOT_PUBLIC"
       ? "当前不公开"
-      : input.publicStatus === "UNKNOWN"
+      : presentationInput.publicStatus === "UNKNOWN"
         ? "无法确认"
         : "不要求";
 
@@ -628,35 +704,42 @@ export function buildAuditResultPresentation(
     pendingReasons,
     isManualReviewRequired: automaticStatus === "NEEDS_REVIEW" && !manual,
     isPendingRetention: false,
-    publicDisplay: { status: input.publicStatus, label: publicLabel },
+    publicDisplay: { status: presentationInput.publicStatus, label: publicLabel },
     retentionDisplay: {
-      status: input.retentionStatus,
+      status: presentationInput.retentionStatus,
       label: retentionDays > 0 ? "仅作活动信息" : "不要求",
       requirementDays: retentionDays,
       dueAt: null,
     },
+    storeTopic: {
+      applicable: scoped.applicable,
+      status: scoped.applicable
+        ? presentationInput.storeTopicStatus || "NOT_CHECKED"
+        : "NOT_APPLICABLE",
+      label: scoped.applicable ? "适用" : "不适用",
+    },
     topic,
     body: {
-      status: input.bodyStatus,
-      compliant: input.bodyCompliant,
+      status: presentationInput.bodyStatus,
+      compliant: presentationInput.bodyCompliant,
       label: unavailable
         ? "未审核"
-        : input.bodyStatus === "UNKNOWN"
+        : presentationInput.bodyStatus === "UNKNOWN"
         ? "待人工确认"
-        : input.bodyCompliant ? "合规" : "不合规",
+        : presentationInput.bodyCompliant ? "合规" : "不合规",
     },
     image: {
-      status: input.imageStatus,
-      compliant: input.imageCompliant,
-      label: unavailable ? "未审核" : imageLabel(input),
+      status: presentationInput.imageStatus,
+      compliant: presentationInput.imageCompliant,
+      label: unavailable ? "未审核" : imageLabel(presentationInput),
     },
     interactionReward: {
-      status: input.interactionRewardStatus || "NOT_ENABLED",
-      likeCount: input.likeCount ?? null,
-      commentCount: input.commentCount ?? null,
-      favoriteCount: input.favoriteCount ?? null,
-      total: input.interactionTotal ?? null,
-      threshold: input.interactionRewardThreshold ?? null,
+      status: presentationInput.interactionRewardStatus || "NOT_ENABLED",
+      likeCount: presentationInput.likeCount ?? null,
+      commentCount: presentationInput.commentCount ?? null,
+      favoriteCount: presentationInput.favoriteCount ?? null,
+      total: presentationInput.interactionTotal ?? null,
+      threshold: presentationInput.interactionRewardThreshold ?? null,
     },
   };
 }

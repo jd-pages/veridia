@@ -239,7 +239,10 @@ export async function runAuditTask(
     contentChannel,
   );
   const storeTopicRequirement = baseContext.rulesConfigured
-    ? await resolveStoreTopicAuditRequirement(task)
+    ? await resolveStoreTopicAuditRequirement({
+        ...task,
+        brandName: baseContext.brandName,
+      })
     : null;
   const context = {
     ...baseContext,

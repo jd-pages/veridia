@@ -5,6 +5,7 @@ import type { AuditResultPresentation } from "@/lib/audit-result-presentation";
 export interface ProductOption {
   id: string;
   name: string;
+  brandName?: string | null;
 }
 
 export interface CampaignOption {

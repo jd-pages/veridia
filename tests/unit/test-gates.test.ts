@@ -304,13 +304,13 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // v1.1.36 replaces retention pending with the information-only contract.
-      behaviorCount: 33,
+      // v1.1.37 adds DOUYIN fail-stop and store-topic brand-scope contracts.
+      behaviorCount: 35,
       groupCount: 14,
       triggerFiles: {
-        totalEntryCount: 125,
-        exactFileEntryCount: 110,
-        directoryEntryCount: 15,
+        totalEntryCount: 134,
+        exactFileEntryCount: 117,
+        directoryEntryCount: 17,
         patternEntryCount: 0,
         duplicateEntryCount: 0,
         missingEntryCount: 0,

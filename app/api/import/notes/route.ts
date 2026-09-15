@@ -71,6 +71,7 @@ import {
 import {
   normalizeStoreNameForMatch,
   resolveStoreTopicConfig,
+  scopeStoreTopicResolutionByBrand,
   type StoreMappingStatus,
 } from "@/lib/store-topic-config";
 import { loadActiveStoreTopicRules } from "@/lib/store-topic-rule-service";
@@ -576,14 +577,6 @@ export async function POST(request: Request) {
         });
         checked.hasPreviewAttention = true;
       }
-      if (
-        checked.channel !== "DOUYIN" &&
-        storeResolution.status !== "MATCHED"
-      ) {
-        checked.errors.push(
-          `${storeResolution.status}：${storeResolution.failureReason}`,
-        );
-      }
       if (checked.failureReason) {
         checked.errors.push(checked.failureReason);
       }
@@ -686,6 +679,28 @@ export async function POST(request: Request) {
           !(WYETH_NESTLE_BRANDS as readonly string[]).includes(product.brandName.trim())
         ) {
           checked.errors.push("该产品不属于惠氏/雀巢导入模板支持范围");
+        }
+      }
+      if (product) {
+        storeResolution = scopeStoreTopicResolutionByBrand(
+          storeResolution,
+          product.brandName,
+        );
+        checked.commercePlatform = storeResolution.commercePlatform || "";
+        checked.expectedStoreTopic = storeResolution.expectedTopic || "";
+        checked.expectedStoreTopics = storeResolution.expectedTopics;
+        checked.requiredStoreTopics = storeResolution.requiredTopics;
+        checked.storeTopicRuleId = storeResolution.storeTopicRuleId || "";
+        checked.matchedStoreName = storeResolution.matchedStoreName || "";
+        checked.storeMappingStatus = storeResolution.status;
+        if (
+          checked.channel !== "DOUYIN" &&
+          storeResolution.status !== "MATCHED" &&
+          storeResolution.status !== "NOT_APPLICABLE"
+        ) {
+          checked.errors.push(
+            `${storeResolution.status}：${storeResolution.failureReason}`,
+          );
         }
       }
 

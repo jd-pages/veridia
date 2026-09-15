@@ -1,5 +1,12 @@
 # VERIDIA 更新日志
 
+## 1.1.37 - 2026-09-15
+
+### 抖音失败即停与店铺话题品牌范围
+
+- Douyin technical extraction failures now pause the active batch and prevent later tasks from continuing automatically.
+- Store-topic auditing is scoped to Danone and Kabrita; Nestlé and Wyeth no longer receive store-topic audit requirements.
+
 ## 1.1.36 - 2026-09-15
 
 ### 当前公开与留存口径

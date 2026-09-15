@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { runAuditTask } from "@/lib/audit-service";
 import {
   automaticFailureLabels,
+  classifyDouyinFailureDisposition,
   toAutomaticExtractionError,
 } from "./failure";
 import { recordProcessingFailureResult } from "@/lib/processing-failure-result";
@@ -605,8 +606,15 @@ async function processBatch(batchId: string) {
         "BODY_NOT_RECOGNIZED",
         "TOPICS_NOT_RECOGNIZED",
       ].includes(extractionError.code);
+      const douyinDisposition = platform === "DOUYIN"
+        ? classifyDouyinFailureDisposition(extractionError.code)
+        : null;
       sessionFailureCode = extractionError.code;
-      if (sessionIssue || browserControlIssue) {
+      if (
+        sessionIssue ||
+        browserControlIssue ||
+        douyinDisposition === "PAUSE_SESSION"
+      ) {
         const securityRestricted = ["SECURITY_VERIFICATION", "SECURITY_CHECK"].includes(
           extractionError.code,
         );
@@ -663,7 +671,8 @@ async function processBatch(batchId: string) {
             status:
               extractionError.code === "NOTE_NOT_FOUND"
                 ? "COMPLETED"
-                : technicalReadFailure
+                : technicalReadFailure ||
+                    douyinDisposition === "PAUSE_TECHNICAL"
                   ? "READ_FAILED"
                   : "FAILED",
             failureCode: extractionError.code,
@@ -677,6 +686,29 @@ async function processBatch(batchId: string) {
         } catch (persistenceError) {
           if (isStaleRunnerCompletionError(persistenceError)) return;
           throw persistenceError;
+        }
+        if (douyinDisposition === "PAUSE_TECHNICAL") {
+          const paused = await prisma.auditBatch.updateMany({
+            where: { id: batchId, status: "RUNNING", runEpoch },
+            data: {
+              status: "PAUSED",
+              runEpoch: { increment: 1 },
+              currentTaskId: null,
+              pausedAt: new Date(),
+              lastErrorCode: extractionError.code,
+              lastErrorMessage: extractionError.message,
+            },
+          });
+          if (!paused.count) return;
+          mustPauseBatch = true;
+          console.warn(
+            "[自动审核] 抖音技术读取失败，当前任务证据已保存且批次已暂停",
+            JSON.stringify({
+              batchId,
+              taskId: processingTask.id,
+              code: extractionError.code,
+            }),
+          );
         }
       }
       }

@@ -65,7 +65,16 @@ export function normalizeStoreTopicForMatch(value: unknown) {
 export type StoreMappingStatus =
   | "MATCHED"
   | "STORE_NAME_MISSING"
-  | "STORE_NOT_MAPPED";
+  | "STORE_NOT_MAPPED"
+  | "NOT_APPLICABLE";
+
+export const STORE_TOPIC_AUDIT_BRANDS = ["达能", "佳贝艾特"] as const;
+
+export function brandUsesStoreTopicAudit(brandName: unknown) {
+  return (STORE_TOPIC_AUDIT_BRANDS as readonly string[]).includes(
+    String(brandName ?? "").trim(),
+  );
+}
 
 export interface StoreTopicResolution {
   status: StoreMappingStatus;
@@ -159,6 +168,37 @@ export function resolveStoreTopicConfig(
     config: matches[0],
     failureReason: null,
   };
+}
+
+export function scopeStoreTopicResolutionByBrand(
+  resolution: StoreTopicResolution,
+  brandName: unknown,
+): StoreTopicResolution {
+  if (brandUsesStoreTopicAudit(brandName)) return resolution;
+  return {
+    ...resolution,
+    status: "NOT_APPLICABLE",
+    storeTopicRuleId: null,
+    expectedTopic: null,
+    expectedTopics: [],
+    requiredTopics: [],
+    config: null,
+    failureReason: null,
+  };
+}
+
+export function resolveStoreTopicConfigForBrand(
+  configs: readonly StoreTopicConfig[],
+  input: {
+    brandName?: unknown;
+    storeName?: unknown;
+    commercePlatform?: unknown;
+  },
+) {
+  return scopeStoreTopicResolutionByBrand(
+    resolveStoreTopicConfig(configs, input),
+    input.brandName,
+  );
 }
 
 export type StoreTopicAuditStatus =

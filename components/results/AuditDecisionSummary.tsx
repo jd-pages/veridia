@@ -123,6 +123,8 @@ export default function AuditDecisionSummary({
     (row.task.storeMappingStatus === "MATCHED" &&
       expectedStoreTopics.length === 0 &&
       requiredStoreTopics.length === 0);
+  const storeTopicNotApplicable =
+    row.presentation.storeTopic.status === "NOT_APPLICABLE";
 
   return (
     <div className={styles.decisionLayout}>
@@ -368,7 +370,9 @@ export default function AuditDecisionSummary({
 
           <article className={styles.auditDetailCard}>
             <h4>店铺话题审核</h4>
-            {storeTopicNotRequired ? (
+            {storeTopicNotApplicable ? (
+              <strong>不适用</strong>
+            ) : storeTopicNotRequired ? (
               <div className={styles.auditDetailList}>
                 <div>
                   <span>导入店铺</span>

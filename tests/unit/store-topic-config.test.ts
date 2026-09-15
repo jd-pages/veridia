@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { evaluateAudit } from "@/lib/audit-engine";
 import { createMockNote } from "@/lib/mock-data";
 import {
+  brandUsesStoreTopicAudit,
   expectedStoreTopicForName,
   normalizeStoreNameForMatch,
   normalizeStoreTopicForMatch,
   resolveStoreTopicConfig,
+  resolveStoreTopicConfigForBrand,
   validateStoreTopic,
 } from "@/lib/store-topic-config";
 import {
@@ -101,6 +103,37 @@ const resolve = (input: { storeName?: unknown; commercePlatform?: unknown }) =>
   resolveStoreTopicConfig(storeTopicConfigs, input);
 
 describe("店铺话题配置与精确审核", () => {
+  it("Protected STORE_TOPIC_BRAND_SCOPE：只允许达能和佳贝艾特进入店铺话题审核", () => {
+    expect(brandUsesStoreTopicAudit("达能")).toBe(true);
+    expect(brandUsesStoreTopicAudit("佳贝艾特")).toBe(true);
+    expect(brandUsesStoreTopicAudit("雀巢")).toBe(false);
+    expect(brandUsesStoreTopicAudit("惠氏")).toBe(false);
+
+    const sharedStore = "FOLO海外专营店";
+    const danone = resolveStoreTopicConfigForBrand(storeTopicConfigs, {
+      brandName: "达能",
+      storeName: sharedStore,
+      commercePlatform: "天猫",
+    });
+    expect(danone).toMatchObject({ status: "MATCHED" });
+    expect(danone.expectedTopics.length).toBeGreaterThan(0);
+
+    for (const brandName of ["雀巢", "惠氏"] as const) {
+      expect(resolveStoreTopicConfigForBrand(storeTopicConfigs, {
+        brandName,
+        storeName: sharedStore,
+        commercePlatform: "天猫",
+      })).toMatchObject({
+        status: "NOT_APPLICABLE",
+        matchedStoreName: danone.matchedStoreName,
+        storeTopicRuleId: null,
+        expectedTopics: [],
+        requiredTopics: [],
+        failureReason: null,
+      });
+    }
+  });
+
   it("配置清单由单一来源保存且不包含简称", () => {
     expect(storeTopicConfigs).toHaveLength(42);
     expect(

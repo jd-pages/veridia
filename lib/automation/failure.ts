@@ -16,6 +16,32 @@ export type AutomaticFailureCode =
   | "PLATFORM_ROUTING_MISMATCH"
   | "CANCELLED";
 
+export type DouyinFailureDisposition =
+  | "CONTINUE_CONTENT_TERMINAL"
+  | "PAUSE_SESSION"
+  | "PAUSE_TECHNICAL";
+
+const DOUYIN_SESSION_FAILURE_CODES = new Set<AutomaticFailureCode>([
+  "LOGIN_EXPIRED",
+  "LOGIN_REQUIRED",
+  "SECURITY_VERIFICATION",
+  "SECURITY_CHECK",
+  "BROWSER_CONTROL_ERROR",
+]);
+
+/**
+ * Douyin is fail-closed: only a confirmed missing work is a terminal platform
+ * fact that may advance the queue. Successful extraction followed by a
+ * business audit never enters this classifier.
+ */
+export function classifyDouyinFailureDisposition(
+  code: AutomaticFailureCode,
+): DouyinFailureDisposition {
+  if (code === "NOTE_NOT_FOUND") return "CONTINUE_CONTENT_TERMINAL";
+  if (DOUYIN_SESSION_FAILURE_CODES.has(code)) return "PAUSE_SESSION";
+  return "PAUSE_TECHNICAL";
+}
+
 export const automaticFailureLabels: Record<AutomaticFailureCode, string> = {
   NOTE_NOT_FOUND: "笔记不存在",
   NO_PERMISSION: "无权限访问",
