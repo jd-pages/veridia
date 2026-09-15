@@ -6,6 +6,12 @@ export type DouyinCurrentContentScopeKind =
   | "CURRENT_MEDIA_ANCESTOR"
   | "NONE";
 
+export type DouyinStructuredTargetEvidence = {
+  contentId: string;
+  hasPayload: boolean;
+  source?: "NETWORK_RESPONSE" | "PAGE_SCRIPT" | null;
+};
+
 export type DouyinCurrentContentEvidence = {
   scopeKind: DouyinCurrentContentScopeKind;
   scopeSelector: string | null;
@@ -20,6 +26,11 @@ export type DouyinCurrentContentEvidence = {
   hasAuthor: boolean;
   actionBarControlCount: number;
   hasStructuredCurrentContent: boolean;
+  structuredTargetContentId: string | null;
+  hasStructuredTargetPayload: boolean;
+  hasBoundPageMetadata: boolean;
+  currentVideoCandidateCount: number;
+  conflictingVisibleContentIds: string[];
   contentIdInScope: boolean;
   contentIdInDocument: boolean;
   contentIdMatches: boolean;
@@ -40,6 +51,11 @@ const EMPTY_EVIDENCE: DouyinCurrentContentEvidence = {
   hasAuthor: false,
   actionBarControlCount: 0,
   hasStructuredCurrentContent: false,
+  structuredTargetContentId: null,
+  hasStructuredTargetPayload: false,
+  hasBoundPageMetadata: false,
+  currentVideoCandidateCount: 0,
+  conflictingVisibleContentIds: [],
   contentIdInScope: false,
   contentIdInDocument: false,
   contentIdMatches: false,
@@ -51,8 +67,11 @@ const EMPTY_EVIDENCE: DouyinCurrentContentEvidence = {
 export async function readDouyinCurrentContentEvidence(
   page: Page,
   expectedContentId?: string | null,
+  structuredTargetEvidence?: DouyinStructuredTargetEvidence | null,
 ): Promise<DouyinCurrentContentEvidence> {
-  return page.evaluate((expectedId) => {
+  return page.evaluate((input) => {
+    const expectedId = input.expectedContentId;
+    const structuredTarget = input.structuredTargetEvidence;
     const explicitRoots = [
       {
         selector: "[data-e2e='note-detail']",
@@ -154,6 +173,36 @@ export async function readDouyinCurrentContentEvidence(
     )?.[1] || new URL(location.href).searchParams.get("modal_id") || null;
     const targetId = expectedId || locationContentId;
     const locationMatches = !expectedId || !locationContentId || locationContentId === expectedId;
+    const structuredTargetMatches = Boolean(
+      targetId && structuredTarget?.hasPayload &&
+      structuredTarget.contentId === targetId && locationMatches,
+    );
+    const pageMetadataUrls = [
+      document.querySelector("link[rel='canonical']")?.getAttribute("href"),
+      document.querySelector("meta[property='og:url']")?.getAttribute("content"),
+    ].filter((value): value is string => Boolean(value));
+    const pageMetadataIds = pageMetadataUrls.map((value) => {
+      try {
+        return new URL(value, location.href).pathname.match(
+          /^\/(?:share\/)?(?:video|note|slides)\/([^/?#]+)/iu,
+        )?.[1] || null;
+      } catch {
+        return null;
+      }
+    }).filter((value): value is string => Boolean(value));
+    const metadataIdentityMatches = Boolean(
+      targetId && pageMetadataIds.length > 0 &&
+      pageMetadataIds.every((value) => value === targetId),
+    );
+    const metadataDescription = (
+      document.querySelector("meta[property='og:description']") ||
+      document.querySelector("meta[name='description']")
+    )?.getAttribute("content")?.trim() || "";
+    const meaningfulTitle = document.title.trim() &&
+      !/^抖音(?:，记录美好生活)?$/u.test(document.title.trim());
+    const hasBoundPageMetadata = Boolean(
+      metadataIdentityMatches && (meaningfulTitle || metadataDescription),
+    );
     const candidates = explicitRoots.flatMap((candidate) =>
       Array.from(document.querySelectorAll(candidate.selector)).filter((root) =>
         !root.closest(excludedSelector) && isVisible(root),
@@ -185,7 +234,11 @@ export async function readDouyinCurrentContentEvidence(
       document.querySelectorAll(carouselSelector),
     ).filter((element) => !element.closest(excludedSelector) && isVisible(element));
     const eligibleCurrentPlayerVideos = Array.from(
-      document.querySelectorAll(currentPlayerVideoSelector),
+      document.querySelectorAll(
+        structuredTargetMatches && hasBoundPageMetadata
+          ? `video, ${currentPlayerVideoSelector}`
+          : currentPlayerVideoSelector,
+      ),
     ).filter((element) => !element.closest(excludedSelector) && isVisible(element));
     const eligibleMediaMarkers = [
       ...eligibleCarouselMarkers,
@@ -206,12 +259,29 @@ export async function readDouyinCurrentContentEvidence(
         scope = eligibleAncestors[0];
         scopeSelector = scope.tagName.toLowerCase();
         scopeKind = "CURRENT_MEDIA_ANCESTOR";
+      } else if (
+        eligibleAncestors.length === 0 && structuredTargetMatches &&
+        hasBoundPageMetadata && eligibleCurrentPlayerVideos.length === 1
+      ) {
+        const mediaContainer = eligibleCurrentPlayerVideos[0].parentElement;
+        if (
+          mediaContainer && isVisible(mediaContainer) &&
+          !mediaContainer.closest(excludedSelector)
+        ) {
+          const ids = idsForScope(mediaContainer);
+          if (
+            ids.size === 0 ||
+            ids.size === 1 && Boolean(targetId && ids.has(targetId))
+          ) {
+            scope = mediaContainer;
+            // A generated scope-token selector below binds collection to this
+            // exact node without depending on the drift-prone class name.
+            scopeKind = "CURRENT_MEDIA_ANCESTOR";
+          }
+        }
       }
     }
 
-    const scopeIndex = scope && scopeSelector
-      ? Array.from(document.querySelectorAll(scopeSelector)).indexOf(scope)
-      : -1;
     const currentNode = (element: Element) => {
       const detail = element.closest("[data-e2e='note-detail'], [data-testid='douyin-note-detail']");
       return !element.closest(excludedSelector) && (!detail || detail === scope) && isVisible(element);
@@ -228,7 +298,7 @@ export async function readDouyinCurrentContentEvidence(
       ? Array.from(scope.querySelectorAll("video")).filter((element) => {
           if (!currentNode(element)) return false;
           if (scopeKind !== "CURRENT_MEDIA_ANCESTOR") return true;
-          return Boolean(element.closest(
+          return structuredTargetMatches && hasBoundPageMetadata || Boolean(element.closest(
             "[data-e2e='player-container'], [data-e2e='video-player'], [data-testid='douyin-video-player']",
           ));
         })
@@ -270,10 +340,19 @@ export async function readDouyinCurrentContentEvidence(
       : isVideoUrl
         ? videos.length > 0
         : hasImageEvidence || videos.length > 0;
+    const scopeVisibleIds = scope ? idsForScope(scope) : new Set<string>();
+    const conflictingVisibleContentIds = [...scopeVisibleIds].filter((value) =>
+      Boolean(targetId && value !== targetId),
+    );
+    const structuredVideoWitness = Boolean(
+      scopeKind === "CURRENT_MEDIA_ANCESTOR" && isVideoUrl &&
+      structuredTargetMatches && hasBoundPageMetadata &&
+      videos.length === 1 && conflictingVisibleContentIds.length === 0,
+    );
     const hasCurrentDomEvidence = Boolean(
       scope && (
         scopeKind === "CURRENT_MEDIA_ANCESTOR"
-          ? mediaMatchesUrl && metadataWitnessCount >= 2
+          ? mediaMatchesUrl && (metadataWitnessCount >= 2 || structuredVideoWitness)
           : mediaMatchesUrl || description.length > 0
       ),
     );
@@ -281,6 +360,12 @@ export async function readDouyinCurrentContentEvidence(
     // index after SPA navigation must not silently identify another detail.
     const scopeToken = scope ? `${Date.now()}-${Math.random().toString(36).slice(2)}` : null;
     if (scope && scopeToken) scope.setAttribute("data-veridia-douyin-scope", scopeToken);
+    if (scope && scopeToken && !scopeSelector) {
+      scopeSelector = `[data-veridia-douyin-scope='${scopeToken}']`;
+    }
+    const scopeIndex = scope && scopeSelector
+      ? Array.from(document.querySelectorAll(scopeSelector)).indexOf(scope)
+      : -1;
 
     const visibleText = document.body?.innerText || "";
     const terminalMarker = /你要观看的(?:图文|视频|作品|内容)不存在|你要查看的(?:图文|视频|作品|内容)不存在|作品不存在|作品已删除/u.test(visibleText)
@@ -306,6 +391,11 @@ export async function readDouyinCurrentContentEvidence(
       hasAuthor,
       actionBarControlCount,
       hasStructuredCurrentContent,
+      structuredTargetContentId: structuredTarget?.contentId || null,
+      hasStructuredTargetPayload: structuredTargetMatches,
+      hasBoundPageMetadata,
+      currentVideoCandidateCount: eligibleCurrentPlayerVideos.length,
+      conflictingVisibleContentIds,
       contentIdInScope,
       contentIdInDocument,
       contentIdMatches,
@@ -313,23 +403,35 @@ export async function readDouyinCurrentContentEvidence(
       hasContentEvidence: contentIdMatches && hasCurrentDomEvidence,
       terminalMarker,
     } satisfies DouyinCurrentContentEvidence;
-  }, expectedContentId || null).catch(() => ({ ...EMPTY_EVIDENCE }));
+  }, {
+    expectedContentId: expectedContentId || null,
+    structuredTargetEvidence: structuredTargetEvidence || null,
+  }).catch(() => ({ ...EMPTY_EVIDENCE }));
 }
 
 export async function waitForDouyinCurrentContentEvidence(
   page: Page,
   expectedContentId: string | null,
   timeoutMs: number,
+  structuredTargetEvidence?: DouyinStructuredTargetEvidence | null,
 ) {
   const deadline = Date.now() + timeoutMs;
-  let latest = await readDouyinCurrentContentEvidence(page, expectedContentId);
+  let latest = await readDouyinCurrentContentEvidence(
+    page,
+    expectedContentId,
+    structuredTargetEvidence,
+  );
   while (
     !latest.hasContentEvidence &&
     !latest.terminalMarker &&
     Date.now() < deadline
   ) {
     await page.waitForTimeout(150);
-    latest = await readDouyinCurrentContentEvidence(page, expectedContentId);
+    latest = await readDouyinCurrentContentEvidence(
+      page,
+      expectedContentId,
+      structuredTargetEvidence,
+    );
   }
   return latest;
 }

@@ -1,5 +1,12 @@
 # VERIDIA 更新日志
 
+## 1.1.38 - 2026-09-15
+
+### 抖音真实视频详情识别
+
+- 增强真实抖音视频详情页识别，正常公开视频不再误报页面结构异常，同时保持技术异常暂停机制不变。
+- Improved real Douyin video-detail recognition using content-ID-bound current-content evidence so valid public video pages are not falsely classified as STRUCTURE_MISMATCH, while recommendation/preload/SPA stale content and true technical failures remain fail-closed.
+
 ## 1.1.37 - 2026-09-15
 
 ### 抖音失败即停与店铺话题品牌范围

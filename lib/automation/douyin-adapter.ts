@@ -9,6 +9,7 @@ import {
 import {
   readDouyinCurrentContentEvidence,
   type DouyinCurrentContentEvidence,
+  type DouyinStructuredTargetEvidence,
 } from "./douyin-current-content-evidence";
 import {
   douyinTopicMatchKey,
@@ -456,8 +457,18 @@ export async function collectDouyinEvidence(
   expectedContentId?: string | null,
 ) {
   // Re-resolve every observation: a readiness reference can outlive a SPA DOM.
+  const structuredTargetEvidence: DouyinStructuredTargetEvidence | null =
+    currentContentEvidence?.hasStructuredTargetPayload &&
+      currentContentEvidence.structuredTargetContentId
+      ? {
+          contentId: currentContentEvidence.structuredTargetContentId,
+          hasPayload: true,
+          source: null,
+        }
+      : null;
   const scopeReference = await readDouyinCurrentContentEvidence(
     page, expectedContentId || currentContentEvidence?.scopeContentId || null,
+    structuredTargetEvidence,
   );
   return page.evaluate((scopeInput) => {
     const candidateScope = scopeInput.scopeSelector && scopeInput.scopeIndex >= 0
@@ -909,12 +920,27 @@ export class PlaywrightDouyinAdapter {
     const finalUrl = options.canonicalUrl || page.url();
     const urlIdentity = douyinContentIdentityFromUrl(finalUrl) ||
       douyinContentIdentityFromUrl(originalUrl);
+    const contentId = options.contentId || urlIdentity?.contentId || null;
+    const liveIdentity = douyinContentIdentityFromUrl(page.url());
+    const liveContentId = liveIdentity?.contentId || new URL(page.url()).searchParams.get("modal_id");
+    const locationMatchesContentId = !contentId || !liveContentId || liveContentId === contentId;
+    const providedStructuredItem = contentId && options.structured && locationMatchesContentId
+      ? findDouyinAwemeItem(options.structured.item, contentId)
+      : null;
+    const structuredTargetEvidence: DouyinStructuredTargetEvidence | null =
+      contentId && providedStructuredItem && hasDouyinContentPayload(providedStructuredItem)
+        ? {
+            contentId,
+            hasPayload: true,
+            source: options.structured?.source || "NETWORK_RESPONSE",
+          }
+        : null;
     const currentContentEvidence = options.currentContentEvidence ||
       await readDouyinCurrentContentEvidence(
         page,
-        options.contentId || urlIdentity?.contentId || null,
+        contentId,
+        structuredTargetEvidence,
       );
-    const contentId = options.contentId || urlIdentity?.contentId || null;
     let evidence = await collectDouyinEvidence(
       page,
       currentContentEvidence,
@@ -925,12 +951,6 @@ export class PlaywrightDouyinAdapter {
           evidence.structuredPayloads,
           contentId,
         )
-      : null;
-    const liveIdentity = douyinContentIdentityFromUrl(page.url());
-    const liveContentId = liveIdentity?.contentId || new URL(page.url()).searchParams.get("modal_id");
-    const locationMatchesContentId = !contentId || !liveContentId || liveContentId === contentId;
-    const providedStructuredItem = contentId && options.structured && locationMatchesContentId
-      ? findDouyinAwemeItem(options.structured.item, contentId)
       : null;
     const structuredEvidence = providedStructuredItem && hasDouyinContentPayload(providedStructuredItem) && options.structured
       ? { ...options.structured, item: providedStructuredItem }

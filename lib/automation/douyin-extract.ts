@@ -24,6 +24,8 @@ import {
   waitForDouyinCurrentContentEvidence,
 } from "./douyin-current-content-evidence";
 import {
+  findDouyinAwemeItem,
+  hasDouyinContentPayload,
   playwrightDouyinAdapter,
   type DouyinStructuredEvidence,
 } from "./douyin-adapter";
@@ -295,9 +297,21 @@ export async function extractDouyinAuditTaskAutomatically(
     assertCurrentGeneration();
     // No future response belongs to this completed evidence collection.
     responseCollector.dispose();
+    const structuredTargetItem = contentIdentity && structured
+      ? findDouyinAwemeItem(structured.item, contentIdentity.contentId)
+      : null;
+    const structuredTargetEvidence = contentIdentity && structuredTargetItem &&
+      hasDouyinContentPayload(structuredTargetItem)
+      ? {
+          contentId: contentIdentity.contentId,
+          hasPayload: true,
+          source: structured?.source || "NETWORK_RESPONSE" as const,
+        }
+      : null;
     const identityEvidence = await readDouyinCurrentContentEvidence(
       page,
       contentIdentity?.contentId || null,
+      structuredTargetEvidence,
     );
 
     const identity = await readDouyinPageIdentity(
@@ -327,6 +341,10 @@ export async function extractDouyinAuditTaskAutomatically(
       currentActionBarControls: identity.currentContentEvidence.actionBarControlCount,
       redirectCount: uniqueValues(redirectChain).length,
       structuredEvidence: Boolean(structured),
+      structuredTargetPayload: identityEvidence.hasStructuredTargetPayload,
+      boundPageMetadata: identityEvidence.hasBoundPageMetadata,
+      currentVideoCandidates: identityEvidence.currentVideoCandidateCount,
+      conflictingVisibleContentIds: identityEvidence.conflictingVisibleContentIds,
       navigationAttempts,
     }));
 

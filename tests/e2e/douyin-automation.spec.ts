@@ -5,6 +5,7 @@ import path from "node:path";
 import { E2E_ORIGIN } from "./e2e-origin";
 import { playwrightDouyinAdapter } from "../../lib/automation/douyin-adapter";
 import { readDouyinCurrentContentEvidence } from "../../lib/automation/douyin-current-content-evidence";
+import { readDouyinPageIdentity } from "../../lib/automation/douyin-page-classification";
 import { DEFAULT_AUTOMATION_EXTRACTION_DEADLINE_MS } from "../../lib/automation/extraction-deadline";
 import { DEFAULT_BROWSER_LIFECYCLE_CLEANUP_DEADLINE_MS } from "../../lib/automation/generation-lifecycle";
 
@@ -693,6 +694,70 @@ test("混合 Excel 只创建一个导入记录并拆分为两个串行平台批�
   } finally {
     await cleanupOwnedAutomationBatches(page, ownedBatchIds);
   }
+});
+
+test("Protected DOUYIN_REAL_VIDEO_DETAIL_RECOGNITION：真实新播放器结构只接受目标绑定的当前视频证据", async ({ page }) => {
+  const contentId = "7680362613540700006";
+  const url = `https://www.douyin.com/video/${contentId}`;
+  const fixture = fs.readFileSync(
+    path.resolve("tests/regression/fixtures/douyin/real-video-detail-current-player.html"),
+    "utf8",
+  );
+  await page.route("https://www.douyin.com/**", (route) => route.fulfill({
+    status: 200,
+    contentType: "text/html; charset=utf-8",
+    body: fixture,
+  }));
+  await page.goto(url);
+  const structured = {
+    item: {
+      aweme_id: contentId,
+      group_id: contentId,
+      desc: "真实新播放器结构的当前视频正文 #当前话题",
+      author: { nickname: "当前作者" },
+      video: { duration: 12_000 },
+      statistics: {
+        aweme_id: contentId,
+        digg_count: 8,
+        comment_count: 4,
+        collect_count: 2,
+      },
+    },
+    responseUrl: "https://www.douyin.com/aweme/v1/web/aweme/detail/",
+    source: "NETWORK_RESPONSE" as const,
+  };
+  const currentContentEvidence = await readDouyinCurrentContentEvidence(
+    page,
+    contentId,
+    { contentId, hasPayload: true, source: "NETWORK_RESPONSE" },
+  );
+  expect(await readDouyinPageIdentity(
+    page,
+    200,
+    url,
+    contentId,
+    currentContentEvidence,
+  )).toMatchObject({
+    state: "NORMAL",
+    pageType: "VIDEO_DETAIL",
+    currentContentEvidence: {
+      scopeKind: "CURRENT_MEDIA_ANCESTOR",
+      currentVideoCandidateCount: 1,
+      hasContentEvidence: true,
+    },
+  });
+  expect(await playwrightDouyinAdapter.extract(page, url, {
+    canonicalUrl: url,
+    contentId,
+    structured,
+    currentContentEvidence,
+  })).toMatchObject({
+    noteId: contentId,
+    pageType: "VIDEO_DETAIL",
+    noteType: "VIDEO",
+    pageStatus: "NORMAL",
+    body: "真实新播放器结构的当前视频正文 #当前话题",
+  });
 });
 
 test("抖音复用店铺映射但仅审核 ACCEPTED，小红书继续审核 REQUIRED", async ({ page }) => {

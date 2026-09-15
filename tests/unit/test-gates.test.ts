@@ -304,12 +304,12 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // v1.1.37 adds DOUYIN fail-stop and store-topic brand-scope contracts.
-      behaviorCount: 35,
+      // v1.1.38 adds real Douyin video-detail recognition without weakening fail-stop.
+      behaviorCount: 36,
       groupCount: 14,
       triggerFiles: {
-        totalEntryCount: 134,
-        exactFileEntryCount: 117,
+        totalEntryCount: 138,
+        exactFileEntryCount: 121,
         directoryEntryCount: 17,
         patternEntryCount: 0,
         duplicateEntryCount: 0,
