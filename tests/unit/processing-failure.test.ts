@@ -105,28 +105,23 @@ describe("处理失败结果口径", () => {
       buildAuditResultWhere({ manualStatus: "PENDING" }),
     );
     expect(pending).toContain('"autoStatus":"NEEDS_REVIEW"');
-    expect(pending).toContain('"retentionStatus":"PENDING"');
     expect(pending).toContain('"manualReviews":{"none":{}}');
     const notRequired = JSON.stringify(
       buildAuditResultWhere({ manualStatus: "NOT_REQUIRED" }),
     );
     expect(notRequired).toContain('"autoStatus":"NEEDS_REVIEW"');
-    expect(notRequired).toContain('"retentionStatus":"PENDING"');
     expect(notRequired).toContain('"manualReviews":{"none":{}}');
   });
 
-  it("待留存验证与真正待人工复核使用互斥查询分类", () => {
+  it("legacy 待留存筛选不再返回业务记录", () => {
     const pendingRetention = JSON.stringify(
       buildAuditResultWhere({ status: "PENDING_RETENTION" }),
     );
     const needsReview = JSON.stringify(
       buildAuditResultWhere({ status: "NEEDS_REVIEW" }),
     );
-    expect(pendingRetention).toContain('"publicStatus":"PUBLIC"');
-    expect(pendingRetention).toContain('"retentionStatus":"PENDING"');
-    expect(pendingRetention).toContain('"failureReasons":{"in":["[]",""]}');
+    expect(pendingRetention).toContain('"in":[]');
     expect(needsReview).toContain('"autoStatus":"NEEDS_REVIEW"');
-    expect(needsReview).toContain('"NOT":{"AND"');
   });
 
   it("日期范围使用本地时区闭区间并支持单日", () => {
@@ -234,7 +229,6 @@ describe("处理失败结果口径", () => {
       buildAuditResultWhere({ status: "NEEDS_REVIEW" }),
     );
     expect(needsReview).toContain('"autoStatus":"NEEDS_REVIEW"');
-    expect(needsReview).toContain('"retentionStatus":"PENDING"');
     expect(needsReview).toContain('"NOT"');
   });
 

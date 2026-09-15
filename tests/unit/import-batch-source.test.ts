@@ -165,12 +165,12 @@ describe("审核结果导入批次来源", () => {
     expect(route).toContain("importRecordId: importRecord.id");
   });
 
-  it("重新审核和留存复核继承原任务导入来源", () => {
+  it("重新审核和 legacy 手工留存复核继承原任务导入来源", () => {
     expect(source("app/api/results/bulk/route.ts")).toContain(
       "importRecordId: result.task.importRecordId",
     );
-    expect(source("lib/automation/retention-recheck.ts")).toContain(
-      "importRecordId: candidate.task.importRecordId",
+    expect(source("app/api/results/[id]/retention/recheck/route.ts")).toContain(
+      "importRecordId: result.task.importRecordId",
     );
     const batchService = source("lib/automation/batch-service.ts");
     expect(batchService).toContain(

@@ -481,7 +481,7 @@ export function evaluateAudit(
   });
   evaluations.push({
     ruleKey: "GLOBAL_RETENTION",
-    ruleName: "公开留存",
+    ruleName: "公开留存（活动信息）",
     expectedValue:
       context.retentionDays > 0 ? `公开保留至少 ${context.retentionDays} 天` : "不要求",
     actualValue:
@@ -494,9 +494,9 @@ export function evaluateAudit(
           : retentionStatus === "NOT_SATISFIED"
             ? "未满足"
             : "不要求",
-    passed: retentionStatus !== "NOT_SATISFIED",
-    failureReason:
-      retentionStatus === "NOT_SATISFIED" ? "公开留存要求未满足" : undefined,
+    // Retention is preserved in immutable evidence for compatibility, but it is
+    // activity information rather than an automated audit requirement.
+    passed: true,
     evidence: {
       publishedAt: note.publishedAt ?? null,
       retentionDays: context.retentionDays,
@@ -904,12 +904,9 @@ export function evaluateAudit(
     autoStatus = "NEEDS_REVIEW";
   } else if (
     publicStatus === "UNKNOWN" ||
-    retentionStatus === "UNKNOWN" ||
     imageStatus === "IMAGES_READ_FAILED"
   ) {
     autoStatus = "NEEDS_REVIEW";
-  } else if (publicAuditRequired && retentionStatus === "PENDING") {
-    autoStatus = "PENDING_RETENTION";
   }
 
   if (context.basicRewardRequired) {

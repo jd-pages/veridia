@@ -30,7 +30,6 @@ const toneByValue: Record<string, Tone> = {
   NOT_SATISFIED: "danger",
   NON_COMPLIANT: "danger",
   NEEDS_REVIEW: "warning",
-  PENDING_RETENTION: "info",
   PENDING: "warning",
   IMAGES_READ_FAILED: "warning",
   PROCESSING: "info",

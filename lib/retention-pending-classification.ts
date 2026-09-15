@@ -35,7 +35,6 @@ const mandatoryRuleKeys = new Set([
   "GLOBAL_BODY",
   "PRODUCT_STAGE_BODY",
   "GLOBAL_PUBLIC_STATUS",
-  "GLOBAL_RETENTION",
   "STORE_TOPIC",
   "KABRITA_BASIC_REWARD",
 ]);
@@ -49,7 +48,6 @@ function failedMandatoryRule(result: RetentionClassificationRuleResult) {
 export function retentionReviewReasons(input: RetentionClassificationInput) {
   const reasons: string[] = [];
   if (input.publicStatus === "UNKNOWN") reasons.push("公开状态待确认");
-  if (input.retentionStatus === "UNKNOWN") reasons.push("公开留存期限无法确认");
   if (input.bodyStatus === "UNKNOWN") reasons.push("正文读取结果待确认");
   if (["IMAGES_READ_FAILED", "NOT_CHECKED"].includes(input.imageStatus)) {
     reasons.push("图片读取结果待确认");
@@ -60,7 +58,9 @@ export function retentionReviewReasons(input: RetentionClassificationInput) {
   if (input.interactionRewardStatus === "PENDING") {
     reasons.push("互动奖励待确认");
   }
-  const storedReasons = parseStoredStringArray(input.failureReasons);
+  const storedReasons = parseStoredStringArray(input.failureReasons).filter(
+    (reason) => !/^(?:公开)?留存|留存期限/u.test(reason),
+  );
   if (
     input.autoStatus === "NEEDS_REVIEW" &&
     storedReasons.length &&
@@ -85,7 +85,6 @@ export function hasExplicitAuditFailure(input: RetentionClassificationInput) {
     !input.topicsCompliant ||
     !input.clickableCompliant ||
     input.publicStatus === "NOT_PUBLIC" ||
-    input.retentionStatus === "NOT_SATISFIED" ||
     input.storeTopicStatus === "NON_COMPLIANT" ||
     (input.ruleResults || []).some(failedMandatoryRule);
 }
@@ -93,7 +92,7 @@ export function hasExplicitAuditFailure(input: RetentionClassificationInput) {
 export function isRetentionOnlyPending(input: RetentionClassificationInput) {
   return input.pageStatus === "NORMAL" &&
     input.publicStatus === "PUBLIC" &&
-    input.retentionStatus === "PENDING" &&
+    ["PENDING", "UNKNOWN", "SATISFIED"].includes(input.retentionStatus) &&
     !hasExplicitAuditFailure(input) &&
     retentionReviewReasons(input).length === 0;
 }
@@ -103,8 +102,16 @@ export function deriveAuditBusinessStatus(input: RetentionClassificationInput) {
     return input.autoStatus;
   }
   if (input.pageStatus === "NOTE_NOT_FOUND") return "NOTE_NOT_FOUND";
+  if (input.pageStatus === "READ_FAILED") return "READ_FAILED";
+  if (input.pageStatus !== "NORMAL") return "NEEDS_REVIEW";
   if (hasExplicitAuditFailure(input)) return "FAILED";
   if (retentionReviewReasons(input).length) return "NEEDS_REVIEW";
-  if (isRetentionOnlyPending(input)) return "PENDING_RETENTION";
+  if (
+    (input.autoStatus === "PENDING_RETENTION" && isRetentionOnlyPending(input)) ||
+    (input.autoStatus === "NEEDS_REVIEW" && isRetentionOnlyPending(input))
+  ) {
+    return "PASSED";
+  }
+  if (input.autoStatus === "PENDING_RETENTION") return "NEEDS_REVIEW";
   return input.autoStatus === "NEEDS_REVIEW" ? "NEEDS_REVIEW" : input.autoStatus;
 }

@@ -177,7 +177,7 @@ describe("immutable audit result presentation", () => {
     expect(presentation.automaticConclusion.label).toBe("审核通过");
   });
 
-  it("normalizes legacy retention-only NEEDS_REVIEW to PENDING_RETENTION", () => {
+  it("normalizes legacy retention-only NEEDS_REVIEW to PASSED", () => {
     const presentation = buildAuditResultPresentation(base({
       autoStatus: "NEEDS_REVIEW",
       retentionStatus: "PENDING",
@@ -197,15 +197,24 @@ describe("immutable audit result presentation", () => {
 
     expect(presentation.consistency.status).toBe("CONSISTENT");
     expect(presentation.automaticConclusion).toMatchObject({
-      status: "PENDING_RETENTION",
-      label: "待留存验证",
-      tone: "info",
+      status: "PASSED",
+      label: "审核通过",
+      tone: "success",
     });
     expect(presentation.failureReasons).toEqual([]);
     expect(presentation.reviewReasons).toEqual([]);
-    expect(presentation.pendingReasons).toContain("当前公开，公开留存期限尚未到期");
+    expect(presentation.pendingReasons).toEqual([]);
     expect(presentation.isManualReviewRequired).toBe(false);
-    expect(presentation.retentionDisplay.dueAt).toBe("2026-09-20T00:00:00.000Z");
+    expect(presentation.retentionDisplay).toMatchObject({
+      label: "不要求",
+      dueAt: null,
+    });
+
+    const pendingEra = buildAuditResultPresentation(base({
+      autoStatus: "PENDING_RETENTION",
+      retentionStatus: "PENDING",
+    }));
+    expect(pendingEra.automaticConclusion.status).toBe("PASSED");
   });
 
   it("keeps true review evidence dominant while retention remains separately pending", () => {
@@ -218,7 +227,7 @@ describe("immutable audit result presentation", () => {
     expect(presentation.automaticConclusion.status).toBe("NEEDS_REVIEW");
     expect(presentation.isManualReviewRequired).toBe(true);
     expect(presentation.reviewReasons).toContain("公开状态待确认");
-    expect(presentation.retentionDisplay.label).toBe("待留存验证");
+    expect(presentation.retentionDisplay.label).toBe("不要求");
   });
 
   it("lets manual review override the main conclusion without changing automatic evidence", () => {
@@ -331,10 +340,10 @@ describe("audit evaluation persistence invariant", () => {
     })).toThrow(/AUDIT_EVALUATION_INCONSISTENT/u);
   });
 
-  it("accepts PENDING_RETENTION when retention is the only pending fact", () => {
+  it("accepts PASSED when retention is pending information", () => {
     expect(() => assertAuditEvaluationConsistency({
       ...evaluation,
-      autoStatus: "PENDING_RETENTION",
+      autoStatus: "PASSED",
       retentionStatus: "PENDING",
     })).not.toThrow();
   });

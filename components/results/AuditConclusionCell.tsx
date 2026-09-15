@@ -17,7 +17,6 @@ function AuditConclusionCell(props: {
   const { row } = props;
   const duplicateReaudit = duplicateReauditMetadataFromNotes(row.task.notes);
   const reasons = row.presentation.failureReasons;
-  const pendingReasons = row.presentation.pendingReasons;
   const manual = row.manualReviews[0];
   const dotClass = (tone: string) => tone === "success"
     ? styles.dotSuccess
@@ -75,13 +74,6 @@ function AuditConclusionCell(props: {
         <Tooltip title={reasons.join("；")}>
           <div className={styles.reasonText}>{reasons.join("；")}</div>
         </Tooltip>
-      ) : pendingReasons.length ? (
-        <div className={styles.cellSecondary}>
-          {pendingReasons.join("；")}
-          {row.presentation.retentionDisplay.dueAt
-            ? ` · ${new Date(row.presentation.retentionDisplay.dueAt).toLocaleString("zh-CN", { hour12: false })} 后验证`
-            : ""}
-        </div>
       ) : (
         <div className={styles.cellSecondary}>
           {mainValue === "PASSED" ? "无异常" : "暂无补充原因"}

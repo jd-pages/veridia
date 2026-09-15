@@ -10,8 +10,10 @@ import {
 } from "@/lib/result-source";
 import { currentAuditResultWhere } from "@/lib/audit-result-lifecycle";
 import {
+  failedWhere,
   manualReviewWhere,
   pendingRetentionWhere,
+  passedWhere,
   type RetentionBusinessClassificationIds,
 } from "@/lib/retention-pending-query";
 
@@ -209,21 +211,19 @@ export function buildAuditResultWhere(
   } else if (filters.status === "NOTE_NOT_FOUND") {
     and.push(noteNotFoundWhere);
   } else if (filters.status === "PENDING_RETENTION") {
-    and.push(pendingRetentionWhere(evidenceFilters?.retentionClassification));
+    and.push(pendingRetentionWhere());
     and.push({ NOT: noteNotFoundStoredStatusWhere });
   } else if (filters.status === "NEEDS_REVIEW") {
     and.push(manualReviewWhere(evidenceFilters?.retentionClassification));
     and.push({ NOT: noteNotFoundStoredStatusWhere });
+  } else if (filters.status === "PASSED") {
+    and.push(passedWhere(evidenceFilters?.retentionClassification));
+    and.push({ NOT: noteNotFoundStoredStatusWhere });
+  } else if (filters.status === "FAILED") {
+    and.push(failedWhere(evidenceFilters?.retentionClassification));
+    and.push({ NOT: noteNotFoundStoredStatusWhere });
   } else if (filters.status) {
     and.push({ autoStatus: filters.status });
-    if (filters.status === "PASSED") {
-      and.push({
-        NOT: pendingRetentionWhere(evidenceFilters?.retentionClassification),
-      });
-    }
-    if (["PASSED", "FAILED"].includes(filters.status)) {
-      and.push({ NOT: noteNotFoundStoredStatusWhere });
-    }
   }
 
   if (filters.manualStatus === "PENDING") {

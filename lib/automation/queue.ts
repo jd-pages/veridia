@@ -49,10 +49,6 @@ import {
   waitForOwnedExtractionCleanup,
   type OwnedExtractionHandle,
 } from "./generation-lifecycle";
-import {
-  configureRetentionRecheckQueueWake,
-  refreshActiveRetentionRecheckWorkflow,
-} from "./retention-recheck";
 
 const LOCAL_MOCK_WAIT_CAP_MS = Math.max(
   1,
@@ -825,7 +821,6 @@ async function processBatch(batchId: string) {
 
 async function runQueue() {
   await ensureRecovered();
-  await refreshActiveRetentionRecheckWorkflow();
   while (true) {
     const sessionBlockedBatch = await prisma.auditBatch.findFirst({
       where: {
@@ -845,7 +840,6 @@ async function runQueue() {
     });
     if (!batch) return;
     await processBatch(batch.id);
-    await refreshActiveRetentionRecheckWorkflow();
   }
 }
 
@@ -853,8 +847,6 @@ export function kickAutomaticAuditQueue() {
   requestRunnerWake(queueState);
   startAutomaticAuditQueueRunner();
 }
-
-configureRetentionRecheckQueueWake(kickAutomaticAuditQueue);
 
 function startAutomaticAuditQueueRunner() {
   if (queueState.runner) return;

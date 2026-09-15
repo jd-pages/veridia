@@ -7,7 +7,6 @@ const MANDATORY_RESULT_KEYS = new Set([
   "GLOBAL_BODY",
   "PRODUCT_STAGE_BODY",
   "GLOBAL_PUBLIC_STATUS",
-  "GLOBAL_RETENTION",
   "STORE_TOPIC",
   "KABRITA_BASIC_REWARD",
 ]);
@@ -43,35 +42,11 @@ export function assertAuditEvaluationConsistency(evaluation: AuditEvaluation) {
       !evaluation.clickableCompliant ||
       evaluation.pageStatus !== "NORMAL" ||
       evaluation.publicStatus === "NOT_PUBLIC" ||
-      evaluation.retentionStatus === "NOT_SATISFIED" ||
       evaluation.storeTopicStatus === "NON_COMPLIANT" ||
       evaluation.ruleResults.some(isFailedMandatoryResult)
     )
   ) {
     throw new Error("AUDIT_EVALUATION_INCONSISTENT: PASSED 包含失败的强制审核事实");
-  }
-
-  if (evaluation.autoStatus === "PENDING_RETENTION") {
-    if (
-      evaluation.publicStatus !== "PUBLIC" ||
-      evaluation.retentionStatus !== "PENDING" ||
-      evaluation.failureReasons.length > 0 ||
-      evaluation.pageStatus !== "NORMAL" ||
-      evaluation.bodyStatus === "UNKNOWN" ||
-      evaluation.imageCompliant === false ||
-      ["IMAGES_READ_FAILED", "NOT_CHECKED"].includes(evaluation.imageStatus) ||
-      !evaluation.bodyCompliant ||
-      !evaluation.topicsCompliant ||
-      !evaluation.clickableCompliant ||
-      ["NON_COMPLIANT", "UNREVIEWABLE"].includes(evaluation.storeTopicStatus) ||
-      evaluation.interactionReward?.interactionRewardStatus === "PENDING" ||
-      evaluation.ruleResults.some(isFailedMandatoryResult)
-    ) {
-      throw new Error(
-        "AUDIT_EVALUATION_INCONSISTENT: PENDING_RETENTION 包含失败或人工复核事实",
-      );
-    }
-    return;
   }
 
   if (evaluation.autoStatus !== "NEEDS_REVIEW") return;
@@ -81,13 +56,13 @@ export function assertAuditEvaluationConsistency(evaluation: AuditEvaluation) {
     evaluation.bodyStatus === "UNKNOWN" ||
     ["IMAGES_READ_FAILED", "NOT_CHECKED"].includes(evaluation.imageStatus) ||
     evaluation.publicStatus === "UNKNOWN" ||
-    evaluation.retentionStatus === "UNKNOWN" ||
     evaluation.storeTopicStatus === "UNREVIEWABLE" ||
     evaluation.interactionReward?.interactionRewardStatus === "PENDING" ||
-    evaluation.ruleResults.some((result) =>
+    evaluation.ruleResults.some((result) => result.ruleKey !== "GLOBAL_RETENTION" && (
       containsReviewSignal(result.actualValue) ||
       containsReviewSignal(result.failureReason) ||
-      containsReviewSignal(result.evidence),
+      containsReviewSignal(result.evidence)
+    ),
     );
   if (!hasSignal) {
     throw new Error("AUDIT_EVALUATION_INCONSISTENT: NEEDS_REVIEW 缺少复核信号");

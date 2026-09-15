@@ -1,5 +1,14 @@
 # VERIDIA 更新日志
 
+## 1.1.36 - 2026-09-15
+
+### 当前公开与留存口径
+
+- 当前审核时能够正常打开并读取目标帖子的真实内容，即判定当前公开；登录壳、风控页、空页面、明确不存在或网络异常仍按原正式证据边界处理。
+- 留存天数不再参与系统自动审核，不影响审核结论、人工复核、失败原因、统计、筛选或导出。
+- 移除待留存验证的用户界面与后台自动留存复查调度；历史留存专属待处理结果仅在展示层归一为审核通过，不修改历史数据库记录。
+- Retention days no longer participate in automated audit decisions. A post that is currently accessible with valid content evidence can pass immediately; no retention-pending state or automatic retention recheck is created.
+
 ## 1.1.35 - 2026-09-15
 
 ### 留存待验证流程加固

@@ -13,10 +13,7 @@ import {
   deriveAuditBusinessStatus,
   retentionReviewReasons,
 } from "@/lib/retention-pending-classification";
-import {
-  resolveRetentionDueAt,
-  retentionDaysFromRuleSnapshot,
-} from "@/lib/retention-status";
+import { retentionDaysFromRuleSnapshot } from "@/lib/retention-status";
 
 export type AuditResultPresentationTone =
   | "success"
@@ -174,7 +171,6 @@ const MANDATORY_RESULT_KEYS = new Set([
   "GLOBAL_BODY",
   "PRODUCT_STAGE_BODY",
   "GLOBAL_PUBLIC_STATUS",
-  "GLOBAL_RETENTION",
   "STORE_TOPIC",
   "KABRITA_BASIC_REWARD",
 ]);
@@ -479,7 +475,6 @@ function automaticLabel(status: string, unavailable: boolean) {
   if (status === "FAILED") return "审核不通过";
   if (status === "READ_FAILED") return "读取失败";
   if (status === "PROCESSING") return "处理中";
-  if (status === "PENDING_RETENTION") return "待留存验证";
   return "待人工复核";
 }
 
@@ -487,20 +482,18 @@ function conclusionTone(status: string, unavailable: boolean): AuditResultPresen
   if (unavailable) return "neutral";
   if (status === "PASSED") return "success";
   if (status === "FAILED") return "danger";
-  if (status === "PENDING_RETENTION") return "info";
   return "warning";
 }
 
 function reviewSignals(input: PresentationInput, results: PresentationRuleResult[]) {
   const signals: string[] = [];
   if (input.publicStatus === "UNKNOWN") signals.push("公开状态待确认");
-  if (input.retentionStatus === "UNKNOWN") signals.push("公开留存期限无法确认");
   if (input.bodyStatus === "UNKNOWN") signals.push("正文读取结果待确认");
   if (["IMAGES_READ_FAILED", "NOT_CHECKED"].includes(input.imageStatus)) {
     signals.push("图片读取结果待确认");
   }
   if (input.interactionRewardStatus === "PENDING") signals.push("互动奖励待确认");
-  if (!signals.length && results.some((result) =>
+  if (!signals.length && results.some((result) => result.ruleKey !== "GLOBAL_RETENTION" &&
     /需人工确认|待人工复核|待验证|无法确认/u.test(
       `${result.actualValue} ${result.failureReason || ""} ${result.evidence}`,
     ),
@@ -548,24 +541,9 @@ export function buildAuditResultPresentation(
   const legacyDuplicate = legacyZeroHistoryDuplicateMetadataFromNotes(input.task.notes);
   const persistedAutomaticStatus = duplicate?.automaticResult ||
     legacyDuplicate?.automaticResult || input.autoStatus;
-  const retentionRule = results.find((result) => result.ruleKey === "GLOBAL_RETENTION");
-  const retentionEvidenceDueAt = retentionRule
-    ? parseEvidence(retentionRule.evidence).dueAt
-    : null;
-  const retentionDueAt = resolveRetentionDueAt({
-    retentionDueAt: input.retentionDueAt ||
-      (typeof retentionEvidenceDueAt === "string" ? retentionEvidenceDueAt : null),
-    retentionStatus: input.retentionStatus,
-    ruleSnapshot: input.ruleSnapshot,
-    note: input.note,
-  });
-  const effectiveRetentionStatus = input.retentionStatus === "PENDING" && !retentionDueAt
-    ? "UNKNOWN"
-    : input.retentionStatus;
   const classificationInput = {
     ...input,
     autoStatus: persistedAutomaticStatus,
-    retentionStatus: effectiveRetentionStatus,
     ruleResults: results,
   };
   const automaticStatus = deriveAuditBusinessStatus(classificationInput);
@@ -574,19 +552,15 @@ export function buildAuditResultPresentation(
     !input.topicsCompliant || !input.clickableCompliant ||
     input.pageStatus !== "NORMAL" ||
     input.publicStatus === "NOT_PUBLIC" ||
-    input.retentionStatus === "NOT_SATISFIED" ||
     input.storeTopicStatus === "NON_COMPLIANT" ||
     results.some(isFailedMandatoryResult)
   );
   const baseReasons = auditConclusionFailureReasons(input).filter(
-    (reason) => !(
-      input.retentionStatus === "PENDING" &&
-      /^(?:公开)?留存(?:待验证|尚未到期)$/u.test(reason)
-    ),
+    (reason) => !/^(?:公开)?留存|留存期限/u.test(reason),
   );
   const reviewReasons = retentionReviewReasons(classificationInput);
   const derivedReviewSignals = automaticStatus === "NEEDS_REVIEW"
-    ? [...new Set([...reviewSignals({ ...input, retentionStatus: effectiveRetentionStatus }, results), ...reviewReasons])]
+    ? [...new Set([...reviewSignals(input, results), ...reviewReasons])]
     : [];
   const missingReviewSignal = automaticStatus === "NEEDS_REVIEW" &&
     !baseReasons.length && !derivedReviewSignals.length && !duplicate;
@@ -628,19 +602,8 @@ export function buildAuditResultPresentation(
     ...baseReasons,
     ...(consistencyMessage ? [consistencyMessage] : []),
   ])];
-  const pendingReasons = automaticStatus === "PENDING_RETENTION"
-    ? ["当前公开，公开留存期限尚未到期"]
-    : [];
+  const pendingReasons: string[] = [];
   const retentionDays = retentionDaysFromRuleSnapshot(input.ruleSnapshot);
-  const retentionLabel = effectiveRetentionStatus === "PENDING"
-    ? "待留存验证"
-    : effectiveRetentionStatus === "SATISFIED"
-      ? "已满足"
-      : effectiveRetentionStatus === "NOT_SATISFIED"
-        ? "未满足"
-        : effectiveRetentionStatus === "UNKNOWN"
-          ? "无法确认"
-          : "不要求";
   const publicLabel = input.publicStatus === "PUBLIC"
     ? "当前公开"
     : input.publicStatus === "NOT_PUBLIC"
@@ -664,13 +627,13 @@ export function buildAuditResultPresentation(
       : [],
     pendingReasons,
     isManualReviewRequired: automaticStatus === "NEEDS_REVIEW" && !manual,
-    isPendingRetention: automaticStatus === "PENDING_RETENTION",
+    isPendingRetention: false,
     publicDisplay: { status: input.publicStatus, label: publicLabel },
     retentionDisplay: {
-      status: effectiveRetentionStatus,
-      label: retentionLabel,
+      status: input.retentionStatus,
+      label: retentionDays > 0 ? "仅作活动信息" : "不要求",
       requirementDays: retentionDays,
-      dueAt: retentionDueAt,
+      dueAt: null,
     },
     topic,
     body: {

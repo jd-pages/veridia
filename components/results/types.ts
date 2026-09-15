@@ -189,7 +189,6 @@ export interface ResultSummary {
   failed: number;
   notFound: number;
   review: number;
-  pendingRetention: number;
   statusCounts: Record<string, number>;
 }
 

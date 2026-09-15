@@ -15,7 +15,6 @@ import {
   AuditOutlined,
   CalendarOutlined,
   CheckCircleOutlined,
-  ClockCircleOutlined,
   CloseCircleOutlined,
   FileSearchOutlined,
   PictureOutlined,
@@ -562,20 +561,6 @@ export default function DashboardPage() {
                     <small>页面读取异常，可重新执行</small>
                   </span>
                   <b>{data.readFailed}</b>
-                  <RightOutlined />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openResults({ reason: "公开留存" })}
-                >
-                  <span className={`${styles.todoIcon} ${styles.blue}`}>
-                    <ClockCircleOutlined />
-                  </span>
-                  <span>
-                    <strong>公开留存待验证</strong>
-                    <small>当前统计接口未提供汇总</small>
-                  </span>
-                  <b>—</b>
                   <RightOutlined />
                 </button>
                 <button type="button" onClick={() => router.push("/campaigns")}>

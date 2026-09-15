@@ -325,7 +325,6 @@ function compactSelfReview(row: CompactAuditResultExportSourceRow) {
   const finalStatus = row.presentation?.conclusion.status ||
     row.manualReviews[0]?.result || row.autoStatus;
   if (finalStatus === "PASSED") return "Y";
-  if (finalStatus === "PENDING_RETENTION") return "待留存验证";
 
   const unavailable = isUnavailableNoteResult({
     pageStatus: row.pageStatus,
@@ -409,7 +408,7 @@ function compactSelfReview(row: CompactAuditResultExportSourceRow) {
 
 export function detailedSelfReview(row: CompactAuditResultExportSourceRow) {
   const summary = compactSelfReview(row);
-  if (!summary || summary === "Y" || summary === "待留存验证") return summary;
+  if (!summary || summary === "Y") return summary;
   let details = (row.presentation?.failureReasons ||
     auditConclusionFailureReasons(row)).filter(
     (reason) =>

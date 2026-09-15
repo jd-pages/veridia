@@ -62,7 +62,6 @@ function parseBasicRewardEvidence(value?: string | null) {
 function auditStatusText(value?: string) {
   if (value === "PASSED") return "通过";
   if (value === "FAILED" || value === "READ_FAILED") return "不通过";
-  if (value === "PENDING_RETENTION") return "待留存验证";
   return "待人工复核";
 }
 
@@ -80,7 +79,6 @@ export default function AuditDecisionSummary({
   const conclusionTone = row.presentation.conclusion.tone;
   const failureReasons = row.presentation.failureReasons;
   const reviewReasons = row.presentation.reviewReasons;
-  const pendingReasons = row.presentation.pendingReasons;
   const topicSummary = row.presentation.topic;
   const expectedTopicCount = topicSummary.expectedCount;
   const matchedTopicCount = topicSummary.matchedCount;
@@ -287,15 +285,6 @@ export default function AuditDecisionSummary({
         </section>
       ) : null}
 
-      {pendingReasons.length ? (
-        <section className={styles.decisionSection} aria-label="待验证事项">
-          <h3>待验证事项</h3>
-          <ul className={styles.pendingReasonList}>
-            {pendingReasons.map((reason) => <li key={reason}>{reason}</li>)}
-          </ul>
-        </section>
-      ) : null}
-
       <section className={styles.decisionSection} aria-label="审核明细">
         <h3>审核明细</h3>
         <div className={styles.auditDetailCards}>
@@ -310,29 +299,6 @@ export default function AuditDecisionSummary({
             <strong>{row.presentation.publicDisplay.label}</strong>
           </article>
 
-          <article className={styles.auditDetailCard}>
-            <h4>公开留存</h4>
-            <div className={styles.auditDetailList}>
-              <div>
-                <span>留存状态</span>
-                <strong>{row.presentation.retentionDisplay.label}</strong>
-              </div>
-              <div>
-                <span>留存要求</span>
-                <strong>
-                  {row.presentation.retentionDisplay.requirementDays > 0
-                    ? `${row.presentation.retentionDisplay.requirementDays} 天`
-                    : "不要求"}
-                </strong>
-              </div>
-              {row.presentation.retentionDisplay.dueAt ? (
-                <div>
-                  <span>留存到期</span>
-                  <strong>{formatAuditTime(row.presentation.retentionDisplay.dueAt)}</strong>
-                </div>
-              ) : null}
-            </div>
-          </article>
           <article className={styles.auditDetailCard}>
             <h4>话题审核</h4>
             {unavailable || topicUnavailable ? (

@@ -254,10 +254,6 @@ export default function AuditFilterPanel({
                 label: auditResultLabels.NOTE_NOT_FOUND,
               },
               {
-                value: "PENDING_RETENTION",
-                label: auditResultLabels.PENDING_RETENTION,
-              },
-              {
                 value: "NEEDS_REVIEW",
                 label: auditResultLabels.NEEDS_REVIEW,
               },

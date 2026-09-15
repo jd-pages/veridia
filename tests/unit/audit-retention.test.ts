@@ -16,13 +16,13 @@ describe("公开留存与旧活动奖励兼容", () => {
 
   it.each([
     ["2026-07-08T08:30:00.000Z", true, "PUBLIC", "SATISFIED", "PASSED"],
-    ["2026-09-01T08:30:00.000Z", true, "PUBLIC", "PENDING", "PENDING_RETENTION"],
-    [null, true, "PUBLIC", "UNKNOWN", "NEEDS_REVIEW"],
-    ["invalid", true, "PUBLIC", "UNKNOWN", "NEEDS_REVIEW"],
+    ["2026-09-01T08:30:00.000Z", true, "PUBLIC", "PENDING", "PASSED"],
+    [null, true, "PUBLIC", "UNKNOWN", "PASSED"],
+    ["invalid", true, "PUBLIC", "UNKNOWN", "PASSED"],
     ["2026-07-08T08:30:00.000Z", false, "NOT_PUBLIC", "NOT_SATISFIED", "FAILED"],
     ["2026-07-08T08:30:00.000Z", null, "UNKNOWN", "UNKNOWN", "NEEDS_REVIEW"],
     ["2026-08-23T08:30:00.000Z", true, "PUBLIC", "SATISFIED", "PASSED"],
-    ["2026-08-23T08:30:00.001Z", true, "PUBLIC", "PENDING", "PENDING_RETENTION"],
+    ["2026-08-23T08:30:00.001Z", true, "PUBLIC", "PENDING", "PASSED"],
   ] as const)("%s / public=%s => %s / %s / %s", (publishedAt, isPublic, publicStatus, retentionStatus, autoStatus) => {
     const result = evaluateAudit({ ...createMockNote("passed"), publishedAt, isPublic }, context);
     expect(result).toMatchObject({ publicStatus, retentionStatus, autoStatus });
@@ -32,7 +32,7 @@ describe("公开留存与旧活动奖励兼容", () => {
   it("uses exact millisecond retention boundaries without timezone day rounding", () => {
     const dueAt = Date.parse("2026-09-07T08:30:00.000Z");
     for (const [now, retentionStatus, autoStatus] of [
-      [dueAt - 1, "PENDING", "PENDING_RETENTION"],
+      [dueAt - 1, "PENDING", "PASSED"],
       [dueAt, "SATISFIED", "PASSED"],
       [dueAt + 1, "SATISFIED", "PASSED"],
     ] as const) {
@@ -44,6 +44,20 @@ describe("公开留存与旧活动奖励兼容", () => {
       }, context);
       expect(result).toMatchObject({ retentionStatus, autoStatus });
       expect(result.retentionDueAt).toBe("2026-09-07T08:30:00.000Z");
+    }
+  });
+
+  it("retentionDays 0, 15 and 30 are information-only for the main decision", () => {
+    for (const retentionDays of [0, 15, 30]) {
+      const result = evaluateAudit({
+        ...createMockNote("passed"),
+        publishedAt: null,
+        isPublic: true,
+      }, { ...context, retentionDays });
+      expect(result.autoStatus).toBe("PASSED");
+      expect(result.failureReasons).toEqual([]);
+      expect(result.ruleResults.find((item) => item.ruleKey === "GLOBAL_RETENTION"))
+        .toMatchObject({ passed: true });
     }
   });
 

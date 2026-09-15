@@ -67,7 +67,7 @@ describe("互动额外奖励", () => {
         expect(evaluateAudit({ ...note, body: "真".repeat(20) }, context).bodyCompliant).toBe(false);
         expect(evaluateAudit({ ...note, isPublic: false }, context).autoStatus).toBe("FAILED");
         expect(evaluateAudit({ ...note, imageCount: 1 }, context).imageCompliant).toBe(false);
-        expect(evaluateAudit({ ...note, publishedAt: new Date().toISOString() }, context).autoStatus).toBe("PENDING_RETENTION");
+        expect(evaluateAudit({ ...note, publishedAt: new Date().toISOString() }, context).autoStatus).toBe("PASSED");
         const low = evaluateAudit({ ...note, likeCount: 3, commentCount: 2, favoriteCount: 4, interactionExtractionStatus: "SUCCESS" }, context);
         expect(low.autoStatus).toBe("PASSED");
         expect(low.interactionReward?.interactionRewardStatus).toBe("NOT_QUALIFIED");

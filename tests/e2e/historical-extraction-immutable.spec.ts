@@ -132,7 +132,7 @@ test("Protected AUDIT_RESULT_PRESENTATION_IMMUTABLE：List、Detail 与 Export �
   }
 });
 
-test("Protected RETENTION_PENDING_NOT_MANUAL_REVIEW：List、Detail、Summary、Filter、Export 与到期复查一致", async ({ page }) => {
+test("Protected RETENTION_DOES_NOT_AFFECT_AUDIT_DECISION：List、Detail、Summary、Filter、Export 与后台调度一致", async ({ page }) => {
   test.setTimeout(90_000);
   const databaseUrl = process.env.E2E_DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("必须通过 isolated E2E runner 提供 E2E_DATABASE_URL");
@@ -182,7 +182,7 @@ test("Protected RETENTION_PENDING_NOT_MANUAL_REVIEW：List、Detail、Summary、
       isPublic: true,
     });
     expect(pending.result).toMatchObject({
-      autoStatus: "PENDING_RETENTION",
+      autoStatus: "PASSED",
       publicStatus: "PUBLIC",
       retentionStatus: "PENDING",
     });
@@ -206,22 +206,21 @@ test("Protected RETENTION_PENDING_NOT_MANUAL_REVIEW：List、Detail、Summary、
     const list = (await listResponse.json()).data;
     expect(list.summary).toMatchObject({
       total: 4,
-      passed: 1,
+      passed: 2,
       failed: 1,
       review: 1,
-      pendingRetention: 1,
     });
     const listPending = list.items.find(
       (item: { id: string }) => item.id === pending.result.id,
     );
     expect(listPending.presentation).toMatchObject({
-      automaticConclusion: { status: "PENDING_RETENTION", label: "待留存验证" },
+      automaticConclusion: { status: "PASSED", label: "审核通过" },
       failureReasons: [],
       reviewReasons: [],
       isManualReviewRequired: false,
-      isPendingRetention: true,
+      isPendingRetention: false,
       publicDisplay: { label: "当前公开" },
-      retentionDisplay: { status: "PENDING", label: "待留存验证", requirementDays: 15 },
+      retentionDisplay: { status: "PENDING", label: "仅作活动信息", requirementDays: 15, dueAt: null },
     });
 
     const pendingFilter = (await (
@@ -230,15 +229,36 @@ test("Protected RETENTION_PENDING_NOT_MANUAL_REVIEW：List、Detail、Summary、
     const reviewFilter = (await (
       await page.request.get(`/api/results?ids=${ids}&status=NEEDS_REVIEW&pageSize=100`)
     ).json()).data;
+    const passFilter = (await (
+      await page.request.get(`/api/results?ids=${ids}&status=PASSED&pageSize=100`)
+    ).json()).data;
     const manualFilter = (await (
       await page.request.get(`/api/results?ids=${ids}&manualStatus=PENDING&pageSize=100`)
     ).json()).data;
-    expect(pendingFilter.items.map((item: { id: string }) => item.id))
-      .toEqual([pending.result.id]);
+    expect(pendingFilter.items).toEqual([]);
     expect(reviewFilter.items.map((item: { id: string }) => item.id))
       .toEqual([review.result.id]);
     expect(manualFilter.items.map((item: { id: string }) => item.id))
       .toEqual([review.result.id]);
+    expect(new Set(passFilter.items.map((item: { id: string }) => item.id)))
+      .toEqual(new Set([passed.result.id, pending.result.id]));
+
+    const p95ByPageSize: Record<string, number> = {};
+    for (const pageSize of [20, 100]) {
+      await page.request.get(`/api/results?page=1&pageSize=${pageSize}`);
+      const timings: number[] = [];
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const startedAt = performance.now();
+        const response = await page.request.get(`/api/results?page=1&pageSize=${pageSize}`);
+        expect(response.status()).toBe(200);
+        timings.push(performance.now() - startedAt);
+      }
+      timings.sort((left, right) => left - right);
+      const p95 = timings[Math.ceil(timings.length * 0.95) - 1];
+      p95ByPageSize[String(pageSize)] = Math.round(p95 * 100) / 100;
+      expect(p95).toBeLessThanOrEqual(500);
+    }
+    console.log(`RETENTION_RESULTS_PERFORMANCE=${JSON.stringify(p95ByPageSize)}`);
 
     const detailResponse = await page.request.get(`/api/results/${pending.result.id}`);
     expect(detailResponse.status(), await detailResponse.text()).toBe(200);
@@ -254,19 +274,22 @@ test("Protected RETENTION_PENDING_NOT_MANUAL_REVIEW：List、Detail、Summary、
       retentionStatus: "PENDING",
     });
 
-    await page.goto(`/results?status=PENDING_RETENTION&startDate=2020-01-01&endDate=2099-12-31`);
+    await page.goto(`/results?status=PASSED&startDate=2020-01-01&endDate=2099-12-31`);
     const pendingRow = page.locator(`.ant-table-row[data-row-key="${pending.result.id}"]`);
-    await expect(pendingRow.getByText("待留存验证", { exact: true })).toBeVisible();
-    await expect(pendingRow.getByText(/当前公开，公开留存期限尚未到期/u)).toBeVisible();
+    await expect(pendingRow.getByText("审核通过", { exact: true })).toBeVisible();
+    await expect(pendingRow).not.toContainText("待留存验证");
     await page.goto(`/results/${pending.result.id}`);
     await expect(page.getByRole("heading", { name: "审核详情" })).toBeVisible();
-    await expect(page.getByText("待留存验证", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("审核通过", { exact: true }).first()).toBeVisible();
     await expect(page.getByRole("region", { name: "失败原因" })).toHaveCount(0);
-    await expect(page.getByRole("region", { name: "待验证事项" })).toContainText(
-      "当前公开，公开留存期限尚未到期",
-    );
+    await expect(page.getByRole("region", { name: "待验证事项" })).toHaveCount(0);
     await expect(page.getByText("当前公开", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("留存到期", { exact: true })).toBeVisible();
+    await expect(page.getByText("留存到期", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("公开留存", { exact: true })).toHaveCount(0);
+    await page.screenshot({
+      path: ".playwright/v1.1.36-retention-result-after.png",
+      fullPage: true,
+    });
 
     const exported = await page.request.get(`/api/results/export?ids=${pending.result.id}`);
     expect(exported.status(), await exported.text()).toBe(200);
@@ -275,31 +298,29 @@ test("Protected RETENTION_PENDING_NOT_MANUAL_REVIEW：List、Detail、Summary、
     const sheet = workbook.worksheets[0];
     const headers = sheet.getRow(1).values as string[];
     const selfReviewColumn = headers.findIndex((value) => value === "自审");
-    expect(sheet.getRow(2).getCell(selfReviewColumn).text).toBe("待留存验证");
+    expect(sheet.getRow(2).getCell(selfReviewColumn).text).toBe("Y");
 
-    // Move the due boundary past now in the isolated DB and submit two concurrent
-    // requests. The shared sweep may only create one immutable replacement task.
+    // Moving the informational due time past now and hitting Desktop Health must
+    // not create a task, batch or replacement result.
     await db.auditResult.update({
       where: { id: pending.result.id },
       data: { retentionDueAt: new Date(Date.now() - 1) },
     });
-    const [recheckA, recheckB] = await Promise.all([
-      page.request.post(`/api/results/${pending.result.id}/retention/recheck`),
-      page.request.post(`/api/results/${pending.result.id}/retention/recheck`),
-    ]);
-    expect(recheckA.status(), await recheckA.text()).toBe(200);
-    expect(recheckB.status(), await recheckB.text()).toBe(200);
-    const batchId = (await recheckA.json()).data.batchId as string;
+    const retentionBatchCount = await db.auditBatch.count({ where: { source: "RETENTION_RECHECK" } });
+    const resultCount = await db.auditResult.count();
+    const health = await page.request.get("/api/health");
+    expect(health.status()).toBe(200);
+    await page.waitForTimeout(250);
     expect(await db.auditTask.count({
       where: { replacesResultId: pending.result.id },
-    })).toBe(1);
+    })).toBe(0);
+    expect(await db.auditBatch.count({ where: { source: "RETENTION_RECHECK" } }))
+      .toBe(retentionBatchCount);
+    expect(await db.auditResult.count()).toBe(resultCount);
     expect(await db.auditResult.findUniqueOrThrow({
       where: { id: pending.result.id },
       select: { autoStatus: true, supersededAt: true },
     })).toEqual({ autoStatus: "NEEDS_REVIEW", supersededAt: null });
-    await page.request.post(`/api/automation/batches/${batchId}/control`, {
-      data: { action: "CANCEL" },
-    });
   } finally {
     try {
       await fixture?.cleanup();

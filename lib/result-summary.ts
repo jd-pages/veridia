@@ -4,6 +4,12 @@ export interface ResultStatusGroup {
   _count: { _all: number };
 }
 
+export interface ResultStatusNormalizations {
+  passed?: Partial<Record<string, number>>;
+  failed?: Partial<Record<string, number>>;
+  review?: Partial<Record<string, number>>;
+}
+
 const storedNotFoundPageStatuses = new Set([
   "NOTE_NOT_FOUND",
   "NOT_FOUND",
@@ -13,15 +19,13 @@ const storedNotFoundPageStatuses = new Set([
 export function summarizeResultStatusGroups(
   groups: ResultStatusGroup[],
   additionalNotFound: number,
-  legacyRetentionOnlyPending: Partial<Record<string, number>> = {},
-  retentionManualReview: Partial<Record<string, number>> = {},
+  normalizations: ResultStatusNormalizations = {},
 ) {
   const statusCounts: Record<string, number> = {};
   let total = 0;
   let passed = 0;
   let failed = 0;
   let review = 0;
-  let pendingRetention = 0;
   let storedNotFound = 0;
   for (const group of groups) {
     const count = group._count._all;
@@ -38,43 +42,45 @@ export function summarizeResultStatusGroups(
     if (group.autoStatus === "PASSED") passed += count;
     if (group.autoStatus === "FAILED") failed += count;
     if (group.autoStatus === "NEEDS_REVIEW") review += count;
-    if (group.autoStatus === "PENDING_RETENTION") pendingRetention += count;
   }
-  const normalizedPending = Object.values(legacyRetentionOnlyPending).reduce<number>(
-    (total, count) => total + (count || 0),
+
+  for (const [source, count] of Object.entries(normalizations.passed || {})) {
+    if (source === "PASSED") continue;
+    if (source === "FAILED") failed = Math.max(0, failed - (count || 0));
+    if (source === "NEEDS_REVIEW") review = Math.max(0, review - (count || 0));
+    passed += count || 0;
+  }
+  for (const [source, count] of Object.entries(normalizations.failed || {})) {
+    if (source === "FAILED") continue;
+    if (source === "PASSED") passed = Math.max(0, passed - (count || 0));
+    if (source === "NEEDS_REVIEW") review = Math.max(0, review - (count || 0));
+    failed += count || 0;
+  }
+  for (const [source, count] of Object.entries(normalizations.review || {})) {
+    if (source === "NEEDS_REVIEW") continue;
+    if (source === "PASSED") passed = Math.max(0, passed - (count || 0));
+    if (source === "FAILED") failed = Math.max(0, failed - (count || 0));
+    review += count || 0;
+  }
+
+  // Persisted PENDING_RETENTION is consumed by one of the normalized buckets.
+  const normalizedPending = (normalizations.passed?.PENDING_RETENTION || 0) +
+    (normalizations.failed?.PENDING_RETENTION || 0) +
+    (normalizations.review?.PENDING_RETENTION || 0);
+  const unresolvedPending = Math.max(
     0,
+    (statusCounts.PENDING_RETENTION || 0) - normalizedPending,
   );
-  passed = Math.max(0, passed - (legacyRetentionOnlyPending.PASSED || 0));
-  review = Math.max(
-    0,
-    review - (legacyRetentionOnlyPending.NEEDS_REVIEW || 0),
-  );
-  pendingRetention += normalizedPending;
-  passed = Math.max(0, passed - (retentionManualReview.PASSED || 0));
-  failed = Math.max(0, failed - (retentionManualReview.FAILED || 0));
-  pendingRetention = Math.max(
-    0,
-    pendingRetention - (retentionManualReview.PENDING_RETENTION || 0),
-  );
-  review += Object.entries(retentionManualReview).reduce(
-    (total, [status, count]) =>
-      total + (status === "NEEDS_REVIEW" ? 0 : count || 0),
-    0,
-  );
+  // Defensive compatibility: an unclassified legacy pending row is reviewable,
+  // never silently counted as passed.
+  review += unresolvedPending;
+
   statusCounts.ALL = total;
   statusCounts.PASSED = passed;
   statusCounts.FAILED = failed;
   statusCounts.NEEDS_REVIEW = review;
-  statusCounts.PENDING_RETENTION = pendingRetention;
+  delete statusCounts.PENDING_RETENTION;
   const notFound = storedNotFound + additionalNotFound;
   statusCounts.NOTE_NOT_FOUND = notFound;
-  return {
-    total,
-    passed,
-    failed,
-    notFound,
-    review,
-    pendingRetention,
-    statusCounts,
-  };
+  return { total, passed, failed, notFound, review, statusCounts };
 }

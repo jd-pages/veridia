@@ -304,7 +304,7 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // v1.1.35 adds the user-approved retention pending workflow contract.
+      // v1.1.36 replaces retention pending with the information-only contract.
       behaviorCount: 33,
       groupCount: 14,
       triggerFiles: {

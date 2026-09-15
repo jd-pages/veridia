@@ -11,7 +11,10 @@ import { withXhsOriginalPublishedAt } from "@/lib/xhs-original-published-at";
 import { withAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
 import { withAuditResultPresentation } from "@/lib/audit-result-presentation";
 import { resolveAuditEvidenceFilterIds } from "@/lib/audit-evidence-query";
-import { legacyPendingWhere } from "@/lib/retention-pending-query";
+import {
+  allNormalizedRetentionIds,
+  buildRetentionStatusNormalizations,
+} from "@/lib/retention-pending-query";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -89,30 +92,14 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       where: summaryWhere,
       _count: { _all: true },
     });
-    const legacyRetentionPendingGroups = await tx.auditResult.groupBy({
-      by: ["autoStatus"],
+    const normalizedRows = await tx.auditResult.findMany({
       where: {
         AND: [
           summaryWhere,
-          legacyPendingWhere(evidenceFilters.retentionClassification),
+          { id: { in: allNormalizedRetentionIds(evidenceFilters.retentionClassification) } },
         ],
       },
-      _count: { _all: true },
-    });
-    const retentionManualReviewGroups = await tx.auditResult.groupBy({
-      by: ["autoStatus"],
-      where: {
-        AND: [
-          summaryWhere,
-          {
-            id: {
-              in: evidenceFilters.retentionClassification
-                .retentionManualReviewIds,
-            },
-          },
-        ],
-      },
-      _count: { _all: true },
+      select: { id: true, autoStatus: true },
     });
     let additionalNotFound = 0;
     const taskIds = notFoundTasks.map((task) => task.id);
@@ -143,17 +130,9 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     const summary = summarizeResultStatusGroups(
       statusGroups,
       additionalNotFound,
-      Object.fromEntries(
-        legacyRetentionPendingGroups.map((group) => [
-          group.autoStatus,
-          group._count._all,
-        ]),
-      ),
-      Object.fromEntries(
-        retentionManualReviewGroups.map((group) => [
-          group.autoStatus,
-          group._count._all,
-        ]),
+      buildRetentionStatusNormalizations(
+        normalizedRows,
+        evidenceFilters.retentionClassification,
       ),
     );
     const total = filters.status

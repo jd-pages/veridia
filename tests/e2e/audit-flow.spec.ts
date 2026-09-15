@@ -1201,9 +1201,8 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(
     unavailableDrawer.getByRole("heading", { name: "公开状态" }).locator(".."),
   ).toContainText("无法确认");
-  await expect(
-    unavailableDrawer.getByRole("heading", { name: "公开留存" }).locator(".."),
-  ).toContainText("留存状态不要求");
+  await expect(unavailableDrawer.getByRole("heading", { name: "公开留存" })).toHaveCount(0);
+  await expect(unavailableDrawer).not.toContainText(/留存状态|留存到期|待留存验证/u);
   await expect(unavailableDrawer.getByRole("heading", { name: "失败原因" })).toHaveCount(1);
   await expect(
     unavailableDrawer.getByRole("link", {

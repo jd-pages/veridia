@@ -5,11 +5,7 @@ import { withAuditExtractionSnapshot } from "@/lib/audit-extraction-snapshot";
 import { buildAuditResultPresentation } from "@/lib/audit-result-presentation";
 import type { RetentionBusinessClassificationIds } from "@/lib/retention-pending-query";
 
-/**
- * Resolve legacy retention rows from immutable evidence in one bounded query.
- * A SQL-only check cannot validate XHS note-id derived publish time, so callers
- * receive exact IDs instead of treating every persisted PENDING value as known.
- */
+/** Resolve retention-era rows from immutable evidence without mutating history. */
 export async function resolveRetentionBusinessClassificationIds(): Promise<RetentionBusinessClassificationIds> {
   const rows = await prisma.auditResult.findMany({
     where: {
@@ -17,8 +13,11 @@ export async function resolveRetentionBusinessClassificationIds(): Promise<Reten
         currentAuditResultWhere,
         {
           OR: [
-            { retentionStatus: "PENDING" },
             { autoStatus: "PENDING_RETENTION" },
+            {
+              autoStatus: "NEEDS_REVIEW",
+              retentionStatus: { in: ["PENDING", "UNKNOWN"] },
+            },
           ],
         },
       ],
@@ -57,16 +56,22 @@ export async function resolveRetentionBusinessClassificationIds(): Promise<Reten
       },
     },
   });
-  const pendingIds: string[] = [];
-  const retentionManualReviewIds: string[] = [];
+  const normalizedPassIds: string[] = [];
+  const normalizedManualReviewIds: string[] = [];
+  const normalizedFailedIds: string[] = [];
   for (const row of rows) {
     const presentation = buildAuditResultPresentation(
       withAuditExtractionSnapshot(row),
     );
-    if (presentation.isPendingRetention) pendingIds.push(row.id);
-    else if (presentation.isManualReviewRequired) {
-      retentionManualReviewIds.push(row.id);
-    }
+    const status = presentation.automaticConclusion.status;
+    if (status === row.autoStatus) continue;
+    if (status === "PASSED") normalizedPassIds.push(row.id);
+    if (status === "NEEDS_REVIEW") normalizedManualReviewIds.push(row.id);
+    if (status === "FAILED") normalizedFailedIds.push(row.id);
   }
-  return { pendingIds, retentionManualReviewIds };
+  return {
+    normalizedPassIds,
+    normalizedManualReviewIds,
+    normalizedFailedIds,
+  };
 }

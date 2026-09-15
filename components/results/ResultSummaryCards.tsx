@@ -6,7 +6,6 @@ import {
   CloseCircleOutlined,
   FileUnknownOutlined,
   UserSwitchOutlined,
-  FieldTimeOutlined,
 } from "@ant-design/icons";
 import type { ResultSummary } from "./types";
 import styles from "./results-workbench.module.css";
@@ -39,13 +38,6 @@ const items = [
     label: "笔记不存在",
     icon: <FileUnknownOutlined />,
     iconClass: styles.summaryIconNeutral,
-  },
-  {
-    key: "PENDING_RETENTION",
-    metric: "pendingRetention" as const,
-    label: "待留存验证",
-    icon: <FieldTimeOutlined />,
-    iconClass: styles.summaryIconPendingRetention,
   },
   {
     key: "NEEDS_REVIEW",

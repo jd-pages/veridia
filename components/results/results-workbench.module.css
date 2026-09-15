@@ -31,7 +31,7 @@
 
 .summaryGrid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 20px;
 }
@@ -96,11 +96,6 @@
 .summaryIconReview {
   color: #a15c00;
   background: #fff5e5;
-}
-
-.summaryIconPendingRetention {
-  color: #175cd3;
-  background: #eff8ff;
 }
 
 .summaryContent {
@@ -706,16 +701,6 @@
 
 .decisionHero_warning::before {
   background: #d98b21;
-}
-
-.decisionHero_info::before {
-  background: #2e90fa;
-}
-
-.pendingReasonList {
-  margin: 0;
-  padding-left: 20px;
-  color: #175cd3;
 }
 
 .decisionHero_neutral::before {

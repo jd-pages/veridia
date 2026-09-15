@@ -69,7 +69,7 @@ export function createMockNote(
     publishedAtRaw: "2026-07-08 16:30:00",
     // The explicit E2E adapter models a structured platform response. Keep the
     // source inside the same trusted family as production JSON evidence so
-    // retention checks exercise a known publication time instead of UNKNOWN.
+    // retention information uses the known publication time.
     publishedAtSource: "NETWORK_JSON:mock.note.publish_time",
     isPublic: true,
     extractedAt: new Date().toISOString(),
