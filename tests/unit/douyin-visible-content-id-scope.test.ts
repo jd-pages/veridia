@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
@@ -13,14 +13,21 @@ const detail = (id: string, content: string, attributes = "") => `<section data-
 describe("抖音可见当前作品范围边界", () => {
   let browser: Browser;
   let page: Page;
-  beforeAll(async () => { browser = await chromium.launch({ headless: true, channel: "chrome" }); }, 90_000);
-  beforeEach(async () => { page = await browser.newPage(); });
-  afterEach(async () => { await page?.close(); });
+  beforeAll(async () => {
+    browser = await chromium.launch({ headless: true, channel: "chrome" });
+    page = await browser.newPage();
+    await page.route(url, (route) => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: "<!doctype html><html><body></body></html>" }));
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await page.unroute(url);
+  }, 90_000);
   afterAll(async () => { await browser?.close(); }, 30_000);
 
   async function load(html: string) {
-    await page.route("https://www.douyin.com/**", (route) => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }));
-    await page.goto(url);
+    await page.evaluate((targetUrl) => history.replaceState(null, "", targetUrl), url);
+    // This suite validates SPA page reuse. Replacing the document on one same-origin
+    // page preserves that contract without paying a new Page + routed navigation for
+    // every unit case, whose CI scheduling latency is unrelated to the assertions.
+    await page.setContent(html, { waitUntil: "domcontentloaded" });
   }
 
   it("Protected DOUYIN_VISIBLE_CONTENT_ID_SCOPE：隐藏旧详情与同 ID clone 不覆盖当前正文和三张图片", async () => {
