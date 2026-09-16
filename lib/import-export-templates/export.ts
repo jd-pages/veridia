@@ -67,6 +67,8 @@ import {
   WYETH_NESTLE_FIELD_DEFINITIONS,
   buildWyethNestleProductOptions,
   wyethNestleDisplayName,
+  NESTLE_BRAND_NAME,
+  WYETH_BRAND_NAME,
 } from "./wyeth-nestle";
 
 export type ExportValueRecord = Partial<Record<StandardField, unknown>>;
@@ -108,6 +110,9 @@ export interface CompactAuditResultExportSourceRow extends InteractionRewardSnap
   imageCount?: number;
   imageExtractionStatus: string;
   imageStatus: string;
+  publicStatus?: string;
+  storeTopicStatus?: string;
+  storeTopicFailureReason?: string | null;
   task: {
     url: string;
     originalInput?: string | null;
@@ -210,21 +215,36 @@ function columns(
   templateType?: ImportTemplateType,
   fieldsOverride?: readonly StandardField[],
 ) {
+  const auditOutputDisplayNames: Partial<Record<StandardField, string>> = {
+    mediaType: "作品类型",
+    finalAuditConclusion: "审核结论",
+    publicStatus: "公开状态",
+    topicsAuditResult: "话题审核",
+    imageStatus: "图片 / 视频审核",
+    bodyStatus: "正文审核",
+    storeTopicAuditResult: "店铺话题审核",
+    likeCount: "点赞数",
+    commentCount: "评论数",
+    favoriteCount: "收藏数",
+    interactionTotal: "互动量",
+    interactionAtLeastTen: "互动量≥10",
+    failedReasons: "失败原因",
+  };
   if (fieldsOverride) {
     return fieldsOverride.map((field) => ({
       field,
       displayName:
-        field === "templateType"
+        auditOutputDisplayNames[field] || (field === "templateType"
           ? "模板类型"
-          : field === "activityMonth"
-            ? "活动月份"
+          : templateBrand === KABRITA_BRAND_NAME
+            ? kabritaFieldDefinition(field)?.displayName || field
           : ["WYETH", "NESTLE", "WYETH_NESTLE"].includes(templateType || "")
             ? wyethNestleDisplayName(field)
             : danoneTemplateFieldDisplayName(
                 field,
                 templateType || "DANONE_CUSTOMER",
                 true,
-              ),
+              )),
     }));
   }
   if (kind === "auditResults" && templateBrand === KABRITA_BRAND_NAME) {
@@ -286,11 +306,94 @@ function appendRewardColumns(selected: Array<{ field: StandardField; displayName
 
 function rewardExport(row: InteractionRewardSnapshot) {
   const reward = interactionRewardPresentation(row);
-  if (!reward) return {};
   return {
     likeCount: row.likeCount ?? null, commentCount: row.commentCount ?? null,
     favoriteCount: row.favoriteCount ?? null, interactionTotal: row.interactionTotal ?? null,
-    interactionRewardThreshold: row.interactionRewardThreshold ?? null, interactionRewardStatus: reward.status,
+    interactionRewardThreshold: row.interactionRewardThreshold ?? null,
+    interactionRewardStatus: reward?.status || null,
+  };
+}
+
+function safeInteractionCount(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+function completeInteraction(row: InteractionRewardSnapshot) {
+  const likeCount = safeInteractionCount(row.likeCount);
+  const commentCount = safeInteractionCount(row.commentCount);
+  const favoriteCount = safeInteractionCount(row.favoriteCount);
+  const interactionTotal = likeCount !== null && commentCount !== null && favoriteCount !== null
+    ? likeCount + commentCount + favoriteCount
+    : null;
+  return { likeCount, commentCount, favoriteCount, interactionTotal };
+}
+
+function topicExportValue(presentation: AuditResultPresentation) {
+  const topic = presentation.topic;
+  if (topic.status === "UNAVAILABLE") return topic.message || "历史审核明细不可用";
+  if (topic.status === "NEEDS_REVIEW") return "待人工复核";
+  const summary = `${topic.matchedCount}/${topic.expectedCount} ${topic.status === "COMPLIANT" ? "合规" : "不合规"}`;
+  return topic.missing.length ? `${summary}，缺少 ${topic.missing.join("、")}` : summary;
+}
+
+function imageExportValue(presentation: AuditResultPresentation) {
+  if (presentation.media.kind === "VIDEO") return "视频作品，不参与图片数量审核";
+  if (presentation.media.kind === "UNKNOWN") return "无法确认";
+  const count = presentation.media.imageCount;
+  if (count === null) return "无法确认";
+  if (presentation.image.status === "NON_COMPLIANT" && presentation.image.minimumCount !== null) {
+    return `${count}张，数量不足，要求至少${presentation.image.minimumCount}张`;
+  }
+  return `${count}张，${presentation.image.label}`;
+}
+
+function bodyExportValue(row: CompactAuditResultExportSourceRow) {
+  const body = row.presentation?.body;
+  if (!body) return "待人工确认";
+  const length = typeof row.effectiveBodyLength === "number" ? row.effectiveBodyLength : null;
+  return `${body.label}${length === null ? "" : `，${length}字符`}`;
+}
+
+function storeTopicExportValue(row: CompactAuditResultExportSourceRow) {
+  if (!row.presentation?.storeTopic.applicable) return "不适用";
+  const status = row.presentation.storeTopic.status;
+  if (status === "COMPLIANT") return "合规";
+  if (status === "NON_COMPLIANT") {
+    return `不合规${row.storeTopicFailureReason ? `：${row.storeTopicFailureReason}` : ""}`;
+  }
+  if (status === "NOT_REQUIRED") return "不要求";
+  return "待人工复核";
+}
+
+function completeAuditExport(row: CompactAuditResultExportSourceRow): ExportValueRecord {
+  const presentation = row.presentation;
+  const interaction = completeInteraction(row);
+  const brand = row.task.product.brandName?.trim() || "";
+  const thresholdApplicable = new Set<string>([
+    WYETH_BRAND_NAME,
+    NESTLE_BRAND_NAME,
+    KABRITA_BRAND_NAME,
+  ]).has(brand);
+  const interactionAtLeastTen = !thresholdApplicable
+    ? "不适用"
+    : interaction.interactionTotal === null
+      ? "待确认"
+      : interaction.interactionTotal >= 10 ? "Y" : "N";
+  return {
+    mediaType: presentation?.media.kind === "VIDEO"
+      ? "视频"
+      : presentation?.media.kind === "IMAGE_TEXT" ? "图文" : "无法确认",
+    finalAuditConclusion: presentation?.conclusion.label || "待人工复核",
+    publicStatus: presentation?.publicDisplay.label || "无法确认",
+    topicsAuditResult: presentation ? topicExportValue(presentation) : "历史审核明细不可用",
+    imageStatus: presentation ? imageExportValue(presentation) : "无法确认",
+    bodyStatus: bodyExportValue(row),
+    storeTopicAuditResult: storeTopicExportValue(row),
+    ...interaction,
+    interactionAtLeastTen,
+    failedReasons: presentation?.failureReasons.join("；") || "",
   };
 }
 
@@ -495,6 +598,7 @@ export function auditResultToCompactExportRecord(
     templateType: IMPORT_TEMPLATE_TYPE_LABELS[templateType],
     selfReview: detailedSelfReview(row),
     ...rewardExport(row),
+    ...completeAuditExport(row),
   };
 }
 
@@ -531,6 +635,7 @@ export function auditResultToKabritaExportRecord(
       : resolvedActivityMonthValue(undefined, row.task.campaign?.month),
     complianceResult: kabritaComplianceResult(row),
     ...rewardExport(row),
+    ...completeAuditExport(row),
   };
 }
 
@@ -633,7 +738,10 @@ export function auditResultToWyethNestleExportRecord(
       : resolvedActivityMonthValue(undefined, row.task.campaign?.month),
     customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
     selfReview: detailedSelfReview(row),
-    interactionAtLeastTen: interactionAtLeastTenExportValue(row),
+    interactionAtLeastTen: completeInteraction(row).interactionTotal === null
+      ? "待确认"
+      : completeInteraction(row).interactionTotal! >= 10 ? "Y" : "N",
+    ...completeAuditExport(row),
   };
 }
 
@@ -1319,6 +1427,25 @@ export function buildUnifiedAuditResultsWorkbook(input: {
   wyethRecords: ExportValueRecord[];
   nestleRecords: ExportValueRecord[];
 }) {
+  const auditFields = [
+    "mediaType",
+    "finalAuditConclusion",
+    "publicStatus",
+    "topicsAuditResult",
+    "imageStatus",
+    "bodyStatus",
+    "storeTopicAuditResult",
+    "likeCount",
+    "commentCount",
+    "favoriteCount",
+    "interactionTotal",
+    "interactionAtLeastTen",
+    "failedReasons",
+  ] as const satisfies readonly StandardField[];
+  const appendAuditFields = (fields: readonly StandardField[]) => [
+    ...fields,
+    ...auditFields.filter((field) => !fields.includes(field)),
+  ];
   return buildConfiguredWorkbook({
     templates: input.templates,
     kind: "auditResults",
@@ -1328,23 +1455,25 @@ export function buildUnifiedAuditResultsWorkbook(input: {
         sheetName: "达能客户导入",
         records: input.danoneRecords,
         templateType: "DANONE_CUSTOMER",
+        fields: appendAuditFields(DANONE_CUSTOMER_EXPORT_FIELDS),
       },
       {
         sheetName: "佳贝艾特客户导入",
         records: input.kabritaRecords,
         templateBrand: KABRITA_BRAND_NAME,
+        fields: appendAuditFields(KABRITA_EXPORT_FIELDS),
       },
       {
         sheetName: WYETH_SHEET_NAME,
         records: input.wyethRecords,
         templateType: "WYETH",
-        fields: WYETH_NESTLE_FIELDS,
+        fields: appendAuditFields(WYETH_NESTLE_FIELDS),
       },
       {
         sheetName: NESTLE_SHEET_NAME,
         records: input.nestleRecords,
         templateType: "NESTLE",
-        fields: WYETH_NESTLE_FIELDS,
+        fields: appendAuditFields(WYETH_NESTLE_FIELDS),
       },
     ],
   });

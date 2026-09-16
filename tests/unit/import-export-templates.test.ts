@@ -37,6 +37,7 @@ import {
   KABRITA_IMPORT_FIELDS,
 } from "@/lib/import-export-templates/kabrita";
 import { WYETH_NESTLE_FIELDS } from "@/lib/import-export-templates/wyeth-nestle";
+import { buildAuditResultPresentation } from "@/lib/audit-result-presentation";
 import {
   NESTLE_SHEET_NAME,
   WYETH_NESTLE_LEGACY_SHEET_NAME,
@@ -274,7 +275,7 @@ describe("佳贝艾特专属导入导出模板", () => {
       manualReviews: [],
     };
     const record = auditResultToKabritaExportRecord(row);
-    expect(Object.keys(record)).toEqual(KABRITA_EXPORT_FIELDS);
+    expect(Object.keys(record)).toEqual(expect.arrayContaining([...KABRITA_EXPORT_FIELDS]));
     expect(record.purchaseProductLine).toBe("港版佳贝3");
     expect(record.activityMonth).toBe("8月");
     expect(record.xiaohongshuPublishLink).toBe(
@@ -429,8 +430,16 @@ describe("统一 Excel 工作簿", () => {
       NESTLE_SHEET_NAME,
     ]);
     expect(workbook.worksheets.map((sheet) => sheet.rowCount)).toEqual([2, 1, 2, 1]);
-    expect((workbook.worksheets[1].getRow(1).values as unknown[]).slice(1))
+    expect((workbook.worksheets[1].getRow(1).values as unknown[]).slice(1, kabritaExportHeaders.length + 1))
       .toEqual(kabritaExportHeaders);
+    for (const sheet of workbook.worksheets) {
+      const headers = (sheet.getRow(1).values as unknown[]).slice(1);
+      expect(headers).toEqual(expect.arrayContaining([
+        "作品类型", "审核结论", "公开状态", "话题审核", "图片 / 视频审核",
+        "正文审核", "店铺话题审核", "点赞数", "评论数", "收藏数", "互动量", "互动量≥10", "失败原因",
+      ]));
+      expect(headers.filter((header) => header === "互动量≥10")).toHaveLength(1);
+    }
     expect(workbook.worksheets[2].getCell("L2").text).toBe("Y");
     expect(workbook.worksheets[2].getCell("M2").text).toBe("N");
   });
@@ -728,6 +737,9 @@ describe("统一 Excel 工作簿", () => {
       failureReasons: "[]",
       imageExtractionStatus: "SUCCESS",
       imageStatus: "COMPLIANT",
+      likeCount: 3,
+      commentCount: 3,
+      favoriteCount: 3,
       interactionTotal: 9,
       task: {
         url: "https://www.xiaohongshu.com/explore/wyeth",
@@ -762,20 +774,132 @@ describe("统一 Excel 工作簿", () => {
       selfReview: "Y",
       interactionAtLeastTen: "N",
     });
-    expect(auditResultToWyethNestleExportRecord({ ...base, interactionTotal: 10 }))
+    expect(auditResultToWyethNestleExportRecord({
+      ...base,
+      likeCount: 5,
+      commentCount: 3,
+      favoriteCount: 2,
+      interactionTotal: 10,
+    }))
       .toMatchObject({ selfReview: "Y", interactionAtLeastTen: "Y" });
     expect(auditResultToWyethNestleExportRecord({
       ...base,
       autoStatus: "FAILED",
       topicsCompliant: false,
       failureReasons: '["缺少必带话题"]',
+      likeCount: 7,
+      commentCount: 3,
+      favoriteCount: 2,
       interactionTotal: 12,
     })).toMatchObject({
       selfReview: expect.stringContaining("N-缺少话题"),
       interactionAtLeastTen: "Y",
     });
     expect(Object.keys(auditResultToWyethNestleExportRecord(base)))
-      .toEqual(WYETH_NESTLE_FIELDS);
+      .toEqual(expect.arrayContaining([...WYETH_NESTLE_FIELDS]));
+    expect(auditResultToWyethNestleExportRecord({
+      ...base,
+      favoriteCount: null,
+      interactionTotal: 9,
+    })).toMatchObject({ interactionTotal: null, interactionAtLeastTen: "待确认" });
+  });
+
+  it("Protected UNIFIED_AUDIT_EXPORT_COMPLETENESS：视频、互动数值和展示结论来自同一历史 Presentation", async () => {
+    const presentation = buildAuditResultPresentation({
+      autoStatus: "PASSED",
+      pageStatus: "NORMAL",
+      bodyStatus: "PRESENT",
+      bodyCompliant: true,
+      imageStatus: "NOT_REQUIRED",
+      imageCompliant: null,
+      imageCount: 0,
+      noteType: "VIDEO",
+      imageExtractionStatus: "VIDEO_NOTE",
+      topicsCompliant: true,
+      clickableCompliant: true,
+      publicStatus: "PUBLIC",
+      retentionStatus: "SATISFIED",
+      failureReasons: "[]",
+      missingTopics: "[]",
+      forbiddenTopics: "[]",
+      ruleSnapshot: JSON.stringify({ minImageCount: 3, rules: [] }),
+      evidenceStatus: "RESULT_BOUND",
+      likeCount: 3,
+      commentCount: 6,
+      favoriteCount: 2,
+      interactionTotal: 11,
+      note: { noteType: "VIDEO", pageType: "VIDEO_DETAIL", topics: [] },
+      task: { pageType: "VIDEO_DETAIL", product: { brandName: "惠氏" } },
+      ruleResults: [],
+      manualReviews: [],
+    });
+    const row: Parameters<typeof auditResultToWyethNestleExportRecord>[0] = {
+      autoStatus: "PASSED",
+      pageStatus: "NORMAL",
+      bodyStatus: "PRESENT",
+      topicsCompliant: true,
+      failureReasons: "[]",
+      ruleSnapshot: JSON.stringify({ minImageCount: 3, rules: [] }),
+      effectiveBodyLength: 72,
+      imageCount: 0,
+      imageExtractionStatus: "VIDEO_NOTE",
+      imageStatus: "NOT_REQUIRED",
+      publicStatus: "PUBLIC",
+      storeTopicStatus: "NOT_REQUIRED",
+      likeCount: 3,
+      commentCount: 6,
+      favoriteCount: 2,
+      interactionTotal: 11,
+      task: {
+        url: "https://www.douyin.com/video/historical",
+        failureCode: null,
+        failureMessage: null,
+        pageTitle: "视频作品",
+        pageType: "VIDEO_DETAIL",
+        notes: buildImportedTaskNotes({ templateMetadata: { templateType: "WYETH", rawValues: {} } }),
+        productStage: null,
+        product: { name: "启赋未来", brandName: "惠氏" },
+        campaign: { name: "惠氏活动", month: "2026-09" },
+      },
+      note: {
+        url: "https://www.douyin.com/video/historical",
+        finalUrl: null,
+        publishedAt: null,
+        title: "视频作品",
+        body: "历史正文",
+      },
+      manualReviews: [],
+      presentation,
+    };
+    const record = auditResultToWyethNestleExportRecord(row);
+    expect(record).toMatchObject({
+      mediaType: "视频",
+      finalAuditConclusion: "审核通过",
+      publicStatus: "当前公开",
+      imageStatus: "视频作品，不参与图片数量审核",
+      storeTopicAuditResult: "不适用",
+      likeCount: 3,
+      commentCount: 6,
+      favoriteCount: 2,
+      interactionTotal: 11,
+      interactionAtLeastTen: "Y",
+    });
+    const bytes = await buildUnifiedAuditResultsWorkbook({
+      templates,
+      danoneRecords: [],
+      kabritaRecords: [],
+      wyethRecords: [record],
+      nestleRecords: [],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes as ExcelJS.Buffer);
+    const sheet = workbook.getWorksheet(WYETH_SHEET_NAME)!;
+    const headers = (sheet.getRow(1).values as unknown[]).slice(1);
+    const cell = (header: string) => sheet.getCell(2, headers.indexOf(header) + 1);
+    expect(cell("图片 / 视频审核").text).toBe("视频作品，不参与图片数量审核");
+    expect(cell("互动量").value).toBe(11);
+    expect(cell("互动量≥10").text).toBe("Y");
+    expect(headers.filter((header) => header === "互动量≥10")).toHaveLength(1);
   });
 });
 

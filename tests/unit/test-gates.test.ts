@@ -304,13 +304,13 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // v1.1.39 adds installed Desktop runtime parity without weakening fail-stop.
-      behaviorCount: 37,
+      // v1.1.40 adds immutable media presentation and complete unified export contracts.
+      behaviorCount: 39,
       groupCount: 14,
       triggerFiles: {
-        totalEntryCount: 144,
-        exactFileEntryCount: 127,
-        directoryEntryCount: 17,
+        totalEntryCount: 150,
+        exactFileEntryCount: 131,
+        directoryEntryCount: 19,
         patternEntryCount: 0,
         duplicateEntryCount: 0,
         missingEntryCount: 0,

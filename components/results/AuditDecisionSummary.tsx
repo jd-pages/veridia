@@ -2,9 +2,6 @@
 
 import { Alert, Tag, Tooltip, Typography } from "antd";
 import { productStageTopicLabel } from "@/lib/product-stage";
-import {
-  minimumImageCountFromRuleSnapshot,
-} from "@/lib/result-detail-presentation";
 import { isUnavailableNoteResult } from "@/lib/result-display";
 import { resultDetailLinks } from "@/lib/result-links";
 import { parseStoredStringArray } from "@/lib/stored-json";
@@ -86,9 +83,7 @@ export default function AuditDecisionSummary({
   const topicCompliant = topicSummary.status === "COMPLIANT";
   const topicUnavailable = topicSummary.status === "UNAVAILABLE";
   const links = resultDetailLinks(row);
-  const minimumImageCount = minimumImageCountFromRuleSnapshot(
-    row.ruleSnapshot,
-  );
+  const minimumImageCount = row.presentation.image.minimumCount;
   const reviews = detail?.manualReviews || row.manualReviews;
   const duplicateReaudit = duplicateReauditMetadataFromNotes(row.task.notes);
   const basicRewardRule = row.ruleResults.find(
@@ -258,7 +253,11 @@ export default function AuditDecisionSummary({
           <div className={styles.decisionMetrics}>
             <span>有效正文：{row.effectiveBodyLength ?? 0} 个字符</span>
             <span>
-              图片数量：{row.imageCount === null ? "未能确认" : `${row.imageCount} 张`}
+              {row.presentation.media.kind === "VIDEO"
+                ? "作品类型：视频"
+                : row.presentation.media.kind === "IMAGE_TEXT"
+                  ? `图片数量：${row.presentation.media.imageCount === null ? "未能确认" : `${row.presentation.media.imageCount} 张`}`
+                  : "图片 / 视频：作品类型无法确认"}
             </span>
             <span>
               公开状态：{row.presentation.publicDisplay.label}
@@ -345,17 +344,26 @@ export default function AuditDecisionSummary({
           </article>
 
           <article className={styles.auditDetailCard}>
-            <h4>图片审核</h4>
+            <h4>图片 / 视频审核</h4>
             {unavailable ? (
               <strong>未审核</strong>
             ) : (
               <div className={styles.auditDetailList}>
-                <div>
-                  <span>结果</span>
-                  <strong>
-                    {row.imageCount === null ? "未能确认" : `${row.imageCount} 张`}
-                  </strong>
-                </div>
+                {row.presentation.media.kind === "VIDEO" ? (
+                  <div>
+                    <span>作品类型</span>
+                    <strong>视频</strong>
+                  </div>
+                ) : (
+                  <div>
+                    <span>结果</span>
+                    <strong>
+                      {row.presentation.media.imageCount === null
+                        ? "未能确认"
+                        : `${row.presentation.media.imageCount} 张`}
+                    </strong>
+                  </div>
+                )}
                 <div>
                   <span>状态</span>
                   <strong>

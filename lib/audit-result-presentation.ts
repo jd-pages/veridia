@@ -4,6 +4,7 @@ import {
 } from "@/lib/import-task-metadata";
 import {
   auditConclusionFailureReasons,
+  minimumImageCountFromRuleSnapshot,
 } from "@/lib/result-detail-presentation";
 import { isUnavailableNoteResult } from "@/lib/result-display";
 import { parseStoredStringArray } from "@/lib/stored-json";
@@ -84,7 +85,18 @@ export interface AuditResultPresentation {
   };
   topic: AuditResultPresentationTopic;
   body: { status: string; compliant: boolean; label: string };
-  image: { status: string; compliant: boolean | null; label: string };
+  media: {
+    kind: "VIDEO" | "IMAGE_TEXT" | "UNKNOWN";
+    label: "视频作品" | "图文作品" | "作品类型无法确认";
+    imageAuditApplicable: boolean;
+    imageCount: number | null;
+  };
+  image: {
+    status: string;
+    compliant: boolean | null;
+    label: string;
+    minimumCount: number | null;
+  };
   interactionReward: {
     status: string;
     likeCount: number | null;
@@ -117,6 +129,9 @@ interface PresentationInput {
   bodyCompliant: boolean;
   imageStatus: string;
   imageCompliant: boolean | null;
+  imageCount?: number | null;
+  noteType?: string | null;
+  imageExtractionStatus?: string | null;
   topicsCompliant: boolean;
   clickableCompliant: boolean;
   publicStatus: string;
@@ -138,6 +153,10 @@ interface PresentationInput {
   evidenceMessage?: string | null;
   ruleResults?: PresentationRuleResult[];
   note: {
+    noteType?: unknown;
+    pageType?: unknown;
+    imageExtractionStatus?: unknown;
+    imageCount?: unknown;
     contentChannel?: unknown;
     platformNoteId?: unknown;
     publishedAt?: unknown;
@@ -585,6 +604,46 @@ function imageLabel(input: PresentationInput) {
   return "待人工复核";
 }
 
+function mediaPresentation(input: PresentationInput): AuditResultPresentation["media"] {
+  const resultBoundKinds = input.evidenceStatus === "RESULT_BOUND"
+    ? [input.note.noteType, input.note.pageType, input.task.pageType,
+        input.note.imageExtractionStatus]
+    : [];
+  const immutableKinds = [
+    input.noteType,
+    input.imageExtractionStatus,
+    ...resultBoundKinds,
+  ].map((value) => String(value ?? "").trim().toUpperCase());
+  const video = immutableKinds.some((value) =>
+    ["VIDEO", "VIDEO_NOTE", "VIDEO_DETAIL"].includes(value),
+  );
+  if (video) {
+    return {
+      kind: "VIDEO",
+      label: "视频作品",
+      imageAuditApplicable: false,
+      imageCount: null,
+    };
+  }
+  const imageText = immutableKinds.some((value) =>
+    ["IMAGE_TEXT", "IMAGE_TEXT_DETAIL", "NOTE", "NOTE_DETAIL"].includes(value),
+  );
+  if (imageText) {
+    return {
+      kind: "IMAGE_TEXT",
+      label: "图文作品",
+      imageAuditApplicable: true,
+      imageCount: typeof input.imageCount === "number" ? input.imageCount : null,
+    };
+  }
+  return {
+    kind: "UNKNOWN",
+    label: "作品类型无法确认",
+    imageAuditApplicable: false,
+    imageCount: null,
+  };
+}
+
 /**
  * The sole projection for list, detail and export. It only reads immutable
  * persisted result fields, result-bound extraction evidence and result-bound
@@ -687,6 +746,24 @@ export function buildAuditResultPresentation(
       : presentationInput.publicStatus === "UNKNOWN"
         ? "无法确认"
         : "不要求";
+  const media = mediaPresentation(presentationInput);
+  const normalizedImage = media.kind === "VIDEO"
+    ? {
+        status: "VIDEO_NOTE",
+        compliant: null,
+        label: "视频作品，不参与图片数量审核",
+      }
+    : media.kind === "UNKNOWN"
+      ? {
+          status: "NOT_CHECKED",
+          compliant: null,
+          label: unavailable ? "未审核" : "作品类型无法确认",
+        }
+      : {
+          status: presentationInput.imageStatus,
+          compliant: presentationInput.imageCompliant,
+          label: unavailable ? "未审核" : imageLabel(presentationInput),
+        };
 
   return {
     source: "PERSISTED_AUDIT_RESULT",
@@ -728,10 +805,10 @@ export function buildAuditResultPresentation(
         ? "待人工确认"
         : presentationInput.bodyCompliant ? "合规" : "不合规",
     },
+    media,
     image: {
-      status: presentationInput.imageStatus,
-      compliant: presentationInput.imageCompliant,
-      label: unavailable ? "未审核" : imageLabel(presentationInput),
+      ...normalizedImage,
+      minimumCount: minimumImageCountFromRuleSnapshot(presentationInput.ruleSnapshot),
     },
     interactionReward: {
       status: presentationInput.interactionRewardStatus || "NOT_ENABLED",

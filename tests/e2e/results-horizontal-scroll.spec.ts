@@ -86,7 +86,7 @@ test("审核结果表格悬浮横向滚动、固定列和重算", async ({ page 
     return {
       ownership: widthFor("归属信息"),
       topics: widthFor("话题审核"),
-      images: widthFor("图片"),
+      images: widthFor("图片 / 视频"),
       conclusion: widthFor("审核结论"),
       actions: widthFor("操作"),
     };

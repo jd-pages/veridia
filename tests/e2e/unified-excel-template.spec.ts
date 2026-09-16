@@ -865,6 +865,8 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一四 Sheet 结�
               ? 10
               : 12;
       const kabritaLow = kabritaIndex === 1;
+      const interactionUnknown = wyethNestleIndex === 3;
+      const videoFixture = wyethNestleIndex === 0;
       await prisma.auditResult.update({
         where: { id: result.id },
         data: {
@@ -872,7 +874,10 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一四 Sheet 结�
           pageStatus: "NORMAL",
           bodyStatus: "PRESENT",
           bodyCompliant: true,
-          imageStatus: "COMPLIANT",
+          noteType: videoFixture ? "VIDEO" : "IMAGE_TEXT",
+          imageExtractionStatus: videoFixture ? "VIDEO_NOTE" : "SUCCESS",
+          imageCount: videoFixture ? 0 : result.imageCount,
+          imageStatus: videoFixture ? "NOT_REQUIRED" : "COMPLIANT",
           imageCompliant: true,
           topicsCompliant: true,
           clickableCompliant: true,
@@ -884,8 +889,8 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一四 Sheet 结�
             : "[]",
           likeCount: Math.max(total - 5, 0),
           commentCount: Math.min(total, 3),
-          favoriteCount: Math.min(Math.max(total - 3, 0), 2),
-          interactionTotal: total,
+          favoriteCount: interactionUnknown ? null : Math.min(Math.max(total - 3, 0), 2),
+          interactionTotal: interactionUnknown ? null : total,
         },
       });
       // This fixture deliberately synthesizes the final interaction outcome
@@ -958,6 +963,26 @@ test("统一 Workbook 八行审核后按 ImportRecord 导出单一四 Sheet 结�
     expect(exported.getWorksheet(WYETH_SHEET_NAME)!.getCell("M2").text).toBe("N");
     expect(exported.getWorksheet(NESTLE_SHEET_NAME)!.getCell("L2").text).toBe("Y");
     expect(exported.getWorksheet(NESTLE_SHEET_NAME)!.getCell("M2").text).toBe("Y");
+    expect(exported.getWorksheet(NESTLE_SHEET_NAME)!.getCell("M3").text).toBe("待确认");
+    const headerCell = (sheetName: string, row: number, header: string) => {
+      const sheet = exported.getWorksheet(sheetName)!;
+      const headers = (sheet.getRow(1).values as unknown[]).slice(1);
+      return sheet.getCell(row, headers.indexOf(header) + 1);
+    };
+    expect(headerCell(WYETH_SHEET_NAME, 2, "作品类型").text).toBe("视频");
+    expect(headerCell(WYETH_SHEET_NAME, 2, "图片 / 视频审核").text)
+      .toBe("视频作品，不参与图片数量审核");
+    expect(headerCell(WYETH_SHEET_NAME, 2, "互动量").value).toBe(9);
+    expect(headerCell(NESTLE_SHEET_NAME, 3, "收藏数").value).toBeNull();
+    expect(headerCell(NESTLE_SHEET_NAME, 3, "互动量").value).toBeNull();
+    for (const sheet of exported.worksheets) {
+      const headers = (sheet.getRow(1).values as unknown[]).slice(1);
+      expect(headers.filter((header) => header === "互动量≥10")).toHaveLength(1);
+      expect(headers).toEqual(expect.arrayContaining([
+        "作品类型", "审核结论", "公开状态", "话题审核", "图片 / 视频审核",
+        "正文审核", "店铺话题审核", "点赞数", "评论数", "收藏数", "互动量", "失败原因",
+      ]));
+    }
     const danoneExport = exported.getWorksheet("达能客户导入")!;
     expect([danoneExport.getCell("D2").text, danoneExport.getCell("D3").text])
       .toEqual(["澳白", "澳白"]);

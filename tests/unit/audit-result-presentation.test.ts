@@ -92,6 +92,60 @@ function base(overrides: Record<string, unknown> = {}) {
 }
 
 describe("immutable audit result presentation", () => {
+  it("Protected VIDEO_MEDIA_PRESENTATION_CONTRACT：历史绑定视频不会显示为零张图片", () => {
+    const presentation = buildAuditResultPresentation(base({
+      evidenceStatus: "RESULT_BOUND",
+      noteType: "VIDEO",
+      imageExtractionStatus: "VIDEO_NOTE",
+      imageStatus: "NOT_REQUIRED",
+      imageCompliant: null,
+      imageCount: 0,
+      note: { ...base().note, noteType: "VIDEO", pageType: "VIDEO_DETAIL" },
+      task: { ...base().task, pageType: "VIDEO_DETAIL" },
+    }));
+    expect(presentation.media).toEqual({
+      kind: "VIDEO",
+      label: "视频作品",
+      imageAuditApplicable: false,
+      imageCount: null,
+    });
+    expect(presentation.image).toMatchObject({
+      status: "VIDEO_NOTE",
+      compliant: null,
+      label: "视频作品，不参与图片数量审核",
+    });
+    expect(presentation.conclusion.label).toBe("审核通过");
+  });
+
+  it("图文继续使用历史图片数量和最低数量，证据不足不猜视频", () => {
+    const compliant = buildAuditResultPresentation(base({
+      noteType: "IMAGE_TEXT",
+      imageCount: 4,
+      note: { ...base().note, noteType: "IMAGE_TEXT" },
+    }));
+    expect(compliant.media).toMatchObject({ kind: "IMAGE_TEXT", imageCount: 4 });
+    expect(compliant.image).toMatchObject({ label: "数量合规", minimumCount: 3 });
+
+    const insufficient = buildAuditResultPresentation(base({
+      autoStatus: "FAILED",
+      noteType: "IMAGE_TEXT",
+      imageCount: 2,
+      imageStatus: "NON_COMPLIANT",
+      imageCompliant: false,
+      failureReasons: '["图片数量不足"]',
+      note: { ...base().note, noteType: "IMAGE_TEXT" },
+    }));
+    expect(insufficient.media).toMatchObject({ kind: "IMAGE_TEXT", imageCount: 2 });
+    expect(insufficient.image).toMatchObject({ label: "数量不足", minimumCount: 3 });
+
+    const unknown = buildAuditResultPresentation(base({
+      imageStatus: "NOT_REQUIRED",
+      imageCompliant: null,
+      imageCount: 0,
+    }));
+    expect(unknown.media.kind).toBe("UNKNOWN");
+    expect(unknown.image.status).toBe("NOT_CHECKED");
+  });
   it("Protected STORE_TOPIC_BRAND_SCOPE：雀巢和惠氏历史店铺话题误判只在展示层归一化", () => {
     const storeFailure = {
       ruleKey: "STORE_TOPIC",

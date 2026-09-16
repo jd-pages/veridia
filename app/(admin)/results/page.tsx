@@ -704,7 +704,7 @@ export default function ResultsPage() {
       render: (_value, row) => <TopicAuditCell row={row} />,
     },
     {
-      title: "图片",
+      title: "图片 / 视频",
       key: "images",
       width: 120,
       render: (_value, row) => <ImageAuditCell row={row} />,

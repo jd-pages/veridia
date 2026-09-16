@@ -16,6 +16,7 @@ export type TabularSourceType =
 
 export type StandardField =
   | "likeCount" | "commentCount" | "favoriteCount" | "interactionTotal" | "interactionRewardThreshold" | "interactionRewardStatus"
+  | "mediaType" | "storeTopicAuditResult"
   | "noteUrl"
   | "noteId"
   | "platform"

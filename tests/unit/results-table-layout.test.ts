@@ -26,7 +26,7 @@ describe("审核结果表格布局", () => {
   it("收紧内容列并使用固定表格布局防止长文本撑宽", () => {
     expect(page).toMatch(/title: "归属信息",[\s\S]*?width: 240/);
     expect(page).toMatch(/title: "话题审核",[\s\S]*?width: 180/);
-    expect(page).toMatch(/title: "图片",[\s\S]*?width: 120/);
+    expect(page).toMatch(/title: "图片 \/ 视频",[\s\S]*?width: 120/);
     expect(page).toMatch(/title: "正文审核",[\s\S]*?width: 130/);
     expect(page).toMatch(/title: "审核结论",[\s\S]*?width: 250/);
     expect(page).toContain('tableLayout="fixed"');
@@ -36,11 +36,13 @@ describe("审核结果表格布局", () => {
     expect(styles).toContain("text-overflow: ellipsis;");
   });
 
-  it("长失败原因最多显示两行且图片数量继续读取实际识别结果", () => {
+  it("长失败原因最多显示两行且媒体列读取统一 Presentation", () => {
     expect(styles).toMatch(
       /\.reasonText\s*\{[\s\S]*?-webkit-line-clamp: 2;/,
     );
-    expect(imageCell).toContain("`${row.imageCount} 张`");
+    expect(imageCell).toContain("`${row.presentation.media.imageCount} 张`");
+    expect(imageCell).toContain('row.presentation.media.kind === "VIDEO"');
+    expect(imageCell).toContain("不参与图片数量审核");
     expect(imageCell).not.toContain('"2 张"');
     expect(imageCell).not.toContain('"2张"');
   });

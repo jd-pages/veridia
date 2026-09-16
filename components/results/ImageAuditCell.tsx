@@ -13,26 +13,28 @@ function ImageAuditCell({ row }: { row: ResultRow }) {
       </span>
     );
   }
-  if (row.presentation.image.status === "VIDEO_NOTE") {
+  if (row.presentation.media.kind === "VIDEO") {
     return (
       <div className={styles.stack}>
-        <AuditStatusTag value="VIDEO_NOTE" />
-        <span className={styles.cellSecondary}>不参与图片数量判断</span>
+        <span className={styles.cellPrimary}>视频</span>
+        <span className={styles.cellSecondary}>不参与图片数量审核</span>
       </div>
     );
   }
-  if (row.presentation.image.status === "IMAGES_READ_FAILED") {
+  if (row.presentation.media.kind === "UNKNOWN") {
     return (
       <div className={styles.stack}>
         <span className={styles.cellPrimary}>未能确认</span>
-        <AuditStatusTag value="IMAGES_READ_FAILED" label="待人工复核" />
+        <AuditStatusTag value="NOT_CHECKED" label="待人工复核" />
       </div>
     );
   }
   return (
     <div className={styles.stack}>
       <span className={styles.cellPrimary}>
-        {row.imageCount === null ? "未能确认" : `${row.imageCount} 张`}
+        {row.presentation.media.imageCount === null
+          ? "未能确认"
+          : `${row.presentation.media.imageCount} 张`}
       </span>
       <AuditStatusTag
         value={row.presentation.image.status}

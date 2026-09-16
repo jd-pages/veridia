@@ -1,5 +1,12 @@
 # VERIDIA 更新日志
 
+## 1.1.40 - 2026-09-16
+
+### 视频展示与完整审核导出
+
+- Video results now display as video content instead of zero-image content across list, detail and export.
+- Unified audit-result workbooks now include populated audit outputs and persisted interaction metrics while preserving original imported business fields.
+
 ## 1.1.39 - 2026-09-16
 
 ### 抖音 Desktop Runtime 取证一致性

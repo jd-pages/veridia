@@ -1192,7 +1192,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     .getByRole("heading", { name: "话题审核", exact: true })
     .locator("..");
   const unavailableDrawerImage = unavailableDrawer
-    .getByRole("heading", { name: "图片审核" })
+    .getByRole("heading", { name: "图片 / 视频审核", exact: true })
     .locator("..");
   await expect(unavailableDrawerTopic).toContainText("未审核");
   await expect(unavailableDrawerImage).toContainText("未审核");
