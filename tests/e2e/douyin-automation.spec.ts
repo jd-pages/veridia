@@ -760,6 +760,52 @@ test("Protected DOUYIN_REAL_VIDEO_DETAIL_RECOGNITION：真实新播放器结构�
   });
 });
 
+test("Protected DOUYIN_DESKTOP_RUNTIME_PARITY：后台复用且无 network payload 时保持严格当前作品身份", async ({ page }) => {
+  const contentId = "7680362613540700006";
+  const url = `https://www.douyin.com/video/${contentId}`;
+  const fixture = fs.readFileSync(
+    path.resolve("tests/regression/fixtures/douyin/desktop-runtime-network-cache-video.html"),
+    "utf8",
+  );
+  await page.route("https://www.douyin.com/**", (route) => route.fulfill({
+    status: 200,
+    contentType: "text/html; charset=utf-8",
+    body: fixture,
+  }));
+
+  await page.goto(url);
+  await page.locator("[data-e2e='player-container']").evaluate((node) => {
+    (node as HTMLElement).style.position = "relative";
+    (node as HTMLElement).style.top = "-20px";
+  });
+  const firstEvidence = await readDouyinCurrentContentEvidence(page, contentId);
+  expect(await readDouyinPageIdentity(page, 200, url, contentId, firstEvidence)).toMatchObject({
+    state: "NORMAL",
+    pageType: "VIDEO_DETAIL",
+    currentContentEvidence: {
+      hasStructuredTargetPayload: false,
+      hasContentEvidence: true,
+    },
+  });
+
+  const background = await page.context().newPage();
+  await background.setContent("<title>background</title>");
+  await background.bringToFront();
+  expect(await readDouyinCurrentContentEvidence(page, contentId)).toMatchObject({
+    scopeKind: "DATA_E2E_VIDEO_DETAIL",
+    hasContentEvidence: true,
+  });
+  await background.close();
+
+  await page.setContent(`<main data-e2e="note-detail"><div data-e2e="slide"><img src="fixture.jpg"></div></main>`);
+  await page.goto(url);
+  expect(await readDouyinCurrentContentEvidence(page, contentId)).toMatchObject({
+    scopeKind: "DATA_E2E_VIDEO_DETAIL",
+    currentVideoCandidateCount: 1,
+    hasContentEvidence: true,
+  });
+});
+
 test("抖音复用店铺映射但仅审核 ACCEPTED，小红书继续审核 REQUIRED", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);

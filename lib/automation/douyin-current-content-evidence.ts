@@ -3,6 +3,8 @@ import type { Page } from "playwright";
 export type DouyinCurrentContentScopeKind =
   | "DATA_E2E_NOTE_DETAIL"
   | "DATA_TESTID_NOTE_DETAIL"
+  | "DATA_E2E_VIDEO_DETAIL"
+  | "DATA_TESTID_VIDEO_DETAIL"
   | "CURRENT_MEDIA_ANCESTOR"
   | "NONE";
 
@@ -80,6 +82,14 @@ export async function readDouyinCurrentContentEvidence(
       {
         selector: "[data-testid='douyin-note-detail']",
         kind: "DATA_TESTID_NOTE_DETAIL" as const,
+      },
+      {
+        selector: "[data-e2e='video-detail']",
+        kind: "DATA_E2E_VIDEO_DETAIL" as const,
+      },
+      {
+        selector: "[data-testid='douyin-video-detail']",
+        kind: "DATA_TESTID_VIDEO_DETAIL" as const,
       },
     ];
     const excludedSelector = [
@@ -383,7 +393,9 @@ export async function readDouyinCurrentContentEvidence(
       scopeToken,
       scopeContentId: scopeIds.size === 1 ? [...scopeIds][0] : null,
       hasExplicitRoot: scopeKind === "DATA_E2E_NOTE_DETAIL" ||
-        scopeKind === "DATA_TESTID_NOTE_DETAIL",
+        scopeKind === "DATA_TESTID_NOTE_DETAIL" ||
+        scopeKind === "DATA_E2E_VIDEO_DETAIL" ||
+        scopeKind === "DATA_TESTID_VIDEO_DETAIL",
       carouselMarkerCount: scopedCarouselMarkers.length,
       imageCount: images.length,
       videoCount: videos.length,

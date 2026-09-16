@@ -14,6 +14,10 @@ const REAL_SHAPE_FIXTURE = fs.readFileSync(
   path.resolve("tests/regression/fixtures/douyin/real-video-detail-current-player.html"),
   "utf8",
 );
+const DESKTOP_CACHE_FIXTURE = fs.readFileSync(
+  path.resolve("tests/regression/fixtures/douyin/desktop-runtime-network-cache-video.html"),
+  "utf8",
+);
 
 const structured = (
   contentId: string,
@@ -82,6 +86,34 @@ describe("抖音真实 video detail current-content 识别", () => {
       state: "UNKNOWN",
       hasContentEvidence: false,
     });
+  });
+
+  it("Protected DOUYIN_DESKTOP_RUNTIME_PARITY：network payload 缺席时仅接受页面绑定身份与唯一正式播放器", async () => {
+    await load(DESKTOP_CACHE_FIXTURE);
+    expect(await identity()).toMatchObject({
+      state: "NORMAL",
+      pageType: "VIDEO_DETAIL",
+      currentContentEvidence: {
+        scopeKind: "DATA_E2E_VIDEO_DETAIL",
+        hasStructuredTargetPayload: false,
+        hasStructuredCurrentContent: true,
+        hasBoundPageMetadata: true,
+        currentVideoCandidateCount: 1,
+        videoCount: 1,
+        hasContentEvidence: true,
+      },
+    });
+
+    await page.locator("[data-e2e='player-container']").evaluate((node) => {
+      node.setAttribute("aria-hidden", "true");
+    });
+    expect(await identity()).toMatchObject({ state: "UNKNOWN", hasContentEvidence: false });
+
+    await load(DESKTOP_CACHE_FIXTURE.replace(
+      'data-e2e="video-detail"',
+      `data-e2e="video-detail" data-aweme-id="${CONTENT_B}"`,
+    ));
+    expect(await identity()).toMatchObject({ state: "UNKNOWN", hasContentEvidence: false });
   });
 
   it("仅有 video URL 且没有当前内容证据时保持 UNKNOWN", async () => {

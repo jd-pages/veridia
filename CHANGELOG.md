@@ -1,5 +1,12 @@
 # VERIDIA 更新日志
 
+## 1.1.39 - 2026-09-16
+
+### 抖音 Desktop Runtime 取证一致性
+
+- 修复 Windows Desktop 后台审核中，目标详情已由 canonical、页面脚本与唯一当前播放器严格绑定，但网络 structured response 因缓存或时序未再次出现时被误报 `STRUCTURE_MISMATCH` 的问题。
+- 新增 Desktop Runtime Parity 保护，确保最小化、后台标签页及页面复用不改变当前作品身份，同时继续隔离推荐、预加载、隐藏节点、旧 SPA 节点和身份冲突。
+
 ## 1.1.38 - 2026-09-15
 
 ### 抖音真实视频详情识别
