@@ -284,7 +284,7 @@ describe("佳贝艾特专属导入导出模板", () => {
       "标题 https://www.xiaohongshu.com/explore/kabrita-export",
     );
     expect(record.complianceResult).toBe(
-      "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张",
+      "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张；N-互动量＜10",
     );
 
     expect(
@@ -293,6 +293,9 @@ describe("佳贝艾特专属导入导出模板", () => {
         autoStatus: "PASSED",
         imageStatus: "COMPLIANT",
         failureReasons: "[]",
+        likeCount: 5,
+        commentCount: 3,
+        favoriteCount: 2,
         interactionTotal: 10,
       }).complianceResult,
     ).toBe("Y");
@@ -302,6 +305,9 @@ describe("佳贝艾特专属导入导出模板", () => {
         autoStatus: "FAILED",
         imageStatus: "COMPLIANT",
         failureReasons: '["基础奖励未达成：互动合计 9"]',
+        likeCount: 4,
+        commentCount: 3,
+        favoriteCount: 2,
         interactionTotal: 9,
       }).complianceResult,
     ).toBe("N-互动量＜10");
@@ -311,6 +317,9 @@ describe("佳贝艾特专属导入导出模板", () => {
         autoStatus: "FAILED",
         imageStatus: "NON_COMPLIANT",
         failureReasons: '["图片数量不足（2/3）","基础奖励未达成：互动合计 9"]',
+        likeCount: 4,
+        commentCount: 3,
+        favoriteCount: 2,
         interactionTotal: 9,
       }).complianceResult,
     ).toContain("N-互动量＜10");
@@ -322,7 +331,7 @@ describe("佳贝艾特专属导入导出模板", () => {
         failureReasons: '["基础奖励互动数据无法确认，需人工复核"]',
         interactionTotal: null,
       }).complianceResult,
-    ).toBe("待确认");
+    ).toBe("N-互动量＜10");
     expect(
       auditResultToKabritaExportRecord({
         ...row,
@@ -347,7 +356,7 @@ describe("佳贝艾特专属导入导出模板", () => {
       expect.arrayContaining(["阶段", "IFFO", "GUM", "产品阶段话题"]),
     );
     expect(sheet.getCell("N2").text).toBe(
-      "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张",
+      "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张；N-互动量＜10",
     );
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
     expect(sheet.autoFilter).toBeTruthy();
@@ -812,7 +821,13 @@ describe("统一 Excel 工作簿", () => {
       ...base,
       favoriteCount: null,
       interactionTotal: 9,
-    })).toMatchObject({ interactionTotal: null, interactionAtLeastTen: "待确认" });
+    })).toMatchObject({
+      likeCount: 3,
+      commentCount: 3,
+      favoriteCount: 0,
+      interactionTotal: 6,
+      interactionAtLeastTen: "N",
+    });
     const interactionOnlyPresentation = buildAuditResultPresentation({
       autoStatus: "PASSED",
       pageStatus: "NORMAL",
@@ -850,7 +865,14 @@ describe("统一 Excel 工作簿", () => {
       interactionTotal: null,
       interactionRewardStatus: "PENDING",
       presentation: interactionOnlyPresentation,
-    })).toMatchObject({ selfReview: "Y", interactionAtLeastTen: "待确认" });
+    })).toMatchObject({
+      selfReview: "Y",
+      likeCount: 0,
+      commentCount: 3,
+      favoriteCount: 0,
+      interactionTotal: 3,
+      interactionAtLeastTen: "N",
+    });
     expect(auditTaskToUnreviewedWyethNestleExportRecord({
       ...base.task,
       originalInput: base.task.url,
@@ -859,6 +881,97 @@ describe("统一 Excel 工作簿", () => {
       interactionAtLeastTen: "未审核",
       interactionTotal: null,
     });
+  });
+
+  it("Protected AUDIT_EXPORT_INTERACTION_ZERO_DEFAULT：正常结果缺失互动按零导出且不可读结果保持空白", () => {
+    const readable: Parameters<typeof auditResultToWyethNestleExportRecord>[0] = {
+      autoStatus: "PASSED",
+      pageStatus: "NORMAL",
+      bodyStatus: "PRESENT",
+      topicsCompliant: true,
+      failureReasons: "[]",
+      imageExtractionStatus: "SUCCESS",
+      imageStatus: "COMPLIANT",
+      likeCount: null,
+      commentCount: 3,
+      favoriteCount: null,
+      interactionTotal: null,
+      task: {
+        url: "https://www.xiaohongshu.com/explore/interaction-zero-default",
+        failureCode: null,
+        failureMessage: null,
+        pageTitle: "正常作品",
+        pageType: "NOTE_DETAIL",
+        productStage: null,
+        notes: buildImportedTaskNotes({ templateMetadata: { templateType: "WYETH", rawValues: {} } }),
+        product: { name: "启赋未来", brandName: "惠氏" },
+        campaign: { name: "惠氏活动", month: "2026-09" },
+      },
+      note: {
+        url: "https://www.xiaohongshu.com/explore/interaction-zero-default",
+        finalUrl: null,
+        publishedAt: null,
+        title: "正常作品",
+        body: "正常完成审核的正文",
+      },
+      manualReviews: [],
+    };
+    const rawEvidence = {
+      likeCount: readable.likeCount,
+      commentCount: readable.commentCount,
+      favoriteCount: readable.favoriteCount,
+      interactionTotal: readable.interactionTotal,
+    };
+    expect(auditResultToWyethNestleExportRecord(readable)).toMatchObject({
+      likeCount: 0,
+      commentCount: 3,
+      favoriteCount: 0,
+      interactionTotal: 3,
+      interactionAtLeastTen: "N",
+    });
+    expect(auditResultToWyethNestleExportRecord({
+      ...readable,
+      commentCount: 10,
+    })).toMatchObject({ interactionTotal: 10, interactionAtLeastTen: "Y" });
+    expect(auditResultToWyethNestleExportRecord({
+      ...readable,
+      commentCount: 12,
+    })).toMatchObject({ interactionTotal: 12, interactionAtLeastTen: "Y" });
+    expect(auditResultToWyethNestleExportRecord({
+      ...readable,
+      likeCount: null,
+      commentCount: null,
+      favoriteCount: null,
+    })).toMatchObject({
+      likeCount: 0,
+      commentCount: 0,
+      favoriteCount: 0,
+      interactionTotal: 0,
+      interactionAtLeastTen: "N",
+    });
+    for (const pageStatus of ["READ_FAILED", "LOGIN_EXPIRED", "SECURITY_VERIFICATION", "NOTE_NOT_FOUND"]) {
+      expect(auditResultToWyethNestleExportRecord({
+        ...readable,
+        autoStatus: pageStatus === "NOTE_NOT_FOUND" ? "NOTE_NOT_FOUND" : "NEEDS_REVIEW",
+        pageStatus,
+        task: {
+          ...readable.task,
+          failureCode: pageStatus === "READ_FAILED" ? "NETWORK_ERROR" : pageStatus,
+        },
+      })).toMatchObject({
+        likeCount: null,
+        commentCount: null,
+        favoriteCount: null,
+        interactionTotal: null,
+        interactionAtLeastTen: "",
+      });
+    }
+    expect({
+      likeCount: readable.likeCount,
+      commentCount: readable.commentCount,
+      favoriteCount: readable.favoriteCount,
+      interactionTotal: readable.interactionTotal,
+    }).toEqual(rawEvidence);
   });
 
   it("Protected UNIFIED_AUDIT_EXPORT_COMPLETENESS：视频、互动数值和展示结论来自同一历史 Presentation", async () => {

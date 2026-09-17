@@ -900,8 +900,8 @@ test("统一 Workbook 八行审核加一行未审核后按 ImportRecord 导出�
           failureReasons: kabritaLow
             ? JSON.stringify(["基础奖励未达成：互动合计 9"])
             : "[]",
-          likeCount: Math.max(total - 5, 0),
-          commentCount: Math.min(total, 3),
+          likeCount: interactionUnknown ? null : Math.max(total - 5, 0),
+          commentCount: interactionUnknown ? null : Math.min(total, 3),
           favoriteCount: interactionUnknown ? null : Math.min(Math.max(total - 3, 0), 2),
           interactionTotal: interactionUnknown ? null : total,
         },
@@ -1028,13 +1028,30 @@ test("统一 Workbook 八行审核加一行未审核后按 ImportRecord 导出�
     expect(headerCell("惠氏审核结果", 4, "活动月份").text).toBe("9月");
     expect(headerCell("雀巢审核结果", 2, "内部自审").text).toBe("Y");
     expect(headerCell("雀巢审核结果", 2, "互动量≥10").text).toBe("Y");
-    expect(headerCell("雀巢审核结果", 3, "互动量≥10").text).toBe("待确认");
+    expect(headerCell("雀巢审核结果", 3, "互动量≥10").text).toBe("N");
     expect(headerCell("惠氏审核结果", 2, "作品类型").text).toBe("视频");
     expect(headerCell("惠氏审核结果", 2, "图片 / 视频审核").text)
       .toBe("视频作品，不参与图片数量审核");
     expect(headerCell("惠氏审核结果", 2, "互动量").value).toBe(9);
-    expect(headerCell("雀巢审核结果", 3, "收藏数").value).toBeNull();
-    expect(headerCell("雀巢审核结果", 3, "互动量").value).toBeNull();
+    expect(headerCell("雀巢审核结果", 3, "点赞数").value).toBe(0);
+    expect(headerCell("雀巢审核结果", 3, "评论数").value).toBe(0);
+    expect(headerCell("雀巢审核结果", 3, "收藏数").value).toBe(0);
+    expect(headerCell("雀巢审核结果", 3, "互动量").value).toBe(0);
+    expect(exported.worksheets.flatMap((sheet) =>
+      Array.from({ length: sheet.rowCount - 1 }, (_, index) =>
+        sheet.getRow(index + 2).values,
+      )
+    ).flat()).not.toContain("待确认");
+    const zeroDefaultEvidence = await prisma.auditResult.findFirstOrThrow({
+      where: { task: { importRecordId, orderNumber: `MIX-WN-${suffix}-3` } },
+      select: { likeCount: true, commentCount: true, favoriteCount: true, interactionTotal: true },
+    });
+    expect(zeroDefaultEvidence).toEqual({
+      likeCount: null,
+      commentCount: null,
+      favoriteCount: null,
+      interactionTotal: null,
+    });
     for (const sheet of exported.worksheets) {
       const headers = (sheet.getRow(1).values as unknown[]).slice(1);
       expect(headers.filter((header) => header === "互动量≥10")).toHaveLength(1);

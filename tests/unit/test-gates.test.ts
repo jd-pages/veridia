@@ -305,12 +305,12 @@ describe("分层测试门禁", () => {
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
       // v1.1.40 adds immutable media presentation and complete unified export contracts.
-      behaviorCount: 40,
+      behaviorCount: 41,
       groupCount: 14,
       triggerFiles: {
-        totalEntryCount: 152,
-        exactFileEntryCount: 132,
-        directoryEntryCount: 20,
+        totalEntryCount: 154,
+        exactFileEntryCount: 133,
+        directoryEntryCount: 21,
         patternEntryCount: 0,
         duplicateEntryCount: 0,
         missingEntryCount: 0,

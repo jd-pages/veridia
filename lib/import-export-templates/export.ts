@@ -1,6 +1,5 @@
 import ExcelJS from "exceljs";
 import {
-  interactionAtLeastTenExportValue,
   interactionRewardPresentation,
   type InteractionRewardSnapshot,
 } from "@/lib/interaction-reward";
@@ -344,14 +343,32 @@ function safeInteractionCount(value: unknown) {
     : null;
 }
 
-function completeInteraction(row: InteractionRewardSnapshot) {
-  const likeCount = safeInteractionCount(row.likeCount);
-  const commentCount = safeInteractionCount(row.commentCount);
-  const favoriteCount = safeInteractionCount(row.favoriteCount);
-  const interactionTotal = likeCount !== null && commentCount !== null && favoriteCount !== null
-    ? likeCount + commentCount + favoriteCount
-    : null;
-  return { likeCount, commentCount, favoriteCount, interactionTotal };
+export function businessInteractionExport(
+  row: InteractionRewardSnapshot & { pageStatus: string },
+) {
+  if (row.pageStatus !== "NORMAL") {
+    return {
+      likeCount: null,
+      commentCount: null,
+      favoriteCount: null,
+      interactionTotal: null,
+      interactionAtLeastTen: "",
+    };
+  }
+  const rawLikeCount = safeInteractionCount(row.likeCount);
+  const rawCommentCount = safeInteractionCount(row.commentCount);
+  const rawFavoriteCount = safeInteractionCount(row.favoriteCount);
+  const likeCount = rawLikeCount ?? 0;
+  const commentCount = rawCommentCount ?? 0;
+  const favoriteCount = rawFavoriteCount ?? 0;
+  const interactionTotal = likeCount + commentCount + favoriteCount;
+  return {
+    likeCount,
+    commentCount,
+    favoriteCount,
+    interactionTotal,
+    interactionAtLeastTen: interactionTotal >= 10 ? "Y" : "N",
+  };
 }
 
 function topicExportValue(presentation: AuditResultPresentation) {
@@ -393,7 +410,7 @@ function storeTopicExportValue(row: CompactAuditResultExportSourceRow) {
 
 function completeAuditExport(row: CompactAuditResultExportSourceRow): ExportValueRecord {
   const presentation = row.presentation;
-  const interaction = completeInteraction(row);
+  const interaction = businessInteractionExport(row);
   const brand = row.task.product.brandName?.trim() || "";
   const thresholdApplicable = new Set<string>([
     WYETH_BRAND_NAME,
@@ -402,9 +419,7 @@ function completeAuditExport(row: CompactAuditResultExportSourceRow): ExportValu
   ]).has(brand);
   const interactionAtLeastTen = !thresholdApplicable
     ? "不适用"
-    : interaction.interactionTotal === null
-      ? "待确认"
-      : interaction.interactionTotal >= 10 ? "Y" : "N";
+    : interaction.interactionAtLeastTen;
   return {
     mediaType: presentation?.media.kind === "VIDEO"
       ? "视频"
@@ -842,8 +857,8 @@ export function kabritaComplianceResult(
       });
     }
   }
-  const interaction = interactionAtLeastTenExportValue(row);
-  if (!interaction) return base === "Y" ? "待确认" : base;
+  const interaction = businessInteractionExport(row).interactionAtLeastTen;
+  if (!interaction) return base;
   if (base === "Y") return interaction === "Y" ? "Y" : "N-互动量＜10";
   if (interaction === "Y" || base.includes("互动量＜10")) return base;
   return [base, "N-互动量＜10"].filter(Boolean).join("；");
@@ -892,9 +907,6 @@ export function auditResultToWyethNestleExportRecord(
       : resolvedActivityMonthValue(undefined, row.task.campaign?.month),
     customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
     selfReview: wyethNestleSelfReview(row),
-    interactionAtLeastTen: completeInteraction(row).interactionTotal === null
-      ? "待确认"
-      : completeInteraction(row).interactionTotal! >= 10 ? "Y" : "N",
     ...completeAuditExport(row),
   };
 }
