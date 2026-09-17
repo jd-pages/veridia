@@ -505,7 +505,7 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
       combinedFailed.id,
       "N-缺少话题；缺少必带话题：#佳贝艾特荷兰版；N-互动量＜10",
     ],
-    [unreadable.id, "待确认"],
+    [unreadable.id, "N-互动量＜10"],
     [unavailable.id, "N-帖子无法查看；页面无法访问：小红书页面提示“你访问的页面不见了”"],
   ] as const;
   for (const [id, expected] of expectedExports) {
