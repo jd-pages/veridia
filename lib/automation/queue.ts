@@ -15,6 +15,7 @@ import { AuditConfigurationError } from "@/lib/audit-configuration";
 import {
   automaticAuditQueueState as queueState,
   isAutomaticBatchRuntimeLive,
+  isIdempotentQueuedContinueState,
 } from "./runtime-state";
 import {
   assertPlatformRouting,
@@ -1030,6 +1031,26 @@ export async function controlAutomaticBatch(
   }
 
   if (action === "CONTINUE") {
+    const processingTaskCount =
+      batch.status === "QUEUED" && batch.currentTaskId === null
+        ? await prisma.auditTask.count({
+            where: { batchId, status: "PROCESSING" },
+          })
+        : 0;
+    if (
+      isIdempotentQueuedContinueState({
+        status: batch.status,
+        currentTaskId: batch.currentTaskId,
+        processingTaskCount,
+      })
+    ) {
+      console.info(
+        "[自动审核生命周期] CONTINUE_ALREADY_QUEUED",
+        JSON.stringify({ batchId, runEpoch: batch.runEpoch }),
+      );
+      kickAutomaticAuditQueue();
+      return batch;
+    }
     const reconciled = await reconcileBatchExecutionState({
       batchId,
       reason: "RESUME",

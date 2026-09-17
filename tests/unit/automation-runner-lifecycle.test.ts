@@ -26,6 +26,7 @@ import {
   trackOwnedExtraction,
   waitForOwnedExtractionCleanup,
 } from "@/lib/automation/generation-lifecycle";
+import { isIdempotentQueuedContinueState } from "@/lib/automation/runtime-state";
 
 const root = process.cwd();
 
@@ -108,6 +109,30 @@ describe("Pause / Resume runner epoch", () => {
     expect(completeRunnerWake(state, nextRunner!)).toBe(false);
   });
 
+  it("QUEUED 且无活动 lease 的重复 CONTINUE 不再失效 runEpoch", () => {
+    expect(
+      isIdempotentQueuedContinueState({
+        status: "QUEUED",
+        currentTaskId: null,
+        processingTaskCount: 0,
+      }),
+    ).toBe(true);
+    expect(
+      isIdempotentQueuedContinueState({
+        status: "QUEUED",
+        currentTaskId: "task-1",
+        processingTaskCount: 1,
+      }),
+    ).toBe(false);
+    expect(
+      isIdempotentQueuedContinueState({
+        status: "PAUSED",
+        currentTaskId: null,
+        processingTaskCount: 0,
+      }),
+    ).toBe(false);
+  });
+
   it("runner Promise 已消失时回收孤儿 generation claim 且不丢失后续 wake", () => {
     const state = { wakeGeneration: 8, runnerGeneration: 7 };
 
@@ -126,6 +151,18 @@ describe("Pause / Resume runner epoch", () => {
     expect(browser).toContain("closePromise?: Promise<void>");
     expect(browser).toContain("if (state.closePromise) await state.closePromise");
     expect(browser).toContain("await launching?.catch(() => undefined)");
+  });
+
+  it("Playwright fallback 先关闭 Persistent Context 再释放 Profile", () => {
+    const launcher = readFileSync(
+      path.join(root, "lib/automation/windows-hidden-chromium.ts"),
+      "utf8",
+    );
+    expect(launcher).toContain("closePlaywrightPersistentContext(");
+    expect(launcher).toContain("await context.close().catch(() => undefined)");
+    expect(launcher).toContain(
+      "closePlaywrightPersistentContext(\n          browser.context,",
+    );
   });
 
   it("generation 1 延迟 cleanup 无权关闭 generation 2 browser owner", () => {

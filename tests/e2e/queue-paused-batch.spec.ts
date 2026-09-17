@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { prisma } from "@/lib/db";
 import { lockValidExecutionLease, StaleRunnerCompletionError } from "@/lib/automation/execution-lease";
 import { E2E_ORIGIN } from "./e2e-origin";
@@ -51,9 +51,17 @@ async function createBatch(page: Page, platform: Platform, delayed = false) {
 }
 
 async function control(page: Page, id: string, action: "PAUSE" | "CONTINUE" | "CANCEL") {
-  expect((await page.request.post(`/api/automation/batches/${id}/control`, {
+  const response = await page.request.post(`/api/automation/batches/${id}/control`, {
     data: { action },
-  })).ok()).toBeTruthy();
+  });
+  const payload = await response.json();
+  expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
+  return payload.data as {
+    id: string;
+    status: string;
+    runEpoch: number;
+    currentTaskId: string | null;
+  };
 }
 
 async function pauseRunningA(page: Page) {
@@ -84,12 +92,97 @@ async function assertInactiveA(a: Awaited<ReturnType<typeof pauseRunningA>>, sta
   expect(await prisma.auditResult.count({ where: { task: { batchId: a.id } } })).toBe(0);
 }
 
-async function complete(ids: string[], inactiveA?: Awaited<ReturnType<typeof pauseRunningA>>, status = "PAUSED") {
-  await expect.poll(async () => {
-    if (inactiveA) await assertInactiveA(inactiveA, status);
-    expect(await prisma.auditTask.count({ where: { batchId: { in: batchIds }, status: "PROCESSING" } })).toBeLessThanOrEqual(1);
-    return prisma.auditBatch.count({ where: { id: { in: ids }, status: { in: ["COMPLETED", "COMPLETED_WITH_ERRORS"] } } });
-  }, { timeout: 45000, intervals: [100, 200, 500] }).toBe(ids.length);
+async function readCompletionSnapshot(page: Page, ids: string[], startedAt: number) {
+  const [batches, sessionResponse] = await Promise.all([
+    prisma.auditBatch.findMany({
+      where: { id: { in: ids } },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        status: true,
+        runEpoch: true,
+        currentTaskId: true,
+        tasks: {
+          orderBy: [{ queueOrder: "asc" }, { createdAt: "asc" }],
+          select: {
+            id: true,
+            status: true,
+            claimEpoch: true,
+            attempts: true,
+            auditResults: { select: { id: true } },
+          },
+        },
+      },
+    }),
+    page.request.get("/api/automation/session?platform=XIAOHONGSHU"),
+  ]);
+  expect(sessionResponse.ok()).toBeTruthy();
+  const session = (await sessionResponse.json()).data;
+  return {
+    elapsedMs: Date.now() - startedAt,
+    batches: batches.map((batch) => ({
+      id: batch.id,
+      status: batch.status,
+      runEpoch: batch.runEpoch,
+      currentTaskId: batch.currentTaskId,
+      tasks: batch.tasks.map((task) => ({
+        id: task.id,
+        status: task.status,
+        claimEpoch: task.claimEpoch,
+        attempts: task.attempts,
+        resultCount: task.auditResults.length,
+      })),
+    })),
+    auditLock: session.auditLock,
+    effectiveRunnerCount: session.generationLifecycle.effectiveRunnerCount,
+    activeExtractionCount: session.generationLifecycle.activeExtractionCount,
+    pendingCleanupBarrierCount:
+      session.generationLifecycle.pendingCleanupBarrierCount,
+    activeBrowserOwnerGeneration: session.activeBrowserOwnerGeneration,
+  };
+}
+
+async function complete(
+  page: Page,
+  testInfo: TestInfo,
+  ids: string[],
+  inactiveA?: Awaited<ReturnType<typeof pauseRunningA>>,
+  status = "PAUSED",
+) {
+  const startedAt = Date.now();
+  const timeline: Awaited<ReturnType<typeof readCompletionSnapshot>>[] = [];
+  let previousState = "";
+  try {
+    await expect.poll(async () => {
+      if (inactiveA) await assertInactiveA(inactiveA, status);
+      const snapshot = await readCompletionSnapshot(page, ids, startedAt);
+      const state = JSON.stringify({ ...snapshot, elapsedMs: 0 });
+      if (state !== previousState) {
+        timeline.push(snapshot);
+        previousState = state;
+      }
+      const processingCount = snapshot.batches.reduce(
+        (count, batch) =>
+          count + batch.tasks.filter((task) => task.status === "PROCESSING").length,
+        0,
+      );
+      expect(processingCount).toBeLessThanOrEqual(1);
+      expect(snapshot.effectiveRunnerCount).toBeLessThanOrEqual(1);
+      return snapshot.batches.filter((batch) =>
+        ["COMPLETED", "COMPLETED_WITH_ERRORS"].includes(batch.status),
+      ).length;
+    }, { timeout: 45000, intervals: [100, 200, 500] }).toBe(ids.length);
+  } catch (error) {
+    await testInfo.attach("A07-completion-timeline-failure", {
+      body: JSON.stringify(timeline, null, 2),
+      contentType: "application/json",
+    });
+    throw error;
+  }
+  await testInfo.attach("A07-completion-timeline", {
+    body: JSON.stringify(timeline, null, 2),
+    contentType: "application/json",
+  });
   for (const id of ids) {
     const batch = await prisma.auditBatch.findUniqueOrThrow({ where: { id }, include: { tasks: { include: { auditResults: true } } } });
     expect(batch.startedAt).not.toBeNull();
@@ -109,22 +202,39 @@ for (const platform of ["XIAOHONGSHU", "DOUYIN"] as const) {
     await testInfo.attach("B-after-create", { body: JSON.stringify({ id: b, status: initial.status, startedAt: initial.startedAt }), contentType: "application/json" });
     // One explicit wake; subsequent observations use Prisma and do not retry the scheduler.
     expect((await page.request.get(`/api/automation/batches?batchId=${b}`)).ok()).toBeTruthy();
-    await complete([b], a);
+    await complete(page, testInfo, [b], a);
     expect((await prisma.auditTask.findFirstOrThrow({ where: { batchId: b } })).attempts).toBe(1);
     await assertInactiveA(a);
   });
 }
 
-test("A07 Continue A 与已创建 B 串行完成且无重复 runner", async ({ page }) => {
+test("A07 Continue A 与已创建 B 串行完成且无重复 runner", async ({ page }, testInfo) => {
   const a = await pauseRunningA(page);
   const b = await createBatch(page, "XIAOHONGSHU");
-  for (let i = 0; i < 3; i += 1) await control(page, a.id, "CONTINUE");
-  await complete([a.id, b]);
+  const continueResponses = [];
+  for (let i = 0; i < 3; i += 1) {
+    continueResponses.push(await control(page, a.id, "CONTINUE"));
+  }
+  await testInfo.attach("A07-continue-responses", {
+    body: JSON.stringify(continueResponses, null, 2),
+    contentType: "application/json",
+  });
+  expect(continueResponses[0]).toMatchObject({
+    status: "QUEUED",
+    runEpoch: a.epoch + 1,
+    currentTaskId: null,
+  });
+  expect(continueResponses.map((response) => response.runEpoch)).toEqual([
+    a.epoch + 1,
+    a.epoch + 1,
+    a.epoch + 1,
+  ]);
+  await complete(page, testInfo, [a.id, b]);
   expect((await prisma.auditTask.findFirstOrThrow({ where: { batchId: a.id } })).attempts).toBe(a.attempts + 1);
   expect((await prisma.auditTask.findFirstOrThrow({ where: { batchId: b } })).attempts).toBe(1);
 });
 
-test("A07 Cancel PAUSED A 后 B 正常完成且 A 不再执行", async ({ page }) => {
+test("A07 Cancel PAUSED A 后 B 正常完成且 A 不再执行", async ({ page }, testInfo) => {
   const a = await pauseRunningA(page);
   const b = await createBatch(page, "XIAOHONGSHU", true);
   await expect.poll(async () => {
@@ -147,6 +257,6 @@ test("A07 Cancel PAUSED A 后 B 正常完成且 A 不再执行", async ({ page }
     expect(after.generationLifecycle.effectiveRunnerCount).toBe(1);
   }
   expect((await page.request.get(`/api/automation/batches?batchId=${b}`)).ok()).toBeTruthy();
-  await complete([b], a, "CANCELLED");
+  await complete(page, testInfo, [b], a, "CANCELLED");
   await assertInactiveA(a, "CANCELLED");
 });

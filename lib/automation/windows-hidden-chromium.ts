@@ -250,6 +250,18 @@ async function closeBrowser(
   await waitForProfileRelease(profilePath);
 }
 
+async function closePlaywrightPersistentContext(
+  context: BrowserContext,
+  browser: Browser,
+  profilePath: string,
+) {
+  // launchPersistentContext owns the profile through the context. Closing only
+  // Browser can disconnect Playwright before Chromium has released that
+  // profile, allowing the next runner generation to race the old process.
+  await context.close().catch(() => undefined);
+  await closeBrowser(browser, null, profilePath);
+}
+
 export async function launchWindowsHiddenChromium(
   chromium: BrowserType,
   profilePath: string,
@@ -356,7 +368,12 @@ export async function launchWindowsHiddenChromium(
       browserVersion: browser.browser.version(),
       remoteDebuggingMode: "playwright",
       remoteDebuggingPolicy: policy,
-      close: () => closeBrowser(browser.browser, null, profilePath),
+      close: () =>
+        closePlaywrightPersistentContext(
+          browser.context,
+          browser.browser,
+          profilePath,
+        ),
     };
   }
   const context = browser.contexts()[0];

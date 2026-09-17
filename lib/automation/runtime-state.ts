@@ -26,6 +26,18 @@ export function isAutomaticBatchRuntimeLive(batchId: string) {
   );
 }
 
+export function isIdempotentQueuedContinueState(input: {
+  status: string;
+  currentTaskId: string | null;
+  processingTaskCount: number;
+}) {
+  return (
+    input.status === "QUEUED" &&
+    input.currentTaskId === null &&
+    input.processingTaskCount === 0
+  );
+}
+
 export function isLiveBatchExecutionStateCoherent(input: {
   status: string;
   runEpoch: number;
