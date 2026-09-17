@@ -30,6 +30,10 @@ import { isIdempotentQueuedContinueState } from "@/lib/automation/runtime-state"
 
 const root = process.cwd();
 
+function normalizeLineEndings(value: string) {
+  return value.replace(/\r\n/g, "\n");
+}
+
 afterEach(() => {
   resetGenerationLifecycleForTesting();
 });
@@ -153,15 +157,45 @@ describe("Pause / Resume runner epoch", () => {
     expect(browser).toContain("await launching?.catch(() => undefined)");
   });
 
+  it("静态源码 Contract 只归一化 CRLF 行尾", () => {
+    const expected =
+      "closePlaywrightPersistentContext(\n          browser.context,";
+    const lfSource = expected;
+    const crlfSource = expected.replace(/\n/g, "\r\n");
+    const semanticNegative =
+      "closePlaywrightPersistentContext(\r\n          browser.foo,";
+
+    expect(normalizeLineEndings(lfSource)).toBe(expected);
+    expect(normalizeLineEndings(crlfSource)).toBe(expected);
+    expect(normalizeLineEndings(semanticNegative)).not.toContain(expected);
+  });
+
   it("Playwright fallback 先关闭 Persistent Context 再释放 Profile", () => {
-    const launcher = readFileSync(
-      path.join(root, "lib/automation/windows-hidden-chromium.ts"),
-      "utf8",
+    const launcher = normalizeLineEndings(
+      readFileSync(
+        path.join(root, "lib/automation/windows-hidden-chromium.ts"),
+        "utf8",
+      ),
     );
     expect(launcher).toContain("closePlaywrightPersistentContext(");
     expect(launcher).toContain("await context.close().catch(() => undefined)");
     expect(launcher).toContain(
       "closePlaywrightPersistentContext(\n          browser.context,",
+    );
+    const contextClose = launcher.indexOf(
+      "await context.close().catch(() => undefined)",
+    );
+    const browserClose = launcher.indexOf(
+      "await closeBrowser(browser, null, profilePath)",
+      contextClose,
+    );
+    const profileRelease = launcher.indexOf(
+      "await waitForProfileRelease(profilePath);",
+      launcher.indexOf("async function closeBrowser("),
+    );
+    expect(browserClose).toBeGreaterThan(contextClose);
+    expect(profileRelease).toBeGreaterThan(
+      launcher.indexOf("browser.close().catch(() => undefined)"),
     );
   });
 
