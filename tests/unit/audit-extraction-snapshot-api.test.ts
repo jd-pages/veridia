@@ -20,6 +20,12 @@ import { auditConclusionCardLabel } from "@/lib/result-detail-presentation";
 let temporaryRoot: string;
 let db: PrismaClient;
 let fixture: Awaited<ReturnType<typeof createAuditIngestFixture>>;
+let immutableHistory: {
+  firstResultId: string;
+  finalResultId: string;
+  noteId: string;
+  firstExtractionRecordId: string;
+};
 async function detail(id: string) {
   const response = await resultGet(new Request(`http://localhost/api/results/${id}`), { params: Promise.resolve({ id }) });
   expect(response.status).toBe(200);
@@ -37,6 +43,33 @@ beforeAll(async () => {
   isolated.db = db;
   fixture = await createAuditIngestFixture(db);
   await db.campaign.update({ where: { id: fixture.campaign.id }, data: { interactionRewardEnabled: true, interactionRewardThreshold: 10 } });
+
+  const firstTask = await fixture.task();
+  const first = await runAuditTask(firstTask.id, auditIngestExtraction(firstTask, {
+    title: "原始标题 A", body: "原始正文 A，足够二十一字用于验证历史审核证据绝不能发生漂移。",
+    likeCount: 0, commentCount: 4, favoriteCount: 6, interactionExtractionStatus: "SUCCESS",
+  }), { source: "MANUAL" });
+  if (!first.extractionRecordId) throw new Error("历史快照测试未创建首个 ExtractionRecord");
+  let previousId = first.id;
+  for (let index = 1; index <= 7; index += 1) {
+    const task = await fixture.task({ url: firstTask.url, normalizedUrl: firstTask.url, replacesResultId: previousId });
+    const failed = index === 1;
+    const next = await runAuditTask(task.id, auditIngestExtraction(task, {
+      title: failed ? null : `后续标题 ${index}`, body: failed ? null : "后续变更正文，新的内容不能修改第一次审核已经保存的历史证据。",
+      publishedAt: failed ? null : "2026-08-02T00:00:00.000Z",
+      pageStatus: failed ? "READ_FAILED" : "NORMAL", isPublic: failed ? null : true,
+      topics: failed ? [] : auditIngestExtraction(task).topics,
+      verifiedPlatformTopics: failed ? [] : auditIngestExtraction(task).verifiedPlatformTopics,
+      likeCount: index, commentCount: 0, favoriteCount: 0, interactionExtractionStatus: "SUCCESS",
+    }), { source: "MANUAL" });
+    previousId = next.id;
+  }
+  immutableHistory = {
+    firstResultId: first.id,
+    finalResultId: previousId,
+    noteId: first.noteId,
+    firstExtractionRecordId: first.extractionRecordId,
+  };
 }, 120_000);
 
 afterAll(async () => {
@@ -50,38 +83,52 @@ afterAll(async () => {
 });
 
 describe("HISTORICAL_EXTRACTION_IMMUTABLE API / Prisma", () => {
-  it("真实审核服务和详情 API 保持八次采集、失败、superseded 与互动快照不变", async () => {
-    const firstTask = await fixture.task();
-    const first = await runAuditTask(firstTask.id, auditIngestExtraction(firstTask, {
-      title: "原始标题 A", body: "原始正文 A，足够二十一字用于验证历史审核证据绝不能发生漂移。",
-      likeCount: 0, commentCount: 4, favoriteCount: 6, interactionExtractionStatus: "SUCCESS",
-    }), { source: "MANUAL" });
-    expect(first.autoStatus).toBe("PASSED");
-    expect(first.extractionRecordId).toBeTruthy();
-    const original = await detail(first.id);
-    let previousId = first.id;
-    for (let index = 1; index <= 7; index += 1) {
-      const task = await fixture.task({ url: firstTask.url, normalizedUrl: firstTask.url, replacesResultId: previousId });
-      const failed = index === 1;
-      const next = await runAuditTask(task.id, auditIngestExtraction(task, {
-        title: failed ? null : `后续标题 ${index}`, body: failed ? null : "后续变更正文，新的内容不能修改第一次审核已经保存的历史证据。",
-        publishedAt: failed ? null : "2026-08-02T00:00:00.000Z",
-        pageStatus: failed ? "READ_FAILED" : "NORMAL", isPublic: failed ? null : true,
-        topics: failed ? [] : auditIngestExtraction(task).topics,
-        verifiedPlatformTopics: failed ? [] : auditIngestExtraction(task).verifiedPlatformTopics,
-        likeCount: index, commentCount: 0, favoriteCount: 0, interactionExtractionStatus: "SUCCESS",
-      }), { source: "MANUAL" });
-      previousId = next.id;
-      const historical = await detail(first.id);
-      expect(historical.note).toEqual(original.note);
-      expect(historical).toMatchObject({ autoStatus: "PASSED", isCurrent: false,
-        likeCount: 0, commentCount: 4, favoriteCount: 6, interactionTotal: 10,
-        interactionRewardThreshold: 10, interactionRewardStatus: original.interactionRewardStatus });
-      expect(historical.note.extractions).toHaveLength(1);
-    }
-    expect(await db.extractionRecord.count({ where: { noteId: first.noteId } })).toBe(8);
-    await expect(db.extractionRecord.delete({ where: { id: first.extractionRecordId! } })).rejects.toThrow();
-    expect((await detail(first.id)).note).toEqual(original.note);
+  it("历史八次 Extraction 与七次 revision 链完整", async () => {
+    expect(await db.extractionRecord.count({ where: { noteId: immutableHistory.noteId } })).toBe(8);
+    expect(await db.auditResult.count({ where: { noteId: immutableHistory.noteId } })).toBe(8);
+  });
+
+  it("第一次 Note 历史快照在七次后续 revision 后保持不变", async () => {
+    const historical = await detail(immutableHistory.firstResultId);
+    expect(historical).toMatchObject({ autoStatus: "PASSED", isCurrent: false });
+    expect(historical.note).toMatchObject({
+      title: "原始标题 A",
+      body: "原始正文 A，足够二十一字用于验证历史审核证据绝不能发生漂移。",
+    });
+    expect(historical.note.extractions).toHaveLength(1);
+  });
+
+  it("第一次 Interaction 历史快照保持 0 + 4 + 6 = 10", async () => {
+    expect(await detail(immutableHistory.firstResultId)).toMatchObject({
+      likeCount: 0,
+      commentCount: 4,
+      favoriteCount: 6,
+      interactionTotal: 10,
+      interactionRewardThreshold: 10,
+      interactionRewardStatus: "QUALIFIED",
+    });
+  });
+
+  it("superseded 与 isCurrent 链只保留最后版本", async () => {
+    const historical = await detail(immutableHistory.firstResultId);
+    const current = await detail(immutableHistory.finalResultId);
+    expect(historical).toMatchObject({ isCurrent: false });
+    expect(historical.supersededByResultId).toBeTruthy();
+    expect(current).toMatchObject({ isCurrent: true, supersededByResultId: null });
+  });
+
+  it("Detail API 只读取 Result-bound Snapshot", async () => {
+    const historical = await detail(immutableHistory.firstResultId);
+    expect(historical.extractionRecordId).toBe(immutableHistory.firstExtractionRecordId);
+    expect(historical.note.extractions).toHaveLength(1);
+    expect(historical.note.extractions[0].id).toBe(immutableHistory.firstExtractionRecordId);
+  });
+
+  it("绑定 Extraction 仍拒绝删除", async () => {
+    await expect(db.extractionRecord.delete({
+      where: { id: immutableHistory.firstExtractionRecordId },
+    })).rejects.toThrow();
+    expect((await detail(immutableHistory.firstResultId)).note.extractions).toHaveLength(1);
   });
 
   it("旧结果保持空绑定并明确告知证据未知，不猜测最新 extraction", async () => {
