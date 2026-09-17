@@ -73,6 +73,13 @@ import {
 
 export type ExportValueRecord = Partial<Record<StandardField, unknown>>;
 
+export const UNIFIED_AUDIT_RESULT_SHEET_NAMES = [
+  "达能审核结果",
+  "佳贝艾特审核结果",
+  "惠氏审核结果",
+  "雀巢审核结果",
+] as const;
+
 type DownloadableImportTemplateType = Exclude<
   ImportTemplateType,
   "DANONE_AGENCY" | "WYETH_NESTLE"
@@ -142,8 +149,24 @@ export interface CompactAuditResultExportSourceRow extends InteractionRewardSnap
     body: string | null;
     topics?: Array<{ displayText: string }>;
   };
-  manualReviews: Array<{ result: string }>;
+  manualReviews: Array<{ result: string; comment?: string | null }>;
   presentation?: AuditResultPresentation;
+}
+
+export interface UnreviewedAuditTaskExportSource {
+  url: string;
+  originalInput?: string | null;
+  notes: string | null;
+  platform?: string | null;
+  channel?: string | null;
+  commercePlatform?: string | null;
+  productStage?: string | null;
+  product: {
+    name: string;
+    seriesName?: string | null;
+    brandName?: string | null;
+  };
+  campaign?: { name: string; month?: string | null };
 }
 
 function importedDateLabel(value: Date) {
@@ -229,6 +252,7 @@ function columns(
     interactionTotal: "互动量",
     interactionAtLeastTen: "互动量≥10",
     failedReasons: "失败原因",
+    activityMonth: "活动月份",
   };
   if (fieldsOverride) {
     return fieldsOverride.map((field) => ({
@@ -397,6 +421,24 @@ function completeAuditExport(row: CompactAuditResultExportSourceRow): ExportValu
   };
 }
 
+function unreviewedAuditExport(): ExportValueRecord {
+  return {
+    mediaType: "未审核",
+    finalAuditConclusion: "未审核",
+    publicStatus: "未审核",
+    topicsAuditResult: "未审核",
+    imageStatus: "未审核",
+    bodyStatus: "未审核",
+    storeTopicAuditResult: "未审核",
+    likeCount: null,
+    commentCount: null,
+    favoriteCount: null,
+    interactionTotal: null,
+    interactionAtLeastTen: "未审核",
+    failedReasons: "",
+  };
+}
+
 function fieldDefinition(
   templates: ImportExportTemplates,
   field: StandardField,
@@ -425,8 +467,13 @@ function compactSelfReview(row: CompactAuditResultExportSourceRow) {
   ) {
     return "N-结果一致性异常";
   }
-  const finalStatus = row.presentation?.conclusion.status ||
-    row.manualReviews[0]?.result || row.autoStatus;
+  const manual = row.manualReviews[0];
+  if (manual?.result === "PASSED") return "Y";
+  if (manual?.result === "FAILED") {
+    const reason = manual.comment?.trim();
+    return reason ? `N-人工不通过；${reason}` : "N-人工不通过";
+  }
+  const finalStatus = row.presentation?.conclusion.status || row.autoStatus;
   if (finalStatus === "PASSED") return "Y";
 
   const unavailable = isUnavailableNoteResult({
@@ -474,7 +521,7 @@ function compactSelfReview(row: CompactAuditResultExportSourceRow) {
   ) {
     return "N-内容渠道不支持";
   }
-  if (finalStatus !== "FAILED") return "";
+  if (finalStatus !== "FAILED") return "待人工复核";
   if (
     row.topicsCompliant === false ||
     /TOPIC(?:S)?_(?:MISSING|NOT_MATCHED|NON_COMPLIANT)|缺少.{0,8}话题|话题.{0,8}(?:未命中|不合规|缺失)|阶段话题.{0,8}缺失|未识别到话题|缺少精确话题/iu.test(
@@ -527,6 +574,18 @@ export function detailedSelfReview(row: CompactAuditResultExportSourceRow) {
     );
   }
   return details.length ? `${summary}；${details.join("；")}` : summary;
+}
+
+function wyethNestleSelfReview(row: CompactAuditResultExportSourceRow) {
+  const presentation = row.presentation;
+  const interactionOnlyReview =
+    !row.manualReviews.length &&
+    row.autoStatus === "PASSED" &&
+    presentation?.consistency.status === "CONSISTENT" &&
+    presentation.conclusion.status === "NEEDS_REVIEW" &&
+    presentation.reviewReasons.length > 0 &&
+    presentation.reviewReasons.every((reason) => reason === "互动奖励待确认");
+  return interactionOnlyReview ? "Y" : detailedSelfReview(row);
 }
 
 /**
@@ -602,6 +661,66 @@ export function auditResultToCompactExportRecord(
   };
 }
 
+export function auditTaskToUnreviewedCompactExportRecord(
+  task: UnreviewedAuditTaskExportSource,
+): ExportValueRecord {
+  const importedMetadata = importedTaskMetadataFromNotes(task.notes);
+  const templateMetadata = importedTemplateMetadataFromNotes(task.notes);
+  const raw = (templateMetadata?.rawValues || {}) as Partial<
+    Record<StandardField, string>
+  >;
+  const templateType = templateMetadata?.templateType === "DANONE_AGENCY"
+    ? "DANONE_AGENCY"
+    : "DANONE_CUSTOMER";
+  const commercePlatform = parseCommercePlatform(task.commercePlatform) ||
+    parseCommercePlatform(importedMetadata.platform);
+  const channel = resolveTaskChannel(task) ||
+    parseContentChannel(importedMetadata.contentChannel);
+  return {
+    commercePlatform: preservedRawValue(
+      raw,
+      "commercePlatform",
+      preservedRawValue(raw, "platform", commercePlatformLabel(commercePlatform)),
+    ),
+    shopName: preservedRawValue(raw, "shopName", importedMetadata.shopName),
+    customerName: preservedRawValue(raw, "customerName", importedMetadata.customerName),
+    productName: preservedRawValue(
+      raw,
+      "productName",
+      task.product.seriesName || task.product.name,
+    ),
+    productStage: preservedRawValue(
+      raw,
+      "productStage",
+      task.productStage?.startsWith("GUM") ? "GUM" : "IFFO",
+    ),
+    productStageDetail: templateType === "DANONE_CUSTOMER"
+      ? preservedRawValue(raw, "productStageDetail", "")
+      : "",
+    productStageTopic: productStageTopicLabel(task.productStage),
+    orderNumber: preservedRawValue(raw, "orderNumber", importedMetadata.orderNumber),
+    contentChannel: preservedRawValue(raw, "contentChannel", contentChannelLabel(channel)),
+    noteUrl: preservedRawLink(templateMetadata, "noteUrl", task.originalInput || task.url),
+    originalUrl: task.originalInput || task.url,
+    publishTime: hasRawValue(raw, "publishTime")
+      ? raw.publishTime ?? ""
+      : importedMetadata.publishTime
+        ? importedPublishTimeValue(importedMetadata.publishTime)
+        : "",
+    activityName: preservedRawValue(
+      raw,
+      "activityName",
+      importedMetadata.activityName || task.campaign?.name || "",
+    ),
+    activityMonth: hasRawValue(raw, "activityMonth")
+      ? raw.activityMonth ?? ""
+      : resolvedActivityMonthValue(undefined, task.campaign?.month),
+    templateType: IMPORT_TEMPLATE_TYPE_LABELS[templateType],
+    selfReview: "未审核",
+    ...unreviewedAuditExport(),
+  };
+}
+
 export function auditResultToKabritaExportRecord(
   row: CompactAuditResultExportSourceRow,
 ): ExportValueRecord {
@@ -636,6 +755,41 @@ export function auditResultToKabritaExportRecord(
     complianceResult: kabritaComplianceResult(row),
     ...rewardExport(row),
     ...completeAuditExport(row),
+  };
+}
+
+export function auditTaskToUnreviewedKabritaExportRecord(
+  task: UnreviewedAuditTaskExportSource,
+): ExportValueRecord {
+  const templateMetadata = importedTemplateMetadataFromNotes(task.notes);
+  const raw = templateMetadata?.rawValues || {};
+  const imported = importedTaskMetadataFromNotes(task.notes);
+  return {
+    registrationTime: preservedRawValue(raw, "registrationTime", ""),
+    channel: preservedRawValue(raw, "channel", ""),
+    shopName: preservedRawValue(raw, "shopName", imported.shopName),
+    customerRemark: preservedRawValue(raw, "customerRemark", ""),
+    buyerPurchaseId: preservedRawValue(raw, "buyerPurchaseId", ""),
+    purchaseOrderNumber: preservedRawValue(raw, "purchaseOrderNumber", imported.orderNumber),
+    purchaseTime: preservedRawValue(raw, "purchaseTime", ""),
+    purchaseCanCount: preservedRawValue(raw, "purchaseCanCount", ""),
+    participationCount: preservedRawValue(raw, "participationCount", ""),
+    xiaohongshuAccount: preservedRawValue(raw, "xiaohongshuAccount", ""),
+    xiaohongshuPublishLink: preservedRawLink(
+      templateMetadata,
+      "xiaohongshuPublishLink",
+      task.originalInput || task.url,
+    ),
+    purchaseProductLine: preservedRawValue(
+      raw,
+      "purchaseProductLine",
+      task.product.seriesName || task.product.name,
+    ),
+    complianceResult: "未审核",
+    activityMonth: hasRawValue(raw, "activityMonth")
+      ? raw.activityMonth ?? ""
+      : resolvedActivityMonthValue(undefined, task.campaign?.month),
+    ...unreviewedAuditExport(),
   };
 }
 
@@ -689,7 +843,7 @@ export function kabritaComplianceResult(
     }
   }
   const interaction = interactionAtLeastTenExportValue(row);
-  if (!interaction) return base === "Y" ? "" : base;
+  if (!interaction) return base === "Y" ? "待确认" : base;
   if (base === "Y") return interaction === "Y" ? "Y" : "N-互动量＜10";
   if (interaction === "Y" || base.includes("互动量＜10")) return base;
   return [base, "N-互动量＜10"].filter(Boolean).join("；");
@@ -737,11 +891,51 @@ export function auditResultToWyethNestleExportRecord(
       ? raw.activityMonth ?? ""
       : resolvedActivityMonthValue(undefined, row.task.campaign?.month),
     customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
-    selfReview: detailedSelfReview(row),
+    selfReview: wyethNestleSelfReview(row),
     interactionAtLeastTen: completeInteraction(row).interactionTotal === null
       ? "待确认"
       : completeInteraction(row).interactionTotal! >= 10 ? "Y" : "N",
     ...completeAuditExport(row),
+  };
+}
+
+export function auditTaskToUnreviewedWyethNestleExportRecord(
+  task: UnreviewedAuditTaskExportSource,
+): ExportValueRecord {
+  const imported = importedTaskMetadataFromNotes(task.notes);
+  const templateMetadata = importedTemplateMetadataFromNotes(task.notes);
+  const raw = (templateMetadata?.rawValues || {}) as Partial<
+    Record<StandardField, string>
+  >;
+  const commercePlatform = parseCommercePlatform(task.commercePlatform) ||
+    parseCommercePlatform(imported.platform);
+  const channel = resolveTaskChannel(task) ||
+    parseContentChannel(imported.contentChannel);
+  return {
+    registrant: preservedRawValue(raw, "registrant", ""),
+    wechatNickname: preservedRawValue(raw, "wechatNickname", imported.customerName),
+    commercePlatform: preservedRawValue(
+      raw,
+      "commercePlatform",
+      commercePlatformLabel(commercePlatform),
+    ),
+    shopName: preservedRawValue(raw, "shopName", imported.shopName),
+    productName: preservedRawValue(
+      raw,
+      "productName",
+      task.product.seriesName || task.product.name,
+    ),
+    orderNumber: preservedRawValue(raw, "orderNumber", imported.orderNumber),
+    contentChannel: preservedRawValue(raw, "contentChannel", contentChannelLabel(channel)),
+    noteUrl: preservedRawLink(templateMetadata, "noteUrl", task.originalInput || task.url),
+    publishTime: hasRawValue(raw, "publishTime") ? raw.publishTime ?? "" : "",
+    customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
+    selfReview: "未审核",
+    interactionAtLeastTen: "未审核",
+    activityMonth: hasRawValue(raw, "activityMonth")
+      ? raw.activityMonth ?? ""
+      : resolvedActivityMonthValue(undefined, task.campaign?.month),
+    ...unreviewedAuditExport(),
   };
 }
 
@@ -1442,9 +1636,16 @@ export function buildUnifiedAuditResultsWorkbook(input: {
     "interactionAtLeastTen",
     "failedReasons",
   ] as const satisfies readonly StandardField[];
-  const appendAuditFields = (fields: readonly StandardField[]) => [
-    ...fields,
-    ...auditFields.filter((field) => !fields.includes(field)),
+  const appendAuditFields = (
+    fields: readonly StandardField[],
+  ): StandardField[] => [
+    ...fields.filter(
+      (field) =>
+        field !== "activityMonth" &&
+        !auditFields.includes(field as (typeof auditFields)[number]),
+    ),
+    ...auditFields,
+    "activityMonth",
   ];
   return buildConfiguredWorkbook({
     templates: input.templates,
@@ -1452,25 +1653,25 @@ export function buildUnifiedAuditResultsWorkbook(input: {
     records: [],
     sections: [
       {
-        sheetName: "达能客户导入",
+        sheetName: UNIFIED_AUDIT_RESULT_SHEET_NAMES[0],
         records: input.danoneRecords,
         templateType: "DANONE_CUSTOMER",
         fields: appendAuditFields(DANONE_CUSTOMER_EXPORT_FIELDS),
       },
       {
-        sheetName: "佳贝艾特客户导入",
+        sheetName: UNIFIED_AUDIT_RESULT_SHEET_NAMES[1],
         records: input.kabritaRecords,
         templateBrand: KABRITA_BRAND_NAME,
         fields: appendAuditFields(KABRITA_EXPORT_FIELDS),
       },
       {
-        sheetName: WYETH_SHEET_NAME,
+        sheetName: UNIFIED_AUDIT_RESULT_SHEET_NAMES[2],
         records: input.wyethRecords,
         templateType: "WYETH",
         fields: appendAuditFields(WYETH_NESTLE_FIELDS),
       },
       {
-        sheetName: NESTLE_SHEET_NAME,
+        sheetName: UNIFIED_AUDIT_RESULT_SHEET_NAMES[3],
         records: input.nestleRecords,
         templateType: "NESTLE",
         fields: appendAuditFields(WYETH_NESTLE_FIELDS),

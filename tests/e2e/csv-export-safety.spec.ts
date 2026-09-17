@@ -40,6 +40,7 @@ test("A09: single and mixed brand result CSV is safe while XLSX keeps string cel
   const kabrita = await createAuditIngestFixture(db);
   try {
     expect((await request.post("/api/auth/login", { data: { username: "admin", password: "Admin123!" } })).status()).toBe(200);
+    await db.product.update({ where: { id: danone.product.id }, data: { brandName: "达能" } });
     await db.product.update({ where: { id: kabrita.product.id }, data: { brandName: "佳贝艾特" } });
     const values = ["=1+1", "+1+1", "-1+1", "@SUM(1,1)", ' \t=1+1\r\n"中文",🙂'];
     const groups: string[][] = [];
@@ -49,7 +50,10 @@ test("A09: single and mixed brand result CSV is safe while XLSX keeps string cel
         const notes = buildImportedTaskNotes({ templateMetadata: fixture === danone
           ? { templateType: "DANONE_CUSTOMER", rawValues: { productName: value } }
           : { templateType: "KABRITA", templateBrand: "佳贝艾特", rawValues: { customerRemark: value } } });
-        const task = await fixture.task({ notes });
+        const task = await fixture.task({
+          notes,
+          ...(fixture === danone ? { productStage: "IFFO_2" } : {}),
+        });
         const response = await request.post(`/api/tasks/${task.id}/audit`, { data: { extraction: auditIngestExtraction(task) } });
         expect(response.status(), await response.text()).toBe(200);
         ids.push((await response.json()).data.id);

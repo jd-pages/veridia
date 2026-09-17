@@ -25,7 +25,35 @@ const importHeaders = [
   "是否符合",
 ];
 
-const exportHeaders = importHeaders;
+const auditResultExportHeaders = [
+  "登记时间",
+  "渠道",
+  "店铺名称",
+  "客户备注",
+  "买家购买ID",
+  "购买订单号",
+  "购买时间",
+  "购买罐数",
+  "参与次数",
+  "发布小红书账号",
+  "小红书发布链接",
+  "购买产品线",
+  "是否符合",
+  "作品类型",
+  "审核结论",
+  "公开状态",
+  "话题审核",
+  "图片 / 视频审核",
+  "正文审核",
+  "店铺话题审核",
+  "点赞数",
+  "评论数",
+  "收藏数",
+  "互动量",
+  "互动量≥10",
+  "失败原因",
+  "活动月份",
+];
 const legacyImportHeaders = importHeaders.filter(
   (header) => header !== "活动月份（必填）",
 );
@@ -477,7 +505,7 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
       combinedFailed.id,
       "N-缺少话题；缺少必带话题：#佳贝艾特荷兰版；N-互动量＜10",
     ],
-    [unreadable.id, ""],
+    [unreadable.id, "待确认"],
     [unavailable.id, "N-帖子无法查看；页面无法访问：小红书页面提示“你访问的页面不见了”"],
   ] as const;
   for (const [id, expected] of expectedExports) {
@@ -487,11 +515,12 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
     await workbook.xlsx.load(
       (await exportResponse.body()) as unknown as ExcelJS.Buffer,
     );
-    expect(
-      (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1),
-    ).toEqual(exportHeaders);
-    expect(workbook.worksheets[0].getCell("M2").text).toBe("8月");
-    expect(workbook.worksheets[0].getCell("N2").text).toBe(expected);
+    const resultSheet = workbook.getWorksheet("佳贝艾特审核结果")!;
+    expect((resultSheet.getRow(1).values as unknown[]).slice(1)).toEqual(
+      auditResultExportHeaders,
+    );
+    expect(resultSheet.getCell("M2").text).toBe(expected);
+    expect(resultSheet.getCell("AA2").text).toBe("8月");
   }
 
   await page.goto(`/results/${passed.id}`);

@@ -444,15 +444,15 @@ test("重新审核保留历史版本并在原始导入槽位原位替换", async
       (await exportResponse.body()) as unknown as ExcelJS.Buffer,
     );
     expect(exported.worksheets.map((sheet) => sheet.name)).toEqual([
-      "达能客户导入",
-      "佳贝艾特客户导入",
-      "惠氏客户导入",
-      "雀巢客户导入",
+      "达能审核结果",
+      "佳贝艾特审核结果",
+      "惠氏审核结果",
+      "雀巢审核结果",
     ]);
-    expect(exported.getWorksheet("佳贝艾特客户导入")!.rowCount).toBe(1);
-    expect(exported.getWorksheet("惠氏客户导入")!.rowCount).toBe(1);
-    expect(exported.getWorksheet("雀巢客户导入")!.rowCount).toBe(1);
-    const resultSheet = exported.getWorksheet("达能客户导入")!;
+    expect(exported.getWorksheet("佳贝艾特审核结果")!.rowCount).toBe(1);
+    expect(exported.getWorksheet("惠氏审核结果")!.rowCount).toBe(1);
+    expect(exported.getWorksheet("雀巢审核结果")!.rowCount).toBe(1);
+    const resultSheet = exported.getWorksheet("达能审核结果")!;
     const headers = resultSheet!.getRow(1).values as unknown[];
     const orderColumn = headers.indexOf("订单编号");
     expect(orderColumn).toBeGreaterThan(0);

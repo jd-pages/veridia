@@ -237,39 +237,22 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
         typeof workbook.xlsx.load
       >[0],
     );
-    const headers = workbook.worksheets[0]?.getRow(1).values as unknown[];
-    expect([
-      [
-        "平台",
-        "店铺名称",
-        "客户名",
-        "产品系列",
-        "段位",
-        "阶段",
-        "订单编号",
-        "内容渠道",
-        "链接",
-        "发布时间",
-        "活动月份",
-        "自审",
-      ],
-      [
-        "登记时间",
-        "渠道",
-        "店铺名称",
-        "客户备注",
-        "买家购买ID",
-        "购买订单号",
-        "购买时间",
-        "购买罐数",
-        "参与次数",
-        "发布小红书账号",
-        "小红书发布链接",
-        "购买产品线",
-        "活动月份",
-        "自审",
-      ],
-    ]).toContainEqual(headers.slice(1));
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+      "达能审核结果",
+      "佳贝艾特审核结果",
+      "惠氏审核结果",
+      "雀巢审核结果",
+    ]);
+    for (const sheet of workbook.worksheets) {
+      const headers = (sheet.getRow(1).values as unknown[]).slice(1);
+      expect(headers.at(-1), sheet.name).toBe("活动月份");
+      expect(
+        headers.includes("自审") ||
+          headers.includes("是否符合") ||
+          headers.includes("内部自审"),
+        sheet.name,
+      ).toBe(true);
+    }
   }
 
   const operatorProduct = await page.request.post("/api/products", {

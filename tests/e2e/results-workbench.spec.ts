@@ -18,8 +18,21 @@ const resultExportHeaders = [
   "内容渠道",
   "链接",
   "发布时间",
-  "活动月份",
   "自审",
+  "作品类型",
+  "审核结论",
+  "公开状态",
+  "话题审核",
+  "图片 / 视频审核",
+  "正文审核",
+  "店铺话题审核",
+  "点赞数",
+  "评论数",
+  "收藏数",
+  "互动量",
+  "互动量≥10",
+  "失败原因",
+  "活动月份",
 ];
 
 const kabritaResultExportHeaders = [
@@ -35,8 +48,21 @@ const kabritaResultExportHeaders = [
   "发布小红书账号",
   "小红书发布链接",
   "购买产品线",
-  "活动月份（必填）",
   "是否符合",
+  "作品类型",
+  "审核结论",
+  "公开状态",
+  "话题审核",
+  "图片 / 视频审核",
+  "正文审核",
+  "店铺话题审核",
+  "点赞数",
+  "评论数",
+  "收藏数",
+  "互动量",
+  "互动量≥10",
+  "失败原因",
+  "活动月份",
 ];
 
 const removedResultExportHeaders = [
@@ -56,10 +82,7 @@ const removedResultExportHeaders = [
   "审核完成时间",
   "页面状态",
   "笔记状态",
-  "话题审核",
   "图片",
-  "审核结论",
-  "失败原因",
   "客服修改留言 日期-已留言",
   "审核时间",
   "正文",
@@ -69,23 +92,6 @@ const removedResultExportHeaders = [
   "正文内容",
   "noteContent",
   "contentText",
-];
-
-const danoneMixedSummaryHeaders = [
-  "模板类型",
-  "活动月份",
-  "活动名称",
-  "平台",
-  "店铺名称",
-  "客户名",
-  "产品系列",
-  "段位",
-  "阶段",
-  "订单编号",
-  "内容渠道",
-  "链接",
-  "发布时间",
-  "自审",
 ];
 
 function resultExportFileNamePattern(scope: "当前筛选" | "所选结果") {
@@ -389,29 +395,25 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   ).json()).data as { total: number };
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile((await download.path())!);
-  const danoneSummary = workbook.getWorksheet("达能审核结果汇总");
-  const mixedSummary = workbook.getWorksheet("审核结果汇总");
-  const exportedRecordCount = mixedSummary
-    ? Math.max(mixedSummary.rowCount - 1, 0)
-    : danoneSummary
-      ? Math.max(danoneSummary.rowCount - 1, 0) +
-        Math.max(
-          (workbook.getWorksheet("佳贝艾特审核结果")?.rowCount || 1) - 1,
-          0,
-        )
-      : workbook.worksheets.reduce(
-          (total, worksheet) => total + Math.max(worksheet.rowCount - 1, 0),
-          0,
-        );
+  expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+    "达能审核结果",
+    "佳贝艾特审核结果",
+    "惠氏审核结果",
+    "雀巢审核结果",
+  ]);
+  const exportedRecordCount = workbook.worksheets.reduce(
+    (total, worksheet) => total + Math.max(worksheet.rowCount - 1, 0),
+    0,
+  );
   expect(exportedRecordCount).toBe(filteredList.total);
   const exportHeaders = workbook.worksheets[0]
     .getRow(1)
     .values as unknown[];
-  expect(exportHeaders.slice(1)).toEqual(
-    danoneSummary || mixedSummary
-      ? danoneMixedSummaryHeaders
-      : resultExportHeaders,
-  );
+  expect(exportHeaders.slice(1)).toEqual(resultExportHeaders);
+  for (const worksheet of workbook.worksheets) {
+    const headers = (worksheet.getRow(1).values as unknown[]).slice(1);
+    expect(headers.at(-1), worksheet.name).toBe("活动月份");
+  }
   for (const removedHeader of removedResultExportHeaders) {
     expect(exportHeaders).not.toContain(removedHeader);
   }
@@ -453,11 +455,13 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   );
   const selectedWorkbook = new ExcelJS.Workbook();
   await selectedWorkbook.xlsx.readFile((await selectedDownload.path())!);
-  expect(selectedWorkbook.worksheets[0].rowCount - 1).toBe(1);
-  const selectedHeaders = selectedWorkbook.worksheets[0].getRow(1)
-    .values as unknown[];
+  const selectedSheet = selectedWorkbook.worksheets.find(
+    (worksheet) => worksheet.rowCount > 1,
+  )!;
+  expect(selectedSheet.rowCount - 1).toBe(1);
+  const selectedHeaders = selectedSheet.getRow(1).values as unknown[];
   expect(selectedHeaders.slice(1)).toEqual(
-    selectedFileName.startsWith("VERIDIA佳贝艾特")
+    selectedSheet.name === "佳贝艾特审核结果"
       ? kabritaResultExportHeaders
       : resultExportHeaders,
   );
@@ -778,9 +782,17 @@ test("互动奖励表格、详情和导出使用已保存快照", async ({ page 
     expect(exported.ok()).toBeTruthy();
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(new Uint8Array(await exported.body()).buffer);
-    const sheet = workbook.worksheets[0];
+    const sheet = workbook.worksheets.find(
+      (worksheet) => worksheet.rowCount > 1,
+    )!;
     const headers = sheet.getRow(1).values as string[];
-    for (const [header, value] of Object.entries({ 点赞数: 5, 评论数: 3, 收藏数: 4, 互动合计: 12, 互动奖励门槛: 10, 互动奖励结果: "达标" })) {
+    for (const [header, value] of Object.entries({
+      点赞数: 5,
+      评论数: 3,
+      收藏数: 4,
+      互动量: 12,
+      "互动量≥10": "不适用",
+    })) {
       expect(headers.filter((item) => item === header)).toHaveLength(1);
       expect(sheet.getRow(2).getCell(headers.indexOf(header)).value).toBe(value);
     }

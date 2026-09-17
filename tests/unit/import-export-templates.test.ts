@@ -8,12 +8,14 @@ import {
   auditResultToExportRecord,
   auditResultToKabritaExportRecord,
   auditResultToWyethNestleExportRecord,
+  auditTaskToUnreviewedWyethNestleExportRecord,
   buildConfiguredCsv,
   buildConfiguredWorkbook,
   buildImportTemplateCsv,
   buildImportTemplateWorkbook,
   buildUnifiedAuditResultsWorkbook,
   buildUnifiedImportTemplateWorkbook,
+  UNIFIED_AUDIT_RESULT_SHEET_NAMES,
 } from "@/lib/import-export-templates/export";
 import {
   detectLocalSourceType,
@@ -320,7 +322,7 @@ describe("佳贝艾特专属导入导出模板", () => {
         failureReasons: '["基础奖励互动数据无法确认，需人工复核"]',
         interactionTotal: null,
       }).complianceResult,
-    ).toBe("");
+    ).toBe("待确认");
     expect(
       auditResultToKabritaExportRecord({
         ...row,
@@ -409,7 +411,7 @@ describe("佳贝艾特专属导入导出模板", () => {
 });
 
 describe("统一 Excel 工作簿", () => {
-  it("统一审核结果始终按固定顺序生成四个业务 Sheet 并保留空 Sheet", async () => {
+  it("Protected AUDIT_EXPORT_BRAND_SHEET_ISOLATION：惠氏和雀巢固定独立输出且活动月份末列", async () => {
     const bytes = await buildUnifiedAuditResultsWorkbook({
       templates,
       danoneRecords: [{ orderNumber: "D-001", selfReview: "Y" }],
@@ -419,19 +421,19 @@ describe("统一 Excel 工作簿", () => {
         selfReview: "Y",
         interactionAtLeastTen: "N",
       }],
-      nestleRecords: [],
+      nestleRecords: [{
+        orderNumber: "N-001",
+        selfReview: "待人工复核",
+        interactionAtLeastTen: "待确认",
+      }],
     });
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes as ExcelJS.Buffer);
-    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
-      "达能客户导入",
-      "佳贝艾特客户导入",
-      WYETH_SHEET_NAME,
-      NESTLE_SHEET_NAME,
-    ]);
-    expect(workbook.worksheets.map((sheet) => sheet.rowCount)).toEqual([2, 1, 2, 1]);
-    expect((workbook.worksheets[1].getRow(1).values as unknown[]).slice(1, kabritaExportHeaders.length + 1))
-      .toEqual(kabritaExportHeaders);
+    expect(workbook.worksheets.map((sheet) => sheet.name))
+      .toEqual(UNIFIED_AUDIT_RESULT_SHEET_NAMES);
+    expect(workbook.worksheets.map((sheet) => sheet.rowCount)).toEqual([2, 1, 2, 2]);
+    expect((workbook.worksheets[1].getRow(1).values as unknown[]).slice(1, kabritaExportHeaders.length))
+      .toEqual(kabritaExportHeaders.filter((header) => header !== "活动月份（必填）"));
     for (const sheet of workbook.worksheets) {
       const headers = (sheet.getRow(1).values as unknown[]).slice(1);
       expect(headers).toEqual(expect.arrayContaining([
@@ -440,8 +442,17 @@ describe("统一 Excel 工作簿", () => {
       ]));
       expect(headers.filter((header) => header === "互动量≥10")).toHaveLength(1);
     }
-    expect(workbook.worksheets[2].getCell("L2").text).toBe("Y");
-    expect(workbook.worksheets[2].getCell("M2").text).toBe("N");
+    const wyethHeaders = (workbook.worksheets[2].getRow(1).values as unknown[]).slice(1);
+    expect(workbook.worksheets[2].getCell(2, wyethHeaders.indexOf("内部自审") + 1).text).toBe("Y");
+    expect(workbook.worksheets[2].getCell(2, wyethHeaders.indexOf("互动量≥10") + 1).text).toBe("N");
+    const nestleHeaders = (workbook.worksheets[3].getRow(1).values as unknown[]).slice(1);
+    expect(workbook.worksheets[2].getCell(2, wyethHeaders.indexOf("订单编号（必填）") + 1).text)
+      .toBe("WN-001");
+    expect(workbook.worksheets[3].getCell(2, nestleHeaders.indexOf("订单编号（必填）") + 1).text)
+      .toBe("N-001");
+    for (const sheet of workbook.worksheets) {
+      expect(sheet.getRow(1).getCell(sheet.columnCount).text).toBe("活动月份");
+    }
   });
 
   it("只显示四个 canonical 业务 Sheet，metadata 同步，并生成月份和品牌产品下拉", async () => {
@@ -802,6 +813,52 @@ describe("统一 Excel 工作簿", () => {
       favoriteCount: null,
       interactionTotal: 9,
     })).toMatchObject({ interactionTotal: null, interactionAtLeastTen: "待确认" });
+    const interactionOnlyPresentation = buildAuditResultPresentation({
+      autoStatus: "PASSED",
+      pageStatus: "NORMAL",
+      bodyStatus: "PRESENT",
+      bodyCompliant: true,
+      imageStatus: "COMPLIANT",
+      imageCompliant: true,
+      imageCount: 2,
+      noteType: "IMAGE_TEXT",
+      imageExtractionStatus: "SUCCESS",
+      topicsCompliant: true,
+      clickableCompliant: true,
+      publicStatus: "PUBLIC",
+      retentionStatus: "SATISFIED",
+      failureReasons: "[]",
+      missingTopics: "[]",
+      forbiddenTopics: "[]",
+      ruleSnapshot: JSON.stringify({ rules: [] }),
+      evidenceStatus: "RESULT_BOUND",
+      likeCount: null,
+      commentCount: 3,
+      favoriteCount: null,
+      interactionTotal: null,
+      interactionRewardStatus: "PENDING",
+      note: { noteType: "IMAGE_TEXT", pageType: "NOTE_DETAIL", topics: [] },
+      task: { pageType: "NOTE_DETAIL", product: { brandName: "惠氏" } },
+      ruleResults: [],
+      manualReviews: [],
+    });
+    expect(auditResultToWyethNestleExportRecord({
+      ...base,
+      likeCount: null,
+      commentCount: 3,
+      favoriteCount: null,
+      interactionTotal: null,
+      interactionRewardStatus: "PENDING",
+      presentation: interactionOnlyPresentation,
+    })).toMatchObject({ selfReview: "Y", interactionAtLeastTen: "待确认" });
+    expect(auditTaskToUnreviewedWyethNestleExportRecord({
+      ...base.task,
+      originalInput: base.task.url,
+    })).toMatchObject({
+      selfReview: "未审核",
+      interactionAtLeastTen: "未审核",
+      interactionTotal: null,
+    });
   });
 
   it("Protected UNIFIED_AUDIT_EXPORT_COMPLETENESS：视频、互动数值和展示结论来自同一历史 Presentation", async () => {
@@ -893,7 +950,7 @@ describe("统一 Excel 工作簿", () => {
     });
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes as ExcelJS.Buffer);
-    const sheet = workbook.getWorksheet(WYETH_SHEET_NAME)!;
+    const sheet = workbook.getWorksheet("惠氏审核结果")!;
     const headers = (sheet.getRow(1).values as unknown[]).slice(1);
     const cell = (header: string) => sheet.getCell(2, headers.indexOf(header) + 1);
     expect(cell("图片 / 视频审核").text).toBe("视频作品，不参与图片数量审核");
@@ -1583,7 +1640,11 @@ describe("模板驱动导出", () => {
       autoStatus: "NEEDS_REVIEW",
       imageExtractionStatus: "IMAGES_READ_FAILED",
       failureReasons: '["图片读取失败，待人工复核"]',
-    })).toBe("");
+    })).toBe("待人工复核；图片读取失败，待人工复核");
+    expect(selfReview({
+      autoStatus: "FAILED",
+      manualReviews: [{ result: "FAILED", comment: "客服确认内容不合规" }],
+    })).toBe("N-人工不通过；客服确认内容不合规");
     expect(selfReview({
       autoStatus: "FAILED",
       pageStatus: "NOT_FOUND",
@@ -1624,7 +1685,7 @@ describe("模板驱动导出", () => {
       "N-图片不足",
       "N-阶段不符",
       "N-其他不合规",
-      "",
+      "待人工复核",
     ];
     for (const value of [
       passed.selfReview,
@@ -1850,7 +1911,7 @@ describe("模板驱动导出", () => {
     });
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes);
-    const sheet = workbook.getWorksheet("达能客户导入")!;
+    const sheet = workbook.getWorksheet("达能审核结果")!;
     expect(sheet.getCell("D2").text).toBe("德白");
     expect(sheet.getCell("E2").text).toBe("IFFO");
     expect(sheet.getCell("F2").text).toBe("2段");
@@ -1860,7 +1921,8 @@ describe("模板驱动导出", () => {
     expect((sheet.getCell("I2").value as ExcelJS.CellHyperlinkValue).hyperlink)
       .toBe("https://v.douyin.com/resolved/");
     expect(sheet.getCell("J2").text).toBe("2026/9/1");
-    expect(sheet.getCell("K2").text).toBe("09月");
+    expect(sheet.getRow(1).getCell(sheet.columnCount).text).toBe("活动月份");
+    expect(sheet.getCell(2, sheet.columnCount).text).toBe("09月");
   });
 
   it("18条当前筛选结果生成包含活动月份的线下处理字段", async () => {

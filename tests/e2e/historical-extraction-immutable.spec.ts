@@ -110,6 +110,10 @@ test("Protected AUDIT_RESULT_PRESENTATION_IMMUTABLE：List、Detail 与 Export �
     ).data;
     expect(immutableDetail.presentation).toEqual(detail.presentation);
 
+    await db.product.update({
+      where: { id: fixture.product.id },
+      data: { brandName: "惠氏" },
+    });
     const exportResponse = await page.request.get(
       `/api/results/export?ids=${result.id}`,
     );
@@ -118,9 +122,9 @@ test("Protected AUDIT_RESULT_PRESENTATION_IMMUTABLE：List、Detail 与 Export �
     await workbook.xlsx.load(
       (await exportResponse.body()) as unknown as ExcelJS.Buffer,
     );
-    const sheet = workbook.worksheets[0];
+    const sheet = workbook.getWorksheet("惠氏审核结果")!;
     const headers = sheet.getRow(1).values as string[];
-    const selfReviewColumn = headers.findIndex((value) => value === "自审");
+    const selfReviewColumn = headers.findIndex((value) => value === "内部自审");
     expect(selfReviewColumn).toBeGreaterThan(0);
     expect(sheet.getRow(2).getCell(selfReviewColumn).text).toBe("Y");
   } finally {
@@ -291,13 +295,17 @@ test("Protected RETENTION_DOES_NOT_AFFECT_AUDIT_DECISION：List、Detail、Summa
       fullPage: true,
     });
 
+    await db.product.update({
+      where: { id: fixture.product.id },
+      data: { brandName: "惠氏" },
+    });
     const exported = await page.request.get(`/api/results/export?ids=${pending.result.id}`);
     expect(exported.status(), await exported.text()).toBe(200);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load((await exported.body()) as unknown as ExcelJS.Buffer);
-    const sheet = workbook.worksheets[0];
+    const sheet = workbook.getWorksheet("惠氏审核结果")!;
     const headers = sheet.getRow(1).values as string[];
-    const selfReviewColumn = headers.findIndex((value) => value === "自审");
+    const selfReviewColumn = headers.findIndex((value) => value === "内部自审");
     expect(sheet.getRow(2).getCell(selfReviewColumn).text).toBe("Y");
 
     // Moving the informational due time past now and hitting Desktop Health must

@@ -49,7 +49,27 @@ afterAll(async () => {
 });
 
 async function exported(id: string, format: "csv" | "xlsx") {
+  let productId = "";
+  let originalBrandName = "";
+  if (format === "xlsx") {
+    const result = await db.auditResult.findUniqueOrThrow({
+      where: { id },
+      select: { task: { select: { product: { select: { id: true, brandName: true } } } } },
+    });
+    productId = result.task.product.id;
+    originalBrandName = result.task.product.brandName;
+    await db.product.update({
+      where: { id: productId },
+      data: { brandName: "达能" },
+    });
+  }
   const response = await exportGet(new Request(`http://localhost/api/results/export?ids=${id}&format=${format}`));
+  if (productId) {
+    await db.product.update({
+      where: { id: productId },
+      data: { brandName: originalBrandName },
+    });
+  }
   expect(response.status).toBe(200);
   expect(response.headers.get("X-Veridia-Export-Count")).toBe("1");
   if (format === "csv") {
@@ -62,8 +82,14 @@ async function exported(id: string, format: "csv" | "xlsx") {
   }
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(Buffer.from(await response.arrayBuffer()) as unknown as ExcelJS.Buffer);
-  expect(workbook.worksheets).toHaveLength(1);
-  const sheet = workbook.worksheets[0];
+  expect(workbook.worksheets).toHaveLength(4);
+  expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+    "达能审核结果",
+    "佳贝艾特审核结果",
+    "惠氏审核结果",
+    "雀巢审核结果",
+  ]);
+  const sheet = workbook.getWorksheet("达能审核结果")!;
   expect(sheet.rowCount).toBe(2);
   const record: Record<string, ExcelJS.CellValue> = {};
   sheet.getRow(1).eachCell((cell, column) => { record[cell.text] = sheet.getRow(2).getCell(column).value; });
@@ -218,7 +244,7 @@ describe("历史审核导出使用当次采集证据", () => {
     expect(csv).toMatchObject({ "自审": "Y", "点赞数": "0", "评论数": "4", "收藏数": "6", "互动合计": "10", "互动奖励门槛": "10" });
     const xlsx = await exported(result.id, "xlsx");
     expect(publishTime(xlsx)).toEqual(new Date("2026-08-01T00:00:00.000Z"));
-    expect(xlsx).toMatchObject({ "自审": "Y", "点赞数": 0, "评论数": 4, "收藏数": 6, "互动合计": 10, "互动奖励门槛": 10 });
+    expect(xlsx).toMatchObject({ "自审": "Y", "点赞数": 0, "评论数": 4, "收藏数": 6, "互动量": 10 });
   });
 
   it("legacy 未绑定结果不导出最新笔记时间且保留已保存互动", async () => {
@@ -230,7 +256,7 @@ describe("历史审核导出使用当次采集证据", () => {
     expect(csv["互动合计"]).toBe("10");
     const xlsx = await exported(result.id, "xlsx");
     expect(publishTime(xlsx)).toBeNull();
-    expect(xlsx["互动合计"]).toBe(10);
+    expect(xlsx["互动量"]).toBe(10);
   });
 
   it("导入登记时间优先级与模板字段保持不变，不因 legacy 证据缺失被清空", async () => {

@@ -7,12 +7,14 @@ import {
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import { getActiveImportExportTemplates } from "@/lib/import-export-templates/config";
 import {
+  auditTaskToUnreviewedCompactExportRecord,
+  auditTaskToUnreviewedKabritaExportRecord,
+  auditTaskToUnreviewedWyethNestleExportRecord,
   auditResultToCompactExportRecord,
   auditResultToKabritaExportRecord,
   auditResultToWyethNestleExportRecord,
   buildBrandedAuditResultsCsv,
   buildConfiguredCsv,
-  buildConfiguredWorkbook,
   buildUnifiedAuditResultsWorkbook,
 } from "@/lib/import-export-templates/export";
 import {
@@ -24,9 +26,7 @@ import {
   WYETH_BRAND_NAME,
   WYETH_NESTLE_FIELDS,
 } from "@/lib/import-export-templates/wyeth-nestle";
-import { WYETH_NESTLE_SHEET_NAME } from "@/lib/import-template-type";
 import {
-  DANONE_MIXED_SUMMARY_FIELDS,
   type ImportTemplateType,
 } from "@/lib/import-template-type";
 import { importedTemplateMetadataFromNotes } from "@/lib/import-task-metadata";
@@ -44,10 +44,11 @@ import { resolveAuditEvidenceFilterIds } from "@/lib/audit-evidence-query";
 type UnifiedResultSheetType = "DANONE" | "KABRITA" | "WYETH" | "NESTLE";
 
 function unifiedResultSheetType(row: {
-  task: { notes: string | null; product: { brandName?: string | null } };
+  notes: string | null;
+  product: { brandName?: string | null };
 }): { type: UnifiedResultSheetType | null; error: string } {
-  const brandName = row.task.product.brandName?.trim() || "";
-  const templateType = importedTemplateMetadataFromNotes(row.task.notes)?.templateType;
+  const brandName = row.product.brandName?.trim() || "";
+  const templateType = importedTemplateMetadataFromNotes(row.notes)?.templateType;
   const expected = templateType === "KABRITA"
     ? "KABRITA"
     : templateType === "WYETH"
@@ -93,6 +94,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
   if (user instanceof Response) return user;
   const { searchParams } = new URL(request.url);
   const filters = readResultQueryFilters(searchParams);
+  const format = searchParams.get("format") === "csv" ? "csv" : "xlsx";
   const importBatch = filters.importRecordId
     ? await prisma.importRecord.findUnique({
         where: { id: filters.importRecordId },
@@ -157,7 +159,22 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       },
     });
   }));
-  if (!rows.length) {
+  const includeUnreviewed = format === "xlsx" && Boolean(importBatch) &&
+    Object.entries(filters).every(([key, value]) =>
+      key === "importRecordId" ||
+      (Array.isArray(value) ? value.length === 0 : !value),
+    );
+  const unreviewedTasks = includeUnreviewed
+    ? await prisma.auditTask.findMany({
+        where: {
+          importRecordId: importBatch!.id,
+          auditResults: { none: {} },
+        },
+        include: { product: true, campaign: true, batch: true },
+        orderBy: [{ createdAt: "asc" }, { queueOrder: "asc" }],
+      })
+    : [];
+  if (!rows.length && !unreviewedTasks.length) {
     console.info(
       "[审核结果导出] 未生成文件",
       JSON.stringify({
@@ -217,13 +234,10 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     : useWyethNestleTemplate
       ? wyethNestleRows.map(auditResultToWyethNestleExportRecord)
       : danoneRows.map(auditResultToCompactExportRecord);
-  const agencyRecords = danoneAgencyRows.map(auditResultToCompactExportRecord);
-  const customerRecords = danoneCustomerRows.map(auditResultToCompactExportRecord);
   const kabritaRecords = kabritaRows.map(auditResultToKabritaExportRecord);
   const wyethNestleRecords = wyethNestleRows.map(
     auditResultToWyethNestleExportRecord,
   );
-  const format = searchParams.get("format") === "csv" ? "csv" : "xlsx";
   const fileName = auditResultExportFileName({
     kabrita: useKabritaTemplate,
     selected: Boolean(filters.ids?.length),
@@ -231,7 +245,11 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     importBatch,
     danoneMixed: mixedDanoneTemplates && !mixedBrands,
   });
-  const exportLog = async (format: "csv" | "xlsx", bytes: number) => {
+  const exportLog = async (
+    format: "csv" | "xlsx",
+    bytes: number,
+    exportCount = rows.length,
+  ) => {
     const filterKeys = Object.entries(filters)
       .filter(([, value]) =>
         Array.isArray(value) ? value.length > 0 : Boolean(value),
@@ -240,7 +258,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     console.info(
       "[审核结果导出] 文件生成完成",
       JSON.stringify({
-        count: rows.length,
+        count: exportCount,
         format,
         bytes,
         importRecordId: importBatch?.id || null,
@@ -256,25 +274,30 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
         action: "EXPORT_AUDIT_RESULTS",
         entityType: importBatch ? "IMPORT_RECORD" : "AUDIT_RESULT",
         entityId: importBatch?.id || null,
-        summary: `导出审核结果 ${rows.length} 条`,
+        summary: `导出审核结果 ${exportCount} 条`,
         metadata: JSON.stringify({
           importRecordId: importBatch?.id || null,
           fileName: importBatch?.fileName || null,
           importedAt: importBatch?.createdAt || null,
           filterKeys,
-          exportCount: rows.length,
+          exportCount,
           format,
           exportTime: new Date().toISOString(),
         }),
       },
     });
   };
-  if (format === "xlsx" && importBatch) {
+  if (format === "xlsx") {
     const classified = rows.map((row) => ({
       row,
-      classification: unifiedResultSheetType(row),
+      classification: unifiedResultSheetType(row.task),
     }));
-    const invalid = classified.find(({ classification }) => !classification.type);
+    const classifiedUnreviewed = unreviewedTasks.map((task) => ({
+      task,
+      classification: unifiedResultSheetType(task),
+    }));
+    const invalid = classified.find(({ classification }) => !classification.type) ||
+      classifiedUnreviewed.find(({ classification }) => !classification.type);
     if (invalid) {
       return fail(
         `统一审核结果导出已阻断：${invalid.classification.error}`,
@@ -285,33 +308,45 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     const byType = (type: UnifiedResultSheetType) => classified
       .filter(({ classification }) => classification.type === type)
       .map(({ row }) => row);
+    const unreviewedByType = (type: UnifiedResultSheetType) => classifiedUnreviewed
+      .filter(({ classification }) => classification.type === type)
+      .map(({ task }) => task);
     const unifiedDanoneRows = byType("DANONE");
     const unifiedKabritaRows = byType("KABRITA");
     const unifiedWyethRows = byType("WYETH");
     const unifiedNestleRows = byType("NESTLE");
     const buffer = await buildUnifiedAuditResultsWorkbook({
       templates,
-      danoneRecords: unifiedDanoneRows.map(auditResultToCompactExportRecord),
-      kabritaRecords: unifiedKabritaRows.map(auditResultToKabritaExportRecord),
-      wyethRecords: unifiedWyethRows.map(
-        auditResultToWyethNestleExportRecord,
-      ),
-      nestleRecords: unifiedNestleRows.map(
-        auditResultToWyethNestleExportRecord,
-      ),
+      danoneRecords: [
+        ...unifiedDanoneRows.map(auditResultToCompactExportRecord),
+        ...unreviewedByType("DANONE").map(auditTaskToUnreviewedCompactExportRecord),
+      ],
+      kabritaRecords: [
+        ...unifiedKabritaRows.map(auditResultToKabritaExportRecord),
+        ...unreviewedByType("KABRITA").map(auditTaskToUnreviewedKabritaExportRecord),
+      ],
+      wyethRecords: [
+        ...unifiedWyethRows.map(auditResultToWyethNestleExportRecord),
+        ...unreviewedByType("WYETH").map(auditTaskToUnreviewedWyethNestleExportRecord),
+      ],
+      nestleRecords: [
+        ...unifiedNestleRows.map(auditResultToWyethNestleExportRecord),
+        ...unreviewedByType("NESTLE").map(auditTaskToUnreviewedWyethNestleExportRecord),
+      ],
     });
     const bytes = new Uint8Array(buffer as ArrayBuffer);
     if (bytes.byteLength < 1_024) {
       return fail("导出文件生成异常，请稍后重试", 500, "EMPTY_EXPORT_FILE");
     }
-    await exportLog("xlsx", bytes.byteLength);
+    const exportCount = rows.length + unreviewedTasks.length;
+    await exportLog("xlsx", bytes.byteLength, exportCount);
     return new Response(bytes, {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
         "Cache-Control": "no-store",
-        "X-Veridia-Export-Count": String(rows.length),
+        "X-Veridia-Export-Count": String(exportCount),
         "X-Veridia-Export-Workbook": "UNIFIED",
       },
     });
@@ -366,109 +401,5 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
       },
     );
   }
-  const buffer = await buildConfiguredWorkbook({
-    templates,
-    kind: "auditResults",
-    records,
-    templateBrand,
-    templateType:
-      useWyethNestleTemplate
-        ? "WYETH_NESTLE"
-        : !mixedBrands && !mixedDanoneTemplates && agencyRecords.length
-        ? "DANONE_AGENCY"
-        : !mixedBrands && !mixedDanoneTemplates && customerRecords.length
-          ? "DANONE_CUSTOMER"
-          : undefined,
-    ...(useWyethNestleTemplate
-      ? {
-          sections: [{
-            sheetName: WYETH_NESTLE_SHEET_NAME,
-            records: wyethNestleRecords,
-            templateType: "WYETH_NESTLE" as const,
-            fields: WYETH_NESTLE_FIELDS,
-          }],
-        }
-      : mixedDanoneTemplates && !mixedBrands
-      ? {
-          sections: [
-            {
-              sheetName: "审核结果汇总",
-              records,
-              templateType: "DANONE_CUSTOMER" as const,
-              fields: DANONE_MIXED_SUMMARY_FIELDS,
-            },
-            {
-              sheetName: "达能代发",
-              records: agencyRecords,
-              templateType: "DANONE_AGENCY" as const,
-            },
-            {
-              sheetName: "达能客户",
-              records: customerRecords,
-              templateType: "DANONE_CUSTOMER" as const,
-            },
-          ],
-        }
-      : mixedBrands
-      ? {
-          sections: [
-            ...(danoneRows.length && mixedDanoneTemplates
-              ? [
-                  {
-                    sheetName: "达能审核结果汇总",
-                    records,
-                    templateType: "DANONE_CUSTOMER" as const,
-                    fields: DANONE_MIXED_SUMMARY_FIELDS,
-                  },
-                  {
-                    sheetName: "达能代发",
-                    records: agencyRecords,
-                    templateType: "DANONE_AGENCY" as const,
-                  },
-                  {
-                    sheetName: "达能客户",
-                    records: customerRecords,
-                    templateType: "DANONE_CUSTOMER" as const,
-                  },
-                ]
-              : danoneRows.length ? [
-                  {
-                    sheetName: "达能审核结果",
-                    records: danoneRows.map(auditResultToCompactExportRecord),
-                    templateType: agencyRecords.length
-                      ? "DANONE_AGENCY" as const
-                      : "DANONE_CUSTOMER" as const,
-                  },
-                ] : []),
-            ...(kabritaRows.length ? [{
-              sheetName: "佳贝艾特审核结果",
-              records: kabritaRecords,
-              templateBrand: KABRITA_BRAND_NAME,
-            }] : []),
-            ...(wyethNestleRows.length
-              ? [{
-                  sheetName: WYETH_NESTLE_SHEET_NAME,
-                  records: wyethNestleRecords,
-                  templateType: "WYETH_NESTLE" as const,
-                  fields: WYETH_NESTLE_FIELDS,
-                }]
-              : []),
-          ],
-        }
-      : {}),
-  });
-  const bytes = new Uint8Array(buffer as ArrayBuffer);
-  if (bytes.byteLength < 1_024) {
-    return fail("导出文件生成异常，请稍后重试", 500, "EMPTY_EXPORT_FILE");
-  }
-  await exportLog("xlsx", bytes.byteLength);
-  return new Response(bytes, {
-    headers: {
-      "Content-Type":
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
-      "Cache-Control": "no-store",
-      "X-Veridia-Export-Count": String(rows.length),
-    },
-  });
+  return fail("不支持的导出格式", 400, "UNSUPPORTED_EXPORT_FORMAT");
 }, "导出审核结果");
