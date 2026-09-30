@@ -2,7 +2,10 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { normalizeTopic } from "@/lib/topic";
 import {
-  campaignContainsProduct,
+  CampaignProductMembershipError,
+  ensureCampaignProductMembership,
+} from "@/lib/campaign-product-membership";
+import {
   isTopicRuleScope,
   resolveTopicRuleOwnership,
   topicRuleSemanticKey,
@@ -142,11 +145,14 @@ async function resolveManagedRuleOwnership(
     campaign?.product?.brandName,
     ...(campaign?.products || []).map(({ product: item }) => item.brandName),
   ].filter(Boolean));
-  if (!campaign || !campaignBrands.has(input.brandName)) {
+  if (!campaign) {
     throw new TopicRuleManagementError("所选活动不属于当前品牌");
   }
-  if (productId && !campaignContainsProduct(campaign, productId)) {
-    throw new TopicRuleManagementError("所选产品不属于当前活动");
+  if (product && (campaignBrands.size !== 1 || !campaignBrands.has(product.brandName))) {
+    throw new TopicRuleManagementError("所选产品与活动品牌不一致");
+  }
+  if (!campaignBrands.has(input.brandName)) {
+    throw new TopicRuleManagementError("所选活动不属于当前品牌");
   }
   const contentChannel = input.contentChannel || campaign.contentChannel;
   if (contentChannel !== campaign.contentChannel) {
@@ -160,6 +166,34 @@ async function resolveManagedRuleOwnership(
     throw new TopicRuleManagementError("所属活动与当前规则月份不一致");
   }
   return { productId, campaignId, contentChannel, campaign };
+}
+
+async function ensureManagedProductMembership(
+  tx: Prisma.TransactionClient,
+  input: {
+    scope: TopicRuleScope;
+    brandName: string;
+    productId: string | null;
+    campaignId: string | null;
+    contentChannel: string;
+    selectedMonth: string | null;
+  },
+) {
+  if (input.scope !== "PRODUCT" || !input.productId || !input.campaignId) return;
+  try {
+    await ensureCampaignProductMembership(tx, {
+      campaignId: input.campaignId,
+      productId: input.productId,
+      brandName: input.brandName,
+      selectedMonth: input.selectedMonth || "",
+      contentChannel: input.contentChannel,
+    });
+  } catch (error) {
+    if (error instanceof CampaignProductMembershipError) {
+      throw new TopicRuleManagementError(error.message, error.statusCode);
+    }
+    throw error;
+  }
 }
 
 async function assertNoTopicRuleDuplicate(
@@ -249,6 +283,14 @@ export async function createTopicRuleInTransaction(
     topic,
     applicableStage,
     milkType,
+  });
+  await ensureManagedProductMembership(tx, {
+    scope,
+    brandName,
+    productId: ownership.productId,
+    campaignId: ownership.campaignId,
+    contentChannel: ownership.contentChannel,
+    selectedMonth: readOptionalText(input.body.selectedMonth),
   });
   let version = 1;
   if (ownership.campaignId) {
@@ -467,6 +509,16 @@ export async function updateTopicRuleInTransaction(
     topic: nextTopic,
     applicableStage,
     milkType,
+  });
+  await ensureManagedProductMembership(tx, {
+    scope: requestedScope,
+    brandName,
+    productId: ownership.productId,
+    campaignId: ownership.campaignId,
+    contentChannel: ownership.contentChannel,
+    selectedMonth:
+      readOptionalText(input.body.selectedMonth) ||
+      (requestedCampaignId === existing.campaignId ? existing.campaign?.month || null : null),
   });
 
   let version = existing.version + 1;

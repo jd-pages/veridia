@@ -164,7 +164,7 @@ describe.sequential("话题规则启停与永久删除", () => {
     });
   });
 
-  it("PRODUCT rejects product not in campaign", async () => {
+  it("PRODUCT joins an existing same-brand campaign when membership is absent", async () => {
     const fixture = await createOwnershipFixture(`member-${Date.now().toString(36)}`);
     await expect(source.$transaction((tx) => createTopicRuleInTransaction(tx, {
       userId: fixture.userId,
@@ -176,9 +176,15 @@ describe.sequential("话题规则启停与永久删除", () => {
         selectedMonth: "2026-09",
         contentChannel: "XIAOHONGSHU",
         ruleType: "MUST_ALL",
-        topic: "#错误活动成员",
+        topic: "#新活动成员",
       },
-    }))).rejects.toThrow("所选产品不属于当前活动");
+    }))).resolves.toMatchObject({
+      productId: fixture.secondProduct.id,
+      campaignId: fixture.campaign.id,
+    });
+    expect(await source.campaignProduct.count({
+      where: { campaignId: fixture.campaign.id, productId: fixture.secondProduct.id },
+    })).toBe(1);
   });
 
   it("PRODUCT rejects campaign channel mismatch", async () => {
@@ -232,7 +238,16 @@ describe.sequential("话题规则启停与永久删除", () => {
         campaignId: fixture.secondCampaign.id,
         selectedMonth: "2026-09",
       },
-    }))).rejects.toThrow("所选产品不属于当前活动");
+    }))).resolves.toMatchObject({
+      productId: fixture.product.id,
+      campaignId: fixture.secondCampaign.id,
+    });
+    expect(await source.campaignProduct.count({
+      where: { campaignId: fixture.secondCampaign.id, productId: fixture.product.id },
+    })).toBe(1);
+    expect(await source.campaign.findUniqueOrThrow({
+      where: { id: fixture.campaign.id },
+    })).toMatchObject({ productId: fixture.product.id });
   });
 
   it("CAMPAIGN rules must not bind a product", async () => {

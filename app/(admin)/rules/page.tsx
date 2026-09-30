@@ -59,6 +59,7 @@ interface Campaign {
   products?: Array<{ product: Product }>;
   ruleVersion?: number;
   status?: string;
+  deletedAt?: string | null;
   contentChannel: "XIAOHONGSHU" | "DOUYIN";
 }
 
@@ -153,6 +154,8 @@ export default function RulesPage() {
   const [deleteMonthOpen, setDeleteMonthOpen] = useState(false);
   const [deletingMonth, setDeletingMonth] = useState(false);
   const [open, setOpen] = useState(false);
+  const [savingRule, setSavingRule] = useState(false);
+  const [savedRuleNeedsRefresh, setSavedRuleNeedsRefresh] = useState(false);
   const [monthOpen, setMonthOpen] = useState(false);
   const [creatingMonth, setCreatingMonth] = useState(false);
   const [editing, setEditing] = useState<Rule | null>(null);
@@ -210,8 +213,17 @@ export default function RulesPage() {
     [displayedRules],
   );
   const productCampaignOptions = useMemo(
-    () => campaigns.filter((campaign) => campaignContainsProduct(campaign, formProductId)),
-    [campaigns, formProductId],
+    () => campaigns.filter((campaign) => {
+      const brands = [
+        campaign.product?.brandName,
+        ...(campaign.products || []).map(({ product }) => product.brandName),
+      ].filter(Boolean);
+      return !campaign.deletedAt &&
+        campaign.month === selectedMonth &&
+        campaign.contentChannel === selectedChannel &&
+        brands.length > 0 && brands.every((brand) => brand === selectedBrand);
+    }),
+    [campaigns, selectedBrand, selectedChannel, selectedMonth],
   );
 
   const loadBrands = useCallback(async () => {
@@ -274,18 +286,18 @@ export default function RulesPage() {
           : undefined,
       );
       setStageGroups(stageData);
+      return true;
     } catch (error) {
       message.error(error instanceof Error ? error.message : "加载规则失败");
+      return false;
     } finally {
       setLoading(false);
     }
   }, [campaignId, message, selectedBrand, selectedMonth, selectedChannel]);
 
   const openNewRule = useCallback((targetScope: RuleView, productId?: string) => {
-    const eligibleCampaigns = campaigns.filter((campaign) =>
-      campaignContainsProduct(campaign, productId),
-    );
     setEditing(null);
+    setSavedRuleNeedsRefresh(false);
     setOpen(true);
     window.setTimeout(() => {
       form.resetFields();
@@ -293,8 +305,8 @@ export default function RulesPage() {
         scope: targetScope === "GENERAL" ? "GLOBAL" : targetScope,
         productId: targetScope === "PRODUCT" ? productId : undefined,
         campaignId:
-          targetScope === "PRODUCT" && eligibleCampaigns.length === 1
-            ? eligibleCampaigns[0].id
+          targetScope === "PRODUCT" && productCampaignOptions.length === 1
+            ? productCampaignOptions[0].id
             : undefined,
         ruleType: "MUST_ALL",
         exactMatch: true,
@@ -304,10 +316,11 @@ export default function RulesPage() {
         sortOrder: 10,
       });
     }, 0);
-  }, [campaigns, form]);
+  }, [form, productCampaignOptions]);
 
   const openRuleEditor = useCallback((rule: Rule) => {
     setEditing(rule);
+    setSavedRuleNeedsRefresh(false);
     setOpen(true);
     window.setTimeout(() => {
       form.resetFields();
@@ -1106,29 +1119,52 @@ export default function RulesPage() {
             : scope === "PRODUCT"
               ? "新增产品规则"
               : "新增活动规则"}
-        onCancel={() => setOpen(false)}
+        onCancel={() => {
+          if (!savingRule) setOpen(false);
+        }}
         onOk={() => form.submit()}
-        okText="保存"
+        okText={savedRuleNeedsRefresh ? "刷新数据" : "保存"}
+        confirmLoading={savingRule}
+        cancelButtonProps={{ disabled: savingRule }}
         width={680}
       >
         <Form
           form={form}
           layout="vertical"
+          disabled={savingRule || savedRuleNeedsRefresh}
           onFinish={async (values) => {
-            await apiFetch(editing ? `/api/rules/${editing.id}` : "/api/rules", {
-              method: editing ? "PUT" : "POST",
-              body: JSON.stringify({
-                ...values,
-                brandName: selectedBrand,
-                contentChannel: selectedChannel,
-                selectedMonth,
-              }),
-            });
-            message.success(editing ? "规则已更新并生成新版本" : "规则已创建");
-            setOpen(false);
-            void load();
+            if (savingRule) return;
+            setSavingRule(true);
+            try {
+              if (!savedRuleNeedsRefresh) {
+                await apiFetch(editing ? `/api/rules/${editing.id}` : "/api/rules", {
+                  method: editing ? "PUT" : "POST",
+                  body: JSON.stringify({
+                    ...values,
+                    brandName: selectedBrand,
+                    contentChannel: selectedChannel,
+                    selectedMonth,
+                  }),
+                });
+                setSavedRuleNeedsRefresh(true);
+                message.success(editing ? "规则已更新并生成新版本" : "规则已创建");
+              }
+              if (await load()) {
+                setOpen(false);
+                setSavedRuleNeedsRefresh(false);
+              }
+            } catch (error) {
+              message.error(error instanceof Error ? error.message : "规则保存失败");
+            } finally {
+              setSavingRule(false);
+            }
           }}
         >
+          {savedRuleNeedsRefresh ? (
+            <Typography.Paragraph type="secondary">
+              规则已保存。正在刷新产品、活动和规则；若加载失败，可点击“刷新数据”重试。
+            </Typography.Paragraph>
+          ) : null}
           <Space style={{ display: "flex" }} align="start">
             <Form.Item name="scope" label="规则层级" rules={[{ required: true }]}>
               <Select
@@ -1165,7 +1201,10 @@ export default function RulesPage() {
               <Select
                 showSearch
                 optionFilterProp="label"
-                onChange={() => form.setFieldValue("campaignId", undefined)}
+                onChange={() => form.setFieldValue(
+                  "campaignId",
+                  productCampaignOptions.length === 1 ? productCampaignOptions[0].id : undefined,
+                )}
                 options={products.map((item) => ({
                   value: item.id,
                   label: item.code ? `${item.code} · ${item.name}` : item.name,
@@ -1181,7 +1220,7 @@ export default function RulesPage() {
               label="所属活动"
               rules={[{ required: true, message: "请选择所属活动" }]}
               extra={scope === "PRODUCT"
-                ? "仅显示当前品牌、月份、平台且包含所选产品的活动。"
+                ? "显示当前品牌、月份和平台的活动；若产品尚未加入，保存规则时会同时加入该活动。"
                 : undefined}
             >
               <Select
@@ -1193,7 +1232,11 @@ export default function RulesPage() {
                 disabled={scope === "PRODUCT" && !formProductId}
                 options={(scope === "PRODUCT" ? productCampaignOptions : campaigns).map((item) => ({
                   value: item.id,
-                  label: `${item.month} · ${item.name}`,
+                  label: `${item.month} · ${item.name}${scope === "PRODUCT"
+                    ? campaignContainsProduct(item, formProductId)
+                      ? "【已加入活动】"
+                      : "【保存后加入活动】"
+                    : ""}`,
                 }))}
               />
             </Form.Item>
