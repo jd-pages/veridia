@@ -1,4 +1,5 @@
 import { parseStoredStringArray } from "@/lib/stored-json";
+import { rewardModeFromRuleSnapshot } from "@/lib/interaction-reward";
 
 export interface RetentionClassificationRuleResult {
   ruleKey: string;
@@ -21,6 +22,7 @@ export interface RetentionClassificationInput {
   retentionStatus: string;
   storeTopicStatus?: string;
   interactionRewardStatus?: string;
+  ruleSnapshot?: string;
   failureReasons: string;
   ruleResults?: RetentionClassificationRuleResult[];
 }
@@ -55,7 +57,8 @@ export function retentionReviewReasons(input: RetentionClassificationInput) {
   if (input.storeTopicStatus === "UNREVIEWABLE") {
     reasons.push("店铺话题审核证据待确认");
   }
-  if (input.interactionRewardStatus === "PENDING") {
+  if (input.interactionRewardStatus === "PENDING" &&
+    rewardModeFromRuleSnapshot(input.ruleSnapshot) === "LEGACY") {
     reasons.push("互动奖励待确认");
   }
   const storedReasons = parseStoredStringArray(input.failureReasons).filter(

@@ -12,12 +12,15 @@ import {
   Drawer,
   Form,
   Input,
+  InputNumber,
   List,
   Modal,
   Row,
   Segmented,
+  Select,
   Space,
   Statistic,
+  Switch,
   Table,
   Tag,
   Tabs,
@@ -79,6 +82,10 @@ interface Campaign {
   retentionDays: number;
   interactionRewardEnabled: boolean;
   interactionRewardThreshold: number;
+  rewardMode: "LEGACY" | "CONTENT_BASE_PLUS_INTERACTION_TIERS";
+  basicRewardRequired: boolean;
+  baseRewardAmount: number;
+  interactionRewardTiers: Array<{ threshold: number; amount: number }>;
   rewardDescription: string | null;
   customerRegistrationNotes: string | null;
   ruleVersion: number;
@@ -89,6 +96,16 @@ interface Campaign {
   topicRules?: TopicRule[];
   brandNames?: string[];
   _count: { topicRules: number };
+}
+
+interface RewardFormValues {
+  rewardMode: Campaign["rewardMode"];
+  basicRewardRequired: boolean;
+  baseRewardAmount: number;
+  interactionRewardEnabled: boolean;
+  interactionRewardThreshold: number;
+  interactionRewardTiers: Campaign["interactionRewardTiers"];
+  retentionDays: number;
 }
 
 interface ImportMetadata {
@@ -177,6 +194,10 @@ export default function CampaignsPage() {
   const [detail, setDetail] = useState<Campaign | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [importForm] = Form.useForm<ImportMetadata>();
+  const [rewardForm] = Form.useForm<RewardFormValues>();
+  const [rewardOpen, setRewardOpen] = useState(false);
+  const [rewardSaving, setRewardSaving] = useState(false);
+  const rewardMode = Form.useWatch("rewardMode", rewardForm);
   const [currentRole, setCurrentRole] = useState<SessionUser["role"] | null>(
     null,
   );
@@ -250,6 +271,40 @@ export default function CampaignsPage() {
       message.error(error instanceof Error ? error.message : "加载活动详情失败");
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const openRewardConfig = () => {
+    if (!detail || !canManageBusiness) return;
+    rewardForm.setFieldsValue({
+      rewardMode: detail.rewardMode || "LEGACY",
+      basicRewardRequired: detail.basicRewardRequired || false,
+      baseRewardAmount: detail.baseRewardAmount || 0,
+      interactionRewardEnabled: detail.interactionRewardEnabled,
+      interactionRewardThreshold: detail.interactionRewardThreshold,
+      interactionRewardTiers: detail.interactionRewardTiers || [],
+      retentionDays: detail.retentionDays,
+    });
+    setRewardOpen(true);
+  };
+
+  const saveRewardConfig = async () => {
+    if (!detail || !canManageBusiness) return;
+    try {
+      const values = await rewardForm.validateFields();
+      setRewardSaving(true);
+      await apiFetch<Campaign>(`/api/campaigns/${detail.id}`, {
+        method: "PUT",
+        body: JSON.stringify(values),
+      });
+      setDetail(await apiFetch<Campaign>(`/api/campaigns/${detail.id}`));
+      await load();
+      message.success("活动奖励配置已保存；正式 Rules 发布仍需单独执行");
+      setRewardOpen(false);
+    } catch (error) {
+      if (error instanceof Error) message.error(error.message);
+    } finally {
+      setRewardSaving(false);
     }
   };
 
@@ -598,9 +653,15 @@ export default function CampaignsPage() {
               </Descriptions.Item>
               <Descriptions.Item label="奖励信息" span={2}>
                 {detail.rewardDescription || "无"}
-                {detail.interactionRewardEnabled && (
+                {detail.rewardMode === "CONTENT_BASE_PLUS_INTERACTION_TIERS" ? (
+                  <>
+                    <div>内容通过基础奖励：{detail.baseRewardAmount} 元；互动量不影响内容审核结论</div>
+                    <div>互动额外奖励：{detail.interactionRewardTiers.map((tier) => `≥${tier.threshold}：${tier.amount}元`).join("；")}（取最高达标档位，不累加）</div>
+                  </>
+                ) : detail.interactionRewardEnabled && (
                   <div>互动额外奖励：点赞+评论+收藏≥{detail.interactionRewardThreshold}，独立于基础审核</div>
                 )}
+                {canManageBusiness && <Button type="link" onClick={openRewardConfig}>配置活动奖励</Button>}
               </Descriptions.Item>
               <Descriptions.Item label="客服登记备注" span={2}>
                 {detail.customerRegistrationNotes ||
@@ -680,6 +741,57 @@ export default function CampaignsPage() {
           </>
         ) : null}
       </Drawer>
+
+      <Modal
+        open={rewardOpen}
+        title="配置活动奖励"
+        okText="保存配置"
+        confirmLoading={rewardSaving}
+        onOk={() => void saveRewardConfig()}
+        onCancel={() => { if (!rewardSaving) setRewardOpen(false); }}
+        cancelButtonProps={{ disabled: rewardSaving }}
+        maskClosable={!rewardSaving}
+      >
+        <Alert type="info" showIcon message="仅修改当前活动配置，不重算历史结果，不发布 Rules。留存天数为信息，不创建自动复审任务。" style={{ marginBottom: 16 }} />
+        <Form form={rewardForm} layout="vertical">
+          <Form.Item name="rewardMode" label="奖励模式" rules={[{ required: true }]}>
+            <Select options={[
+              { value: "LEGACY", label: "原有基础条件 / 单档互动奖励" },
+              { value: "CONTENT_BASE_PLUS_INTERACTION_TIERS", label: "内容基础奖励 + 阶梯互动额外奖励" },
+            ]} />
+          </Form.Item>
+          {rewardMode === "CONTENT_BASE_PLUS_INTERACTION_TIERS" ? <>
+            <Form.Item name="baseRewardAmount" label="内容通过基础奖励金额" rules={[{ required: true }]}>
+              <InputNumber min={0} precision={0} addonAfter="元" />
+            </Form.Item>
+            <Form.List name="interactionRewardTiers" rules={[{
+              validator: async (_rule, tiers) => {
+                if (!tiers?.length) throw new Error("至少添加一个互动奖励档位");
+                if (new Set(tiers.map((tier: { threshold?: number }) => tier.threshold)).size !== tiers.length) throw new Error("互动门槛不能重复");
+              },
+            }]}>
+              {(fields, { add, remove }, { errors }) => <>
+                {fields.map(({ key, name, ...rest }) => <Space key={key} align="baseline">
+                  <Form.Item {...rest} name={[name, "threshold"]} label="互动量至少" rules={[{ required: true }]}>
+                    <InputNumber min={1} precision={0} />
+                  </Form.Item>
+                  <Form.Item {...rest} name={[name, "amount"]} label="额外奖励金额" rules={[{ required: true }]}>
+                    <InputNumber min={0} precision={0} addonAfter="元" />
+                  </Form.Item>
+                  <Button onClick={() => remove(name)}>删除档位</Button>
+                </Space>)}
+                <Form.ErrorList errors={errors} />
+                <Button onClick={() => add({ threshold: 1, amount: 0 })} style={{ marginBottom: 16 }}>添加互动奖励档位</Button>
+              </>}
+            </Form.List>
+          </> : <>
+            <Form.Item name="basicRewardRequired" label="原有基础互动达标条件" valuePropName="checked"><Switch /></Form.Item>
+            <Form.Item name="interactionRewardEnabled" label="原有单档互动奖励" valuePropName="checked"><Switch /></Form.Item>
+            <Form.Item name="interactionRewardThreshold" label="原有互动奖励门槛" rules={[{ required: true }]}><InputNumber min={0} precision={0} /></Form.Item>
+          </>}
+          <Form.Item name="retentionDays" label="留存天数（仅信息）" rules={[{ required: true }]}><InputNumber min={0} precision={0} /></Form.Item>
+        </Form>
+      </Modal>
     </>
   );
 }

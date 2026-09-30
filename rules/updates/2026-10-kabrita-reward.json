@@ -1,0 +1,19 @@
+{
+  "description": "佳贝艾特10月奖励配置候选，仅用于隔离验收；正式活动配置和Rules发布由用户单独确认。",
+  "minimumAppVersion": "1.1.41",
+  "selector": {
+    "brandName": "佳贝艾特",
+    "month": "2026-10",
+    "contentChannel": "XIAOHONGSHU"
+  },
+  "campaign": {
+    "rewardMode": "CONTENT_BASE_PLUS_INTERACTION_TIERS",
+    "basicRewardRequired": false,
+    "baseRewardAmount": 50,
+    "interactionRewardTiers": [
+      { "threshold": 10, "amount": 20 },
+      { "threshold": 40, "amount": 50 }
+    ],
+    "retentionDays": 30
+  }
+}

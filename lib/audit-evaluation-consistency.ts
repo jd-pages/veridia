@@ -57,7 +57,8 @@ export function assertAuditEvaluationConsistency(evaluation: AuditEvaluation) {
     ["IMAGES_READ_FAILED", "NOT_CHECKED"].includes(evaluation.imageStatus) ||
     evaluation.publicStatus === "UNKNOWN" ||
     evaluation.storeTopicStatus === "UNREVIEWABLE" ||
-    evaluation.interactionReward?.interactionRewardStatus === "PENDING" ||
+    (evaluation.rewardMode !== "CONTENT_BASE_PLUS_INTERACTION_TIERS" &&
+      evaluation.interactionReward?.interactionRewardStatus === "PENDING") ||
     evaluation.ruleResults.some((result) => result.ruleKey !== "GLOBAL_RETENTION" && (
       containsReviewSignal(result.actualValue) ||
       containsReviewSignal(result.failureReason) ||

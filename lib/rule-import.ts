@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { cellText } from "@/lib/excel";
 import { normalizeTopic } from "@/lib/topic";
 import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
+import { legacyBasicRewardRequired } from "@/lib/campaign-reward-config";
 import {
   PRODUCT_STAGE_TOPIC_VALUES,
   detectProductStage,
@@ -865,7 +866,14 @@ export async function commitCampaignRuleImport(
           where: { id: existingCampaign.id },
           data: { ...campaignData, ruleVersion: { increment: 1 } },
         })
-      : await tx.campaign.create({ data: campaignData });
+      : await tx.campaign.create({ data: {
+          ...campaignData,
+          basicRewardRequired: legacyBasicRewardRequired({
+            name: campaignData.name,
+            contentChannel: "XIAOHONGSHU",
+            brandNames: products.map((product) => product.brandName),
+          }),
+        } });
 
     await tx.campaignProduct.deleteMany({ where: { campaignId: campaign.id } });
     await tx.campaignProduct.createMany({

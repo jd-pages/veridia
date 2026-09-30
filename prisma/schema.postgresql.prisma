@@ -224,6 +224,9 @@ model Campaign {
   rewardDescription         String?
   interactionRewardEnabled  Boolean           @default(false)
   interactionRewardThreshold Int              @default(0)
+  rewardMode                String            @default("LEGACY")
+  basicRewardRequired       Boolean           @default(false)
+  baseRewardAmount          Int               @default(0)
   visualReviewGuidance      String?
   customerRegistrationNotes String?
   clickableTopicRequired    Boolean           @default(true)
@@ -234,6 +237,7 @@ model Campaign {
   updatedAt                 DateTime          @updatedAt
   product                   Product?          @relation(fields: [productId], references: [id])
   products                  CampaignProduct[]
+  interactionRewardTiers    CampaignInteractionRewardTier[]
   topicRules                TopicRule[]
   auditTasks                AuditTask[]
   auditBatches              AuditBatch[]
@@ -242,6 +246,21 @@ model Campaign {
   @@index([contentChannel, month, status])
   @@index([productId, status])
   @@map("campaigns")
+}
+
+model CampaignInteractionRewardTier {
+  id         String   @id @default(cuid())
+  campaignId String
+  threshold  Int
+  amount     Int
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, threshold])
+  @@index([campaignId, sortOrder])
+  @@map("campaign_interaction_reward_tiers")
 }
 
 model CampaignProduct {

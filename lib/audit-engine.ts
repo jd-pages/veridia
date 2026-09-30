@@ -239,6 +239,7 @@ export function evaluateAudit(
       failureReasons: ["抖音采集成功，业务规则未配置"],
       ruleResults: evaluations,
       interactionReward: evaluateInteractionReward({}, context),
+      rewardMode: context.rewardMode,
     };
   }
 
@@ -291,6 +292,7 @@ export function evaluateAudit(
       failureReasons: [...new Set(failures)],
       ruleResults: evaluations,
       interactionReward: evaluateInteractionReward({}, context),
+      rewardMode: context.rewardMode,
     };
   }
 
@@ -909,7 +911,7 @@ export function evaluateAudit(
     autoStatus = "NEEDS_REVIEW";
   }
 
-  if (context.basicRewardRequired) {
+  if (context.rewardMode !== "CONTENT_BASE_PLUS_INTERACTION_TIERS" && context.basicRewardRequired) {
     const interaction = calculateInteractionTotal(note);
     const counts = {
       likeCount: interaction.likeCount,
@@ -999,5 +1001,6 @@ export function evaluateAudit(
     failureReasons: [...new Set(failures)],
     ruleResults: evaluations,
     interactionReward: evaluateInteractionReward(note, context),
+    rewardMode: context.rewardMode,
   };
 }

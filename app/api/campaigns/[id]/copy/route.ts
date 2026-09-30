@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import { resolveTopicRuleOwnership } from "@/lib/topic-rule-model";
+import { resolveCampaignRewardConfig } from "@/lib/campaign-reward-config";
 
 export async function POST(
   request: Request,
@@ -19,10 +20,18 @@ export async function POST(
     where: { id },
     include: {
       products: { include: { product: { select: { brandName: true } } } },
+      interactionRewardTiers: { orderBy: { threshold: "asc" } },
       topicRules: { where: { status: "ACTIVE" }, include: { product: true } },
     },
   });
   if (!source) return fail("源活动不存在", 404);
+  let reward;
+  try {
+    reward = resolveCampaignRewardConfig(source as unknown as Record<string, unknown>);
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "源活动奖励配置无效");
+  }
+  const { interactionRewardTiers, ...rewardFields } = reward;
   const targetMonth = body.month || dayjs(source.month).add(1, "month").format("YYYY-MM");
   if (!/^\d{4}-\d{2}$/u.test(targetMonth)) return fail("规则月份格式应为 YYYY-MM");
   const brandName = source.products[0]?.product.brandName;
@@ -54,7 +63,8 @@ export async function POST(
     return [{ rule, ownership }];
   });
   try {
-    const copied = await prisma.campaign.create({
+    const copied = await prisma.$transaction(async (tx) => {
+    const created = await tx.campaign.create({
       data: {
         ruleSource: "LOCAL_DRAFT",
         productId: source.productId,
@@ -73,8 +83,10 @@ export async function POST(
         publicRequired: source.publicRequired,
         retentionDays: source.retentionDays,
         rewardDescription: source.rewardDescription,
-        interactionRewardEnabled: source.interactionRewardEnabled,
-        interactionRewardThreshold: source.interactionRewardThreshold,
+        ...rewardFields,
+        interactionRewardTiers: {
+          create: interactionRewardTiers.map((tier, sortOrder) => ({ ...tier, sortOrder })),
+        },
         visualReviewGuidance: null,
         customerRegistrationNotes: source.customerRegistrationNotes,
         clickableTopicRequired: source.clickableTopicRequired,
@@ -105,17 +117,19 @@ export async function POST(
           })),
         },
       },
-      include: { topicRules: true, product: true },
+      include: { topicRules: true, product: true, interactionRewardTiers: { orderBy: { threshold: "asc" } } },
     });
-    await prisma.operationLog.create({
+    await tx.operationLog.create({
       data: {
         userId: user.id,
         action: "COPY_CAMPAIGN",
         entityType: "CAMPAIGN",
-        entityId: copied.id,
+        entityId: created.id,
         summary: `复制活动 ${source.name} 到 ${targetMonth}`,
         metadata: JSON.stringify({ sourceId: source.id }),
       },
+    });
+    return created;
     });
     return ok(copied, { status: 201 });
   } catch {

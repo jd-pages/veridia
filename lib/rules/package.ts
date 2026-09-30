@@ -3,6 +3,8 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import packageJson from "@/package.json";
 import { prisma } from "@/lib/db";
+import { legacyBasicRewardRequired, normalizeInteractionRewardTiers, resolveCampaignRewardConfig } from "@/lib/campaign-reward-config";
+import type { RewardMode } from "@/lib/interaction-reward";
 import {
   normalizeStoreNameForMatch,
   normalizeStoreTopicForMatch,
@@ -24,6 +26,7 @@ import { validateImportExportTemplates } from "@/lib/import-export-templates/val
 import {
   RULE_PACKAGE_SCHEMA_VERSION,
   type RuleCounts,
+  type RulePackageCampaign,
   type RulePackagePayload,
   type RulePackageStageGroup,
 } from "./types";
@@ -80,6 +83,13 @@ const payloadSchema = z.object({
       rewardDescription: nullableText,
       interactionRewardEnabled: z.boolean().optional().default(false),
       interactionRewardThreshold: z.number().int().min(0).optional().default(0),
+      rewardMode: z.enum(["LEGACY", "CONTENT_BASE_PLUS_INTERACTION_TIERS"]).optional(),
+      basicRewardRequired: z.boolean().optional(),
+      baseRewardAmount: z.number().int().min(0).max(2_147_483_647).optional(),
+      interactionRewardTiers: z.array(z.object({
+        threshold: z.number().int().positive().max(2_147_483_647),
+        amount: z.number().int().min(0).max(2_147_483_647),
+      })).optional(),
       visualReviewGuidance: nullableText.optional().default(null),
       customerRegistrationNotes: nullableText,
       clickableTopicRequired: z.boolean(),
@@ -188,9 +198,24 @@ export function validateRulePayload(input: unknown): RulePackagePayload {
     "规则包内容最低软件版本",
   );
   const payload = payloadSchema.parse(input) as RulePackagePayload;
-  if (payload.campaigns.some((campaign) => campaign.interactionRewardEnabled)) {
+  const hasRewardConfig = payload.campaigns.some((campaign) =>
+    campaign.rewardMode !== undefined || campaign.basicRewardRequired !== undefined ||
+    campaign.baseRewardAmount !== undefined || campaign.interactionRewardTiers !== undefined,
+  );
+  if (hasRewardConfig && compareRulePackageVersions(payload.minimumAppVersion, "1.1.41") < 0) {
+    throw new Error("包含奖励模式或阶梯配置的规则包最低软件版本不能低于 1.1.41");
+  }
+  for (const campaign of payload.campaigns) {
+    if (campaign.interactionRewardTiers !== undefined) {
+      campaign.interactionRewardTiers = normalizeInteractionRewardTiers(campaign.interactionRewardTiers);
+    }
+    if (campaign.rewardMode === "CONTENT_BASE_PLUS_INTERACTION_TIERS") {
+      resolveCampaignRewardConfig(campaign as unknown as Record<string, unknown>);
+    }
+  }
+  if (payload.campaigns.some((campaign) => campaign.interactionRewardEnabled && campaign.rewardMode !== "CONTENT_BASE_PLUS_INTERACTION_TIERS")) {
     if (compareRulePackageVersions(payload.minimumAppVersion, "1.1.22") < 0) throw new Error("互动奖励规则包最低软件版本不能低于 1.1.22");
-    if (payload.campaigns.some((campaign) => campaign.interactionRewardEnabled && !(campaign.interactionRewardThreshold! > 0))) {
+    if (payload.campaigns.some((campaign) => campaign.rewardMode !== "CONTENT_BASE_PLUS_INTERACTION_TIERS" && campaign.interactionRewardEnabled && !(campaign.interactionRewardThreshold! > 0))) {
       throw new Error("启用互动奖励时门槛必须为正整数");
     }
   }
@@ -464,7 +489,7 @@ export async function exportCurrentRulePayload(options?: {
       }),
       database.campaign.findMany({
         where: { deletedAt: null },
-        include: { products: { orderBy: { sortOrder: "asc" } } },
+        include: { products: { orderBy: { sortOrder: "asc" } }, interactionRewardTiers: { orderBy: { threshold: "asc" } } },
         orderBy: [{ startDate: "asc" }, { name: "asc" }],
       }),
       database.topicRule.findMany({
@@ -507,6 +532,29 @@ export async function exportCurrentRulePayload(options?: {
       ];
     }),
   );
+  const rewardFieldsByCampaignId = new Map<string, Partial<Pick<RulePackageCampaign,
+    "rewardMode" | "basicRewardRequired" | "baseRewardAmount" | "interactionRewardTiers"
+  >>>(campaigns.map((campaign) => {
+    const legacyBasicRequired = legacyBasicRewardRequired({
+      name: campaign.name,
+      contentChannel: campaign.contentChannel,
+      brandNames: [campaign.productId, ...campaign.products.map((link) => link.productId)]
+        .map((id) => id ? productBrandById.get(id) || "" : ""),
+    });
+    // Old clients already implement this exact default. Any override must travel
+    // as a complete configuration behind the newer minimum-version guard.
+    const canonicalLegacy = campaign.rewardMode === "LEGACY" &&
+      campaign.baseRewardAmount === 0 && campaign.interactionRewardTiers.length === 0 &&
+      campaign.basicRewardRequired === legacyBasicRequired;
+    return [campaign.id, canonicalLegacy ? {} : {
+      rewardMode: campaign.rewardMode as RewardMode,
+      basicRewardRequired: campaign.basicRewardRequired,
+      baseRewardAmount: campaign.baseRewardAmount,
+      interactionRewardTiers: campaign.interactionRewardTiers.map(({ threshold, amount }) => ({ threshold, amount })),
+    }] as const;
+  }));
+  const requiredAppVersion = [...rewardFieldsByCampaignId.values()].some((fields) => fields.rewardMode !== undefined)
+    ? "1.1.41" : campaigns.some((campaign) => campaign.interactionRewardEnabled) ? "1.1.22" : "1.1.17";
   const campaignKeyById = new Map(
     campaigns.map((campaign) => [
       campaign.id,
@@ -625,9 +673,8 @@ export async function exportCurrentRulePayload(options?: {
       "builtin-2026.07.29.1",
     schemaVersion: RULE_PACKAGE_SCHEMA_VERSION,
     publishedAt: (options?.publishedAt || new Date()).toISOString(),
-    minimumAppVersion: campaigns.some((campaign) => campaign.interactionRewardEnabled)
-      ? (options?.minimumAppVersion && compareRulePackageVersions(options.minimumAppVersion, "1.1.22") >= 0 ? options.minimumAppVersion : "1.1.22")
-      : options?.minimumAppVersion || "1.1.17",
+    minimumAppVersion: options?.minimumAppVersion && compareRulePackageVersions(options.minimumAppVersion, requiredAppVersion) >= 0
+      ? options.minimumAppVersion : requiredAppVersion,
     products: products.map((product) => ({
       key: productKeyById.get(product.id),
       code: product.code,
@@ -667,6 +714,7 @@ export async function exportCurrentRulePayload(options?: {
       rewardDescription: campaign.rewardDescription,
       interactionRewardEnabled: campaign.interactionRewardEnabled,
       interactionRewardThreshold: campaign.interactionRewardThreshold,
+      ...rewardFieldsByCampaignId.get(campaign.id),
       visualReviewGuidance: campaign.visualReviewGuidance,
       customerRegistrationNotes: campaign.customerRegistrationNotes,
       clickableTopicRequired: campaign.clickableTopicRequired,
@@ -998,6 +1046,7 @@ export async function applyRulePayload(
       const existing =
         (await tx.campaign.findUnique({
           where: { publishedKey: item.key },
+          include: { interactionRewardTiers: { orderBy: { threshold: "asc" } } },
         })) ||
         (await tx.campaign.findFirst({
           where: {
@@ -1005,7 +1054,19 @@ export async function applyRulePayload(
             month: item.month,
             contentChannel: item.contentChannel,
           },
+          include: { interactionRewardTiers: { orderBy: { threshold: "asc" } } },
         }));
+      const reward = resolveCampaignRewardConfig(item as unknown as Record<string, unknown>, existing ? {
+        ...existing,
+        rewardMode: existing.rewardMode as RewardMode,
+      } : {
+        basicRewardRequired: legacyBasicRewardRequired({
+          name: item.name,
+          contentChannel: item.contentChannel,
+          brandNames: item.productKeys.map((key) => payload.products.find((product) => product.key === key)?.brand || ""),
+        }),
+      });
+      const { interactionRewardTiers, ...rewardFields } = reward;
       const data = {
         publishedKey: item.key,
         ruleSource: source,
@@ -1025,8 +1086,7 @@ export async function applyRulePayload(
         publicRequired: item.publicRequired,
         retentionDays: item.retentionDays,
         rewardDescription: item.rewardDescription,
-        interactionRewardEnabled: item.interactionRewardEnabled ?? false,
-        interactionRewardThreshold: item.interactionRewardThreshold ?? 0,
+        ...rewardFields,
         visualReviewGuidance: item.visualReviewGuidance,
         customerRegistrationNotes: item.customerRegistrationNotes,
         clickableTopicRequired: item.clickableTopicRequired,
@@ -1037,6 +1097,14 @@ export async function applyRulePayload(
       const campaign = existing
         ? await tx.campaign.update({ where: { id: existing.id }, data })
         : await tx.campaign.create({ data });
+      if (!existing || item.interactionRewardTiers !== undefined) {
+        await tx.campaignInteractionRewardTier.deleteMany({ where: { campaignId: campaign.id } });
+        if (interactionRewardTiers.length) {
+          await tx.campaignInteractionRewardTier.createMany({
+            data: interactionRewardTiers.map((tier, sortOrder) => ({ ...tier, campaignId: campaign.id, sortOrder })),
+          });
+        }
+      }
       await tx.campaignProduct.deleteMany({
         where: { campaignId: campaign.id },
       });

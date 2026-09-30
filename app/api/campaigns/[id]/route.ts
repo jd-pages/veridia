@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/db";
 import { fail, ok, requireApiUser } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
+import { resolveCampaignRewardConfig } from "@/lib/campaign-reward-config";
+import type { RewardMode } from "@/lib/interaction-reward";
 
 export async function GET(
   _request: Request,
@@ -13,6 +15,7 @@ export async function GET(
     where: { id, deletedAt: null },
     include: {
       product: true,
+      interactionRewardTiers: { orderBy: { threshold: "asc" } },
       products: {
         include: { product: { include: { aliases: true } } },
         orderBy: { sortOrder: "asc" },
@@ -53,19 +56,32 @@ export async function PUT(
   if (user instanceof Response) return user;
   const { id } = await params;
   const body = (await request.json()) as Record<string, unknown>;
-  const current = await prisma.campaign.findUnique({ where: { id } });
+  const current = await prisma.campaign.findUnique({ where: { id }, include: { interactionRewardTiers: { orderBy: { threshold: "asc" } } } });
   if (!current) return fail("活动不存在", 404);
-  const rewardEnabled = body.interactionRewardEnabled ?? current.interactionRewardEnabled;
-  const rewardThreshold = body.interactionRewardThreshold ?? current.interactionRewardThreshold;
-  if (typeof rewardEnabled !== "boolean" || typeof rewardThreshold !== "number" || !Number.isSafeInteger(rewardThreshold) ||
-    rewardThreshold < 0 || (rewardEnabled && rewardThreshold === 0)) return fail("互动奖励启用时门槛必须为正整数");
+  let reward;
   try {
-    const campaign = await prisma.campaign.update({
+    reward = resolveCampaignRewardConfig(body, {
+      ...current,
+      rewardMode: current.rewardMode as RewardMode,
+    });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "奖励配置无效");
+  }
+  const { interactionRewardTiers, ...rewardFields } = reward;
+  try {
+    const campaign = await prisma.$transaction(async (tx) => {
+    const updated = await tx.campaign.update({
       where: { id },
       data: {
         ruleSource: "LOCAL_DRAFT",
-        interactionRewardEnabled: rewardEnabled,
-        interactionRewardThreshold: rewardThreshold,
+        ...rewardFields,
+        ruleVersion: { increment: 1 },
+        ...(body.interactionRewardTiers !== undefined ? {
+          interactionRewardTiers: {
+            deleteMany: {},
+            create: interactionRewardTiers.map((tier, sortOrder) => ({ ...tier, sortOrder })),
+          },
+        } : {}),
         ...(typeof body.name === "string" ? { name: body.name.trim() } : {}),
         ...(typeof body.month === "string" ? { month: body.month } : {}),
         ...(body.contentChannel === "XIAOHONGSHU" ||
@@ -84,9 +100,6 @@ export async function PUT(
         ...(typeof body.minBodyLength === "number"
           ? { minBodyLength: Math.max(0, Math.floor(body.minBodyLength)) }
           : {}),
-        productImageRequired: false,
-        firstImageRequirement: null,
-        prohibitedImageGuidance: null,
         ...(typeof body.publicRequired === "boolean"
           ? { publicRequired: body.publicRequired }
           : {}),
@@ -96,7 +109,6 @@ export async function PUT(
         ...(typeof body.rewardDescription === "string"
           ? { rewardDescription: body.rewardDescription.trim() || null }
           : {}),
-        visualReviewGuidance: null,
         ...(typeof body.customerRegistrationNotes === "string"
           ? {
               customerRegistrationNotes:
@@ -111,22 +123,26 @@ export async function PUT(
           : {}),
         ...(typeof body.status === "string" ? { status: body.status } : {}),
       },
-      include: { product: true, products: { include: { product: true } } },
+      include: { product: true, products: { include: { product: true } }, interactionRewardTiers: { orderBy: { threshold: "asc" } } },
     });
-    await prisma.operationLog.create({
+    await tx.operationLog.create({
       data: {
         userId: user.id,
         action: "UPDATE_CAMPAIGN",
         entityType: "CAMPAIGN",
         entityId: id,
-        summary: `更新活动 ${campaign.name}`,
+        summary: `更新活动 ${updated.name}`,
       },
+    });
+    return updated;
     });
     return ok(campaign);
   } catch {
     return fail("活动不存在或数据无效");
   }
 }
+
+export const PATCH = PUT;
 
 export async function DELETE(
   _request: Request,

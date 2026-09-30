@@ -42,7 +42,7 @@ function AuditConclusionCell(props: {
 
   return (
     <div className={styles.stack}>
-      <InteractionReward snapshot={row} />
+      <InteractionReward snapshot={row} reward={row.presentation.reward} />
       {duplicateReaudit ? (
         <div>
           <Tag color="orange">

@@ -3,6 +3,7 @@ import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import { MIN_BODY_LENGTH } from "@/lib/audit-constants";
 import { campaignRequiresProductStage } from "@/lib/campaign-stage-requirement";
+import { legacyBasicRewardRequired, resolveCampaignRewardConfig } from "@/lib/campaign-reward-config";
 import {
   campaignUsesDetailedProductStages,
   DETAILED_PRODUCT_STAGE_OPTIONS,
@@ -34,6 +35,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
     include: {
       product: true,
       products: { include: { product: true }, orderBy: { sortOrder: "asc" } },
+      interactionRewardTiers: { orderBy: { threshold: "asc" } },
       topicRules: {
         where: {
           status: "ACTIVE",
@@ -127,6 +129,10 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     rewardDescription?: string;
     interactionRewardEnabled?: boolean;
     interactionRewardThreshold?: number;
+    rewardMode?: string;
+    basicRewardRequired?: boolean;
+    baseRewardAmount?: number;
+    interactionRewardTiers?: Array<{ threshold: number; amount: number }>;
     customerRegistrationNotes?: string;
     bodyRequired?: boolean;
     clickableTopicRequired?: boolean;
@@ -138,13 +144,12 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
       ...(body.productId ? [body.productId] : []),
     ]),
   ];
-  if ((body.interactionRewardEnabled !== undefined && typeof body.interactionRewardEnabled !== "boolean") ||
-    (body.interactionRewardThreshold !== undefined && (!Number.isSafeInteger(body.interactionRewardThreshold) || body.interactionRewardThreshold < 0)) ||
-    (body.interactionRewardEnabled === true && !(body.interactionRewardThreshold! > 0))) return fail("互动奖励启用时门槛必须为正整数");
   const contentChannel = body.contentChannel === "DOUYIN" ? "DOUYIN" : "XIAOHONGSHU";
   if (!productIds.length || !body.name?.trim() || !body.month) {
     return fail("至少一个产品、活动名称和月份为必填项");
   }
+  const campaignName = body.name.trim();
+  const campaignMonth = body.month;
   const linkedProducts = await prisma.product.findMany({
     where: { id: { in: productIds }, deletedAt: null },
     select: { id: true, brandName: true },
@@ -153,6 +158,15 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   if (linkedProducts.length !== productIds.length || brands.length !== 1) {
     return fail("月度规则关联产品必须存在且属于同一品牌");
   }
+  let reward;
+  try {
+    reward = resolveCampaignRewardConfig(body, {
+      basicRewardRequired: legacyBasicRewardRequired({ name: campaignName, contentChannel, brandNames: brands }),
+    });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "奖励配置无效");
+  }
+  const { interactionRewardTiers, ...rewardFields } = reward;
   const existingMonthlyRuleSet = await prisma.campaign.findFirst({
     where: {
       month: body.month,
@@ -169,16 +183,17 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
     return fail(`${brands[0]}${body.month} 规则已存在。`, 409);
   }
   try {
-    const campaign = await prisma.campaign.create({
+    const campaign = await prisma.$transaction(async (tx) => {
+    const created = await tx.campaign.create({
       data: {
         ruleSource: "LOCAL_DRAFT",
         productId: productIds.length === 1 ? productIds[0] : null,
-        name: body.name.trim(),
+        name: campaignName,
         contentChannel,
-        month: body.month,
-        year: Number(body.month.slice(0, 4)),
-        startDate: new Date(body.startDate || `${body.month}-01`),
-        endDate: new Date(body.endDate || `${body.month}-28`),
+        month: campaignMonth,
+        year: Number(campaignMonth.slice(0, 4)),
+        startDate: new Date(body.startDate || `${campaignMonth}-01`),
+        endDate: new Date(body.endDate || `${campaignMonth}-28`),
         minImageCount: Math.max(0, Math.floor(body.minImageCount ?? 2)),
         minBodyLength: Math.max(
           0,
@@ -190,8 +205,10 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
         publicRequired: body.publicRequired ?? false,
         retentionDays: body.retentionDays ?? 0,
         rewardDescription: body.rewardDescription?.trim() || null,
-        interactionRewardEnabled: body.interactionRewardEnabled ?? false,
-        interactionRewardThreshold: body.interactionRewardThreshold ?? 0,
+        ...rewardFields,
+        interactionRewardTiers: {
+          create: interactionRewardTiers.map((tier, sortOrder) => ({ ...tier, sortOrder })),
+        },
         visualReviewGuidance: null,
         customerRegistrationNotes:
           body.customerRegistrationNotes?.trim() || null,
@@ -204,16 +221,18 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
           })),
         },
       },
-      include: { product: true, products: { include: { product: true } } },
+      include: { product: true, products: { include: { product: true } }, interactionRewardTiers: { orderBy: { threshold: "asc" } } },
     });
-    await prisma.operationLog.create({
+    await tx.operationLog.create({
       data: {
         userId: user.id,
         action: "CREATE_CAMPAIGN",
         entityType: "CAMPAIGN",
-        entityId: campaign.id,
-        summary: `新增活动 ${campaign.name}`,
+        entityId: created.id,
+        summary: `新增活动 ${created.name}`,
       },
+    });
+    return created;
     });
     return ok(campaign, { status: 201 });
   } catch {

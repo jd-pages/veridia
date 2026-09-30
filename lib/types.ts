@@ -117,6 +117,9 @@ export interface AuditContext {
   ruleMonth?: string;
   brandName?: string;
   basicRewardRequired?: boolean;
+  rewardMode?: import("./interaction-reward").RewardMode;
+  baseRewardAmount?: number;
+  interactionRewardTiers?: import("./interaction-reward").InteractionRewardTier[];
   interactionRewardEnabled?: boolean;
   interactionRewardThreshold?: number;
   requiresProductStage?: boolean;
@@ -164,6 +167,7 @@ export interface RuleEvaluation {
 }
 
 export interface AuditEvaluation {
+  rewardMode?: import("./interaction-reward").RewardMode;
   interactionReward?: import("./interaction-reward").InteractionRewardSnapshot;
   pageStatus: PageStatus;
   bodyStatus: "PRESENT" | "EMPTY" | "UNKNOWN";

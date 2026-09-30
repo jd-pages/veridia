@@ -141,7 +141,7 @@ export default function AuditDecisionSummary({
           description={row.presentation.consistency.message}
         />
       ) : null}
-      <InteractionReward snapshot={row} detail />
+      <InteractionReward snapshot={row} reward={row.presentation.reward} detail />
       <section
         className={`${styles.decisionHero} ${styles[`decisionHero_${conclusionTone}`]}`}
         aria-label="顶部结论"

@@ -1,3 +1,28 @@
+export type RewardMode = "LEGACY" | "CONTENT_BASE_PLUS_INTERACTION_TIERS";
+
+export interface InteractionRewardTier {
+  threshold: number;
+  amount: number;
+}
+
+export interface RewardResultSnapshotInput extends InteractionRewardSnapshot {
+  ruleSnapshot: string | null | undefined;
+  finalContentStatus: string;
+  pageStatus: string;
+  autoStatus?: string;
+  failureCode?: string | null;
+}
+
+export interface ResultSnapshotReward {
+  mode: RewardMode;
+  baseRewardAmount: number | null;
+  total: number | null;
+  qualifiedTier: InteractionRewardTier | null;
+  extraRewardAmount: number | null;
+  nextTier: InteractionRewardTier | null;
+  maxTierReached: boolean;
+}
+
 export interface InteractionRewardSnapshot {
   likeCount?: number | null;
   commentCount?: number | null;
@@ -35,18 +60,94 @@ export function calculateInteractionTotal(note: {
 
 export function evaluateInteractionReward(
   note: { likeCount?: number | null; commentCount?: number | null; favoriteCount?: number | null; interactionExtractionStatus?: string },
-  config: { interactionRewardEnabled?: boolean; interactionRewardThreshold?: number },
+  config: {
+    rewardMode?: RewardMode;
+    interactionRewardEnabled?: boolean;
+    interactionRewardThreshold?: number;
+    interactionRewardTiers?: InteractionRewardTier[];
+  },
 ) {
   const { likeCount, commentCount, favoriteCount, interactionTotal } =
     calculateInteractionTotal(note);
-  const threshold = config.interactionRewardThreshold;
-  const enabled = config.interactionRewardEnabled === true;
+  const tierMode = config.rewardMode === "CONTENT_BASE_PLUS_INTERACTION_TIERS";
+  const threshold = tierMode ? config.interactionRewardTiers?.[0]?.threshold : config.interactionRewardThreshold;
+  const enabled = tierMode || config.interactionRewardEnabled === true;
   const validThreshold = typeof threshold === "number" && Number.isSafeInteger(threshold) && threshold > 0;
   return {
     likeCount, commentCount, favoriteCount, interactionTotal,
     interactionRewardThreshold: enabled && validThreshold ? threshold : null,
     interactionRewardStatus: !enabled ? "NOT_ENABLED" : !validThreshold || interactionTotal === null
       ? "PENDING" : interactionTotal >= threshold ? "QUALIFIED" : "NOT_QUALIFIED",
+  };
+}
+
+export function rewardModeFromRuleSnapshot(ruleSnapshot: string | null | undefined): RewardMode {
+  try {
+    const parsed = JSON.parse(ruleSnapshot || "{}") as { rewardMode?: unknown };
+    return parsed?.rewardMode === "CONTENT_BASE_PLUS_INTERACTION_TIERS"
+      ? "CONTENT_BASE_PLUS_INTERACTION_TIERS" : "LEGACY";
+  } catch {
+    return "LEGACY";
+  }
+}
+
+/** Result-bound reward projection, shared by list, detail and business export. */
+export function rewardFromResultSnapshot(input: RewardResultSnapshotInput): ResultSnapshotReward {
+  const mode = rewardModeFromRuleSnapshot(input.ruleSnapshot);
+  const blank: ResultSnapshotReward = {
+    mode, baseRewardAmount: null, total: null, qualifiedTier: null,
+    extraRewardAmount: null, nextTier: null, maxTierReached: false,
+  };
+  const technicalStatuses = new Set([
+    "READ_FAILED", "NOTE_NOT_FOUND", "PROCESSING", "LOGIN_EXPIRED",
+    "SECURITY_VERIFICATION", "PAGE_READ_FAILED", "NETWORK_ERROR", "STRUCTURE_MISMATCH",
+  ]);
+  if (input.pageStatus !== "NORMAL" || technicalStatuses.has(input.autoStatus || "") ||
+    technicalStatuses.has(input.failureCode || "") ||
+    !["PASSED", "FAILED", "NEEDS_REVIEW", "PENDING_RETENTION"].includes(input.autoStatus || input.finalContentStatus)) {
+    return blank;
+  }
+  // This normalization is a business projection only; raw persisted counts stay null.
+  const normalized = calculateInteractionTotal({
+    likeCount: input.likeCount ?? 0,
+    commentCount: input.commentCount ?? 0,
+    favoriteCount: input.favoriteCount ?? 0,
+    interactionExtractionStatus: "SUCCESS",
+  });
+  const countFieldsAbsent = [input.likeCount, input.commentCount, input.favoriteCount]
+    .every((value) => value === undefined);
+  const storedTotal = input.interactionTotal;
+  const total = countFieldsAbsent && typeof storedTotal === "number" &&
+    Number.isSafeInteger(storedTotal) && storedTotal >= 0
+    ? storedTotal : normalized.interactionTotal;
+  if (mode === "LEGACY") return { ...blank, total };
+  let config: { baseRewardAmount?: unknown; interactionRewardTiers?: unknown };
+  try {
+    config = JSON.parse(input.ruleSnapshot || "{}");
+  } catch {
+    return { ...blank, total };
+  }
+  const integer = (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  const rawTiers = config?.interactionRewardTiers;
+  if (!integer(config?.baseRewardAmount) || !Array.isArray(rawTiers) || !rawTiers.length ||
+    !rawTiers.every((tier: unknown) => tier && typeof tier === "object" &&
+      integer((tier as InteractionRewardTier).threshold) && (tier as InteractionRewardTier).threshold > 0 &&
+      integer((tier as InteractionRewardTier).amount))) return { ...blank, total };
+  const tiers = (rawTiers as InteractionRewardTier[])
+    .map(({ threshold, amount }) => ({ threshold, amount }))
+    .sort((left, right) => left.threshold - right.threshold);
+  if (new Set(tiers.map((tier) => tier.threshold)).size !== tiers.length) return { ...blank, total };
+  if (input.finalContentStatus === "FAILED") {
+    return { ...blank, total, baseRewardAmount: 0, extraRewardAmount: 0 };
+  }
+  if (input.finalContentStatus !== "PASSED" || total === null) return { ...blank, total };
+  const qualifiedTier = tiers.filter((tier) => total >= tier.threshold).at(-1) || null;
+  const nextTier = tiers.find((tier) => tier.threshold > total) || null;
+  return {
+    mode, total, baseRewardAmount: config.baseRewardAmount,
+    qualifiedTier, extraRewardAmount: qualifiedTier?.amount ?? 0,
+    nextTier, maxTierReached: nextTier === null,
   };
 }
 

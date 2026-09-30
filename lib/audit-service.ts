@@ -64,6 +64,7 @@ export async function getAuditContext(
           { products: { some: { productId } } },
         ],
       },
+      include: { interactionRewardTiers: { orderBy: { threshold: "asc" } } },
     }),
   ]);
   if (!campaign) throw new Error("活动不存在、已停用或与所选产品不匹配");
@@ -162,9 +163,10 @@ export async function getAuditContext(
     rulesConfigured: campaignChannelMatches && effectiveRules.length > 0,
     ruleMonth: campaign.month,
     brandName,
-    basicRewardRequired:
-      resolvedContentChannel === "XIAOHONGSHU" && brandName === "佳贝艾特" &&
-      campaign.name === "佳贝艾特2026年8月小红书种草审核",
+    basicRewardRequired: campaign.basicRewardRequired,
+    rewardMode: campaign.rewardMode as AuditContext["rewardMode"],
+    baseRewardAmount: campaign.baseRewardAmount,
+    interactionRewardTiers: campaign.interactionRewardTiers.map(({ threshold, amount }) => ({ threshold, amount })),
     requiresProductStage,
     productStage: normalizedProductStage || null,
     productStageLabel: normalizedProductStage

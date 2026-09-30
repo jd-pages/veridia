@@ -34,6 +34,10 @@ export interface RulePackageCampaign {
   rewardDescription: string | null;
   interactionRewardEnabled?: boolean;
   interactionRewardThreshold?: number;
+  rewardMode?: import("@/lib/interaction-reward").RewardMode;
+  basicRewardRequired?: boolean;
+  baseRewardAmount?: number;
+  interactionRewardTiers?: import("@/lib/interaction-reward").InteractionRewardTier[];
   visualReviewGuidance?: string | null;
   customerRegistrationNotes: string | null;
   clickableTopicRequired: boolean;

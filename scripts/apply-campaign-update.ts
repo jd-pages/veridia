@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { normalizeTopic } from "@/lib/topic";
+import { legacyBasicRewardRequired } from "@/lib/campaign-reward-config";
 
 // Explicit operator action: data file is configuration, never an audit-engine product list.
 const [databasePath, updatePath] = process.argv.slice(2);
@@ -48,7 +49,9 @@ try {
           endDate: new Date(Date.UTC(Number(update.month.slice(0, 4)), Number(update.month.slice(5)), 1) - 8 * 3600000 - 1),
         };
         const campaign = candidates[0] ? await tx.campaign.update({ where: { id: candidates[0].id }, data: { ...data, ruleVersion: { increment: 1 } } })
-          : await tx.campaign.create({ data: { ...data, publishedKey: `campaign_${brand}_${update.month}_${contentChannel}` } });
+          : await tx.campaign.create({ data: { ...data, publishedKey: `campaign_${brand}_${update.month}_${contentChannel}`,
+              basicRewardRequired: legacyBasicRewardRequired({ name: data.name, contentChannel, brandNames: [brand] }),
+            } });
         let rules = 0;
         for (const product of linked) {
           await tx.campaignProduct.upsert({ where: { campaignId_productId: { campaignId: campaign.id, productId: product.id } },

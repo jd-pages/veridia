@@ -16,6 +16,7 @@ import {
 } from "@/lib/retention-pending-classification";
 import { retentionDaysFromRuleSnapshot } from "@/lib/retention-status";
 import { brandUsesStoreTopicAudit } from "@/lib/store-topic-config";
+import { rewardFromResultSnapshot, rewardModeFromRuleSnapshot, type ResultSnapshotReward } from "@/lib/interaction-reward";
 
 export type AuditResultPresentationTone =
   | "success"
@@ -105,6 +106,7 @@ export interface AuditResultPresentation {
     total: number | null;
     threshold: number | null;
   };
+  reward: ResultSnapshotReward;
   storeTopic: {
     applicable: boolean;
     status: string;
@@ -585,7 +587,8 @@ function reviewSignals(input: PresentationInput, results: PresentationRuleResult
   if (["IMAGES_READ_FAILED", "NOT_CHECKED"].includes(input.imageStatus)) {
     signals.push("图片读取结果待确认");
   }
-  if (input.interactionRewardStatus === "PENDING") signals.push("互动奖励待确认");
+  if (input.interactionRewardStatus === "PENDING" &&
+    rewardModeFromRuleSnapshot(input.ruleSnapshot) === "LEGACY") signals.push("互动奖励待确认");
   if (!signals.length && results.some((result) => result.ruleKey !== "GLOBAL_RETENTION" &&
     /需人工确认|待人工复核|待验证|无法确认/u.test(
       `${result.actualValue} ${result.failureReason || ""} ${result.evidence}`,
@@ -818,6 +821,11 @@ export function buildAuditResultPresentation(
       total: presentationInput.interactionTotal ?? null,
       threshold: presentationInput.interactionRewardThreshold ?? null,
     },
+    reward: rewardFromResultSnapshot({
+      ...presentationInput,
+      finalContentStatus: conclusion.status,
+      failureCode: presentationInput.task.failureCode,
+    }),
   };
 }
 

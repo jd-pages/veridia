@@ -45,6 +45,8 @@ export function buildDouyinRuleCopies(payload: RulePackagePayload) {
     contentChannel: "DOUYIN",
     name: douyinCampaignName(campaign.name),
     publicRequired: false,
+    // The old XHS-only basic interaction gate must not follow the copied config.
+    basicRewardRequired: false,
   }));
   const topicRules: RulePackageTopicRule[] = payload.topicRules
     .filter(
@@ -117,6 +119,12 @@ export async function ensureBuiltinDouyinRules(payload: RulePackagePayload) {
           rewardDescription: item.rewardDescription,
           interactionRewardEnabled: item.interactionRewardEnabled ?? false,
           interactionRewardThreshold: item.interactionRewardThreshold ?? 0,
+          rewardMode: item.rewardMode ?? "LEGACY",
+          basicRewardRequired: false,
+          baseRewardAmount: item.baseRewardAmount ?? 0,
+          interactionRewardTiers: {
+            create: (item.interactionRewardTiers || []).map((tier, sortOrder) => ({ ...tier, sortOrder })),
+          },
           visualReviewGuidance: item.visualReviewGuidance,
           customerRegistrationNotes: item.customerRegistrationNotes,
           clickableTopicRequired: item.clickableTopicRequired,
