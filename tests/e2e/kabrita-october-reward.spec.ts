@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 import { writeFile } from "node:fs/promises";
 import { createMockNote } from "../../lib/mock-data";
 import { importedTemplateMetadataFromNotes } from "../../lib/import-task-metadata";
+import { normalizeStoreNameForMatch, normalizeStoreTopicForMatch, storeTopicWithHash } from "../../lib/store-topic-config";
 import type { ExtractedNote } from "../../lib/types";
 
 const exportHeaders = [
@@ -38,10 +39,13 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
     ] },
   } });
   const requiredTopic = `#佳贝10月完整链${suffix}`;
+  const storeName = `佳贝艾特10月隔离店-${suffix}`;
+  const storeTopic = storeTopicWithHash(storeName);
+  let storeTopicRuleId: string | undefined;
   await db.topicRule.create({ data: { scope: "CAMPAIGN", campaignId: campaign.id, brandName: "佳贝艾特", contentChannel: "XIAOHONGSHU",
     ruleType: "MUST_ALL", topic: requiredTopic, exactMatch: true, clickableRequired: true } });
   const globalRules = await db.topicRule.findMany({ where: { scope: "GLOBAL", brandName: "佳贝艾特", status: "ACTIVE", contentChannel: { in: ["XIAOHONGSHU", "ALL"] } } });
-  const allowedTopics = [...globalRules.filter((rule) => rule.ruleType !== "FORBIDDEN").map((rule) => rule.topic), requiredTopic];
+  const allowedTopics = [...globalRules.filter((rule) => rule.ruleType !== "FORBIDDEN").map((rule) => rule.topic), requiredTopic, storeTopic];
   const cases = [
     { key: "pass5", total: 5, content: "PASSED", extra: 0, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
     { key: "pass15", total: 15, content: "PASSED", extra: 20, publishedAt: "2026-10-15T15:30:00Z", next: "2026-11-14" },
@@ -57,6 +61,11 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
   let importRecordId: string | undefined;
   const batchIds: string[] = [];
   try {
+    const storeRule = await db.storeTopicRule.create({ data: {
+      commercePlatform: "JD", storeName, normalizedStoreName: normalizeStoreNameForMatch(storeName), expectedTopic: storeTopic,
+      topicEntries: { create: [{ topic: storeTopic, normalizedTopic: normalizeStoreTopicForMatch(storeTopic), topicType: "ACCEPTED" }] },
+    } });
+    storeTopicRuleId = storeRule.id;
     server = createServer((request, response) => {
       const key = new URL(request.url || "/", "http://127.0.0.1").searchParams.get("fixture") || "";
       const payload = fixtures.get(key);
@@ -79,7 +88,7 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
         favoriteCount: sample.key === "missing" ? null : 0, interactionExtractionStatus: sample.key === "missing" || sample.key === "notFound" ? "UNAVAILABLE" : "SUCCESS",
         publishedAt: sample.publishedAt, publishedAtRaw: sample.publishedAt, publishedAtSource: "NETWORK_JSON:fixture.note.publish_time",
         pageStatus: sample.content === "NOTE_NOT_FOUND" ? "NOTE_NOT_FOUND" : "NORMAL", isPublic: true });
-      sourceSheet.addRow(["2026-10-16 10:00:00", "京东", "佳贝艾特(Kabrita)海外专卖店", `客户备注${sample.key}`,
+      sourceSheet.addRow(["2026-10-16 10:00:00", "京东", storeName, `客户备注${sample.key}`,
         `0000-${sample.key}`, `OCT-${suffix}-${sample.key}`, "2026-09-28", "02", "01", `账号${sample.key}`,
         `原分享文案 ${url}`, product.name, "2026-10", "旧源N", `客服备注${sample.key}`]);
     }
@@ -89,9 +98,13 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
     } });
     const payload = await imported.json();
     expect(imported.ok(), JSON.stringify(payload)).toBeTruthy();
-    expect(payload.data).toMatchObject({ total: cases.length, validCount: cases.length, invalidCount: 0, importedCount: cases.length });
     importRecordId = payload.data.importRecordId;
     batchIds.push(...payload.data.batchIds);
+    expect(payload.data).toMatchObject({ total: cases.length, validCount: cases.length, invalidCount: 0, importedCount: cases.length });
+    expect(payload.data.rows).toHaveLength(cases.length);
+    for (const row of payload.data.rows) {
+      expect(row).toMatchObject({ storeMappingStatus: "MATCHED", storeTopicRuleId, expectedStoreTopics: [storeTopic], requiredStoreTopics: [] });
+    }
     await expect.poll(() => db.auditResult.count({ where: { task: { importRecordId } } }), { timeout: 180_000 }).toBe(cases.length);
     await expect.poll(async () => (await db.auditBatch.findMany({ where: { id: { in: batchIds } } }))
       .every((batch) => ["COMPLETED", "COMPLETED_WITH_ERRORS"].includes(batch.status)), { timeout: 30_000 }).toBe(true);
@@ -101,6 +114,11 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
       data: { createdAt: new Date("2026-10-16T02:00:00Z") } });
     const results = await db.auditResult.findMany({ where: { task: { importRecordId } }, include: { task: true, extractionRecord: true, ruleResults: true } });
     const resultByKey = new Map(results.map((result) => [result.task.orderNumber!.split("-").at(-1)!, result]));
+    await testInfo.attach("Kabrita October audit diagnostics", { body: Buffer.from(JSON.stringify(results.map((result) => ({
+      key: result.task.orderNumber!.split("-").at(-1), autoStatus: result.autoStatus,
+      failureReasons: result.failureReasons, ruleSnapshot: result.ruleSnapshot,
+      storeTopicStatus: result.storeTopicStatus, ruleResults: result.ruleResults,
+    })), null, 2)), contentType: "application/json" });
     for (const sample of cases) {
       const result = resultByKey.get(sample.key)!;
       expect(result, sample.key).toBeTruthy();
@@ -109,6 +127,11 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
         interactionRewardTiers: [{ threshold: 10, amount: 20 }, { threshold: 40, amount: 50 }] });
       expect(result.extractionRecordId).toBeTruthy();
       expect(result.ruleResults.some((rule) => rule.ruleKey === "KABRITA_BASIC_REWARD")).toBe(false);
+      if (sample.content !== "NOTE_NOT_FOUND") {
+        expect(result.storeTopicStatus, sample.key).toBe("COMPLIANT");
+        expect(result.ruleResults.find((rule) => rule.ruleKey === "STORE_TOPIC"), sample.key)
+          .toMatchObject({ passed: true });
+      }
       expect(importedTemplateMetadataFromNotes(result.task.notes)!.rawValues.activityMonth).toBe("2026-10");
     }
     const rawMissing = resultByKey.get("missing")!;
@@ -198,6 +221,7 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
     await db.topicRule.deleteMany({ where: { campaignId: campaign.id } });
     await db.campaign.delete({ where: { id: campaign.id } });
     await db.product.delete({ where: { id: product.id } });
+    if (storeTopicRuleId) await db.storeTopicRule.delete({ where: { id: storeTopicRuleId } });
     await db.$disconnect();
   }
 });
