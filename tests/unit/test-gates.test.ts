@@ -98,8 +98,11 @@ describe("分层测试门禁", () => {
     expect(selection.categories).toEqual(["CAMPAIGN", "RULES"]);
     expect(selection.e2eFiles).toEqual([
       "tests/e2e/audit-topic-boundaries.spec.ts",
+      "tests/e2e/campaign-reward-config.spec.ts",
       "tests/e2e/import-channel-normalization.spec.ts",
       "tests/e2e/kabrita-excel-template.spec.ts",
+      "tests/e2e/kabrita-october-reward.spec.ts",
+      "tests/e2e/product-campaign-membership.spec.ts",
       "tests/e2e/product-stage-topic.spec.ts",
       "tests/e2e/rule-brand-navigation.spec.ts",
       "tests/e2e/rule-sync-status-counts.spec.ts",
@@ -148,12 +151,15 @@ describe("分层测试门禁", () => {
     expect(selection.unitRelatedFiles).toEqual([]);
   });
 
-  it("TEST_ONLY Unit 只运行直接文件，E2E 不进入 vitest related", () => {
+  it("TEST_ONLY Unit 运行直接文件及关联Protected，E2E 不进入 vitest related", () => {
     const directUnit = selectTestScope(["tests/unit/test-gates.test.ts"], "affected");
     expect(directUnit.unitFiles).toEqual(["tests/unit/test-gates.test.ts"]);
     expect(directUnit.unitRelatedFiles).toEqual([]);
     expect(selectTestScope(["tests/unit/topic-rule-management.test.ts"], "affected").unitFiles)
-      .toEqual(["tests/unit/topic-rule-management.test.ts"]);
+      .toEqual([
+        "tests/unit/campaign-product-membership.test.ts",
+        "tests/unit/topic-rule-management.test.ts",
+      ]);
 
     const directE2e = selectTestScope(["tests/e2e/results-workbench.spec.ts"], "affected");
     expect(directE2e.unitFiles).toEqual([]);
@@ -175,6 +181,7 @@ describe("分层测试门禁", () => {
       "lib/topic-rule-management.ts",
     ], "affected");
     expect(ruleCrud.unitFiles).toEqual([
+      "tests/unit/campaign-product-membership.test.ts",
       "tests/unit/topic-rule-management-routes.test.ts",
       "tests/unit/topic-rule-management.test.ts",
     ]);
@@ -304,13 +311,13 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // v1.1.40 adds immutable media presentation and complete unified export contracts.
-      behaviorCount: 41,
-      groupCount: 14,
+      // v1.1.41 adds three Kabrita reward/export/date contracts and atomic product membership.
+      behaviorCount: 45,
+      groupCount: 16,
       triggerFiles: {
-        totalEntryCount: 154,
-        exactFileEntryCount: 133,
-        directoryEntryCount: 21,
+        totalEntryCount: 171,
+        exactFileEntryCount: 147,
+        directoryEntryCount: 24,
         patternEntryCount: 0,
         duplicateEntryCount: 0,
         missingEntryCount: 0,

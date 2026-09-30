@@ -80,8 +80,19 @@ const EXPLICIT_UNIT_RULES = Object.freeze([
       "tests/unit/store-rename-identity-continuity.test.ts",
       "tests/unit/topic-rule-management.test.ts",
       "tests/unit/topic-rule-management-routes.test.ts",
+      "tests/unit/campaign-reward-rules-package.test.ts",
     ],
     reason: "规则包应用显式覆盖兼容契约、同步、店铺 identity 连续性与规则 CRUD",
+  },
+  {
+    match: /^lib\/(?:interaction-reward|campaign-reward-config|result-next-review-date)\.ts$/u,
+    unitFiles: ["tests/unit/interaction-reward.test.ts", "tests/unit/kabrita-october-reward.test.ts", "tests/unit/campaign-reward-config.test.ts", "tests/unit/result-next-review-date.test.ts"],
+    reason: "活动奖励模式、档位和结果绑定业务日期使用定向Unit",
+  },
+  {
+    match: /^lib\/campaign-product-membership\.ts$/u,
+    unitFiles: ["tests/unit/campaign-product-membership.test.ts", "tests/unit/topic-rule-management.test.ts"],
+    reason: "活动产品关联复用服务需要事务、幂等和规则创建验证",
   },
   {
     match: RULE_CRUD_PRODUCTION_PATH,
@@ -180,6 +191,7 @@ const entry = (categories, isolationGroup, parallelSafe = false) => ({
 
 export const E2E_MANIFEST = Object.freeze({
   "tests/e2e/account-auth.spec.ts": entry(["AUTH", "ADMIN"], "AUTH_ADMIN"),
+  "tests/e2e/campaign-reward-config.spec.ts": entry(["CAMPAIGN", "RULES", "ADMIN"], "DATA_RULES"),
   "tests/e2e/auth-request-bound-session.spec.ts": entry(["AUTH", "ADMIN"], "AUTH_ADMIN"),
   "tests/e2e/admin-layout.spec.ts": entry(["AUTH", "ADMIN", "UI_LAYOUT"], "AUTH_ADMIN"),
   "tests/e2e/audit-flow.spec.ts": entry(["XHS", "AUTOMATION", "RESULTS", "MIXED_PLATFORM"], "AUTOMATION"),
@@ -198,12 +210,14 @@ export const E2E_MANIFEST = Object.freeze({
   "tests/e2e/import-preflight-layout.spec.ts": entry(["IMPORT", "UI_LAYOUT"], "DATA_RULES"),
   "tests/e2e/import-row-limit.spec.ts": entry(["IMPORT"], "DATA_RULES"),
   "tests/e2e/kabrita-excel-template.spec.ts": entry(["IMPORT", "CAMPAIGN"], "DATA_RULES"),
+  "tests/e2e/kabrita-october-reward.spec.ts": entry(["IMPORT", "CAMPAIGN", "RULES", "RESULTS", "XHS", "AUTOMATION", "DATABASE"], "AUTOMATION"),
   "tests/e2e/unified-excel-template.spec.ts": entry(["IMPORT", "CAMPAIGN", "RULES"], "DATA_RULES"),
   "tests/e2e/local-fonts.spec.ts": entry(["UI_LAYOUT", "UPDATE"], "RESULTS_UI", true),
   "tests/e2e/localization.spec.ts": entry(["UI_LAYOUT"], "RESULTS_UI", true),
   "tests/e2e/platform-published-at.spec.ts": entry(["XHS", "DOUYIN", "RESULTS", "MIXED_PLATFORM"], "RESULTS_UI", true),
   "tests/e2e/pause-resume-runner-lifecycle.spec.ts": entry(["XHS", "AUTOMATION", "RESULTS", "DATABASE"], "AUTOMATION"),
   "tests/e2e/product-editing.spec.ts": entry(["ADMIN", "DATABASE", "UI_LAYOUT"], "DATA_RULES"),
+  "tests/e2e/product-campaign-membership.spec.ts": entry(["IMPORT", "CAMPAIGN", "RULES", "ADMIN", "DATABASE"], "DATA_RULES"),
   "tests/e2e/queue-paused-batch.spec.ts": entry(["AUTOMATION"], "AUTOMATION"),
   "tests/e2e/product-stage-topic.spec.ts": entry(["CAMPAIGN", "RULES", "XHS"], "DATA_RULES"),
   "tests/e2e/result-lifecycle.spec.ts": entry(["RESULTS", "RECHECK", "MIXED_PLATFORM", "XHS", "DOUYIN"], "RESULTS_UI"),
