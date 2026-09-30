@@ -1,9 +1,11 @@
 import ExcelJS from "exceljs";
 import {
   interactionRewardPresentation,
+  rewardFromResultSnapshot,
   type InteractionRewardSnapshot,
 } from "@/lib/interaction-reward";
 import type { AuditResultPresentation } from "@/lib/audit-result-presentation";
+import { resultBoundNextReviewDate } from "@/lib/result-next-review-date";
 import {
   businessFailureReasonLabel,
   businessSourceLabel,
@@ -112,6 +114,7 @@ export interface CompactAuditResultExportSourceRow extends InteractionRewardSnap
   topicsCompliant: boolean;
   failureReasons: string;
   ruleSnapshot?: string;
+  evidenceStatus?: "RESULT_BOUND" | "LEGACY_UNAVAILABLE";
   effectiveBodyLength?: number;
   imageCount?: number;
   imageExtractionStatus: string;
@@ -144,6 +147,8 @@ export interface CompactAuditResultExportSourceRow extends InteractionRewardSnap
     url: string;
     finalUrl: string | null;
     publishedAt: Date | null;
+    publishedAtRaw?: string | null;
+    publishedAtSource?: string | null;
     title: string | null;
     body: string | null;
     topics?: Array<{ displayText: string }>;
@@ -237,6 +242,13 @@ function columns(
   templateType?: ImportTemplateType,
   fieldsOverride?: readonly StandardField[],
 ) {
+  if (kind === "auditResults" &&
+    (templateBrand === KABRITA_BRAND_NAME || templateType === "KABRITA")) {
+    return KABRITA_EXPORT_FIELDS.map((field) => ({
+      field,
+      displayName: KABRITA_FIELD_DEFINITIONS[field].displayName,
+    }));
+  }
   const auditOutputDisplayNames: Partial<Record<StandardField, string>> = {
     mediaType: "作品类型",
     finalAuditConclusion: "审核结论",
@@ -268,12 +280,6 @@ function columns(
                 templateType || "DANONE_CUSTOMER",
                 true,
               )),
-    }));
-  }
-  if (kind === "auditResults" && templateBrand === KABRITA_BRAND_NAME) {
-    return KABRITA_EXPORT_FIELDS.map((field) => ({
-      field,
-      displayName: KABRITA_FIELD_DEFINITIONS[field].displayName,
     }));
   }
   if (kind === "auditResults" && templateType === "DANONE_AGENCY") {
@@ -742,6 +748,7 @@ export function auditResultToKabritaExportRecord(
   const templateMetadata = importedTemplateMetadataFromNotes(row.task.notes);
   const raw = templateMetadata?.rawValues || {};
   const imported = importedTaskMetadataFromNotes(row.task.notes);
+  const reward = kabritaResultReward(row);
   return {
     registrationTime: preservedRawValue(raw, "registrationTime", ""),
     channel: preservedRawValue(raw, "channel", ""),
@@ -770,6 +777,17 @@ export function auditResultToKabritaExportRecord(
     complianceResult: kabritaComplianceResult(row),
     ...rewardExport(row),
     ...completeAuditExport(row),
+    customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
+    interactionTotal: reward.total,
+    extraRewardAmount: reward.extraRewardAmount,
+    nextReviewAt: isKabritaAuditedReadable(row)
+      ? resultBoundNextReviewDate({
+          evidenceStatus: row.evidenceStatus,
+          publishedAt: row.note.publishedAt,
+          publishedAtRaw: row.note.publishedAtRaw,
+          publishedAtSource: row.note.publishedAtSource,
+        })
+      : null,
   };
 }
 
@@ -800,17 +818,56 @@ export function auditTaskToUnreviewedKabritaExportRecord(
       "purchaseProductLine",
       task.product.seriesName || task.product.name,
     ),
-    complianceResult: "未审核",
+    complianceResult: "",
     activityMonth: hasRawValue(raw, "activityMonth")
       ? raw.activityMonth ?? ""
       : resolvedActivityMonthValue(undefined, task.campaign?.month),
     ...unreviewedAuditExport(),
+    customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
+    extraRewardAmount: null,
+    nextReviewAt: null,
   };
+}
+
+function kabritaFinalContentStatus(row: CompactAuditResultExportSourceRow) {
+  return row.manualReviews[0]?.result || row.presentation?.conclusion.status || row.autoStatus;
+}
+
+const KABRITA_TECHNICAL_EXPORT_STATUSES = new Set([
+  "READ_FAILED", "NOTE_NOT_FOUND", "LOGIN_EXPIRED", "SECURITY_VERIFICATION",
+  "PAGE_READ_FAILED", "NETWORK_ERROR", "STRUCTURE_MISMATCH",
+]);
+
+function isKabritaAuditedReadable(row: CompactAuditResultExportSourceRow) {
+  return row.pageStatus === "NORMAL" &&
+    !KABRITA_TECHNICAL_EXPORT_STATUSES.has(row.autoStatus) &&
+    !KABRITA_TECHNICAL_EXPORT_STATUSES.has(row.task.failureCode || "") &&
+    ["PASSED", "FAILED", "NEEDS_REVIEW", "PENDING_RETENTION"].includes(row.autoStatus);
+}
+
+function kabritaResultReward(row: CompactAuditResultExportSourceRow) {
+  return rewardFromResultSnapshot({
+    ruleSnapshot: row.ruleSnapshot,
+    finalContentStatus: kabritaFinalContentStatus(row),
+    autoStatus: row.autoStatus,
+    pageStatus: row.pageStatus,
+    failureCode: row.task.failureCode,
+    likeCount: row.likeCount,
+    commentCount: row.commentCount,
+    favoriteCount: row.favoriteCount,
+    interactionTotal: row.interactionTotal,
+  });
 }
 
 export function kabritaComplianceResult(
   row: CompactAuditResultExportSourceRow,
 ) {
+  if (!isKabritaAuditedReadable(row)) return "";
+  const reward = kabritaResultReward(row);
+  if (reward.mode === "CONTENT_BASE_PLUS_INTERACTION_TIERS") {
+    const finalStatus = kabritaFinalContentStatus(row);
+    return finalStatus === "PASSED" ? "Y" : finalStatus === "FAILED" ? "N" : "";
+  }
   let base = detailedSelfReview(row);
   if (!row.manualReviews.length) {
     let reasons: string[] = [];
@@ -1220,11 +1277,14 @@ export async function buildConfiguredWorkbook(input: {
     xiaohongshuPublishLink: 52,
     purchaseProductLine: 22,
     complianceResult: 28,
+    customerServiceComment: 32,
+    extraRewardAmount: 18,
+    nextReviewAt: 20,
   };
   if (
     kind === "auditResults" &&
     !section.fields &&
-    templateBrand !== KABRITA_BRAND_NAME
+    templateBrand !== KABRITA_BRAND_NAME && templateType !== "KABRITA"
   ) {
     appendRewardColumns(selected, records);
   }
@@ -1272,7 +1332,9 @@ export async function buildConfiguredWorkbook(input: {
     }
   }
   for (const { field } of selected) {
-    if (fieldDefinition(templates, field, templateBrand)?.type === "datetime") {
+    if (field === "nextReviewAt") {
+      sheet.getColumn(field).numFmt = "yyyy-mm-dd";
+    } else if (fieldDefinition(templates, field, templateBrand)?.type === "datetime") {
       sheet.getColumn(field).numFmt = "yyyy-mm-dd hh:mm:ss";
     }
   }
@@ -1319,7 +1381,7 @@ export function buildConfiguredCsv(input: {
   if (
     input.kind === "auditResults" &&
     !input.fields &&
-    input.templateBrand !== KABRITA_BRAND_NAME
+    input.templateBrand !== KABRITA_BRAND_NAME && input.templateType !== "KABRITA"
   ) {
     appendRewardColumns(selected, input.records);
   }
@@ -1329,7 +1391,9 @@ export function buildConfiguredCsv(input: {
       selected.map(({ field }) => {
         const value = record[field];
         return value instanceof Date
-          ? field === "publishTime"
+          ? field === "nextReviewAt"
+            ? value.toISOString().slice(0, 10)
+          : field === "publishTime"
             ? importedDateLabel(value)
             : value.toLocaleString("zh-CN", { hour12: false })
           : exportTextValue(value) ?? "";
@@ -1674,7 +1738,7 @@ export function buildUnifiedAuditResultsWorkbook(input: {
         sheetName: UNIFIED_AUDIT_RESULT_SHEET_NAMES[1],
         records: input.kabritaRecords,
         templateBrand: KABRITA_BRAND_NAME,
-        fields: appendAuditFields(KABRITA_EXPORT_FIELDS),
+        fields: KABRITA_EXPORT_FIELDS,
       },
       {
         sheetName: UNIFIED_AUDIT_RESULT_SHEET_NAMES[2],

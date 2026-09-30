@@ -21,7 +21,25 @@ export const KABRITA_IMPORT_FIELDS = [
   "complianceResult",
 ] as const satisfies readonly StandardField[];
 
-export const KABRITA_EXPORT_FIELDS = KABRITA_IMPORT_FIELDS;
+export const KABRITA_EXPORT_FIELDS = [
+  "registrationTime",
+  "channel",
+  "shopName",
+  "customerRemark",
+  "buyerPurchaseId",
+  "purchaseOrderNumber",
+  "purchaseTime",
+  "purchaseCanCount",
+  "participationCount",
+  "xiaohongshuAccount",
+  "xiaohongshuPublishLink",
+  "purchaseProductLine",
+  "complianceResult",
+  "customerServiceComment",
+  "interactionTotal",
+  "extraRewardAmount",
+  "nextReviewAt",
+] as const satisfies readonly StandardField[];
 
 // 保留旧名称供历史导入代码读取；它现在只代表佳贝艾特导入字段。
 export const KABRITA_TEMPLATE_FIELDS = KABRITA_IMPORT_FIELDS;
@@ -29,10 +47,11 @@ export const KABRITA_TEMPLATE_FIELDS = KABRITA_IMPORT_FIELDS;
 export type KabritaTemplateField = (typeof KABRITA_IMPORT_FIELDS)[number];
 type KabritaKnownField =
   | KabritaTemplateField
+  | (typeof KABRITA_EXPORT_FIELDS)[number]
   | "selfReview"
   | "complianceResult";
 export type KabritaRawValues = Partial<
-  Record<KabritaTemplateField | "complianceResult", string>
+  Record<KabritaTemplateField | "customerServiceComment", string>
 >;
 
 export const KABRITA_REQUIRED_FIELDS = [
@@ -119,6 +138,26 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
     type: "string",
     description: "导入值仅作历史记录，导出使用系统最新审核结论",
   },
+  customerServiceComment: {
+    displayName: "客服备注",
+    type: "string",
+    description: "可选的原始客服备注，与客户备注分别保存",
+  },
+  interactionTotal: {
+    displayName: "互动量",
+    type: "integer",
+    description: "结果绑定的点赞、评论和收藏合计，技术不可读时留空",
+  },
+  extraRewardAmount: {
+    displayName: "额外奖励金额",
+    type: "integer",
+    description: "按当次规则快照计算的最高互动奖励档位金额，不含基础奖励",
+  },
+  nextReviewAt: {
+    displayName: "下次审核时间",
+    type: "datetime",
+    description: "结果绑定的可靠发帖时间加30个北京时间自然日，仅作业务导出日期",
+  },
 };
 
 export const KABRITA_TEMPLATE_EXAMPLES: KabritaRawValues = {
@@ -179,9 +218,13 @@ export function kabritaDisplayName(field: StandardField) {
 export function kabritaRawValues(
   values: Partial<Record<StandardField, string>>,
 ): KabritaRawValues {
-  return Object.fromEntries(
+  const raw = Object.fromEntries(
     KABRITA_IMPORT_FIELDS.map((field) => [field, values[field] || ""]),
   ) as KabritaRawValues;
+  if (Object.prototype.hasOwnProperty.call(values, "customerServiceComment")) {
+    raw.customerServiceComment = values.customerServiceComment ?? "";
+  }
+  return raw;
 }
 
 export function inferKabritaProductStage(productLine: unknown) {

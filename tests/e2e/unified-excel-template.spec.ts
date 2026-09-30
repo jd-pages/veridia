@@ -620,6 +620,7 @@ test("统一 Workbook 八行审核加一行未审核后按 ImportRecord 导出�
         },
       },
     });
+    expect(kabritaCampaign.month).toBe("2026-08");
     const [wyethStore, nestleStore] = await Promise.all([
       prisma.storeTopicRule.findFirstOrThrow({
         where: { commercePlatform: "JD", enabled: true, deletedAt: null, storeName: { contains: "惠氏" } },
@@ -1014,9 +1015,17 @@ test("统一 Workbook 八行审核加一行未审核后按 ImportRecord 导出�
       const headers = (sheet.getRow(1).values as unknown[]).slice(1);
       return sheet.getCell(row, headers.indexOf(header) + 1);
     };
-    const kabritaExportMonth = `${Number(kabritaCampaign.month.slice(-2))}月`;
-    expect(headerCell("佳贝艾特审核结果", 2, "活动月份").text).toBe(kabritaExportMonth);
-    expect(headerCell("佳贝艾特审核结果", 3, "活动月份").text).toBe("");
+    const kabritaHeaders = (exported.getWorksheet("佳贝艾特审核结果")!.getRow(1).values as unknown[]).slice(1);
+    expect(kabritaHeaders).toEqual([
+      "登记时间", "渠道", "店铺名称", "客户备注", "买家购买ID", "购买订单号", "购买时间",
+      "购买罐数", "参与次数", "发布小红书账号", "小红书发布链接", "购买产品线", "是否符合",
+      "客服备注", "互动量", "额外奖励金额", "下次审核时间",
+    ]);
+    const kabritaRawMetadata = await prisma.auditTask.findMany({
+      where: { importRecordId, productId: kabritaProductId }, select: { notes: true }, orderBy: { queueOrder: "asc" },
+    });
+    expect(kabritaRawMetadata[0].notes).toContain('"activityMonth":"8月"');
+    expect(kabritaRawMetadata[1].notes).toContain('"activityMonth":""');
     expect(headerCell("佳贝艾特审核结果", 2, "是否符合").text).toBe("Y");
     expect(headerCell("佳贝艾特审核结果", 3, "是否符合").text).toBe("N-互动量＜10");
     expect(headerCell("惠氏审核结果", 2, "活动月份").text).toBe("9月");
@@ -1052,7 +1061,7 @@ test("统一 Workbook 八行审核加一行未审核后按 ImportRecord 导出�
       favoriteCount: null,
       interactionTotal: null,
     });
-    for (const sheet of exported.worksheets) {
+    for (const sheet of exported.worksheets.filter((sheet) => sheet.name !== "佳贝艾特审核结果")) {
       const headers = (sheet.getRow(1).values as unknown[]).slice(1);
       expect(headers.filter((header) => header === "互动量≥10")).toHaveLength(1);
       expect(headers.at(-1)).toBe("活动月份");

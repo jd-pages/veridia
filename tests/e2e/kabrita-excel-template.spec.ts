@@ -39,20 +39,10 @@ const auditResultExportHeaders = [
   "小红书发布链接",
   "购买产品线",
   "是否符合",
-  "作品类型",
-  "审核结论",
-  "公开状态",
-  "话题审核",
-  "图片 / 视频审核",
-  "正文审核",
-  "店铺话题审核",
-  "点赞数",
-  "评论数",
-  "收藏数",
+  "客服备注",
   "互动量",
-  "互动量≥10",
-  "失败原因",
-  "活动月份",
+  "额外奖励金额",
+  "下次审核时间",
 ];
 const legacyImportHeaders = importHeaders.filter(
   (header) => header !== "活动月份（必填）",
@@ -290,7 +280,7 @@ test("佳贝艾特14列导入模板下载、Sheet 月份应用和六种购买产
   ).toBe(true);
 });
 
-test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导出", async ({
+test("佳贝艾特旧活动内容与基础奖励结论兼容且按17列导出", async ({
   page,
 }) => {
   const login = await page.request.post("/api/auth/login", {
@@ -506,7 +496,7 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
       "N-缺少话题；缺少必带话题：#佳贝艾特荷兰版；N-互动量＜10",
     ],
     [unreadable.id, "N-互动量＜10"],
-    [unavailable.id, "N-帖子无法查看；页面无法访问：小红书页面提示“你访问的页面不见了”"],
+    [unavailable.id, ""],
   ] as const;
   for (const [id, expected] of expectedExports) {
     const exportResponse = await page.request.get(`/api/results/export?ids=${id}`);
@@ -520,7 +510,8 @@ test("佳贝艾特内容合规与基础奖励共同决定最终结论和14列导
       auditResultExportHeaders,
     );
     expect(resultSheet.getCell("M2").text).toBe(expected);
-    expect(resultSheet.getCell("AA2").text).toBe("8月");
+    expect(resultSheet.columnCount).toBe(17);
+    expect((resultSheet.getRow(1).values as unknown[])).not.toContain("活动月份");
   }
 
   await page.goto(`/results/${passed.id}`);

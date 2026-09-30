@@ -74,7 +74,9 @@ const kabritaImportHeaders = [
   "是否符合",
 ];
 
-const kabritaExportHeaders = kabritaImportHeaders;
+const kabritaExportHeaders = [
+  ...kabritaImportHeaders.slice(0, 12), "是否符合", "客服备注", "互动量", "额外奖励金额", "下次审核时间",
+];
 
 describe("远程表格模板配置", () => {
   it("内置模板包含必填字段、标准别名和本地数据源", () => {
@@ -339,7 +341,7 @@ describe("佳贝艾特专属导入导出模板", () => {
         pageStatus: "NO_PERMISSION",
         failureReasons: '["当前账号无权访问笔记"]',
       }).complianceResult,
-    ).toBe("N-帖子无法查看；页面无法访问：当前账号无权访问笔记");
+    ).toBe("");
 
     const exportBytes = await buildConfiguredWorkbook({
       templates,
@@ -355,7 +357,7 @@ describe("佳贝艾特专属导入导出模板", () => {
     expect(headers).not.toEqual(
       expect.arrayContaining(["阶段", "IFFO", "GUM", "产品阶段话题"]),
     );
-    expect(sheet.getCell("N2").text).toBe(
+    expect(sheet.getCell("M2").text).toBe(
       "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张；N-互动量＜10",
     );
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
@@ -441,9 +443,9 @@ describe("统一 Excel 工作簿", () => {
     expect(workbook.worksheets.map((sheet) => sheet.name))
       .toEqual(UNIFIED_AUDIT_RESULT_SHEET_NAMES);
     expect(workbook.worksheets.map((sheet) => sheet.rowCount)).toEqual([2, 1, 2, 2]);
-    expect((workbook.worksheets[1].getRow(1).values as unknown[]).slice(1, kabritaExportHeaders.length))
-      .toEqual(kabritaExportHeaders.filter((header) => header !== "活动月份（必填）"));
-    for (const sheet of workbook.worksheets) {
+    expect((workbook.worksheets[1].getRow(1).values as unknown[]).slice(1))
+      .toEqual(kabritaExportHeaders);
+    for (const sheet of workbook.worksheets.filter((sheet) => sheet.name !== "佳贝艾特审核结果")) {
       const headers = (sheet.getRow(1).values as unknown[]).slice(1);
       expect(headers).toEqual(expect.arrayContaining([
         "作品类型", "审核结论", "公开状态", "话题审核", "图片 / 视频审核",
@@ -459,7 +461,7 @@ describe("统一 Excel 工作簿", () => {
       .toBe("WN-001");
     expect(workbook.worksheets[3].getCell(2, nestleHeaders.indexOf("订单编号（必填）") + 1).text)
       .toBe("N-001");
-    for (const sheet of workbook.worksheets) {
+    for (const sheet of workbook.worksheets.filter((sheet) => sheet.name !== "佳贝艾特审核结果")) {
       expect(sheet.getRow(1).getCell(sheet.columnCount).text).toBe("活动月份");
     }
   });
