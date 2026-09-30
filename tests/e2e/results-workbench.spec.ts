@@ -49,20 +49,10 @@ const kabritaResultExportHeaders = [
   "小红书发布链接",
   "购买产品线",
   "是否符合",
-  "作品类型",
-  "审核结论",
-  "公开状态",
-  "话题审核",
-  "图片 / 视频审核",
-  "正文审核",
-  "店铺话题审核",
-  "点赞数",
-  "评论数",
-  "收藏数",
+  "客服备注",
   "互动量",
-  "互动量≥10",
-  "失败原因",
-  "活动月份",
+  "额外奖励金额",
+  "下次审核时间",
 ];
 
 const removedResultExportHeaders = [
@@ -412,7 +402,13 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
   expect(exportHeaders.slice(1)).toEqual(resultExportHeaders);
   for (const worksheet of workbook.worksheets) {
     const headers = (worksheet.getRow(1).values as unknown[]).slice(1);
-    expect(headers.at(-1), worksheet.name).toBe("活动月份");
+    if (worksheet.name === "佳贝艾特审核结果") {
+      expect(headers, worksheet.name).toEqual(kabritaResultExportHeaders);
+      expect(worksheet.columnCount).toBe(17);
+      expect(headers).not.toContain("活动月份");
+    } else {
+      expect(headers.at(-1), worksheet.name).toBe("活动月份");
+    }
   }
   for (const removedHeader of removedResultExportHeaders) {
     expect(exportHeaders).not.toContain(removedHeader);
@@ -760,7 +756,10 @@ test("审核详情区分原笔记链接与最终链接并复制完整原始 URL"
 
 test("互动奖励表格、详情和导出使用已保存快照", async ({ page }) => {
   const prisma = new PrismaClient({ datasourceUrl: databaseUrl });
-  const original = await prisma.auditResult.findFirstOrThrow({ include: { task: true } });
+  const original = await prisma.auditResult.findFirstOrThrow({
+    where: { task: { product: { brandName: "达能" } } },
+    include: { task: true },
+  });
   try {
     await prisma.auditResult.update({ where: { id: original.id }, data: {
       likeCount: 5, commentCount: 3, favoriteCount: 4, interactionTotal: 12,

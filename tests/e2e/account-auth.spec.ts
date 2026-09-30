@@ -10,6 +10,12 @@ const privateKeyPath =
   process.env.VERIDIA_ACCOUNT_SIGNING_PRIVATE_KEY_PATH ||
   path.join(os.tmpdir(), "veridia-e2e-account-signing", "private.pem");
 
+const kabritaAuditExportHeaders = [
+  "登记时间", "渠道", "店铺名称", "客户备注", "买家购买ID", "购买订单号", "购买时间",
+  "购买罐数", "参与次数", "发布小红书账号", "小红书发布链接", "购买产品线", "是否符合",
+  "客服备注", "互动量", "额外奖励金额", "下次审核时间",
+];
+
 function signedCode(payload: Record<string, unknown>) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signature = sign(
@@ -245,7 +251,13 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
     ]);
     for (const sheet of workbook.worksheets) {
       const headers = (sheet.getRow(1).values as unknown[]).slice(1);
-      expect(headers.at(-1), sheet.name).toBe("活动月份");
+      if (sheet.name === "佳贝艾特审核结果") {
+        expect(headers, sheet.name).toEqual(kabritaAuditExportHeaders);
+        expect(sheet.columnCount).toBe(17);
+        expect(headers).not.toContain("活动月份");
+      } else {
+        expect(headers.at(-1), sheet.name).toBe("活动月份");
+      }
       expect(
         headers.includes("自审") ||
           headers.includes("是否符合") ||
