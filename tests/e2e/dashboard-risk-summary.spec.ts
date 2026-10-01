@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import dayjs from "dayjs";
+import { dashboardLocalMonth } from "../../lib/dashboard-calendar-month";
 import { E2E_ORIGIN } from "./e2e-origin";
 
 async function waitForBatch(page: Page, batchId: string) {
@@ -58,17 +60,9 @@ test("风险摘要只展示三类非零风险并下钻到对应结果", async ({
   const batchId = (await batchResponse.json()).data.batchId as string;
   await waitForBatch(page, batchId);
 
-  const month = new Date().toISOString().slice(0, 7);
+  const month = dashboardLocalMonth();
   const startDate = `${month}-01`;
-  const endDate = new Date(
-    Date.UTC(
-      Number(month.slice(0, 4)),
-      Number(month.slice(5, 7)),
-      0,
-    ),
-  )
-    .toISOString()
-    .slice(0, 10);
+  const endDate = dayjs(startDate).endOf("month").format("YYYY-MM-DD");
   const dashboardData = (
     await (await page.request.get(`/api/dashboard?month=${month}`)).json()
   ).data as {

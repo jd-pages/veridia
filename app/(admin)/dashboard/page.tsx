@@ -25,6 +25,7 @@ import {
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/client";
+import { dashboardLocalMonth } from "@/lib/dashboard-calendar-month";
 import {
   businessFailureReasonLabel,
   businessUiText,
@@ -128,7 +129,7 @@ export default function DashboardPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [batches, setBatches] = useState<AuditBatch[]>([]);
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => dashboardLocalMonth());
   const [productId, setProductId] = useState("");
   const [campaignId, setCampaignId] = useState("");
   const [trendRange, setTrendRange] = useState<"7天" | "30天">("7天");
