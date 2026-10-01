@@ -1,0 +1,2 @@
+# Exact upstream byte fixture: its SHA is the reviewed patch input identity.
+next-trace-original.cjs -text

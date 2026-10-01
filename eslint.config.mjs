@@ -15,6 +15,9 @@ export default defineConfig([
     ".next-preview-*/**",
     ".playwright/**",
     "node_modules/**",
+    // Licensed byte-exact compiled upstream reference, not application/test
+    // implementation. Hash and behavior remain exercised by reporter tests.
+    "tests/fixtures/next-trace-original.cjs",
     "coverage/**",
     "playwright-report/**",
     "test-results/**",
