@@ -331,32 +331,32 @@ describe("CI machine evidence retention", () => {
       expect(exportEvidence(root).status, change).toBe("NOT_RUN");
     }
   });
-  it("never accepts missing policy, native identities, close evidence or uncovered/reversed Build windows", () => {
-    const mutations: Array<(receipt: ReturnType<typeof diagnosticReceiptFixture>) => void> = [
-      receipt => { Reflect.deleteProperty(receipt, "policy"); },
-      receipt => { receipt.policy.graceMs++; },
-      receipt => { Reflect.deleteProperty(receipt.ready.worker, "nativeStartFileTime"); },
-      receipt => { Reflect.deleteProperty(receipt.ready.guardian, "nativeStartFileTime"); },
-      receipt => { receipt.native.guardian.actualCloseObserved = false; },
-      receipt => { receipt.native.supervisor.exitCode = 1; },
-      receipt => { Reflect.deleteProperty(receipt.native, "workerStartedAt"); },
-      receipt => { Reflect.deleteProperty(receipt.native, "workerEndedAt"); },
-      receipt => { Reflect.deleteProperty(receipt.native, "lastQueryEndedAt"); },
-      receipt => { receipt.native.rmQueryErrors = 1; },
-      receipt => { receipt.native.workerStopReason = "LEASE_EXPIRED"; },
-      receipt => { Object.assign(receipt.nativeBuild, { exitStatus: null }); },
-      receipt => { Reflect.deleteProperty(receipt.nativeBuild, "startedAt"); },
-      receipt => { receipt.nativeBuild.startedAt = "2026-09-30T10:00:08.010Z"; },
-      receipt => { receipt.nativeBuild.endedAt = "2026-09-30T10:00:08.200Z"; },
-      receipt => { receipt.nativeBuild.endedAt = "2026-09-30T10:00:09.500Z"; },
-      receipt => { receipt.endedAt = "2026-09-30T10:00:09.500Z"; },
-      receipt => { receipt.reporter.endSha256 = NEXT_TRACE_SINGLE_FLIGHT_PATCH.originalSha256; },
-    ];
-    for (const [index, mutate] of mutations.entries()) {
-      const root = sourceRoot(); completeSources(root); const receipt = diagnosticReceiptFixture(root); mutate(receipt);
-      writeDiagnosticReceipt(root, receipt);
-      expect(exportEvidence(root).status, `missing or inconsistent diagnostic field ${index}`).toBe("NOT_RUN");
-    }
+  // Independent negative contracts each keep the normal per-case budget and
+  // their own real filesystem fixture. No shared mutable receipts or retries.
+  const invalidDiagnosticFields: Array<[string, (receipt: ReturnType<typeof diagnosticReceiptFixture>) => void]> = [
+    ["policy missing", receipt => { Reflect.deleteProperty(receipt, "policy"); }],
+    ["policy grace drift", receipt => { receipt.policy.graceMs++; }],
+    ["worker birth missing", receipt => { Reflect.deleteProperty(receipt.ready.worker, "nativeStartFileTime"); }],
+    ["guardian birth missing", receipt => { Reflect.deleteProperty(receipt.ready.guardian, "nativeStartFileTime"); }],
+    ["guardian close absent", receipt => { receipt.native.guardian.actualCloseObserved = false; }],
+    ["supervisor nonzero exit", receipt => { receipt.native.supervisor.exitCode = 1; }],
+    ["worker start missing", receipt => { Reflect.deleteProperty(receipt.native, "workerStartedAt"); }],
+    ["worker end missing", receipt => { Reflect.deleteProperty(receipt.native, "workerEndedAt"); }],
+    ["last query missing", receipt => { Reflect.deleteProperty(receipt.native, "lastQueryEndedAt"); }],
+    ["RM query error", receipt => { receipt.native.rmQueryErrors = 1; }],
+    ["lease-expired stop", receipt => { receipt.native.workerStopReason = "LEASE_EXPIRED"; }],
+    ["Build exit missing", receipt => { Object.assign(receipt.nativeBuild, { exitStatus: null }); }],
+    ["Build start missing", receipt => { Reflect.deleteProperty(receipt.nativeBuild, "startedAt"); }],
+    ["Build before READY", receipt => { receipt.nativeBuild.startedAt = "2026-09-30T10:00:08.010Z"; }],
+    ["reversed Build window", receipt => { receipt.nativeBuild.endedAt = "2026-09-30T10:00:08.200Z"; }],
+    ["Build beyond worker window", receipt => { receipt.nativeBuild.endedAt = "2026-09-30T10:00:09.500Z"; }],
+    ["receipt beyond verification window", receipt => { receipt.endedAt = "2026-09-30T10:00:09.500Z"; }],
+    ["unpatched reporter end hash", receipt => { receipt.reporter.endSha256 = NEXT_TRACE_SINGLE_FLIGHT_PATCH.originalSha256; }],
+  ];
+  it.each(invalidDiagnosticFields)("rejects invalid diagnostics: %s", (_name, mutate) => {
+    const root = sourceRoot(); completeSources(root); const receipt = diagnosticReceiptFixture(root); mutate(receipt);
+    writeDiagnosticReceipt(root, receipt);
+    expect(exportEvidence(root).status).toBe("NOT_RUN");
   });
   it("does not equate complete diagnostics with a successful native Build", () => {
     const root = sourceRoot(); completeSources(root); const receipt = failedDiagnosticFixture(root);
