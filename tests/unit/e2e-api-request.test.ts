@@ -8,18 +8,16 @@ function resetError() {
   return Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
 }
 
-const noDelay = () => Promise.resolve();
-
-describe("E2E idempotent GET transient retry", () => {
-  it("retries a reset GET once after health remains ready", async () => {
+describe("E2E own-process requests are never replayed", () => {
+  it("a healthy server does not authorize replaying a reset GET", async () => {
     const request = vi.fn()
       .mockRejectedValueOnce(resetError())
       .mockResolvedValueOnce({ status: 200 });
     const healthCheck = vi.fn().mockResolvedValue(true);
 
-    await expect(e2eGetWithTransientRetry({ request, healthCheck, sleep: noDelay }))
-      .resolves.toEqual({ status: 200 });
-    expect(request).toHaveBeenCalledTimes(2);
+    await expect(e2eGetWithTransientRetry({ request, healthCheck }))
+      .rejects.toMatchObject({ code: "LOCAL_TEST_SERVER_CONNECTION_RESET", serverHealthy: true });
+    expect(request).toHaveBeenCalledTimes(1);
     expect(healthCheck).toHaveBeenCalledTimes(1);
   });
 
@@ -29,19 +27,19 @@ describe("E2E idempotent GET transient retry", () => {
       .mockResolvedValueOnce({ status: 200 });
     const healthCheck = vi.fn().mockResolvedValue(true);
 
-    await expect(e2eGetWithTransientRetry({ request, healthCheck, sleep: noDelay }))
-      .resolves.toEqual({ status: 200 });
-    expect(request).toHaveBeenCalledTimes(2);
+    await expect(e2eGetWithTransientRetry({ request, healthCheck }))
+      .rejects.toThrow("LOCAL_TEST_SERVER_CONNECTION_RESET");
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
-  it("fails after the bounded retry budget is exhausted", async () => {
+  it("preserves the original error as evidence without using a retry budget", async () => {
     const request = vi.fn().mockRejectedValue(resetError());
     const healthCheck = vi.fn().mockResolvedValue(true);
 
-    await expect(e2eGetWithTransientRetry({ request, healthCheck, sleep: noDelay }))
-      .rejects.toMatchObject({ code: "ECONNRESET" });
-    expect(request).toHaveBeenCalledTimes(3);
-    expect(healthCheck).toHaveBeenCalledTimes(2);
+    await expect(e2eGetWithTransientRetry({ request, healthCheck }))
+      .rejects.toMatchObject({ cause: { code: "ECONNRESET" } });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(healthCheck).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry an HTTP 404 response", async () => {
@@ -49,7 +47,7 @@ describe("E2E idempotent GET transient retry", () => {
     const request = vi.fn().mockResolvedValue(response);
     const healthCheck = vi.fn();
 
-    await expect(e2eGetWithTransientRetry({ request, healthCheck, sleep: noDelay }))
+    await expect(e2eGetWithTransientRetry({ request, healthCheck }))
       .resolves.toBe(response);
     expect(request).toHaveBeenCalledTimes(1);
     expect(healthCheck).not.toHaveBeenCalled();
@@ -63,10 +61,9 @@ describe("E2E idempotent GET transient retry", () => {
       method: "POST",
       request,
       healthCheck,
-      sleep: noDelay,
-    })).rejects.toMatchObject({ code: "ECONNRESET" });
+    })).rejects.toMatchObject({ code: "LOCAL_TEST_SERVER_CONNECTION_RESET", cause: { code: "ECONNRESET" } });
     expect(request).toHaveBeenCalledTimes(1);
-    expect(healthCheck).not.toHaveBeenCalled();
+    expect(healthCheck).toHaveBeenCalledTimes(1);
   });
 
   it("fails immediately when the server health endpoint is not ready", async () => {
@@ -76,9 +73,8 @@ describe("E2E idempotent GET transient retry", () => {
     await expect(e2eGetWithTransientRetry({
       request,
       healthCheck,
-      sleep: noDelay,
       label: "GET /api/example",
-    })).rejects.toThrow("E2E server was not healthy");
+    })).rejects.toMatchObject({ code: "LOCAL_TEST_SERVER_CONNECTION_RESET", serverHealthy: false });
     expect(request).toHaveBeenCalledTimes(1);
     expect(healthCheck).toHaveBeenCalledTimes(1);
   });

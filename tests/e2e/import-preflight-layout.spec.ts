@@ -73,14 +73,18 @@ test("100+ 行预检在三种桌面宽度保持首列与 viewport sticky scrollb
     const showAll = page.getByRole("button", { name: "查看全部记录" });
     await expect(showAll).toBeVisible();
     await showAll.click();
-    await expect(page.getByRole("columnheader", { name: "预检结果" })).toBeVisible();
-
-    const tableWrapper = page.locator(".ant-table-wrapper").last();
+    const excelImportPanel = page.getByRole("tabpanel", { name: "Excel 自动审核", exact: true });
+    const tableWrapper = excelImportPanel.locator(".ant-table-wrapper").filter({
+      has: page.getByRole("columnheader", { name: "预检结果", exact: true }),
+    });
+    await expect(tableWrapper).toHaveCount(1);
     const table = tableWrapper.locator(".ant-table");
     const content = table.locator(".ant-table-body");
-    const resultHeader = table.getByRole("columnheader", { name: "预检结果" });
+    const resultHeader = table.getByRole("columnheader", { name: "预检结果", exact: true });
+    await expect(resultHeader).toBeVisible();
     const stickyScroll = tableWrapper.locator(".ant-table-sticky-scroll");
-    const pagination = page.locator(".ant-pagination").last();
+    const pagination = tableWrapper.locator(".ant-pagination");
+    await expect(pagination).toHaveCount(1);
     for (const viewport of [
       { width: 1366, height: 768 },
       { width: 1440, height: 900 },

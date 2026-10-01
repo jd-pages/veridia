@@ -438,11 +438,18 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await expect(page.getByText("可导入 9 条，异常 0 条")).toBeVisible();
   await expect(page.getByText("预检查通过，无异常记录")).toBeVisible();
   await page.getByRole("button", { name: "查看全部记录" }).click();
-  const previewTable = page.locator(".ant-table-wrapper").last().locator(".ant-table");
+  const excelImportPanel = page.getByRole("tabpanel", { name: "Excel 自动审核", exact: true });
+  const previewTableWrapper = excelImportPanel.locator(".ant-table-wrapper").filter({
+    has: page.getByRole("columnheader", { name: "预检结果", exact: true }),
+  });
+  await expect(previewTableWrapper).toHaveCount(1);
+  const previewTable = previewTableWrapper.locator(".ant-table");
   const previewTableContent = previewTable.locator(".ant-table-body");
   const previewResultHeader = previewTable.getByRole("columnheader", {
     name: "预检结果",
+    exact: true,
   });
+  await expect(previewResultHeader).toBeVisible();
   const resultBoxBeforeScroll = await previewResultHeader.boundingBox();
   await previewTableContent.evaluate((element) => {
     element.scrollLeft = element.scrollWidth;
@@ -462,9 +469,9 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
     tableBox!.x + tableBox!.width + 1,
   );
   await expect(
-    page.getByRole("cell", { name: "达能客户导入 第 10 行", exact: true }),
+    previewTable.getByRole("cell", { name: "达能客户导入 第 10 行", exact: true }),
   ).toBeVisible();
-  await expect(page.locator(".ant-pagination-item-2").last()).toHaveCount(0);
+  await expect(previewTableWrapper.locator(".ant-pagination-item-2")).toHaveCount(0);
   await expect(previewResultHeader).toBeVisible();
 
   downloadedTemplateSheet.getRow(2).getCell(11).value = "";
@@ -477,7 +484,7 @@ test("本地账号登录、创建任务、审核、详情、Excel 与插件提�
   await page.getByRole("button", { name: "开始预检查" }).click();
   await expect(page.getByText("可导入 0 条，异常 9 条")).toBeVisible();
   await expect(page.getByText("当前仅显示异常记录，共 9 条。")).toBeVisible();
-  const errorPreviewTable = page.locator(".ant-table").last();
+  const errorPreviewTable = previewTable;
   await expect(errorPreviewTable.locator('tbody tr[data-row-key]')).toHaveCount(9);
   await expect(errorPreviewTable).toContainText("当前工作表存在业务数据，但未填写活动月份。");
   await page.getByRole("button", { name: "查看全部记录" }).click();

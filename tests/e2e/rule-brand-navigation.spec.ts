@@ -72,41 +72,77 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   ).toBeLessThanOrEqual(1);
 
   await page.setViewportSize({ width: 390, height: 844 });
+  type MobileBrandSnapshot = {
+    cards: Array<{
+      title: string;
+      boxPresent: boolean;
+      box: { x: number; y: number; width: number; height: number };
+      layout: { flexBasis: string; maxWidth: string; cardWidth: string };
+    }>;
+    hasHorizontalOverflow: boolean;
+  };
+  let mobileSnapshot: MobileBrandSnapshot | undefined;
+  let previousMobileSnapshot: MobileBrandSnapshot | undefined;
+  const mobileBrandCards = danoneBrandCard.or(kabritaBrandCard);
+  await expect(mobileBrandCards).toHaveCount(2);
   await expect
     .poll(async () => {
-      const [danoneBox, kabritaBox] = await Promise.all([
-        danoneBrandCard.boundingBox(),
-        kabritaBrandCard.boundingBox(),
-      ]);
-      if (!danoneBox || !kabritaBox) return Number.POSITIVE_INFINITY;
-      return Math.abs(danoneBox.x - kabritaBox.x);
-    })
-    .toBeLessThanOrEqual(6);
-  const [
-    mobileDanoneBox,
-    mobileKabritaBox,
-    mobileCardLayouts,
-    hasHorizontalOverflow,
-  ] = await Promise.all([
-      danoneBrandCard.boundingBox(),
-      kabritaBrandCard.boundingBox(),
-      Promise.all(
-        [danoneBrandCard, kabritaBrandCard].map((cardLocator) =>
-          cardLocator.evaluate((card) => {
-            const column = card.parentElement!;
-            const columnStyle = window.getComputedStyle(column);
-            return {
+      // One DOM task samples both cards, CSS and overflow together. Separate
+      // boundingBox calls can otherwise straddle the responsive sidebar motion.
+      mobileSnapshot = await mobileBrandCards.evaluateAll((cards) => ({
+        cards: cards.map((card) => {
+          const { x, y, width, height } = card.getBoundingClientRect();
+          const columnStyle = window.getComputedStyle(card.parentElement!);
+          return {
+            title: card.querySelector(".ant-card-head-title")?.textContent?.trim() || "",
+            boxPresent: card.isConnected && card.getClientRects().length > 0 && width > 0 && height > 0,
+            box: { x, y, width, height },
+            layout: {
               flexBasis: columnStyle.flexBasis,
               maxWidth: columnStyle.maxWidth,
               cardWidth: window.getComputedStyle(card).width,
-            };
-          }),
+            },
+          };
+        }),
+        hasHorizontalOverflow:
+          document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      }));
+      const danone = mobileSnapshot.cards.find((card) => card.title === "达能");
+      const kabrita = mobileSnapshot.cards.find((card) => card.title === "佳贝艾特");
+      const geometryStable = Boolean(previousMobileSnapshot &&
+        mobileSnapshot.cards.length === 2 &&
+        mobileSnapshot.cards.every((card) => {
+          const prior = previousMobileSnapshot!.cards.find((item) => item.title === card.title);
+          return prior && (["x", "y", "width", "height"] as const).every(
+            (key) => Math.abs(card.box[key] - prior.box[key]) <= 0.5,
+          );
+        }));
+      previousMobileSnapshot = mobileSnapshot;
+      return {
+        boxesPresent: mobileSnapshot.cards.length === 2 && mobileSnapshot.cards.every((card) => card.boxPresent),
+        aligned: Boolean(danone && kabrita && Math.abs(danone.box.x - kabrita.box.x) <= 6),
+        fullWidthColumns: mobileSnapshot.cards.every(
+          ({ layout }) => layout.flexBasis === "100%" && layout.maxWidth === "100%",
         ),
-      ),
-      page.evaluate(
-        () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
-      ),
-    ]);
+        explicitCardWidths: mobileSnapshot.cards.every(({ layout }) => layout.cardWidth !== "auto"),
+        noHorizontalOverflow: !mobileSnapshot.hasHorizontalOverflow,
+        geometryStable,
+      };
+    })
+    .toEqual({
+      boxesPresent: true,
+      aligned: true,
+      fullWidthColumns: true,
+      explicitCardWidths: true,
+      noHorizontalOverflow: true,
+      geometryStable: true,
+    });
+  const mobileDanone = mobileSnapshot!.cards.find((card) => card.title === "达能");
+  const mobileKabrita = mobileSnapshot!.cards.find((card) => card.title === "佳贝艾特");
+  const mobileDanoneBox = mobileDanone?.boxPresent ? mobileDanone.box : null;
+  const mobileKabritaBox = mobileKabrita?.boxPresent ? mobileKabrita.box : null;
+  const mobileCardLayouts = mobileSnapshot!.cards.map((card) => card.layout);
+  const hasHorizontalOverflow = mobileSnapshot!.hasHorizontalOverflow;
   expect(mobileDanoneBox).not.toBeNull();
   expect(mobileKabritaBox).not.toBeNull();
   expect(
@@ -126,11 +162,19 @@ test("话题规则先选择品牌并进入达能详情", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "达能话题规则" }),
   ).toBeVisible();
+  const monthControl = page.locator(".ant-select").filter({
+    has: page.getByRole("combobox"),
+  });
+  await expect(monthControl).toHaveCount(1);
+  await monthControl.click();
+  await page.locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: /^2026年8月$/u }).click();
+  await expect(page).toHaveURL(/[?&]month=2026-08(?:&|$)/u);
   await expect(page.getByText("#爱他美新手爸妈日记")).toBeVisible();
   await expect(
     page.getByText("阶段通用话题", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByTitle("2026年8月")).toBeVisible();
+  await expect(monthControl.getByTitle("2026年8月")).toBeVisible();
   await expect(page.getByText("IFFO：P段/1段", { exact: true })).toBeVisible();
   await expect(page.getByText("IFFO：2段", { exact: true })).toBeVisible();
   await expect(
@@ -676,6 +720,15 @@ test("佳贝艾特品牌、活动、产品和审核规则保持独立", async ({
 test("达能月度规则支持空月份、复制创建、独立主键和刷新保持", async ({
   page,
 }) => {
+  const isolatedDatabaseUrl = process.env.E2E_DATABASE_URL?.trim();
+  if (
+    process.env.VERIDIA_E2E !== "true" ||
+    !isolatedDatabaseUrl ||
+    !isolatedDatabaseUrl.replaceAll("\\", "/").includes("/.playwright/e2e-runs/") ||
+    process.env.DATABASE_URL?.trim() !== isolatedDatabaseUrl
+  ) {
+    throw new Error("月度复制测试只能使用正式 E2E 运行器的隔离数据库");
+  }
   const loginResponse = await page.request.post("/api/auth/login", {
     data: { username: "admin", password: "Admin123!" },
   });
@@ -718,55 +771,98 @@ test("达能月度规则支持空月份、复制创建、独立主键和刷新�
       response.request().method() === "POST",
   );
   await page.locator(".ant-modal:visible .ant-modal-footer .ant-btn-primary").click();
-  const copyResponse = await copyResponsePromise;
-  expect(copyResponse.status()).toBe(201);
-  const copiedCampaign = (await copyResponse.json()).data as {
-    topicRules: Array<{ scope: string; productId: string | null }>;
-  };
-  expect(copiedCampaign.topicRules).toHaveLength(5);
-  expect(copiedCampaign.topicRules.every(
-    (rule) => rule.scope === "PRODUCT" && Boolean(rule.productId),
-  )).toBe(true);
+  let createdCampaignId: string | null = null;
+  try {
+    const copyResponse = await copyResponsePromise;
+    expect(copyResponse.status()).toBe(201);
+    const copiedCampaign = (await copyResponse.json()).data as {
+      id: string;
+      topicRules: Array<{ scope: string; productId: string | null }>;
+    };
+    expect(copiedCampaign.id).toEqual(expect.any(String));
+    expect(copiedCampaign.id).not.toBe("");
+    // Only the successful response's new ID grants fixture cleanup ownership.
+    // Never delete an existing brand/month campaign to make a repeated test pass.
+    createdCampaignId = copiedCampaign.id;
+    expect(copiedCampaign.topicRules).toHaveLength(5);
+    expect(copiedCampaign.topicRules.every(
+      (rule) => rule.scope === "PRODUCT" && Boolean(rule.productId),
+    )).toBe(true);
 
-  await expect(page).toHaveURL(/brand=.*month=2026-09/u);
-  await expect(page.getByTitle("2026年9月")).toBeVisible();
-  await expect(page.getByText("当前视角暂无规则", { exact: true })).toBeVisible();
-  const septemberRules = (await (
-    await page.request.get("/api/rules?brandName=%E8%BE%BE%E8%83%BD&month=2026-09&contentChannel=XIAOHONGSHU")
-  ).json()).data as Array<{ id: string; scope: string }>;
-  const augustRules = (await (
-    await page.request.get("/api/rules?brandName=%E8%BE%BE%E8%83%BD&month=2026-08&contentChannel=XIAOHONGSHU")
-  ).json()).data as Array<{ id: string }>;
-  expect(septemberRules).toHaveLength(9);
-  expect(septemberRules.filter((rule) => rule.scope === "GLOBAL")).toHaveLength(4);
-  expect(septemberRules.filter((rule) => rule.scope === "PRODUCT")).toHaveLength(5);
-  expect(septemberRules.filter((rule) => rule.scope === "CAMPAIGN")).toHaveLength(0);
-  expect(new Set(septemberRules.map((rule) => rule.id))).not.toEqual(
-    new Set(augustRules.map((rule) => rule.id)),
-  );
+    await expect(page).toHaveURL(/brand=.*month=2026-09/u);
+    await expect(page.getByTitle("2026年9月")).toBeVisible();
+    await expect(page.getByText("当前视角暂无规则", { exact: true })).toBeVisible();
+    const septemberRules = (await (
+      await page.request.get("/api/rules?brandName=%E8%BE%BE%E8%83%BD&month=2026-09&contentChannel=XIAOHONGSHU")
+    ).json()).data as Array<{ id: string; scope: string }>;
+    const augustRules = (await (
+      await page.request.get("/api/rules?brandName=%E8%BE%BE%E8%83%BD&month=2026-08&contentChannel=XIAOHONGSHU")
+    ).json()).data as Array<{ id: string }>;
+    expect(septemberRules).toHaveLength(9);
+    expect(septemberRules.filter((rule) => rule.scope === "GLOBAL")).toHaveLength(4);
+    expect(septemberRules.filter((rule) => rule.scope === "PRODUCT")).toHaveLength(5);
+    expect(septemberRules.filter((rule) => rule.scope === "CAMPAIGN")).toHaveLength(0);
+    expect(new Set(septemberRules.map((rule) => rule.id))).not.toEqual(
+      new Set(augustRules.map((rule) => rule.id)),
+    );
 
-  await page.reload();
-  await expect(page.getByTitle("2026年9月")).toBeVisible();
-  await expect(
-    page.getByText("IFFO：P段/1段", { exact: true }),
-  ).toBeVisible();
+    await page.reload();
+    await expect(page.getByTitle("2026年9月")).toBeVisible();
+    await expect(
+      page.getByText("IFFO：P段/1段", { exact: true }),
+    ).toBeVisible();
 
-  const sourceCampaigns = (await (
-    await page.request.get("/api/campaigns")
-  ).json()).data as Array<{ id: string; month: string; name: string }>;
-  const augustCampaign = sourceCampaigns.find(
-    (campaign) =>
-      campaign.month === "2026-08" && campaign.name.startsWith("爱他美"),
-  );
-  expect(augustCampaign).toBeTruthy();
-  const duplicateResponse = await page.request.post(
-    `/api/campaigns/${augustCampaign!.id}/copy`,
-    { data: { month: "2026-09" } },
-  );
-  expect(duplicateResponse.status()).toBe(409);
-  await expect(duplicateResponse.json()).resolves.toMatchObject({
-    error: "达能2026-09 规则已存在。",
-  });
+    const sourceCampaigns = (await (
+      await page.request.get("/api/campaigns?contentChannel=XIAOHONGSHU")
+    ).json()).data as Array<{
+      id: string;
+      month: string;
+      name: string;
+      contentChannel: string;
+    }>;
+    const uiSourceCampaignId = new URL(copyResponse.url()).pathname.match(
+      /^\/api\/campaigns\/([^/]+)\/copy$/u,
+    )?.[1];
+    expect(uiSourceCampaignId).toEqual(expect.any(String));
+    const augustCampaign = sourceCampaigns.find(
+      (campaign) =>
+        campaign.id === uiSourceCampaignId &&
+        campaign.month === "2026-08" &&
+        campaign.contentChannel === "XIAOHONGSHU" &&
+        campaign.name.startsWith("爱他美"),
+    );
+    expect(augustCampaign).toBeTruthy();
+    const duplicateResponse = await page.request.post(
+      `/api/campaigns/${augustCampaign!.id}/copy`,
+      { data: { month: "2026-09" } },
+    );
+    expect(duplicateResponse.status()).toBe(409);
+    await expect(duplicateResponse.json()).resolves.toMatchObject({
+      error: "达能2026-09 规则已存在。",
+    });
+  } finally {
+    if (createdCampaignId) {
+      const ownedCampaignId = createdCampaignId;
+      await prisma.$transaction(async (tx) => {
+        await tx.operationLog.deleteMany({
+          where: {
+            entityType: "CAMPAIGN",
+            entityId: ownedCampaignId,
+            action: "COPY_CAMPAIGN",
+          },
+        });
+        // Schema cascades remove only this target's rules, product links and
+        // reward tiers; source campaigns, GLOBAL rules and products stay intact.
+        await tx.campaign.delete({ where: { id: ownedCampaignId } });
+      });
+      expect(await prisma.campaign.findUnique({
+        where: { id: ownedCampaignId },
+      })).toBeNull();
+      expect(await prisma.topicRule.count({
+        where: { campaignId: ownedCampaignId },
+      })).toBe(0);
+    }
+  }
 });
 
 test("话题规则可逆启停、永久删除并按 selectedMonth 隔离批量删除", async ({

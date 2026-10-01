@@ -3,7 +3,7 @@ import { e2eGetWithTransientRetry } from "../../../scripts/testing/e2e-api-reque
 
 async function healthEndpointIsReady(request: APIRequestContext) {
   try {
-    const response = await request.get("/api/health");
+    const response = await request.get("/api/health", { timeout: 3_000, maxRetries: 0 });
     if (response.status() !== 200) return false;
     const body = await response.json().catch(() => null);
     return body?.ok === true;
@@ -18,13 +18,7 @@ export function getWithTransientNetworkRetry(
 ): Promise<APIResponse> {
   return e2eGetWithTransientRetry({
     label: `GET ${url}`,
-    request: () => request.get(url),
+    request: () => request.get(url, { maxRetries: 0 }),
     healthCheck: () => healthEndpointIsReady(request),
-    onRetry: ({ attempt, error }) => {
-      const code = (error as { code?: string; cause?: { code?: string } })?.code
-        || (error as { cause?: { code?: string } })?.cause?.code
-        || "transient network error";
-      process.stdout.write(`[E2E GET retry ${attempt}/2] ${url}: ${code}\n`);
-    },
   });
 }

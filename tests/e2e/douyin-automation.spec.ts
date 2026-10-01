@@ -1017,6 +1017,14 @@ test("抖音批次使用独立会话、单一后台页面并应用独立业务�
   expect(requirementContext.rules.map((rule) => rule.topic)).toContain(
     "#新生儿奶粉",
   );
+  // These counters describe the server lifetime, not this batch. A preceding
+  // valid batch may already own the reusable audit page on the same server.
+  const beforeSessionResponse = await page.request.get("/api/automation/session?platform=DOUYIN");
+  expect(beforeSessionResponse.ok()).toBeTruthy();
+  const beforeSession = (await beforeSessionResponse.json()).data;
+  expect(beforeSession.auditPageCreateCount).toBeGreaterThanOrEqual(0);
+  expect(beforeSession.auditPageReuseCount).toBeGreaterThanOrEqual(0);
+  const reusableAuditPageBeforeBatch = beforeSession.auditPageOpen && beforeSession.controlReady;
   const suffix = Date.now();
   const response = await page.request.post("/api/automation/batches", {
     data: {
@@ -1088,8 +1096,14 @@ test("抖音批次使用独立会话、单一后台页面并应用独立业务�
   const douyinSession = (await (await page.request.get("/api/automation/session?platform=DOUYIN")).json()).data;
   const xhsSession = (await (await page.request.get("/api/automation/session?platform=XIAOHONGSHU")).json()).data;
   expect(douyinSession.profilePath).not.toBe(xhsSession.profilePath);
-  expect(douyinSession.auditPageCreateCount).toBe(1);
-  expect(douyinSession.auditPageReuseCount).toBeGreaterThanOrEqual(1);
+  expect(douyinSession.auditPageCreateCount).toBe(
+    beforeSession.auditPageCreateCount + (reusableAuditPageBeforeBatch ? 0 : 1),
+  );
+  expect(douyinSession.auditPageReuseCount - beforeSession.auditPageReuseCount).toBeGreaterThanOrEqual(
+    reusableAuditPageBeforeBatch ? 2 : 1,
+  );
+  expect(douyinSession.auditPageOpen).toBe(true);
+  expect(douyinSession.browserInstanceCount).toBe(1);
   expect(douyinSession.pageCount).toBeLessThanOrEqual(2);
 
   const clear = await page.request.post(`/api/automation/batches/${batchId}/clear`);

@@ -523,6 +523,14 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
   });
   await expect(danoneBrandCard).toHaveCount(1);
   await danoneBrandCard.getByRole("button", { name: "进入规则" }).click();
+  const monthControl = page.locator(".ant-select").filter({
+    has: page.getByRole("combobox"),
+  });
+  await expect(monthControl).toHaveCount(1);
+  await monthControl.click();
+  await page.locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: /^2026年8月$/u }).click();
+  await expect(page).toHaveURL(/[?&]month=2026-08(?:&|$)/u);
   await expect(
     page.getByText(
       "产品阶段仅用于匹配对应话题，不要求正文出现段位词。标准话题会自动去空格并统一补充 #",
@@ -553,7 +561,7 @@ test("7月兼容 IFFO/GUM，8月按具体段位组匹配话题", async ({
   await expect(stageSummaryCard).toContainText("#新生儿奶粉");
   await expect(stageSummaryCard).toContainText("#二段奶粉推荐");
   await expect(stageSummaryCard).toContainText("#三段奶粉推荐");
-  await expect(page.getByTitle("2026年8月")).toBeVisible();
+  await expect(monthControl.getByTitle("2026年8月")).toBeVisible();
 });
 
 test("佳贝艾特活动过滤产品、隐藏阶段并允许无阶段创建任务", async ({

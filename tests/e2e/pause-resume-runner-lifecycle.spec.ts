@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { prisma } from "@/lib/db";
 import { recoverInterruptedAutomaticBatches } from "@/lib/automation/batch-execution-reconcile";
 import {
@@ -11,6 +11,122 @@ import { E2E_ORIGIN } from "./e2e-origin";
 const cleanupBatchIds: string[] = [];
 const HANDOFF_PROGRESS_TIMEOUT_MS =
   DEFAULT_BROWSER_LIFECYCLE_CLEANUP_DEADLINE_MS + 15_000;
+const LIFECYCLE_DIAGNOSTIC_TIMEOUT_MS = 3_000;
+
+type LifecycleFailureDiagnostics = {
+  capture: (phase: string) => Promise<void>;
+  snapshots: Array<Record<string, unknown>>;
+};
+
+let lifecycleFailureDiagnostics: LifecycleFailureDiagnostics | undefined;
+
+async function boundedDiagnostic<T>(operation: Promise<T>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("LIFECYCLE_DIAGNOSTIC_DEADLINE")),
+          LIFECYCLE_DIAGNOSTIC_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function lifecycleDiagnostics(page: Page, batchIds: string[], startedAt: number) {
+  const snapshots: Array<Record<string, unknown>> = [];
+  return {
+    snapshots,
+    async capture(phase: string) {
+      const observedAt = new Date().toISOString();
+      const results = await Promise.allSettled([
+        boundedDiagnostic(prisma.auditBatch.findMany({
+          where: { id: { in: batchIds } },
+          select: {
+            id: true,
+            status: true,
+            runEpoch: true,
+            currentTaskId: true,
+            startedAt: true,
+            finishedAt: true,
+            lastErrorCode: true,
+            tasks: {
+              orderBy: { queueOrder: "asc" },
+              select: {
+                id: true,
+                status: true,
+                queueOrder: true,
+                claimEpoch: true,
+                attempts: true,
+                startedAt: true,
+                finishedAt: true,
+                failureCode: true,
+                auditResults: {
+                  select: { id: true, autoStatus: true, pageStatus: true, auditedAt: true },
+                },
+              },
+            },
+          },
+        }).then((batches) => batches.map((batch) => ({
+          ...batch,
+          taskStatusCounts: batch.tasks.reduce<Record<string, number>>(
+            (counts, task) => {
+              counts[task.status] = (counts[task.status] || 0) + 1;
+              return counts;
+            },
+            {},
+          ),
+        })))),
+        boundedDiagnostic((async () => {
+          const response = await page.request.get(
+            "/api/automation/session?platform=XIAOHONGSHU",
+            { timeout: LIFECYCLE_DIAGNOSTIC_TIMEOUT_MS },
+          );
+          if (!response.ok()) return { status: response.status() };
+          const session = (await response.json()).data;
+          return {
+            status: response.status(),
+            generationLifecycle: session.generationLifecycle,
+            browserRunning: session.browserRunning,
+            controlState: session.controlState,
+            controlReady: session.controlReady,
+            profileLocked: session.profileLocked,
+            activeBrowserOwnerGeneration: session.activeBrowserOwnerGeneration,
+            contextLaunchCount: session.contextLaunchCount,
+            remoteDebuggingMode: session.remoteDebuggingMode,
+            browserProcessId: session.browserProcessId,
+            reusedBrowserProcess: session.reusedBrowserProcess,
+            pageCount: session.pageCount,
+            auditPageOpen: session.auditPageOpen,
+            auditLock: session.auditLock,
+            lifecycleStages: session.lifecycleStages,
+            lifecyclePendingOperations: session.lifecyclePendingOperations,
+            physicalCloseState: session.physicalCloseState,
+            globalRuntimeDiagnostics: session.globalRuntimeDiagnostics,
+          };
+        })()),
+        boundedDiagnostic((async () => {
+          const response = await page.request.get("/api/health", {
+            timeout: LIFECYCLE_DIAGNOSTIC_TIMEOUT_MS,
+          });
+          return { status: response.status(), ready: response.ok() };
+        })()),
+      ]);
+      snapshots.push({
+        phase,
+        observedAt,
+        elapsedMs: Date.now() - startedAt,
+        database: results[0].status === "fulfilled" ? results[0].value : "DIAGNOSTIC_FAILED",
+        session: results[1].status === "fulfilled" ? results[1].value : "DIAGNOSTIC_FAILED",
+        health: results[2].status === "fulfilled" ? results[2].value : "DIAGNOSTIC_FAILED",
+      });
+    },
+  } satisfies LifecycleFailureDiagnostics;
+}
 
 async function login(page: Page) {
   const response = await page.request.post("/api/auth/login", {
@@ -36,9 +152,14 @@ async function auditScope() {
   return { product, campaign };
 }
 
-async function waitForBatchTerminal(batchId: string, timeoutMs = 180_000) {
+async function waitForBatchTerminal(
+  batchId: string,
+  timeoutMs = 180_000,
+  diagnostics?: LifecycleFailureDiagnostics,
+) {
   const deadline = Date.now() + timeoutMs;
   let peakProcessing = 0;
+  let nextDiagnosticAt = 0;
   while (Date.now() < deadline) {
     const [batch, processing] = await Promise.all([
       prisma.auditBatch.findUniqueOrThrow({ where: { id: batchId } }),
@@ -47,7 +168,12 @@ async function waitForBatchTerminal(batchId: string, timeoutMs = 180_000) {
     peakProcessing = Math.max(peakProcessing, processing);
     expect(processing).toBeLessThanOrEqual(1);
     if (["COMPLETED", "COMPLETED_WITH_ERRORS"].includes(batch.status)) {
+      await diagnostics?.capture("BATCH_TERMINAL");
       return { batch, peakProcessing };
+    }
+    if (diagnostics && Date.now() >= nextDiagnosticAt) {
+      await diagnostics.capture("TERMINAL_WAIT");
+      nextDiagnosticAt = Date.now() + 1_000;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -193,25 +319,45 @@ async function waitForRunnerHandoffProgress(
   );
 }
 
-test.afterEach(async ({ page }) => {
+test.afterEach(async ({ page }, testInfo) => {
+  const diagnostics = lifecycleFailureDiagnostics;
+  lifecycleFailureDiagnostics = undefined;
+  const cleanupErrors: string[] = [];
+  if (diagnostics && testInfo.status !== testInfo.expectedStatus) {
+    try {
+      await diagnostics.capture("FAILURE_BEFORE_CLEANUP");
+      await testInfo.attach("pause-continue-lifecycle-diagnostics", {
+        body: Buffer.from(JSON.stringify(diagnostics.snapshots, null, 2)),
+        contentType: "application/json",
+      });
+    } catch { cleanupErrors.push("FAILURE_DIAGNOSTICS_ATTACHMENT_FAILED"); }
+  }
   for (const batchId of [...new Set(cleanupBatchIds)].reverse()) {
-    const batch = await prisma.auditBatch.findUnique({
-      where: { id: batchId },
-      select: { status: true, clearedAt: true },
-    });
-    if (!batch || batch.clearedAt) continue;
-    if (!["COMPLETED", "COMPLETED_WITH_ERRORS", "CANCELLED"].includes(batch.status)) {
-      await page.request
-        .post(`/api/automation/batches/${batchId}/control`, {
-          data: { action: "CANCEL" },
-        })
-        .catch(() => undefined);
-    }
-    await page.request
-      .post(`/api/automation/batches/${batchId}/clear`)
-      .catch(() => undefined);
+    try {
+      const batch = await prisma.auditBatch.findUnique({
+        where: { id: batchId }, select: { status: true, clearedAt: true },
+      });
+      if (!batch || batch.clearedAt) continue;
+      if (!["COMPLETED", "COMPLETED_WITH_ERRORS", "CANCELLED"].includes(batch.status)) {
+        const cancelled = await page.request.post(`/api/automation/batches/${batchId}/control`, {
+          data: { action: "CANCEL" }, timeout: LIFECYCLE_DIAGNOSTIC_TIMEOUT_MS,
+        });
+        if (!cancelled.ok()) cleanupErrors.push(`CANCEL_FAILED:${batchId}:${cancelled.status()}`);
+      }
+      const cleared = await page.request.post(`/api/automation/batches/${batchId}/clear`, {
+        timeout: LIFECYCLE_DIAGNOSTIC_TIMEOUT_MS,
+      });
+      if (!cleared.ok()) cleanupErrors.push(`CLEAR_FAILED:${batchId}:${cleared.status()}`);
+      const [remaining, processing] = await Promise.all([
+        prisma.auditBatch.findUnique({ where: { id: batchId }, select: { clearedAt: true } }),
+        prisma.auditTask.count({ where: { batchId, status: "PROCESSING" } }),
+      ]);
+      if (remaining && !remaining.clearedAt) cleanupErrors.push(`BATCH_NOT_CLEARED:${batchId}`);
+      if (processing !== 0) cleanupErrors.push(`PROCESSING_AFTER_CLEANUP:${batchId}:${processing}`);
+    } catch { cleanupErrors.push(`BATCH_CLEANUP_FAILED:${batchId}`); }
   }
   cleanupBatchIds.length = 0;
+  expect(cleanupErrors).toEqual([]);
 });
 
 test("真实 1.1.12 双 orphan fixture 可在 Startup Recovery 后按原顺序完成 100+ Task", async ({
@@ -465,8 +611,12 @@ test("Pause 快速返回、连续三次 Resume 不遗留 PROCESSING，旧 lease 
 
 test("Protected PAUSE_CONTINUE_RUNNER_HANDOFF：旧 extraction 延迟退出仍有界接管且后续批次不饥饿", async ({
   page,
-}) => {
+}, testInfo: TestInfo) => {
   test.setTimeout(150_000);
+  const testStartedAt = Date.now();
+  const diagnosticBatchIds: string[] = [];
+  const diagnostics = lifecycleDiagnostics(page, diagnosticBatchIds, testStartedAt);
+  lifecycleFailureDiagnostics = diagnostics;
   await login(page);
   const { product, campaign } = await auditScope();
   const suffix = Date.now();
@@ -487,11 +637,14 @@ test("Protected PAUSE_CONTINUE_RUNNER_HANDOFF：旧 extraction 延迟退出仍�
   expect(firstResponse.ok()).toBeTruthy();
   const firstBatchId = (await firstResponse.json()).data.batchId as string;
   cleanupBatchIds.push(firstBatchId);
+  diagnosticBatchIds.push(firstBatchId);
+  await diagnostics.capture("FIRST_BATCH_CREATED");
 
   await expect.poll(
     () => prisma.auditTask.count({ where: { batchId: firstBatchId, status: "PROCESSING" } }),
     { timeout: 30_000 },
   ).toBe(1);
+  await diagnostics.capture("FIRST_TASK_PROCESSING");
 
   const pauseStartedAt = Date.now();
   const pauseResponse = await page.request.post(
@@ -500,6 +653,7 @@ test("Protected PAUSE_CONTINUE_RUNNER_HANDOFF：旧 extraction 延迟退出仍�
   );
   expect(pauseResponse.ok()).toBeTruthy();
   expect(Date.now() - pauseStartedAt).toBeLessThan(3_000);
+  await diagnostics.capture("PAUSE_RETURNED");
 
   const secondResponse = await page.request.post("/api/automation/batches", {
     data: {
@@ -514,6 +668,8 @@ test("Protected PAUSE_CONTINUE_RUNNER_HANDOFF：旧 extraction 延迟退出仍�
   expect(secondResponse.ok()).toBeTruthy();
   const secondBatchId = (await secondResponse.json()).data.batchId as string;
   cleanupBatchIds.push(secondBatchId);
+  diagnosticBatchIds.push(secondBatchId);
+  await diagnostics.capture("SECOND_BATCH_CREATED");
 
   const continuedAt = Date.now();
   for (let index = 0; index < 3; index += 1) {
@@ -530,9 +686,16 @@ test("Protected PAUSE_CONTINUE_RUNNER_HANDOFF：旧 extraction 延迟退出仍�
   });
   expect(handoff.elapsedMs).toBeLessThan(HANDOFF_PROGRESS_TIMEOUT_MS);
   expect(handoff.peakProcessing).toBeLessThanOrEqual(1);
+  await diagnostics.capture("HANDOFF_PROGRESS_OBSERVED");
 
-  const firstCompleted = await waitForBatchTerminal(firstBatchId);
-  const secondCompleted = await waitForBatchTerminal(secondBatchId);
+  // Leave a bounded diagnostic/teardown window inside the existing test budget.
+  const terminalDeadline = testStartedAt + testInfo.timeout - 10_000;
+  const firstCompleted = await waitForBatchTerminal(
+    firstBatchId, Math.max(1, terminalDeadline - Date.now()), diagnostics,
+  );
+  const secondCompleted = await waitForBatchTerminal(
+    secondBatchId, Math.max(1, terminalDeadline - Date.now()), diagnostics,
+  );
   expect(firstCompleted.peakProcessing).toBeLessThanOrEqual(1);
   expect(secondCompleted.peakProcessing).toBeLessThanOrEqual(1);
   expect(
@@ -540,6 +703,18 @@ test("Protected PAUSE_CONTINUE_RUNNER_HANDOFF：旧 extraction 延迟退出仍�
       where: { task: { batchId: { in: [firstBatchId, secondBatchId] } } },
     }),
   ).toBe(4);
+  const completedTasks = await prisma.auditTask.findMany({
+    where: { batchId: { in: [firstBatchId, secondBatchId] } },
+    select: {
+      status: true,
+      auditResults: { select: { pageStatus: true } },
+    },
+  });
+  expect(completedTasks).toHaveLength(4);
+  for (const task of completedTasks) {
+    expect(task.status).toBe("COMPLETED");
+    expect(task.auditResults).toEqual([{ pageStatus: "NORMAL" }]);
+  }
   expect(
     await prisma.auditBatch.findUniqueOrThrow({ where: { id: secondBatchId } }),
   ).toMatchObject({

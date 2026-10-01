@@ -1,12 +1,8 @@
 export interface E2eRequestRetryOptions<T> {
   method: string;
   request: () => Promise<T>;
-  healthCheck: () => Promise<boolean>;
+  healthCheck?: () => Promise<boolean>;
   label?: string;
-  maxRetries?: number;
-  retryDelaysMs?: number[];
-  sleep?: (milliseconds: number) => Promise<unknown>;
-  onRetry?: (input: { attempt: number; error: unknown }) => void;
 }
 
 export function isTransientE2eNetworkError(error: unknown): boolean;

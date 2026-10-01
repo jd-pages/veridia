@@ -21,34 +21,22 @@ export async function e2eRequestWithTransientRetry({
   request,
   healthCheck,
   label = "E2E API request",
-  maxRetries = 2,
-  retryDelaysMs = [100, 250],
-  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-  onRetry = () => {},
 }) {
   const normalizedMethod = String(method || "").toUpperCase();
-  let attempt = 0;
-
-  while (true) {
-    try {
-      return await request();
-    } catch (error) {
-      const canRetry = normalizedMethod === "GET"
-        && isTransientE2eNetworkError(error)
-        && attempt < maxRetries;
-      if (!canRetry) throw error;
-
-      const healthy = await healthCheck();
-      if (!healthy) {
-        throw new Error(`${label} failed while the E2E server was not healthy`, {
-          cause: error,
-        });
-      }
-
-      attempt += 1;
-      onRetry({ attempt, error });
-      await sleep(retryDelaysMs[Math.min(attempt - 1, retryDelaysMs.length - 1)] ?? 0);
-    }
+  // Keep the legacy export names for callers, but own-process failures are
+  // never replayed. A health probe is diagnostic evidence, not permission to retry.
+  try {
+    return await request();
+  } catch (error) {
+    if (!isTransientE2eNetworkError(error)) throw error;
+    const healthy = await healthCheck?.().catch(() => false);
+    const failure = new Error(
+      `LOCAL_TEST_SERVER_CONNECTION_RESET: ${normalizedMethod} ${label}; serverHealthy=${healthy === true}; ${error?.message?.split("\n")[0] || errorCode(error)}`,
+      { cause: error },
+    );
+    failure.code = "LOCAL_TEST_SERVER_CONNECTION_RESET";
+    failure.serverHealthy = healthy === true;
+    throw failure;
   }
 }
 
