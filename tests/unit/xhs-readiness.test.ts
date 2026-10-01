@@ -31,6 +31,17 @@ describe("小红书页面 hydration 就绪门禁", () => {
     // lifecycle state behind. Each case owns its page so a later setContent
     // cannot inherit the preceding fixture's load/navigation state.
     page = await browser!.newPage();
+    // Synthetic DOM fixtures keep their original image URLs for extraction,
+    // while image loading remains local and deterministic. A live CDN request
+    // can otherwise consume the readiness network-idle budget.
+    await page.route("**/*", (route) => {
+      if (route.request().resourceType() !== "image") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="800"><rect width="640" height="800" fill="#ccc"/></svg>',
+      });
+    });
   });
 
   afterEach(async () => {

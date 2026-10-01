@@ -5,15 +5,17 @@ import type {
   Browser,
   BrowserContext,
   BrowserType,
+  CDPSession,
   Page,
 } from "playwright";
-import { prisma } from "@/lib/db";
+import { getE2ePrismaTransactionDiagnostics, prisma } from "@/lib/db";
 import packageJson from "@/package.json";
 import { classifyAutomaticPage } from "./page-classification";
 import {
   controlledPageCount,
   createAuditPage,
   launchWindowsHiddenChromium,
+  type HiddenChromiumLaunchDiagnostic,
 } from "./windows-hidden-chromium";
 import {
   AutomaticExtractionError,
@@ -33,6 +35,7 @@ import {
 } from "./generation-lifecycle";
 import { automaticAuditQueueState } from "./runtime-state";
 import { throwIfAutomaticExtractionAborted } from "./extraction-deadline";
+import { WindowsBrowserProfileOwnershipError } from "./windows-browser-process-owner";
 
 type BrowserLifecycleIdentity = GenerationLifecycleIdentity & {
   signal?: AbortSignal;
@@ -113,13 +116,34 @@ type XhsBrowserState = {
   automaticRecoveryCount: number;
   lifecycleGeneration: number;
   contextOwner?: GenerationLifecycleIdentity;
+  contextOwnershipKind?: "INTERACTIVE" | "EXTRACTION" | "NONE";
   launchOwner?: GenerationLifecycleIdentity;
   closeOwnerGeneration?: number;
   pageArbiter?: XhsContextPageArbiter<Page>;
+  lifecycleStages?: Array<Record<string, unknown>>;
+  lifecycleOperationSequence?: number;
+  lifecyclePendingOperations?: Map<number, Record<string, unknown>>;
+  physicalCloseFence?: Promise<void>;
+  physicalCloseState?: "PENDING" | "FAILED";
 };
 
 const globalForAutomation = globalThis as typeof globalThis & {
   xhsBrowserManagerState?: XhsBrowserState;
+  douyinBrowserManagerState?: {
+    browser?: Browser;
+    context?: BrowserContext;
+    auditLock?: Omit<AuditLock, "platform"> & { platform: "DOUYIN" };
+    contextOwner?: GenerationLifecycleIdentity;
+    contextOwnershipKind?: "INTERACTIVE" | "EXTRACTION" | "NONE";
+    lifecycleGeneration: number;
+    launchPromise?: Promise<BrowserContext>;
+    auditPagePromise?: Promise<Page>;
+    restartPromise?: Promise<void>;
+    lifecyclePromise?: Promise<void>;
+    physicalCloseFence?: Promise<void>;
+    physicalCloseState?: "PENDING" | "FAILED";
+    closing: boolean;
+  };
 };
 
 const state =
@@ -136,6 +160,7 @@ const state =
     controlState: "NOT_STARTED",
     automaticRecoveryCount: 0,
     lifecycleGeneration: 0,
+    contextOwnershipKind: "NONE",
   });
 state.closingContext ??= false;
 state.contextClosedUnexpectedly ??= false;
@@ -146,6 +171,71 @@ state.auditPageRequestCount ??= 0;
 state.controlState ??= "NOT_STARTED";
 state.automaticRecoveryCount ??= 0;
 state.lifecycleGeneration ??= 0;
+state.contextOwnershipKind ??= "NONE";
+
+function recordLifecycleStage(phase: string, details: Record<string, unknown> = {}) {
+  if (process.env.VERIDIA_E2E !== "true") return;
+  const stages = state.lifecycleStages ??= [];
+  stages.push({
+    phase,
+    occurredAt: new Date().toISOString(),
+    lifecycleGeneration: state.lifecycleGeneration,
+    ownerGeneration: state.contextOwner?.ownerGeneration ??
+      state.launchOwner?.ownerGeneration ?? null,
+    ...details,
+  });
+  if (stages.length > 80) stages.splice(0, stages.length - 80);
+}
+
+async function observeLifecycleOperation<T>(
+  phase: string,
+  operation: () => Promise<T>,
+) {
+  if (process.env.VERIDIA_E2E !== "true") return operation();
+  const operationId = (state.lifecycleOperationSequence ?? 0) + 1;
+  state.lifecycleOperationSequence = operationId;
+  const startedAt = Date.now();
+  const identity = {
+    operationId,
+    lifecycleGeneration: state.lifecycleGeneration,
+    ownerGeneration: state.contextOwner?.ownerGeneration ??
+      state.launchOwner?.ownerGeneration ?? null,
+  };
+  const pending = state.lifecyclePendingOperations ??= new Map();
+  pending.set(operationId, { phase, startedAt: new Date(startedAt).toISOString(), ...identity });
+  recordLifecycleStage(`${phase}_START`, identity);
+  try {
+    const result = await operation();
+    recordLifecycleStage(`${phase}_END`, { ...identity, elapsedMs: Date.now() - startedAt });
+    return result;
+  } catch (error) {
+    recordLifecycleStage(`${phase}_FAILED`, { ...identity, elapsedMs: Date.now() - startedAt });
+    throw error;
+  } finally {
+    pending.delete(operationId);
+  }
+}
+
+function recordLaunchDiagnostic(
+  snapshot: HiddenChromiumLaunchDiagnostic,
+  lifecycleGeneration: number,
+  ownerGeneration: number | null,
+) {
+  const { phase, ...details } = snapshot;
+  recordLifecycleStage(`LAUNCH_${phase}`, { ...details, lifecycleGeneration, ownerGeneration });
+}
+
+async function e2eBoundedObservation<T>(operation: Promise<T>, fallback: T) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), 1_000); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function persistentOptions() {
   const channel = process.env.PLAYWRIGHT_BROWSER_CHANNEL?.trim();
@@ -208,15 +298,69 @@ async function e2ePageSummaries() {
   );
 }
 
-async function chromiumWindowState(page: Page) {
+const XHS_WINDOW_OPERATION_TIMEOUT_MS = 2_000;
+const XHS_CDP_DETACH_TIMEOUT_MS = 500;
+const XHS_PHYSICAL_CLOSE_TIMEOUT_MS = 12_000;
+
+async function boundedBrowserControlOperation<T>(operation: Promise<T>, timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const session = await page.context().newCDPSession(page);
-    try {
-      const result = await session.send("Browser.getWindowForTarget");
-      return result.bounds.windowState || "normal";
-    } finally {
-      await session.detach().catch(() => undefined);
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(browserControlError(new Error("XHS_BROWSER_OPERATION_DEADLINE"))), timeoutMs);
+      }),
+    ]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
+async function withWindowSession<T>(
+  page: Page,
+  phase: string,
+  operation: (session: CDPSession, assertActive: () => void) => Promise<T>,
+  diagnosticOnly = false,
+) {
+  const observe = diagnosticOnly
+    ? <T>(_phase: string, operation: () => Promise<T>) => operation()
+    : observeLifecycleOperation;
+  const generation = state.lifecycleGeneration;
+  const context = page.context();
+  let active = true;
+  let session: CDPSession | undefined;
+  const detach = (value: CDPSession) => boundedBrowserControlOperation(
+    observe(`${phase}_CDP_DETACH`, () => value.detach()).catch(() => undefined),
+    XHS_CDP_DETACH_TIMEOUT_MS,
+  ).catch(() => undefined);
+  const assertActive = () => {
+    if (!active || generation !== state.lifecycleGeneration || page.isClosed()) {
+      throw new XhsPageGenerationInvalidatedError();
     }
+  };
+  const sessionPromise = observe(`${phase}_CDP_SESSION`, () => context.newCDPSession(page));
+  // If session creation returns after the deadline, consume and detach it;
+  // never issue a late window mutation against an invalidated generation.
+  void sessionPromise.then(value => { if (!active) return detach(value); }).catch(() => undefined);
+  try {
+    return await boundedBrowserControlOperation((async () => {
+      session = await sessionPromise;
+      assertActive();
+      return operation(session, assertActive);
+    })(), XHS_WINDOW_OPERATION_TIMEOUT_MS);
+  } finally {
+    active = false;
+    if (session) await detach(session);
+  }
+}
+
+async function chromiumWindowState(page: Page, diagnosticOnly = false) {
+  try {
+    return await withWindowSession(page, "WINDOW_STATE", async (session, assertActive) => {
+      const result = await (diagnosticOnly
+        ? session.send("Browser.getWindowForTarget")
+        : observeLifecycleOperation("WINDOW_STATE_GET", () => session.send("Browser.getWindowForTarget")));
+      assertActive();
+      return result.bounds.windowState || "normal";
+    }, diagnosticOnly);
   } catch {
     return "unknown";
   }
@@ -227,17 +371,16 @@ async function setChromiumWindowState(
   windowState: "minimized" | "normal",
 ) {
   try {
-    const session = await page.context().newCDPSession(page);
-    try {
-      const { windowId } = await session.send("Browser.getWindowForTarget");
-      await session.send("Browser.setWindowBounds", {
+    return await withWindowSession(page, "WINDOW_SET", async (session, assertActive) => {
+      const { windowId } = await observeLifecycleOperation("WINDOW_SET_GET", () => session.send("Browser.getWindowForTarget"));
+      assertActive();
+      await observeLifecycleOperation("WINDOW_SET_BOUNDS", () => session.send("Browser.setWindowBounds", {
         windowId,
         bounds: { windowState },
-      });
+      }));
+      assertActive();
       return true;
-    } finally {
-      await session.detach().catch(() => undefined);
-    }
+    });
   } catch (error) {
     console.warn(
       "[小红书浏览器] 调整窗口状态失败",
@@ -428,9 +571,9 @@ async function reconcileCurrentContextPages(
   if (!context) throw browserControlError();
   const arbiter = ensureContextPageArbiter(context);
   try {
-    const result = settle
-      ? await arbiter.settleAndReconcile(reason)
-      : await arbiter.reconcile(reason);
+    const result = await observeLifecycleOperation(`PAGE_RECONCILE_${reason}`, () => settle
+      ? arbiter.settleAndReconcile(reason)
+      : arbiter.reconcile(reason));
     if (!result.active || state.context !== context) {
       throw new XhsPageGenerationInvalidatedError();
     }
@@ -448,40 +591,25 @@ async function ensureBrowserContext(
   allowRelaunch = false,
   lifecycle?: BrowserLifecycleIdentity,
 ) {
-  if (state.closePromise) await state.closePromise;
+  if (state.physicalCloseFence) await observeLifecycleOperation("PHYSICAL_CONTEXT_CLOSE_WAIT", () =>
+    boundedBrowserControlOperation(state.physicalCloseFence!, XHS_PHYSICAL_CLOSE_TIMEOUT_MS));
+  if (state.closePromise) await observeLifecycleOperation("PREVIOUS_CONTEXT_CLOSE_WAIT", () => state.closePromise!);
   throwIfAutomaticExtractionAborted(lifecycle?.signal);
-  if (lifecycle) {
-    acquireBrowserOwner(lifecycle);
-    state.contextOwner = lifecycle;
-  }
   if (browserControlAvailable()) {
+    if (lifecycle) {
+      acquireBrowserOwner(lifecycle);
+      state.contextOwner = lifecycle;
+      state.contextOwnershipKind = "EXTRACTION";
+    }
     state.controlState = "READY";
     ensureContextPageArbiter(state.context!);
     return state.context!;
   }
   if (state.context || state.browser) {
-    const staleContext = state.context;
-    const staleCloseBrowser = state.closeBrowser;
-    const staleOwner = state.contextOwner;
-    state.pageArbiter?.dispose();
-    state.pageArbiter = undefined;
-    state.lifecycleGeneration += 1;
-    state.context = undefined;
-    state.browser = undefined;
-    state.closeBrowser = undefined;
-    state.auditPage = undefined;
-    state.auditPagePromise = undefined;
-    state.loginPage = undefined;
-    state.interactivePage = undefined;
-    state.contextOwner = undefined;
-    if (staleOwner) releaseBrowserOwner(staleOwner);
-    state.controlState = "DISCONNECTED";
-    state.controlDisconnectedAt = new Date();
-    if (staleCloseBrowser) {
-      await staleCloseBrowser().catch(() => undefined);
-    } else if (staleContext) {
-      await staleContext.close().catch(() => undefined);
-    }
+    // Preserve the old context's owner; do not substitute the incoming task's
+    // identity or swallow physical cleanup failure before launching again.
+    await closeXhsBrowserContext();
+    throwIfAutomaticExtractionAborted(lifecycle?.signal);
   }
   if (state.launchPromise) return state.launchPromise;
   if (state.contextClosedUnexpectedly && !allowRelaunch) {
@@ -508,13 +636,39 @@ async function ensureBrowserContext(
       browserInstanceCount: 0,
     }),
   );
-  state.launchPromise = (async () => {
+  const launching = (async () => {
     const chromium = await getChromium();
     if (process.platform === "win32") {
       const connection = await launchWindowsHiddenChromium(
         chromium,
         PROFILE_DIRECTORY,
+        process.env.VERIDIA_E2E === "true"
+          ? snapshot => recordLaunchDiagnostic(snapshot, launchGeneration, launchOwner?.ownerGeneration ?? null)
+          : undefined,
       );
+      return connection;
+    }
+    const context = await chromium.launchPersistentContext(
+      PROFILE_DIRECTORY,
+      persistentOptions(),
+    );
+    const browser = context.browser() || undefined;
+    return {
+      context, browser, close: () => context.close(), processId: null,
+      reusedProcess: false, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH,
+      browserVersion: browser?.version(), remoteDebuggingMode: "playwright" as const,
+      remoteDebuggingPolicy: undefined,
+    };
+  })()
+    .then(async (connection) => {
+      const context = connection.context;
+      if (launchGeneration !== state.lifecycleGeneration) {
+        // A late old launch owns only this captured connection. It must never
+        // read/close the mutable current generation's Browser or context.
+        await connection.close();
+        if (launchOwner) releaseBrowserOwner(launchOwner);
+        throw new XhsPageGenerationInvalidatedError();
+      }
       state.browser = connection.browser;
       state.closeBrowser = connection.close;
       state.browserProcessId = connection.processId;
@@ -523,39 +677,9 @@ async function ensureBrowserContext(
       state.browserVersion = connection.browserVersion;
       state.remoteDebuggingMode = connection.remoteDebuggingMode;
       state.remoteDebuggingPolicy = connection.remoteDebuggingPolicy;
-      return connection.context;
-    }
-    const context = await chromium.launchPersistentContext(
-      PROFILE_DIRECTORY,
-      persistentOptions(),
-    );
-    state.browser = context.browser() || undefined;
-    state.closeBrowser = () => context.close();
-    state.browserProcessId = null;
-    state.reusedBrowserProcess = false;
-    state.browserExecutablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
-    state.browserVersion = state.browser?.version();
-    state.remoteDebuggingMode = "playwright";
-    return context;
-  })()
-    .then((context) => {
-      if (launchGeneration !== state.lifecycleGeneration) {
-        const closeBrowser = state.closeBrowser;
-        state.browser = undefined;
-        state.context = undefined;
-        state.closeBrowser = undefined;
-        if (launchOwner) releaseBrowserOwner(launchOwner);
-        return (closeBrowser ? closeBrowser() : context.close())
-          .catch(() => undefined)
-          .then(() => {
-            throw new AutomaticExtractionError(
-              "BROWSER_CONTROL_ERROR",
-              "小红书浏览器操作已被 Pause 或 extraction deadline 取消",
-            );
-          });
-      }
       state.context = context;
       state.contextOwner = launchOwner;
+      state.contextOwnershipKind = launchOwner ? "EXTRACTION" : "INTERACTIVE";
       createContextPageArbiter(context, launchGeneration, launchStartedAt);
       state.profileLocked = false;
       state.contextClosedUnexpectedly = false;
@@ -598,6 +722,7 @@ async function ensureBrowserContext(
           state.loginPage = undefined;
           state.interactivePage = undefined;
           state.contextOwner = undefined;
+          state.contextOwnershipKind = "NONE";
           if (closedOwner) releaseBrowserOwner(closedOwner);
           state.contextClosedUnexpectedly = unexpected;
           state.controlState = unexpected ? "DISCONNECTED" : "NOT_STARTED";
@@ -618,7 +743,15 @@ async function ensureBrowserContext(
       return context;
     })
     .catch(async (error) => {
+      if (launchGeneration !== state.lifecycleGeneration) throw error;
+      if (error instanceof WindowsBrowserProfileOwnershipError) {
+        state.physicalCloseState = "FAILED";
+        state.physicalCloseFence = Promise.reject(error);
+        void state.physicalCloseFence.catch(() => undefined);
+        state.contextClosedUnexpectedly = true;
+      }
       state.profileLocked = isProfileLockError(error);
+      if (error instanceof WindowsBrowserProfileOwnershipError) state.profileLocked = true;
       const message = state.profileLocked
         ? `小红书 Profile 正被其他浏览器实例占用：${PROFILE_DIRECTORY}`
         : error instanceof Error
@@ -629,12 +762,13 @@ async function ensureBrowserContext(
       throw browserControlError(error);
     })
     .finally(() => {
-      state.launchPromise = undefined;
+      if (state.launchPromise === launching) state.launchPromise = undefined;
       if (state.launchOwner?.ownerGeneration === launchOwner?.ownerGeneration) {
         state.launchOwner = undefined;
       }
     });
-  return state.launchPromise;
+  state.launchPromise = launching;
+  return launching;
 }
 
 export async function getXhsAuditPage(input?: {
@@ -644,12 +778,13 @@ export async function getXhsAuditPage(input?: {
 }) {
   throwIfAutomaticExtractionAborted(input?.lifecycle?.signal);
   state.auditPageRequestCount += 1;
-  if (input?.lifecycle) {
-    acquireBrowserOwner(input.lifecycle);
-    state.contextOwner = input.lifecycle;
-  }
   const existing = livingPage(state.auditPage);
   if (existing && browserControlAvailable()) {
+    if (input?.lifecycle) {
+      acquireBrowserOwner(input.lifecycle);
+      state.contextOwner = input.lifecycle;
+      state.contextOwnershipKind = "EXTRACTION";
+    }
     const reconciled = await reconcileCurrentContextPages("AUDIT_REQUEST");
     if (
       livingPage(state.auditPage) !== existing ||
@@ -691,17 +826,17 @@ export async function getXhsAuditPage(input?: {
     while (true) {
       try {
         throwIfAutomaticExtractionAborted(input?.lifecycle?.signal);
-        const context = await ensureBrowserContext(
+        const context = await observeLifecycleOperation("AUDIT_CONTEXT_ACQUIRE", () => ensureBrowserContext(
           recoveryAttempt > 0,
           input?.lifecycle,
-        );
+        ));
         const pageCountBefore = context.pages().length;
         await reconcileCurrentContextPages("CONTEXT_READY");
         const arbiter = ensureContextPageArbiter(context);
         const page = await arbiter.createClaimedPage(
           "AUDIT",
           "AUDIT_CREATE",
-          () => createAuditPage(context),
+          () => observeLifecycleOperation("AUDIT_PAGE_CREATE", () => createAuditPage(context)),
         );
         state.auditPage = page;
         const reconciled = await reconcileCurrentContextPages(
@@ -823,11 +958,61 @@ export async function showXhsManualIntervention(
   );
 }
 
+export function getE2eBrowserTeardownRuntimeSnapshot() {
+  if (process.env.VERIDIA_E2E !== "true") {
+    throw new Error("E2E browser teardown runtime snapshot is unavailable outside E2E");
+  }
+  const douyin = globalForAutomation.douyinBrowserManagerState;
+  const xhsPromises = new Set([state.launchPromise, state.auditPagePromise, state.closePromise].filter(Boolean));
+  const douyinPromises = douyin
+    ? new Set([douyin.launchPromise, douyin.auditPagePromise, douyin.restartPromise, douyin.lifecyclePromise].filter(Boolean))
+    : undefined;
+  return {
+    globalRuntimeDiagnostics: {
+      ...getGenerationLifecycleDiagnostics(),
+      effectiveRunnerCount: automaticAuditQueueState.runner ? 1 : 0,
+      prismaTransactionDiagnostics: getE2ePrismaTransactionDiagnostics(),
+      pendingLifecycleOperationCount: douyinPromises
+        ? (state.lifecyclePendingOperations?.size || 0) + xhsPromises.size + douyinPromises.size
+        : null,
+      physicalCloseState: state.physicalCloseState || douyin?.physicalCloseState || null,
+      physicalCloseFencePresent: Boolean(state.physicalCloseFence || douyin?.physicalCloseFence),
+      platformBrowserManagers: {
+        XIAOHONGSHU: {
+          managerAvailable: true,
+          contextPresent: Boolean(state.context),
+          browserConnected: state.browser?.isConnected() ?? false,
+          contextOwnerGeneration: state.contextOwner?.ownerGeneration ?? null,
+          contextOwnershipKind: state.contextOwnershipKind,
+          lifecycleGeneration: state.lifecycleGeneration,
+        },
+        DOUYIN: {
+          managerAvailable: Boolean(douyin),
+          contextPresent: douyin ? Boolean(douyin.context) : null,
+          browserConnected: douyin ? (douyin.browser?.isConnected() ?? false) : null,
+          contextOwnerGeneration: douyin?.contextOwner?.ownerGeneration ?? null,
+          contextOwnershipKind: douyin?.contextOwnershipKind ?? null,
+          lifecycleGeneration: douyin?.lifecycleGeneration ?? null,
+        },
+      },
+    },
+    sessions: [
+      { auditLock: state.auditLock ?? null },
+      { auditLock: douyin?.auditLock ?? null },
+    ],
+  };
+}
+
 export async function getXhsAuditPageDiagnostics() {
   const page = livingPage(state.auditPage);
   const loginPage = livingPage(state.loginPage);
   const interactivePage = livingPage(state.interactivePage);
-  const windowState = page ? await chromiumWindowState(page) : "closed";
+  const e2e = process.env.VERIDIA_E2E === "true";
+  const windowState = page
+    ? await (e2e
+      ? e2eBoundedObservation(chromiumWindowState(page, true), "unknown")
+      : chromiumWindowState(page))
+    : "closed";
   return {
     browserInstanceCount: state.context ? 1 : 0,
     browserProcessId: state.browserProcessId ?? null,
@@ -853,8 +1038,14 @@ export async function getXhsAuditPageDiagnostics() {
     remoteDebuggingMode: state.remoteDebuggingMode || null,
     remoteDebuggingPolicy: state.remoteDebuggingPolicy || null,
     automaticRecoveryCount: state.automaticRecoveryCount,
-    ...(process.env.VERIDIA_E2E === "true"
-      ? { pageSummaries: await e2ePageSummaries() }
+    ...(e2e
+      ? {
+        pageSummaries: await e2eBoundedObservation(e2ePageSummaries(), undefined),
+        lifecycleStages: [...(state.lifecycleStages || [])],
+        lifecyclePendingOperations: [...(state.lifecyclePendingOperations?.values() || [])],
+        physicalCloseState: state.physicalCloseState || null,
+        globalRuntimeDiagnostics: getE2eBrowserTeardownRuntimeSnapshot().globalRuntimeDiagnostics,
+      }
       : {}),
   };
 }
@@ -873,6 +1064,9 @@ export function closeXhsBrowserContext(
     }
   }
   if (state.closePromise) return state.closePromise;
+  if (state.physicalCloseFence) {
+    return boundedBrowserControlOperation(state.physicalCloseFence, XHS_PHYSICAL_CLOSE_TIMEOUT_MS);
+  }
   const closingOwner = state.contextOwner || state.launchOwner;
   const closing = (async () => {
     state.pageArbiter?.dispose();
@@ -891,21 +1085,61 @@ export function closeXhsBrowserContext(
     state.loginPage = undefined;
     state.interactivePage = undefined;
     state.contextOwner = undefined;
+    state.contextOwnershipKind = "NONE";
     state.launchOwner = undefined;
     state.closeOwnerGeneration = closingOwner?.ownerGeneration;
+    const physicalGeneration = state.lifecycleGeneration;
     try {
-      if (closeBrowser) await closeBrowser().catch(() => undefined);
-      else if (context) await context.close().catch(() => undefined);
-      await launching?.catch(() => undefined);
-    } finally {
-      state.closingContext = false;
-      state.contextClosedUnexpectedly = false;
-      state.controlState = "NOT_STARTED";
-      state.closeOwnerGeneration = undefined;
+      if (closeBrowser) await observeLifecycleOperation("CONTEXT_CLOSE", closeBrowser);
+      else if (context) await observeLifecycleOperation("CONTEXT_CLOSE", () => context.close());
+      if (launching) {
+        try { await observeLifecycleOperation("CANCELLED_LAUNCH_WAIT", () => launching); }
+        catch (error) {
+          if (!(error instanceof XhsPageGenerationInvalidatedError)) throw error;
+        }
+      }
+      if (state.lifecycleGeneration === physicalGeneration) {
+        state.physicalCloseState = undefined;
+        state.physicalCloseFence = undefined;
+        state.profileLocked = false;
+        state.contextClosedUnexpectedly = false;
+        state.controlState = "NOT_STARTED";
+      }
       if (closingOwner) releaseBrowserOwner(closingOwner);
+    } catch (error) {
+      if (state.lifecycleGeneration === physicalGeneration) {
+        state.physicalCloseState = "FAILED";
+        state.profileLocked = true;
+        state.contextClosedUnexpectedly = true;
+        state.controlState = "RESTART_REQUIRED";
+        state.controlLastError = BROWSER_CONTROL_MESSAGE;
+      }
+      throw error;
+    } finally {
+      if (state.lifecycleGeneration === physicalGeneration) {
+        state.closingContext = false;
+        state.closeOwnerGeneration = undefined;
+      }
     }
   })();
-  const barrier = closing.finally(() => {
+  state.physicalCloseFence = closing;
+  state.physicalCloseState = "PENDING";
+  void closing.then(() => {
+    if (state.physicalCloseFence === closing) {
+      state.physicalCloseFence = undefined;
+      state.physicalCloseState = undefined;
+    }
+  }).catch(() => undefined);
+  // Keep the physical fence even if the public deadline rejects. Late old
+  // completion can clear it only after its captured connection has released.
+  const barrier = boundedBrowserControlOperation(closing, XHS_PHYSICAL_CLOSE_TIMEOUT_MS).catch(error => {
+    if (state.physicalCloseFence === closing) {
+      state.profileLocked = true;
+      state.controlState = "RESTART_REQUIRED";
+      state.controlLastError = BROWSER_CONTROL_MESSAGE;
+    }
+    throw error;
+  }).finally(() => {
     if (state.closePromise === barrier) state.closePromise = undefined;
   });
   state.closePromise = barrier;

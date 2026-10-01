@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AutomaticExtractionHandoffCancelledError,
@@ -32,6 +33,57 @@ const root = process.cwd();
 
 function normalizeLineEndings(value: string) {
   return value.replace(/\r\n/g, "\n");
+}
+
+function sourceFunction(source: string, name: string) {
+  const file = ts.createSourceFile("lifecycle.ts", normalizeLineEndings(source), ts.ScriptTarget.Latest, true);
+  const declaration = file.statements.find(statement =>
+    ts.isFunctionDeclaration(statement) && statement.name?.text === name);
+  if (!declaration || !ts.isFunctionDeclaration(declaration) || !declaration.body) {
+    throw new Error(`Missing lifecycle function: ${name}`);
+  }
+  return { text: declaration.getText(file), body: declaration.body, file };
+}
+
+function expectOrdered(source: string, before: string, after: string) {
+  const first = source.indexOf(before);
+  const second = source.indexOf(after);
+  expect(first).toBeGreaterThanOrEqual(0);
+  expect(second).toBeGreaterThanOrEqual(0);
+  expect(second).toBeGreaterThan(first);
+}
+
+function assertXhsPhysicalCloseContract(source: string) {
+  const ensure = sourceFunction(source, "ensureBrowserContext").text;
+  expect(ensure).toContain("boundedBrowserControlOperation(state.physicalCloseFence!, XHS_PHYSICAL_CLOSE_TIMEOUT_MS)");
+  expectOrdered(ensure, "PHYSICAL_CONTEXT_CLOSE_WAIT", "PREVIOUS_CONTEXT_CLOSE_WAIT");
+  expectOrdered(ensure, "PREVIOUS_CONTEXT_CLOSE_WAIT", "if (browserControlAvailable())");
+  const close = sourceFunction(source, "closeXhsBrowserContext").text;
+  expectOrdered(close, "const closingOwner = state.contextOwner || state.launchOwner", "state.contextOwner = undefined");
+  expectOrdered(close, 'observeLifecycleOperation("CONTEXT_CLOSE"', 'observeLifecycleOperation("CANCELLED_LAUNCH_WAIT"');
+  expectOrdered(close, 'observeLifecycleOperation("CANCELLED_LAUNCH_WAIT"', "releaseBrowserOwner(closingOwner)");
+  expect(close).toContain("if (!(error instanceof XhsPageGenerationInvalidatedError)) throw error");
+  expectOrdered(close, "state.physicalCloseFence = closing", "boundedBrowserControlOperation(closing, XHS_PHYSICAL_CLOSE_TIMEOUT_MS)");
+  expect(close).toContain("if (state.closePromise === barrier) state.closePromise = undefined");
+}
+
+function assertPersistentCloseContract(source: string) {
+  const fallback = sourceFunction(source, "closePlaywrightPersistentContext");
+  const awaits = fallback.body.statements.flatMap(statement =>
+    ts.isExpressionStatement(statement) && ts.isAwaitExpression(statement.expression)
+      ? [statement.expression.getText(fallback.file)] : []);
+  const contextClose = awaits.findIndex(value => value.includes("settleWithin(context.close().catch(() => undefined), CLOSE_STEP_TIMEOUT_MS)"));
+  const browserClose = awaits.findIndex(value => value.includes("closeBrowser(browser, null, profilePath, executablePath, capturedOwners, false)"));
+  expect(contextClose).toBeGreaterThanOrEqual(0);
+  expect(browserClose).toBeGreaterThan(contextClose);
+  const close = sourceFunction(source, "closeBrowser").text;
+  expect(close).toContain("CLOSE_STEP_TIMEOUT_MS");
+  expectOrdered(close, "browser.close().catch(() => undefined)", "await waitForProfileRelease(profilePath, executablePath, capturedOwners)");
+  expectOrdered(close, "await waitForProfileRelease(profilePath, executablePath, capturedOwners)", "await waitForBrowserDisconnected(browser)");
+  const release = sourceFunction(source, "waitForProfileRelease").text;
+  expectOrdered(release, "await releaseWindowsBrowserProfileOwners(executablePath, profilePath, capturedOwners)", "await rm(activePortPath");
+  const launch = sourceFunction(source, "launchWindowsHiddenChromium").text;
+  expect(launch).toMatch(/closePlaywrightPersistentContext\(\s*browser\.context,/u);
 }
 
 afterEach(() => {
@@ -153,8 +205,11 @@ describe("Pause / Resume runner epoch", () => {
       "utf8",
     );
     expect(browser).toContain("closePromise?: Promise<void>");
-    expect(browser).toContain("if (state.closePromise) await state.closePromise");
-    expect(browser).toContain("await launching?.catch(() => undefined)");
+    for (const source of [normalizeLineEndings(browser), normalizeLineEndings(browser).replace(/\n/g, "\r\n")]) {
+      assertXhsPhysicalCloseContract(source);
+    }
+    expect(() => assertXhsPhysicalCloseContract(browser.replace("state.physicalCloseFence = closing;", "state.physicalCloseFence = undefined;"))).toThrow();
+    expect(() => assertXhsPhysicalCloseContract(browser.replace("if (!(error instanceof XhsPageGenerationInvalidatedError)) throw error", "void error"))).toThrow();
   });
 
   it("静态源码 Contract 只归一化 CRLF 行尾", () => {
@@ -177,26 +232,15 @@ describe("Pause / Resume runner epoch", () => {
         "utf8",
       ),
     );
-    expect(launcher).toContain("closePlaywrightPersistentContext(");
-    expect(launcher).toContain("await context.close().catch(() => undefined)");
-    expect(launcher).toContain(
-      "closePlaywrightPersistentContext(\n          browser.context,",
-    );
-    const contextClose = launcher.indexOf(
-      "await context.close().catch(() => undefined)",
-    );
-    const browserClose = launcher.indexOf(
-      "await closeBrowser(browser, null, profilePath)",
-      contextClose,
-    );
-    const profileRelease = launcher.indexOf(
-      "await waitForProfileRelease(profilePath);",
-      launcher.indexOf("async function closeBrowser("),
-    );
-    expect(browserClose).toBeGreaterThan(contextClose);
-    expect(profileRelease).toBeGreaterThan(
-      launcher.indexOf("browser.close().catch(() => undefined)"),
-    );
+    for (const source of [launcher, launcher.replace(/\n/g, "\r\n")]) assertPersistentCloseContract(source);
+    expect(() => assertPersistentCloseContract(launcher.replace(
+      "await releaseWindowsBrowserProfileOwners(executablePath, profilePath, capturedOwners);", "void capturedOwners;",
+    ))).toThrow();
+    const contextClose = "await settleWithin(context.close().catch(() => undefined), CLOSE_STEP_TIMEOUT_MS);";
+    const browserClose = "await closeBrowser(browser, null, profilePath, executablePath, capturedOwners, false);";
+    const swapped = launcher.replace(`${contextClose}\n  ${browserClose}`, `${browserClose}\n  ${contextClose}`);
+    expect(swapped).not.toBe(launcher);
+    expect(() => assertPersistentCloseContract(swapped)).toThrow();
   });
 
   it("generation 1 延迟 cleanup 无权关闭 generation 2 browser owner", () => {

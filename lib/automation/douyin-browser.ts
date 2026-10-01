@@ -17,6 +17,7 @@ import {
   type GenerationLifecycleIdentity,
 } from "./generation-lifecycle";
 import { throwIfAutomaticExtractionAborted } from "./extraction-deadline";
+import { WindowsBrowserProfileOwnershipError } from "./windows-browser-process-owner";
 
 type BrowserLifecycleIdentity = GenerationLifecycleIdentity & {
   signal?: AbortSignal;
@@ -55,6 +56,9 @@ type State = {
   controlError?: string;
   lifecycleGeneration: number;
   contextOwner?: GenerationLifecycleIdentity;
+  contextOwnershipKind?: "INTERACTIVE" | "EXTRACTION" | "NONE";
+  physicalCloseFence?: Promise<void>;
+  physicalCloseState?: "PENDING" | "FAILED";
 };
 const globalState = globalThis as typeof globalThis & { douyinBrowserManagerState?: State };
 const state = globalState.douyinBrowserManagerState ?? (globalState.douyinBrowserManagerState = {
@@ -64,8 +68,10 @@ const state = globalState.douyinBrowserManagerState ?? (globalState.douyinBrowse
   auditPageReuseCount: 0,
   closing: false,
   lifecycleGeneration: 0,
+  contextOwnershipKind: "NONE",
 });
 state.lifecycleGeneration ??= 0;
+state.contextOwnershipKind ??= "NONE";
 
 let chromiumPromise: Promise<BrowserType> | undefined;
 function chromium() {
@@ -152,12 +158,16 @@ export async function getDouyinAutomationSession() {
 }
 
 async function launchContextNow(lifecycle?: BrowserLifecycleIdentity) {
+  if (state.physicalCloseFence) await boundedOperation("等待抖音物理 Profile 释放", state.physicalCloseFence);
   throwIfAutomaticExtractionAborted(lifecycle?.signal);
   if (lifecycle) {
     acquireBrowserOwner(lifecycle);
     state.contextOwner = lifecycle;
   }
-  if (state.context && state.browser?.isConnected()) return state.context;
+  if (state.context && state.browser?.isConnected()) {
+    if (lifecycle) state.contextOwnershipKind = "EXTRACTION";
+    return state.context;
+  }
   const launchGeneration = state.lifecycleGeneration;
   await getDouyinAutomationSession();
   const browserType = await chromium();
@@ -165,7 +175,16 @@ async function launchContextNow(lifecycle?: BrowserLifecycleIdentity) {
   let launchedBrowser: Browser | undefined;
   let closeLaunchedBrowser: (() => Promise<void>) | undefined;
   if (process.platform === "win32") {
-    const connection = await launchWindowsHiddenChromium(browserType, PROFILE_DIRECTORY);
+    let connection;
+    try { connection = await launchWindowsHiddenChromium(browserType, PROFILE_DIRECTORY); }
+    catch (error) {
+      if (error instanceof WindowsBrowserProfileOwnershipError) {
+        state.physicalCloseState = "FAILED";
+        state.physicalCloseFence = Promise.reject(error);
+        void state.physicalCloseFence.catch(() => undefined);
+      }
+      throw error;
+    }
     launchedBrowser = connection.browser;
     closeLaunchedBrowser = connection.close;
     context = connection.context;
@@ -182,16 +201,14 @@ async function launchContextNow(lifecycle?: BrowserLifecycleIdentity) {
     closeLaunchedBrowser = () => boundedOperation("关闭抖音 Persistent Context", context.close());
   }
   if (launchGeneration !== state.lifecycleGeneration) {
-    await (closeLaunchedBrowser?.() || context.close()).catch(() => undefined);
-    throw new AutomaticExtractionError(
-      "BROWSER_CONTROL_ERROR",
-      "抖音浏览器操作已被 Pause 或 extraction deadline 取消",
-    );
+    await (closeLaunchedBrowser?.() || context.close());
+    throw new DouyinPageGenerationInvalidatedError();
   }
   state.browser = launchedBrowser;
   state.closeBrowser = closeLaunchedBrowser;
   state.context = context;
   state.contextOwner = lifecycle;
+  state.contextOwnershipKind = lifecycle ? "EXTRACTION" : "INTERACTIVE";
   state.launchCount += 1;
   state.controlError = undefined;
   context.once("close", () => {
@@ -202,6 +219,7 @@ async function launchContextNow(lifecycle?: BrowserLifecycleIdentity) {
       state.auditPage = undefined;
       state.interactivePage = undefined;
       state.contextOwner = undefined;
+      state.contextOwnershipKind = "NONE";
       if (closedOwner) releaseBrowserOwner(closedOwner);
       if (!state.closing) state.controlError = "抖音专用浏览器已关闭";
     }
@@ -211,17 +229,24 @@ async function launchContextNow(lifecycle?: BrowserLifecycleIdentity) {
 }
 
 async function ensureContext(lifecycle?: BrowserLifecycleIdentity) {
+  if (state.physicalCloseFence) await boundedOperation("等待抖音物理 Profile 释放", state.physicalCloseFence);
   if (state.restartPromise) await state.restartPromise;
   throwIfAutomaticExtractionAborted(lifecycle?.signal);
   if (state.context && state.browser?.isConnected()) {
     if (lifecycle) {
       acquireBrowserOwner(lifecycle);
       state.contextOwner = lifecycle;
+      state.contextOwnershipKind = "EXTRACTION";
     }
     return state.context;
   }
+  if (state.context || state.browser) await closeContextNow();
   if (state.launchPromise) return state.launchPromise;
-  const launch = serializeBrowserLifecycle(() => launchContextNow(lifecycle));
+  const queuedGeneration = state.lifecycleGeneration;
+  const launch = serializeBrowserLifecycle(() => {
+    if (queuedGeneration !== state.lifecycleGeneration) throw new DouyinPageGenerationInvalidatedError();
+    return launchContextNow(lifecycle);
+  });
   const tracked = launch.finally(() => {
     if (state.launchPromise === tracked) state.launchPromise = undefined;
   });
@@ -229,27 +254,61 @@ async function ensureContext(lifecycle?: BrowserLifecycleIdentity) {
   return tracked;
 }
 
+class DouyinPageGenerationInvalidatedError extends AutomaticExtractionError {
+  constructor() {
+    super("BROWSER_CONTROL_ERROR", "抖音浏览器操作已被 Pause 或 extraction deadline 取消");
+  }
+}
+
 async function closeContextNow() {
+  if (state.physicalCloseFence) {
+    await boundedOperation("等待抖音物理 Profile 释放", state.physicalCloseFence);
+    return;
+  }
   state.lifecycleGeneration += 1;
+  const closingGeneration = state.lifecycleGeneration;
   state.closing = true;
   const close = state.closeBrowser;
   const context = state.context;
   const closingOwner = state.contextOwner;
+  const launching = state.launchPromise;
   state.context = undefined;
   state.browser = undefined;
   state.auditPage = undefined;
+  state.auditPagePromise = undefined;
   state.interactivePage = undefined;
   state.closeBrowser = undefined;
   state.contextOwner = undefined;
-  try {
-    if (close) await close();
-    else if (context) {
-      await boundedOperation("关闭抖音 Persistent Context", context.close());
+  state.contextOwnershipKind = "NONE";
+  const physical = (async () => {
+    try {
+      if (close) await close();
+      else if (context) await context.close();
+      if (launching) {
+        try { await launching; }
+        catch (error) { if (!(error instanceof DouyinPageGenerationInvalidatedError)) throw error; }
+      }
+      if (closingOwner) releaseBrowserOwner(closingOwner);
+      if (state.lifecycleGeneration === closingGeneration) state.controlError = undefined;
+    } catch (error) {
+      if (state.lifecycleGeneration === closingGeneration) {
+        state.physicalCloseState = "FAILED";
+        state.controlError = "抖音物理 Profile 尚未验证释放，禁止重用";
+      }
+      throw error;
+    } finally {
+      if (state.lifecycleGeneration === closingGeneration) state.closing = false;
     }
-  } finally {
-    state.closing = false;
-    if (closingOwner) releaseBrowserOwner(closingOwner);
-  }
+  })();
+  state.physicalCloseFence = physical;
+  state.physicalCloseState = "PENDING";
+  void physical.then(() => {
+    if (state.physicalCloseFence === physical) {
+      state.physicalCloseFence = undefined;
+      state.physicalCloseState = undefined;
+    }
+  }).catch(() => undefined);
+  await boundedOperation("关闭抖音物理 Persistent Context", physical);
 }
 
 export async function getDouyinAuditPage(input?: {
@@ -259,12 +318,13 @@ export async function getDouyinAuditPage(input?: {
 }) {
   try {
     throwIfAutomaticExtractionAborted(input?.lifecycle?.signal);
-    if (input?.lifecycle) {
-      acquireBrowserOwner(input.lifecycle);
-      state.contextOwner = input.lifecycle;
-    }
     const existing = living(state.auditPage);
     if (existing && state.context && state.browser?.isConnected()) {
+      if (input?.lifecycle) {
+        acquireBrowserOwner(input.lifecycle);
+        state.contextOwner = input.lifecycle;
+        state.contextOwnershipKind = "EXTRACTION";
+      }
       state.auditPageReuseCount += 1;
       return existing;
     }
@@ -381,28 +441,7 @@ export async function cancelDouyinActiveExtraction(
   ) {
     return;
   }
-  state.lifecycleGeneration += 1;
-  state.closing = true;
-  const close = state.closeBrowser;
-  const context = state.context;
-  const closingOwner = state.contextOwner;
-  state.context = undefined;
-  state.browser = undefined;
-  state.auditPage = undefined;
-  state.auditPagePromise = undefined;
-  state.closeBrowser = undefined;
-  state.contextOwner = undefined;
-  try {
-    if (close) await close().catch(() => undefined);
-    else if (context) {
-      await boundedOperation("取消抖音审核浏览器操作", context.close()).catch(
-        () => undefined,
-      );
-    }
-  } finally {
-    state.closing = false;
-    if (closingOwner) releaseBrowserOwner(closingOwner);
-  }
+  await closeContextNow();
 }
 export async function closeDouyinAuditPageForTesting() {
   await serializeBrowserLifecycle(async () => {
@@ -418,5 +457,13 @@ export function heartbeatDouyinAuditLock(batchId: string, status: string) { if (
 export function clearDouyinAuditLockForBatch(batchId: string) { if (state.auditLock?.batchId !== batchId) return false; state.auditLock = undefined; return true; }
 export async function getDouyinSessionDiagnostics() {
   const session = await getDouyinAutomationSession();
-  return { ...session, platform: "DOUYIN", profilePath: PROFILE_DIRECTORY, sessionState: state.sessionState, browserInstanceCount: state.context ? 1 : 0, pageCount: controlledPageCount(state.context), auditPageOpen: Boolean(living(state.auditPage)), auditPageCreateCount: state.auditPageCreateCount, auditPageReuseCount: state.auditPageReuseCount, interactivePageOpen: Boolean(living(state.interactivePage)), auditLock: state.auditLock || null, controlReady: Boolean(state.context && state.browser?.isConnected()), controlLastError: state.controlError || null };
+  return { ...session, platform: "DOUYIN", profilePath: PROFILE_DIRECTORY, sessionState: state.sessionState, browserInstanceCount: state.context ? 1 : 0, pageCount: controlledPageCount(state.context), auditPageOpen: Boolean(living(state.auditPage)), auditPageCreateCount: state.auditPageCreateCount, auditPageReuseCount: state.auditPageReuseCount, interactivePageOpen: Boolean(living(state.interactivePage)), auditLock: state.auditLock || null, controlReady: Boolean(state.context && state.browser?.isConnected()), controlLastError: state.controlError || null,
+    ...(process.env.VERIDIA_E2E === "true" ? {
+      activeBrowserOwnerGeneration: state.contextOwner?.ownerGeneration ?? null,
+      lifecycleGeneration: state.lifecycleGeneration,
+      contextOwnershipKind: state.contextOwnershipKind,
+      physicalCloseState: state.physicalCloseState || null,
+      physicalCloseFencePresent: Boolean(state.physicalCloseFence),
+    } : {}),
+  };
 }
