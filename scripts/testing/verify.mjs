@@ -19,6 +19,11 @@ import {
   classifyReleaseFailure,
   redactReleaseText,
 } from "../release-failure.mjs";
+import { collectSourceFingerprint } from "../source-fingerprint.mjs";
+import { enforcePostE2eProcessQuiescence, validateStoredQuiescenceReceipts } from "./post-e2e-process-quiescence.mjs";
+import { readFormalNextPrepareEvidence } from "./formal-next-prepare-evidence.mjs";
+import { assertNextTraceSingleFlight } from "./next-trace-single-flight.mjs";
+import { beginBuildLockDiagnostics, endBuildLockDiagnostics } from "./build-lock-diagnostics.mjs";
 
 const root = process.cwd();
 const requestedMode = process.argv[2] || "fast";
@@ -65,7 +70,7 @@ function command(name, executable, args, options = {}) {
   if (result.error) process.stderr.write(`[${name}] 启动失败: ${result.error.message}\n`);
   const durationSeconds = Number(((Date.now() - started) / 1000).toFixed(2));
   process.stdout.write(`[${name}] ${result.status === 0 ? "PASSED" : "FAILED"} (${durationSeconds}s)\n`);
-  return { name, passed: !result.error && result.status === 0, status: result.status, output: `${result.stdout || ""}\n${result.stderr || ""}\n${result.error?.message || ""}`, durationSeconds };
+  return { name, passed: !result.error && result.status === 0, status: result.status, error: result.error || null, output: `${result.stdout || ""}\n${result.stderr || ""}\n${result.error?.message || ""}`, durationSeconds };
 }
 
 function npm(name, args, options) {
@@ -223,6 +228,10 @@ let e2eNotRun = 0;
 const e2eEvidence = [];
 const e2eGroups = [];
 const groups = groupE2eFiles(selectedFiles);
+const e2eQuiescenceReceipts = [];
+const e2ePhaseStartedAt = new Date().toISOString();
+const verificationHead = gitLines(["rev-parse", "HEAD"])[0];
+const verificationSourceFingerprint = collectSourceFingerprint(root);
 for (const group of groups) {
   const result = record(command(`E2E ${group.name}`, process.execPath, [
     path.join(root, "scripts", "testing", "run-e2e.mjs"),
@@ -232,6 +241,9 @@ for (const group of groups) {
     ...group.files,
   ]));
   const marker = result.output.match(/VERIDIA_E2E_RESULT=(\{[^\r\n]+\})/u);
+  const receiptMarkers = [...result.output.matchAll(/VERIDIA_E2E_QUIESCENCE=(\{[^\r\n]+\})/gu)];
+  try { e2eQuiescenceReceipts.push(receiptMarkers.length === 1 ? JSON.parse(receiptMarkers[0][1]) : null); }
+  catch { e2eQuiescenceReceipts.push(null); }
   if (marker) {
     const summary = JSON.parse(marker[1]);
     e2eTotal += summary.total;
@@ -254,11 +266,116 @@ for (const group of groups) {
   if (!result.passed && affectedMode) break;
 }
 
-if (!affectedMode) {
-  const productionBuild = record(npm("Production build", ["run", "build"]));
-  if (productionBuild.passed) {
-    record(npm("Standalone runtime", ["run", "test:standalone-runtime", "--", "--skip-build"]));
+let postE2eProcessQuiescence = { status: "NOT_REQUIRED" };
+let productionBuildStatus = "NOT_REQUIRED";
+let standaloneStatus = "NOT_REQUIRED";
+let formalNextPreparation = { status: "NOT_REQUIRED" };
+let buildLockDiagnostics = { status: "NOT_REQUIRED" };
+async function guardedProductionBuild(withStandalone) {
+  if (groups.length > 0) {
+    const started = Date.now();
+    try {
+      if (gitLines(["rev-parse", "HEAD"])[0] !== verificationHead || collectSourceFingerprint(root) !== verificationSourceFingerprint) {
+        throw new Error("SOURCE_CHANGED_BEFORE_BUILD_HANDOFF");
+      }
+      const context = { root, groups: groups.map(group => group.name), receipts: e2eQuiescenceReceipts,
+        head: verificationHead, sourceFingerprint: verificationSourceFingerprint,
+        startedAt: e2ePhaseStartedAt, now: new Date().toISOString() };
+      if (process.platform === "win32") validateStoredQuiescenceReceipts(context);
+      postE2eProcessQuiescence = await enforcePostE2eProcessQuiescence(context);
+      if (gitLines(["rev-parse", "HEAD"])[0] !== verificationHead || collectSourceFingerprint(root) !== verificationSourceFingerprint) {
+        throw new Error("SOURCE_CHANGED_DURING_BUILD_HANDOFF_FENCE");
+      }
+      record({ name: "POST_E2E_PROCESS_QUIESCENCE", passed: ["PASSED", "NOT_APPLICABLE"].includes(postE2eProcessQuiescence.status),
+        status: 0, output: JSON.stringify(postE2eProcessQuiescence), durationSeconds: (Date.now() - started) / 1000 });
+    } catch (error) {
+      postE2eProcessQuiescence = { status: "FAILED", error: redactReleaseText(error instanceof Error ? error.message : String(error)) };
+      record({ name: "POST_E2E_PROCESS_QUIESCENCE", passed: false, status: 1,
+        output: `Error: ${postE2eProcessQuiescence.error}`, durationSeconds: (Date.now() - started) / 1000 });
+    }
+    process.stdout.write(`POST_E2E_PROCESS_QUIESCENCE=${JSON.stringify(postE2eProcessQuiescence)}\n`);
+    if (postE2eProcessQuiescence.status === "FAILED") {
+      productionBuildStatus = "NOT_RUN";
+      standaloneStatus = withStandalone ? "NOT_RUN" : "NOT_REQUIRED";
+      process.stdout.write("Production build NOT_RUN: preceding native E2E quiescence was not verified\n");
+      return;
+    }
   }
+  let lockSession;
+  const lockStarted = Date.now();
+  try {
+    lockSession = await beginBuildLockDiagnostics({ root, head: verificationHead,
+      sourceFingerprint: verificationSourceFingerprint, wrapperPath: path.join(root, "scripts", "testing", "verify.mjs") });
+    if (gitLines(["rev-parse", "HEAD"])[0] !== verificationHead || collectSourceFingerprint(root) !== verificationSourceFingerprint) {
+      throw new Error("SOURCE_CHANGED_DURING_BUILD_DIAGNOSTIC_READINESS");
+    }
+  } catch (error) {
+    try {
+      buildLockDiagnostics = lockSession
+        ? await endBuildLockDiagnostics(lockSession, { buildStatus: null, buildStartedAt: null, buildEndedAt: null, buildError: error })
+        : { ...(error?.diagnostics || {}), status: "DIAGNOSTICS_INCOMPLETE",
+            error: redactReleaseText(error instanceof Error ? error.message : String(error)) };
+    } catch (endError) {
+      buildLockDiagnostics = { status: "DIAGNOSTICS_INCOMPLETE", receiptRelativePath: lockSession?.receiptRelativePath,
+        error: redactReleaseText(error instanceof Error ? error.message : String(error)),
+        endError: redactReleaseText(endError instanceof Error ? endError.message : String(endError)) };
+    }
+    productionBuildStatus = "NOT_RUN";
+    standaloneStatus = withStandalone ? "NOT_RUN" : "NOT_REQUIRED";
+    record({ name: "Build lock diagnostics", passed: false, status: 1,
+      output: `Error: BUILD_DIAGNOSTIC_READINESS_FAILED\n${JSON.stringify(buildLockDiagnostics)}`, durationSeconds: (Date.now() - lockStarted) / 1000 });
+    process.stdout.write(`VERIDIA_BUILD_LOCK_DIAGNOSTICS=${JSON.stringify(buildLockDiagnostics)}\n`);
+    return;
+  }
+  const buildStartedAt = new Date().toISOString();
+  let productionBuild;
+  let buildThrownError;
+  try {
+    // The existing native Build executes exactly once, without a new timeout or retry.
+    productionBuild = record(npm("Production build", ["run", "build"], { env: lockSession.environment }));
+  } catch (error) {
+    buildThrownError = error;
+    throw error;
+  } finally {
+    const buildEndedAt = new Date().toISOString();
+    try {
+      buildLockDiagnostics = await endBuildLockDiagnostics(lockSession, { buildStatus: productionBuild?.status ?? null,
+        buildStartedAt, buildEndedAt, buildError: buildThrownError || productionBuild?.error || undefined,
+        monitorIncomplete: productionBuild?.output.includes("VERIDIA_BUILD_LOCK_MONITOR_INCOMPLETE") === true });
+    } catch (error) {
+      // A diagnostics failure must never replace the original native Build failure.
+      buildLockDiagnostics = { status: "DIAGNOSTICS_INCOMPLETE", receiptRelativePath: lockSession.receiptRelativePath,
+        error: redactReleaseText(error instanceof Error ? error.message : String(error)) };
+    }
+    record({ name: "Build lock diagnostics", passed: ["PASSED", "NOT_APPLICABLE"].includes(buildLockDiagnostics.status),
+      status: ["PASSED", "NOT_APPLICABLE"].includes(buildLockDiagnostics.status) ? 0 : 1,
+      output: JSON.stringify(buildLockDiagnostics), durationSeconds: (Date.now() - lockStarted) / 1000 });
+    process.stdout.write(`VERIDIA_BUILD_LOCK_DIAGNOSTICS=${JSON.stringify(buildLockDiagnostics)}\n`);
+  }
+  productionBuildStatus = productionBuild.passed ? "PASSED" : "FAILED";
+  if (productionBuild.passed) {
+    const started = Date.now();
+    try {
+      formalNextPreparation = readFormalNextPrepareEvidence(productionBuild.output, { root, head: verificationHead,
+        sourceFingerprint: verificationSourceFingerprint, startedAt: buildStartedAt, now: new Date().toISOString() });
+      await assertNextTraceSingleFlight();
+      record({ name: "Formal Next prepare identity", passed: true, status: 0, output: JSON.stringify(formalNextPreparation), durationSeconds: (Date.now() - started) / 1000 });
+    } catch (error) {
+      formalNextPreparation = { status: "FAILED", error: redactReleaseText(error instanceof Error ? error.message : String(error)) };
+      record({ name: "Formal Next prepare identity", passed: false, status: 1, output: `Error: ${formalNextPreparation.error}`, durationSeconds: (Date.now() - started) / 1000 });
+    }
+  } else formalNextPreparation = { status: "NOT_RUN" };
+  if (withStandalone) {
+    standaloneStatus = "NOT_RUN";
+    if (productionBuild.passed && formalNextPreparation.status === "PASSED") {
+      const standalone = record(npm("Standalone runtime", ["run", "test:standalone-runtime", "--", "--skip-build"]));
+      standaloneStatus = standalone.passed ? "PASSED" : "FAILED";
+    }
+  }
+}
+
+if (!affectedMode) {
+  await guardedProductionBuild(true);
 }
 if (affectedMode && highRiskKinds.has("database")) {
   record(command("Database compatibility", process.execPath, [path.join(root, "scripts", "testing", "verify-databases.mjs")]));
@@ -267,7 +384,7 @@ if (affectedMode && highRiskKinds.has("desktopRuntime")) {
   record(npm("Desktop health", ["run", "test:desktop-health"]));
 }
 if (affectedMode && highRiskKinds.has("packageRuntime")) {
-  record(npm("Production build", ["run", "build"]));
+  await guardedProductionBuild(false);
 }
 if (mode === "full") {
   record(command("Database compatibility", process.execPath, [path.join(root, "scripts", "testing", "verify-databases.mjs")]));
@@ -276,6 +393,10 @@ if (mode === "full") {
 }
 record(command("git diff --check", "git", ["diff", "--check"]));
 record(command("git diff --cached --check", "git", ["diff", "--cached", "--check"]));
+const sourceIdentityStarted = Date.now();
+const sourceIdentityStable = gitLines(["rev-parse", "HEAD"])[0] === verificationHead && collectSourceFingerprint(root) === verificationSourceFingerprint;
+record({ name: "Verification source identity", passed: sourceIdentityStable, status: sourceIdentityStable ? 0 : 1,
+  output: sourceIdentityStable ? "Exact HEAD and source fingerprint unchanged" : "Error: SOURCE_CHANGED_DURING_VERIFICATION", durationSeconds: (Date.now() - sourceIdentityStarted) / 1000 });
 
 const protectedEvidence = aggregateProtectedBehaviorEvidence({
   root,
@@ -289,6 +410,9 @@ const protectedRegression = protectedEvidence.status;
 const protectedBehaviors = protectedEvidence.behaviors;
 
 const summary = {
+  gitHead: verificationHead,
+  sourceFingerprint: verificationSourceFingerprint,
+  sourceChangedDuringVerification: !sourceIdentityStable,
   mode: mode.toUpperCase(),
   requestedMode: requestedMode.toUpperCase(),
   passed: failures.length === 0 && !["FAILED"].includes(protectedRegression),
@@ -313,16 +437,11 @@ const summary = {
     passed: unitCommandNames.some((name) => failures.includes(name)) ? 0 : unitTotal,
     total: affectedMode ? unitEvidence.length : unitTotal,
   },
-  productionBuild: affectedMode && !highRiskKinds.has("packageRuntime")
-    ? "NOT_REQUIRED"
-    : failures.includes("Production build") ? "FAILED" : "PASSED",
-  standaloneRuntime: affectedMode
-    ? "NOT_REQUIRED"
-    : failures.includes("Production build")
-      ? "NOT_RUN"
-      : failures.includes("Standalone runtime")
-        ? "FAILED"
-        : "PASSED",
+  productionBuild: productionBuildStatus,
+  standaloneRuntime: standaloneStatus,
+  postE2eProcessQuiescence,
+  formalNextPreparation,
+  buildLockDiagnostics,
   sqliteFreshMigration: (mode === "full" || highRiskKinds.has("database"))
     ? failures.includes("Database compatibility") ? "FAILED" : "PASSED"
     : "NOT_REQUIRED",

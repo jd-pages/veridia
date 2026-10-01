@@ -114,6 +114,9 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path artifacts/ci-logs | Out-Null
 
+      - name: 记录实际 CI 验证窗口
+        run: node scripts/testing/ci-machine-evidence.mjs begin --mode=${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'full' && 'full' || 'affected' }}
+
       - name: affected 变更影响门禁
         if: github.event_name != 'workflow_dispatch' || inputs.mode == 'affected'
         shell: pwsh
@@ -131,6 +134,10 @@ jobs:
           VERIDIA_DISABLE_ATTESTATION_WRITE: "true"
         run: npm run verify:full *>&1 | Tee-Object artifacts/ci-logs/verify-full.log
 
+      - name: 导出安全机器验证证据
+        if: always()
+        run: node scripts/testing/ci-machine-evidence.mjs --mode=${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'full' && 'full' || 'affected' }}
+
       - name: 上传检查日志
         if: always()
         uses: actions/upload-artifact@v4
@@ -138,6 +145,8 @@ jobs:
           name: veridia-ci-${{ github.run_number }}
           path: |
             artifacts/ci-logs
+            artifacts/e2e-diagnostics
+            artifacts/ci-machine
             playwright-report
             test-results
           if-no-files-found: ignore

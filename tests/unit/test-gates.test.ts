@@ -311,12 +311,13 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // v1.1.41 adds three Kabrita reward/export/date contracts and atomic product membership.
-      behaviorCount: 45,
-      groupCount: 16,
+      // v1.1.41 adds reward/export/date, atomic membership and the proven
+      // idle-connection/no-replay infrastructure contract.
+      behaviorCount: 46,
+      groupCount: 17,
       triggerFiles: {
-        totalEntryCount: 171,
-        exactFileEntryCount: 147,
+        totalEntryCount: 174,
+        exactFileEntryCount: 150,
         directoryEntryCount: 24,
         patternEntryCount: 0,
         duplicateEntryCount: 0,
@@ -326,6 +327,17 @@ describe("分层测试门禁", () => {
     });
     expect(new Set(PROTECTED_BEHAVIORS.map((item) => item.key)).size)
       .toBe(PROTECTED_BEHAVIORS.length);
+    expect(PROTECTED_BEHAVIORS.find(item => item.key === "E2E_SERVER_CONNECTION_STABILITY"))
+      .toMatchObject({
+        unitTests: ["tests/unit/e2e-server-infrastructure.test.ts"],
+        unitCases: [{ file: "tests/unit/e2e-server-infrastructure.test.ts", title: "a real idle pooled-socket reset cannot replay POST; close transport preserves cookies and HTTP errors with a stable child server" }],
+        e2eTests: ["tests/e2e/product-stage-topic.spec.ts"],
+        e2eCases: [{ file: "tests/e2e/product-stage-topic.spec.ts", title: "佳贝艾特活动过滤产品、隐藏阶段并允许无阶段创建任务" }],
+      });
+    expect(PROTECTED_BEHAVIOR_GROUPS.E2E_SERVER_CONNECTION_ALL).toEqual(["E2E_SERVER_CONNECTION_STABILITY"]);
+    const connectionScope = selectProtectedBehaviors(["scripts/testing/run-e2e.mjs"]);
+    expect(connectionScope.behaviorKeys).toContain("E2E_SERVER_CONNECTION_STABILITY");
+    expect(connectionScope.groups).toContain("E2E_SERVER_CONNECTION_ALL");
     expect(PROTECTED_BEHAVIORS.every((item) =>
       item.protectedExpectation &&
       item.expectationChangePolicy === PROTECTED_EXPECTATION_CHANGE_POLICY
@@ -466,12 +478,13 @@ describe("分层测试门禁", () => {
   it("运行器记录 run 身份且清理仅指向当前 run 进程和目录", () => {
     const runner = fs.readFileSync(path.resolve("scripts/testing/run-e2e.mjs"), "utf8");
     for (const field of ["runId", "port", "databasePath", "profilePath", "serverPid", "browserPid"]) expect(runner).toContain(field);
-    expect(runner).toContain("taskkill");
+    expect(runner).toContain("terminateWindowsOwnedProcesses");
+    expect(runner).not.toMatch(/spawnSync\(\s*["']taskkill["']/u);
     expect(runner).toContain("runDirectory");
     expect(runner).toContain("XHS_PROFILE_PATH: profilePath");
     expect(runner).toContain("DOUYIN_PROFILE_PATH: douyinProfilePath");
-    expect(runner).toContain('path.join(root, "playwright-report", isolationGroup)');
-    expect(runner).toContain('path.join(root, "test-results", isolationGroup)');
+    expect(runner).toContain('path.join(root, "playwright-report", isolationGroup, runId)');
+    expect(runner).toContain('path.join(root, "test-results", isolationGroup, runId)');
     expect(runner).toContain("E2E 隔离 Profile 清理失败");
     expect(runner).toContain("cleanupTestNextGeneratedTypes");
     expect(runner).toContain("restoreFile");
