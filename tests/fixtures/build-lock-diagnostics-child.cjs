@@ -3,7 +3,8 @@
 // SYNTHETIC_TOOL_VALIDATION only. Never starts Next, Build or a database.
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
+const { setTimeout: wait } = require("node:timers/promises");
 if (process.argv[2] === "owned-sleep") {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.argv[3]));
 } else if (process.argv[2] === "build") {
@@ -14,15 +15,46 @@ if (process.argv[2] === "owned-sleep") {
   (async () => {
     const { createBuildLockDiagnosticsFixtureController } = await import("../../scripts/testing/build-lock-diagnostics.mjs");
     const id = process.argv[3];
-    const controller = createBuildLockDiagnosticsFixtureController({ fixture: { id, policy: { leaseMs: 6000, readyMs: 15000, graceMs: 300, finalMs: 700 } } });
+    const readyMs = 15000, activeLeaseMs = 6000;
+    let injectedStartupDelay = false;
+    const controller = createBuildLockDiagnosticsFixtureController({ fixture: { id,
+      // The synthetic fixture's absolute lease must include the existing READY
+      // budget. The production lease and all test/child timeouts are unchanged.
+      policy: { leaseMs: readyMs + activeLeaseMs, readyMs, graceMs: 300, finalMs: 700 } },
+      ...(process.argv[2] === "lease-startup-delay" ? { spawnChild: (...args) => {
+        if (!injectedStartupDelay) {
+          injectedStartupDelay = true;
+          // Controlled counterexample: the old 6s lease expired before READY.
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 6500);
+        }
+        return spawn(...args);
+      } } : {}) });
     const session = await controller.begin({ head: "a".repeat(40), sourceFingerprint: "b".repeat(64), environment: { NODE_ENV: "test" } });
+    let endedSession = false;
+    try {
+    const root = path.resolve(__dirname, "../..");
+    const directory = path.join(root, path.dirname(session.receiptRelativePath));
+    const configuration = JSON.parse(fs.readFileSync(path.join(directory, "configuration.json"), "utf8"));
+    const leaseDeadline = Date.parse(configuration.leaseDeadlineUtc);
+    // Align the deliberate blocking fault to the original absolute native
+    // deadline, not to variable startup latency. This wait is the fixture's
+    // measured fault schedule, never a production readiness/cleanup workaround.
+    while (Date.now() < leaseDeadline - activeLeaseMs) await wait(leaseDeadline - activeLeaseMs - Date.now());
     const started = new Date().toISOString();
+    if (!(Date.parse(started) < leaseDeadline && leaseDeadline - Date.parse(started) <= activeLeaseMs)) throw new Error("FIXTURE_LEASE_WINDOW_ALREADY_EXPIRED");
     // Own fixed-purpose child, not a Node timer: collector must enforce its
     // lease while this controller's Node event loop is synchronously blocked.
-    spawnSync(process.execPath, [__filename, "owned-sleep", "6500"], { windowsHide: true, timeout: 8000, env: { NODE_ENV: "test", SystemRoot: process.env.SystemRoot } });
-    const evidence = await controller.end(session, { buildStatus: 0, buildStartedAt: started, buildEndedAt: new Date().toISOString() });
-    const root = path.resolve(__dirname, "../..");
-    const proof = JSON.parse(fs.readFileSync(path.join(root, path.dirname(session.receiptRelativePath), "worker-exit-proof.json"), "utf8"));
-    process.stdout.write(`${JSON.stringify({ label: "SYNTHETIC_TOOL_VALIDATION", evidence, proof })}\n`);
+    const blocker = spawnSync(process.execPath, [__filename, "owned-sleep", "6500"], { windowsHide: true, timeout: 8000, env: { NODE_ENV: "test", SystemRoot: process.env.SystemRoot } });
+    const ended = new Date().toISOString();
+    // Capture the native stop before Node can write its own STOP_SIGNAL.
+    const nativeLeaseStop = JSON.parse(fs.readFileSync(path.join(directory, "stop.json"), "utf8"));
+    endedSession = true;
+    const evidence = await controller.end(session, { buildStatus: blocker.status, buildStartedAt: started, buildEndedAt: ended });
+    const proof = JSON.parse(fs.readFileSync(path.join(directory, "worker-exit-proof.json"), "utf8"));
+    const worker = JSON.parse(fs.readFileSync(path.join(directory, "worker-summary.json"), "utf8"));
+    if (blocker.status !== 0 || Date.parse(ended) < leaseDeadline) throw new Error("FIXTURE_SYNCHRONOUS_BLOCK_DID_NOT_CROSS_LEASE");
+    process.stdout.write(`${JSON.stringify({ label: "SYNTHETIC_TOOL_VALIDATION", evidence, proof, worker, nativeLeaseStop,
+      leaseWindow: { readyMs, activeLeaseMs, leaseDeadlineUtc: configuration.leaseDeadlineUtc, blockStartedAt: started, blockEndedAt: ended, injectedStartupDelayMs: injectedStartupDelay ? 6500 : 0 } })}\n`);
+    } finally { if (!endedSession) await controller.end(session); }
   })().catch(error => { process.stderr.write(`${error.name}: ${error.message}\n`); process.exitCode = 1; });
 }

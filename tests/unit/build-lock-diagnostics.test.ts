@@ -185,12 +185,23 @@ describe("actual native owned GUID lifecycle (never formal Build)", () => {
     expect(await c.end(session)).toMatchObject({ status: "DIAGNOSTICS_INCOMPLETE", native: { workerExitConfirmed: true } });
     expect(json(file(session, "worker-exit-proof.json"))).toMatchObject({ workerExited: true });
   }, 25000);
-  test("independent lease expires while Node is blocked in its own synchronous child", () => {
+  test.each(["lease", "lease-startup-delay"])("independent lease expires during synchronous child with %s startup", mode => {
     if (process.platform !== "win32") { expect(process.platform).not.toBe("win32"); return; }
-    const result = spawnSync(process.execPath, [path.join(root, "tests/fixtures/build-lock-diagnostics-child.cjs"), "lease", randomUUID()],
+    const result = spawnSync(process.execPath, [path.join(root, "tests/fixtures/build-lock-diagnostics-child.cjs"), mode, randomUUID()],
       { cwd: root, windowsHide: true, timeout: 25000, encoding: "utf8", env: { NODE_ENV: "test", SystemRoot: process.env.SystemRoot } });
     expect(result.status, result.stderr).toBe(0); const value = JSON.parse(result.stdout.trim());
     expect(value).toMatchObject({ label: "SYNTHETIC_TOOL_VALIDATION", evidence: { status: "DIAGNOSTICS_INCOMPLETE", native: { workerExitConfirmed: true } }, proof: { workerExited: true } });
+    expect(value.leaseWindow).toMatchObject({ readyMs: 15000, activeLeaseMs: 6000, injectedStartupDelayMs: mode === "lease-startup-delay" ? 6500 : 0 });
+    expect(Date.parse(value.leaseWindow.blockStartedAt)).toBeLessThan(Date.parse(value.leaseWindow.leaseDeadlineUtc));
+    expect(Date.parse(value.leaseWindow.blockEndedAt)).toBeGreaterThanOrEqual(Date.parse(value.leaseWindow.leaseDeadlineUtc));
+    expect(value.nativeLeaseStop).toMatchObject({ reason: "LEASE_EXPIRED", invocationId: value.proof.invocationId, nonce: value.proof.nonce, supportIdentity: value.proof.supportIdentity });
+    expect(["Supervisor", "Guardian"]).toContain(value.nativeLeaseStop.emitterRole);
+    expect(Date.parse(value.nativeLeaseStop.utc)).toBeGreaterThanOrEqual(Date.parse(value.leaseWindow.leaseDeadlineUtc));
+    expect(Date.parse(value.nativeLeaseStop.utc)).toBeLessThanOrEqual(Date.parse(value.leaseWindow.blockEndedAt));
+    expect(value.worker).toMatchObject({ failure: null, reason: "LEASE_EXPIRED", pid: value.proof.pid, nativeStartFileTime: value.proof.nativeStartFileTime });
+    expect(value.proof.forced).toBe(false);
+    expect(Date.parse(value.proof.utc)).toBeGreaterThanOrEqual(Date.parse(value.leaseWindow.blockStartedAt));
+    expect(Date.parse(value.proof.utc)).toBeLessThanOrEqual(Date.parse(value.leaseWindow.blockEndedAt));
   }, 30000);
   test("public monitor observes exact target fatal error without consuming/replacing it", () => {
     const id = randomUUID(), nonce = randomUUID(), directory = path.join(root, ".playwright/build-lock-diagnostics-fixtures", `lab-${id}`);
