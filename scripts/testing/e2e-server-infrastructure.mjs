@@ -420,7 +420,7 @@ export function validateInitialOwnedRoot(actual, fence) {
 export function selectNewOwnedBrowserRoot(before, after, parentPid) {
   const previous = new Set(before.map(item => `${item.pid}:${item.createdAt}`));
   const candidates = after.filter(item => item.parentPid === parentPid &&
-    /^(?:chrome|chromium|headless_shell)\.exe$/iu.test(item.name) &&
+    /^(?:chrome|chromium|headless_shell|chrome-headless-shell)\.exe$/iu.test(item.name) &&
     typeof item.createdAt === "string" && item.createdAt.length > 0 &&
     !previous.has(`${item.pid}:${item.createdAt}`));
   if (candidates.length !== 1) throw new Error(`E2E warmup browser 所有权不唯一：${candidates.length}`);
@@ -565,7 +565,7 @@ try {
     $known=$expected.ContainsKey("$($item.ProcessId):$birth");
     $directCollectorChild=[int]$item.ParentProcessId -eq $PID;
     $related=$false; $opaqueNamed=$false; $scopeKnown=$false;
-    $named=$item.Name -match '^(node|chrome|chromium|headless_shell|electron|VERIDIA)\\.exe$';
+    $named=$item.Name -match '^(node|chrome|chromium|headless_shell|chrome-headless-shell|electron|VERIDIA)\\.exe$';
     $conhost=$item.Name -ieq 'conhost.exe';
     if($named -or ($directCollectorChild -and $conhost)) {
       # A conhost exclusion must independently disprove project/profile scope.
@@ -606,7 +606,7 @@ try {
   $historicalObservations=@();$historicalReuseProofs=@();$heldReuse=@();
   function KnownNonProjectScope($row){
     if(!$row -or [string]::IsNullOrWhiteSpace([string]$row.CommandLine) -or [string]::IsNullOrWhiteSpace([string]$row.ExecutablePath)){return $false};
-    if([string]$row.Name -match '^(node|chrome|chromium|headless_shell|electron|VERIDIA)\\.exe$'){return $false};
+    if([string]$row.Name -match '^(node|chrome|chromium|headless_shell|chrome-headless-shell|electron|VERIDIA)\\.exe$'){return $false};
     $command=([string]$row.CommandLine).Replace('/','\\').ToLowerInvariant();$executable=([string]$row.ExecutablePath).Replace('/','\\').ToLowerInvariant();
     if($command.Contains($marker) -or $executable.Contains($marker)){return $false};
     foreach($profile in $scope.profilePaths){$m=([string]$profile).Replace('/','\\').ToLowerInvariant();if($command.Contains($m) -or $executable.Contains($m)){return $false}};
@@ -739,7 +739,7 @@ try {
     // An older nonnamed child cannot belong to any captured later PPID
     // incarnation. An unproved current-collector child cannot use that shortcut.
     const parents = identities.filter(parent => parent.pid === row.parentPid);
-    const namedScope = typeof row.name !== "string" || /^(?:node|chrome|chromium|headless_shell|electron|VERIDIA)\.exe$/iu.test(row.name);
+    const namedScope = typeof row.name !== "string" || /^(?:node|chrome|chromium|headless_shell|chrome-headless-shell|electron|VERIDIA)\.exe$/iu.test(row.name);
     if (row.parentPid !== collector.pid && row.scopeReason === "UNVERIFIED_HISTORICAL_PARENT_CANDIDATE" && !namedScope && canonicalBirth(row) && parents.length > 0 &&
       parents.every(parent => canonicalBirth(parent) && row.createdAt < parent.createdAt)) {
       excluded.push({ ...row, exclusion: "CHILD_BIRTH_PRECEDES_ALL_CAPTURED_PARENT_INCARNATIONS",
@@ -768,7 +768,7 @@ try {
         proof.sameHandlesLiveAtBothBoundaries === true && proof.nativeIdentityMatchesAtBothBoundaries === true &&
         proof.ownershipGranted === false && proof.terminationAuthorized === false && sameRow(proof.child, row) &&
         canonicalBirth(proof.parent) && proof.parent.pid === row.parentPid && typeof proof.parent.name === "string" &&
-        !/^(?:node|chrome|chromium|headless_shell|electron|VERIDIA)\.exe$/iu.test(proof.parent.name) &&
+        !/^(?:node|chrome|chromium|headless_shell|chrome-headless-shell|electron|VERIDIA)\.exe$/iu.test(proof.parent.name) &&
         parentNative !== null && currentChildNative !== null && currentChildNative / 10n === cimFileTime(row) / 10n &&
         parentNative / 10n === cimFileTime(proof.parent) / 10n && parentNative < currentChildNative &&
         parentBirths.every(birth => birth < parentNative) && parentNative <= queryStart && currentChildNative <= queryStart) {

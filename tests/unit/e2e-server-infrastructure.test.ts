@@ -571,9 +571,9 @@ describe("E2E server infrastructure", () => {
     await expect(waitForOwnedProcessQuiescence({ identities: [], capture: () => new Promise(() => {}), deadlineMs: 10 })).rejects.toThrow("观测超时");
   });
 
-  it("independently measures unknown project/profile residuals without turning them into termination authority or exposing commands", () => {
+  it.each(["node.exe", "chrome-headless-shell.exe"])("measures unknown %s project/profile residuals without termination authority or commands", name => {
     const wrapper = processRow(900, 1);
-    const unknown = { ...processRow(901, 2), scopeReason: "PROJECT_OR_RUN_PROFILE_MATCH" };
+    const unknown = { ...processRow(901, 2), name, scopeReason: "PROJECT_OR_RUN_PROFILE_MATCH" };
     const fixture = scopedCollectorFixture(wrapper);
     fixture.snapshot.unknownProcesses = [unknown];
     fixture.snapshot.diagnosticCollectorCandidates = [];
@@ -581,6 +581,7 @@ describe("E2E server infrastructure", () => {
     const result = captureWindowsScopedResiduals({ projectRoot: path.resolve("."), profilePaths: [path.resolve(".playwright/run/xhs-profile")],
       identities: [], wrapperIdentity: wrapper, timeoutMs: 12 }, execute);
     expect(result.unknownProcesses).toEqual([unknown]);
+    expect(result.ownedProcesses).toEqual([]);
     const [command, args, options] = execute.mock.calls[0];
     expect(command).toBe("powershell.exe");
     expect(args.join(" ")).toContain("$collectorHandle.Handle");
@@ -648,6 +649,18 @@ describe("E2E server infrastructure", () => {
     expect(nativeObservation).toContain(".HasExited");
     expect(nativeObservation).not.toMatch(/Get-CimInstance|\.Kill\(|taskkill/);
     expect(result).not.toHaveProperty("historicalParentObservations");
+  });
+
+  it("a headless browser predating the captured parent remains UNKNOWN, never excluded or owned", () => {
+    const fixture = historicalParentEvidenceFixture();
+    Object.assign(fixture.unknown[0], { name: "chrome-headless-shell.exe", createdAt: "2026-09-30T00:00:00.0000000Z" });
+    Object.assign(fixture.snapshot.historicalParentObservations.records[0].candidate, {
+      name: fixture.unknown[0].name, createdAt: fixture.unknown[0].createdAt });
+    const { result } = fixture.capture();
+    expect(result.unknownProcesses).toEqual(fixture.unknown);
+    expect(result.ownedProcesses).toEqual([]);
+    expect(result.excludedHistoricalParentCandidates).toEqual([]);
+    expect(result.excludedReusedHistoricalParentCandidates).toEqual([]);
   });
 
   it("bounds captured parent incarnations and current parent rows without granting authority to any duplicate or replacement", () => {
@@ -756,7 +769,7 @@ describe("E2E server infrastructure", () => {
     expect(JSON.parse(child.stdout.trim())).toEqual([true, false, false, false, false, false, false, false, false, false, false, false, false, false, false]);
   });
 
-  it.each(["valid", "missing-proof", "duplicate-proof", "parent-exited", "native-unbound", "child-scope", "parent-scope", "parent-named",
+  it.each(["valid", "missing-proof", "duplicate-proof", "parent-exited", "native-unbound", "child-scope", "parent-scope", "parent-named", "parent-headless-shell",
     "parent-after-child", "captured-new-parent", "missing-captured-native", "child-native-mismatch", "parent-native-mismatch", "wrong-ppid", "authority", "extra-secret",
     "owned-ancestor", "wrapper-parent", "collector-parent", "captured-parent-parent"])(
     "%s retained native current-parent proof never grants ownership and rejects incomplete PID-reuse evidence", kind => {
@@ -778,6 +791,7 @@ describe("E2E server infrastructure", () => {
       if (kind === "child-scope") proof.childScopeKnownNonProjectProfile = false;
       if (kind === "parent-scope") proof.parentScopeKnownNonProjectProfile = false;
       if (kind === "parent-named") proof.parent.name = "node.exe";
+      if (kind === "parent-headless-shell") proof.parent.name = "chrome-headless-shell.exe";
       if (kind === "parent-after-child") { proof.parent.createdAt = "2026-10-01T00:00:02.5000000Z"; proof.parent.nativeCreationFileTime = fixtureFileTime(proof.parent.createdAt); }
       if (kind === "child-native-mismatch") proof.child.nativeCreationFileTime = (BigInt(proof.child.nativeCreationFileTime) + 10n).toString();
       if (kind === "parent-native-mismatch") proof.parent.nativeCreationFileTime = (BigInt(proof.parent.nativeCreationFileTime) + 10n).toString();
@@ -930,11 +944,12 @@ describe("E2E server infrastructure", () => {
     expect(closedIdentifiers).not.toContain("context");
   });
 
-  it("identifies the newly launched direct browser child and fails closed on ambiguity or missing birth identity", () => {
-    const existing = { ...processRow(20, 1), name: "chrome.exe" };
-    const fresh = { ...processRow(21, 1, "new"), name: "chrome.exe" };
-    const foreign = { ...processRow(22, 40, "new"), name: "chrome.exe" };
+  it.each(["chrome.exe", "chromium.exe", "headless_shell.exe", "chrome-headless-shell.exe"])("identifies new direct %s child; rejects existing, foreign, ambiguous or missing birth identity", name => {
+    const existing = { ...processRow(20, 1), name };
+    const fresh = { ...processRow(21, 1, "new"), name };
+    const foreign = { ...processRow(22, 40, "new"), name };
     expect(selectNewOwnedBrowserRoot([existing], [existing, fresh, foreign], 1)).toEqual(fresh);
+    expect(() => selectNewOwnedBrowserRoot([existing], [existing, foreign], 1)).toThrow("不唯一");
     expect(() => selectNewOwnedBrowserRoot([], [fresh, { ...fresh, pid: 23 }], 1)).toThrow("不唯一");
     expect(() => selectNewOwnedBrowserRoot([], [{ ...fresh, createdAt: "" }], 1)).toThrow("不唯一");
   });
@@ -1138,7 +1153,7 @@ describe("E2E server infrastructure", () => {
       const nativeOptions = options as { input: string };
       const actualScript = nativeArgs[3];
       // Assert the executable argument itself, not JSON-escaped source text.
-      expect(actualScript).toContain("-match '^(node|chrome|chromium|headless_shell|electron|VERIDIA)\\.exe$'");
+      expect(actualScript).toContain("-match '^(node|chrome|chromium|headless_shell|chrome-headless-shell|electron|VERIDIA)\\.exe$'");
       expect(actualScript).toContain(".Replace('/','\\')");
       expect(actualScript).not.toContain(".Replace('/','\\\\')");
       const fixtureProvider = `\n$actualSelf=@(Get-CimInstance Win32_Process -Filter "ProcessId=$PID"); $fixtureRows=@($scope.fixtureRows | ForEach-Object { [pscustomobject]@{ProcessId=$_.ProcessId;ParentProcessId=$(if($_.ParentProcessId -eq -1){$PID}else{$_.ParentProcessId});Name=$_.Name;CreationDate=$(if($_.birth){[DateTimeOffset]::Parse($_.birth).UtcDateTime}else{$null});CommandLine=$_.CommandLine;ExecutablePath=$_.ExecutablePath} })+$actualSelf; function Get-CimInstance { $fixtureRows };\n`;
