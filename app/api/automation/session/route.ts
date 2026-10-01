@@ -2,15 +2,18 @@ import { fail, ok, requireApiUser, withApiErrorBoundary } from "@/lib/api";
 import { BUSINESS_ROLES } from "@/lib/permissions";
 import {
   checkXhsSessionState,
+  closeXhsBrowserContext,
   closeXhsAuditPageForTesting,
   completeXiaohongshuLogin,
   getXhsSessionDiagnostics,
+  getE2eBrowserTeardownRuntimeSnapshot,
   logoutXhsSession,
   restartXhsBrowser,
   startXiaohongshuLogin,
 } from "@/lib/automation/browser";
 import {
   checkDouyinSessionState,
+  closeDouyinBrowserContext,
   closeDouyinAuditPageForTesting,
   completeDouyinLogin,
   getDouyinSessionDiagnostics,
@@ -19,6 +22,7 @@ import {
   startDouyinLogin,
 } from "@/lib/automation/douyin-browser";
 import { parseAutomationPlatform } from "@/lib/automation/platform";
+import { assertIdleE2eBrowserTeardown, assertIsolatedE2eBrowserTeardown } from "@/lib/testing/e2e-browser-teardown";
 
 export const GET = withApiErrorBoundary(async function GET(request: Request) {
   const user = await requireApiUser();
@@ -32,17 +36,36 @@ export const POST = withApiErrorBoundary(async function POST(request: Request) {
   if (user instanceof Response) return user;
   const body = (await request.json()) as {
     platform?: string;
+    teardownNonce?: unknown;
     action?:
       | "START_LOGIN"
       | "COMPLETE_LOGIN"
       | "CHECK_SESSION"
       | "RESTART_BROWSER"
       | "CLOSE_AUDIT_PAGE_FOR_TEST"
+      | "CLOSE_BROWSERS_FOR_E2E_TEARDOWN"
       | "LOGOUT_SESSION"
       | "LOGOUT_XHS";
   };
   const platform = parseAutomationPlatform(body.platform) || "XIAOHONGSHU";
   try {
+    if (body.action === "CLOSE_BROWSERS_FOR_E2E_TEARDOWN") {
+      assertIsolatedE2eBrowserTeardown(request.url, body.teardownNonce);
+      const before = getE2eBrowserTeardownRuntimeSnapshot();
+      assertIdleE2eBrowserTeardown(before.globalRuntimeDiagnostics, before.sessions);
+      // Existing context-close operations retain their own generation/native
+      // physical fences. No login, logout, session write or raw-PID adoption.
+      await closeXhsBrowserContext();
+      await closeDouyinBrowserContext();
+      const after = getE2eBrowserTeardownRuntimeSnapshot();
+      assertIdleE2eBrowserTeardown(after.globalRuntimeDiagnostics, after.sessions);
+      const managers = after.globalRuntimeDiagnostics.platformBrowserManagers;
+      if ([managers.XIAOHONGSHU, managers.DOUYIN].some(manager => manager.managerAvailable !== true || manager.contextPresent !== false || manager.browserConnected !== false) ||
+        after.globalRuntimeDiagnostics.activeBrowserOwnerGenerations.length !== 0) {
+        throw new Error("隔离测试浏览器物理关闭或所有者释放未完成");
+      }
+      return ok({ closed: true });
+    }
     if (platform === "DOUYIN") {
       if (body.action === "START_LOGIN") return ok(await startDouyinLogin());
       if (body.action === "COMPLETE_LOGIN") return ok(await completeDouyinLogin());

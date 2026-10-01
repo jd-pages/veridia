@@ -63,6 +63,7 @@ export default defineConfig({
       ? undefined
       : "**/*.stress.spec.ts",
   fullyParallel: false,
+  retries: 0,
   workers: Number(process.env.E2E_WORKERS || 1),
   timeout: 45_000,
   expect: { timeout: 10_000 },
@@ -76,6 +77,9 @@ export default defineConfig({
   outputDir: e2eTestResultsDir,
   use: {
     baseURL,
+    // APIRequestContext shares a pooled Node HTTP agent. Close each test
+    // connection after its response so an idle server socket is never replayed.
+    extraHTTPHeaders: { Connection: "close" },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

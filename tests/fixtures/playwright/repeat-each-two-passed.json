@@ -1,0 +1,42 @@
+{
+  "config": { "projects": [{ "name": "chromium", "repeatEach": 2 }] },
+  "suites": [{
+    "title": "repeat-accounting.spec.ts",
+    "file": "repeat-accounting.spec.ts",
+    "specs": [
+      {
+        "title": "same formal case",
+        "ok": true,
+        "id": "fixture-distinct-spec-id-first",
+        "file": "repeat-accounting.spec.ts",
+        "line": 12,
+        "column": 1,
+        "tests": [{
+          "timeout": 150000,
+          "expectedStatus": "passed",
+          "projectId": "chromium",
+          "projectName": "chromium",
+          "status": "expected",
+          "results": [{ "status": "passed", "duration": 11, "retry": 0, "workerIndex": 0, "parallelIndex": 0, "startTime": "2026-09-30T13:21:11.591Z" }]
+        }]
+      },
+      {
+        "title": "same formal case",
+        "ok": true,
+        "id": "fixture-distinct-spec-id-second",
+        "file": "repeat-accounting.spec.ts",
+        "line": 12,
+        "column": 1,
+        "tests": [{
+          "timeout": 150000,
+          "expectedStatus": "passed",
+          "projectId": "chromium",
+          "projectName": "chromium",
+          "status": "expected",
+          "results": [{ "status": "passed", "duration": 12, "retry": 0, "workerIndex": 1, "parallelIndex": 0, "startTime": "2026-09-30T13:22:02.328Z" }]
+        }]
+      }
+    ]
+  }],
+  "stats": { "expected": 2, "unexpected": 0, "skipped": 0, "flaky": 0 }
+}
