@@ -187,6 +187,7 @@ describe("actual self-owned Windows native launcher (never real Next)", () => {
     const actual = JSON.parse(fs.readFileSync(output, "utf8"));
     expect(phases.map(phase => phase.kind)).toEqual(["BOOTSTRAP_READY", "NATIVE_ROOT_CAPTURED"]);
     expect(receipt).toMatchObject({ status: "PASSED", executed: true, exitCode: 0, nativeCapturedBeforeCliRelease: true,
+      nativeArmedBeforeCliRelease: true,
       processQuiescence: { measurement: "AVAILABLE", status: "PASSED", remainingCapturedIdentityCount: 0, exhaustiveProcessTreeClaim: false } });
     expect(receipt.nativeRoot?.pid).toBe(actual.pid);
     expect(Date.parse(receipt.nativeRoot!.capturedAt)).toBeLessThanOrEqual(Date.parse(actual.ranAt));
@@ -226,9 +227,9 @@ describe("actual self-owned Windows native launcher (never real Next)", () => {
         const actual = JSON.parse(fs.readFileSync(output, "utf8"));
         if ((phase.identity as { pid: number }).pid === actual.childPid) fs.writeFileSync(rootRelease, "release", { flag: "wx" });
       } }).catch(value => value as Error & { receipt: TypegenReceipt });
-    const actual = JSON.parse(fs.readFileSync(output, "utf8"));
     expect(error, JSON.stringify((error as Error & { receipt: TypegenReceipt }).receipt.nativeMonitor)).toMatchObject({ message: "TYPEGEN_CAPTURED_TREE_NOT_QUIESCENT",
       receipt: { status: "FAILED", exitCode: 0, nativeMonitor: { remainingAfterCleanup: [] } } });
+    const actual = JSON.parse(fs.readFileSync(output, "utf8"));
     expect((error as Error & { receipt: TypegenReceipt }).receipt.nativeMonitor).toMatchObject({
       remainingBeforeCleanup: expect.arrayContaining([expect.objectContaining({ pid: actual.childPid })]) });
   }, 15000);

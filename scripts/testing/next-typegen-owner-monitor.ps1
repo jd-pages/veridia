@@ -7,6 +7,7 @@ param(
   [int]$DeadlineMs = 60000,
   [int]$ExitDeadlineMs = 3000
 )
+[Console]::Out.WriteLine('{"kind":"STARTUP","stage":"SCRIPT_ENTERED"}')
 $ErrorActionPreference = 'Stop'
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $handles = @{}
@@ -22,6 +23,11 @@ $remainingBeforeCleanup = @()
 $remainingAfterCleanup = @()
 $inputStream = $null
 $cleanupErrors = @()
+$protocolJson = $null
+function Startup([string]$Stage) {
+  [Console]::Out.WriteLine('{"kind":"STARTUP","stage":"'+$Stage+'"}')
+  [Console]::Out.Flush()
+}
 function Test-SameCapturedBirth {
   param([long]$ExpectedStamp,[long]$ObservedStamp)
   # CIM has microsecond precision; retained native handles keep full FILETIME.
@@ -32,7 +38,9 @@ function Test-CimBirthAvailable {
   return $null -ne $Row -and $Row.CreationDate -is [DateTime]
 }
 function Emit($value) {
-  [Console]::Out.WriteLine(($value | ConvertTo-Json -Depth 8 -Compress))
+  # Protocol publication must not activate PowerShell Utility/module analysis
+  # before READY. Ownership still uses CIM + retained native handle/birth.
+  [Console]::Out.WriteLine($protocolJson.Serialize($value))
   [Console]::Out.Flush()
 }
 function Remember($row, $native, $parentIdentity) {
@@ -47,8 +55,12 @@ function LiveIdentities {
   return @($handles.Keys | Where-Object {!$handles[$_].HasExited} | ForEach-Object {$identities[$_]})
 }
 try {
+  Startup ARGS_VALIDATED
+  $null = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
+  $protocolJson = [System.Web.Script.Serialization.JavaScriptSerializer]::new()
   $creator = [Diagnostics.Process]::GetProcessById($CreatorPid)
   $null = $creator.Handle
+  Startup ROOT_PROCESS_OPEN_START
   $row = Get-CimInstance Win32_Process -Filter "ProcessId=$RootPid" -OperationTimeoutSec 2
   if (!$row -or $row.ParentProcessId -ne $CreatorPid -or
       ![string]::Equals([string]$row.ExecutablePath,$ExecutablePath,[StringComparison]::OrdinalIgnoreCase)) {
@@ -57,6 +69,7 @@ try {
   if (!(Test-CimBirthAvailable $row)) { throw 'TYPEGEN_ROOT_CIM_BIRTH_UNAVAILABLE' }
   $native = [Diagnostics.Process]::GetProcessById($RootPid)
   $null = $native.Handle
+  Startup ROOT_PROCESS_OPEN_READY
   $created = $native.StartTime.ToUniversalTime()
   $millis = ([DateTimeOffset]$created).ToUnixTimeMilliseconds()
   if ($native.HasExited -or $millis -lt $EarliestCreationMs -or $millis -gt $LatestCreationMs -or
@@ -66,11 +79,14 @@ try {
     throw 'TYPEGEN_ROOT_NATIVE_BIRTH_MISMATCH'
   }
   Remember $row $native $null
+  Startup ROOT_IDENTITY_BOUND
+  Startup READY_EMIT_START
   Emit @{kind='READY';root=$identities[$RootPid];scope='NATIVE_HANDLE_BIRTH_FENCED_SAMPLED_DESCENDANTS_NOT_EXHAUSTIVE'}
+  Startup READY_EMITTED
   # Console.In.ReadLineAsync can synchronously block in Windows PowerShell's
   # synchronized TextReader. Read the redirected pipe asynchronously instead.
   $inputStream = [Console]::OpenStandardInput()
-  $inputBuffer = New-Object byte[] 64
+  $inputBuffer = [byte[]]::new(64)
   $control = $inputStream.ReadAsync($inputBuffer,0,$inputBuffer.Length)
   while ($true) {
     if ($creator.HasExited) { throw 'TYPEGEN_CREATOR_EXITED' }
@@ -80,7 +96,7 @@ try {
       if ($command -ne 'RUN') { throw 'TYPEGEN_MONITOR_ABORTED' }
       $released = $true
       Emit @{kind='ARMED';pid=$RootPid;nativeStartFileTime=$identities[$RootPid].nativeStartFileTime}
-      $inputBuffer = New-Object byte[] 64
+      $inputBuffer = [byte[]]::new(64)
       $control = $inputStream.ReadAsync($inputBuffer,0,$inputBuffer.Length)
     }
     if ($clock.ElapsedMilliseconds -ge $DeadlineMs) { throw 'TYPEGEN_STAGE_DEADLINE' }
@@ -175,7 +191,10 @@ try {
     }
   }
 } catch {
-  $failure = $_.Exception.Message
+  $knownFailures = @('TYPEGEN_ROOT_CREATOR_OR_EXECUTABLE_MISMATCH','TYPEGEN_ROOT_CIM_BIRTH_UNAVAILABLE',
+    'TYPEGEN_ROOT_NATIVE_BIRTH_MISMATCH','TYPEGEN_CREATOR_EXITED','TYPEGEN_MONITOR_ABORTED',
+    'TYPEGEN_STAGE_DEADLINE','TYPEGEN_CAPTURED_TREE_NOT_QUIESCENT')
+  $failure = if ($knownFailures -contains $_.Exception.Message) { $_.Exception.Message } else { 'TYPEGEN_NATIVE_MONITOR_EXCEPTION' }
   $failureLine = $_.InvocationInfo.ScriptLineNumber
   $failureType = $_.Exception.GetType().FullName
 } finally {
@@ -195,12 +214,13 @@ try {
     }
   }
   $remainingAfterCleanup = @(LiveIdentities)
-  Emit @{kind='FINAL';status=$status;failure=$failure;released=$released;root=$identities[$RootPid];
+  if ($protocolJson) { Emit @{kind='FINAL';status=$status;failure=$failure;released=$released;root=$identities[$RootPid];
     failureLine=$failureLine;failureType=$failureType;
     identities=@($identities.Values);sampleCount=$sampleCount;elapsedMs=$clock.Elapsed.TotalMilliseconds;
     uncertainResidualCandidates=@($uncertain.Values);remainingBeforeCleanup=$remainingBeforeCleanup;
     remainingAfterCleanup=$remainingAfterCleanup;cleanupErrors=$cleanupErrors;
-    scope='NATIVE_HANDLE_BIRTH_FENCED_SAMPLED_DESCENDANTS_NOT_EXHAUSTIVE'}
+    scope='NATIVE_HANDLE_BIRTH_FENCED_SAMPLED_DESCENDANTS_NOT_EXHAUSTIVE'} }
+  else { [Console]::Out.WriteLine('{"kind":"FINAL","status":"FAILED","failure":"TYPEGEN_PROTOCOL_SERIALIZER_STARTUP_FAILED"}') }
   foreach ($handle in $handles.Values) { $handle.Dispose() }
   if ($creator) { $creator.Dispose() }
   if ($inputStream) { $inputStream.Dispose() }

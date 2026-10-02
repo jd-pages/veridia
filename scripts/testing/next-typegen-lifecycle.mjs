@@ -5,6 +5,9 @@ import { fork, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+
+const { minimalSafeWindowsNativeEnvironment } = createRequire(import.meta.url)("./windows-native-environment.cjs");
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const coverage = "NATIVE_HANDLE_BIRTH_FENCED_SAMPLED_DESCENDANTS_NOT_EXHAUSTIVE";
@@ -54,6 +57,9 @@ function exitOf(child, event = "exit") {
 
 function monitorProtocol(child, onCapture) {
   let pending = "", outputBytes = 0, final;
+  const startup = [];
+  const startupStages = ["SCRIPT_ENTERED", "ARGS_VALIDATED", "ROOT_PROCESS_OPEN_START", "ROOT_PROCESS_OPEN_READY",
+    "ROOT_IDENTITY_BOUND", "READY_EMIT_START", "READY_EMITTED"];
   let readyResolve, readyReject, armedResolve, armedReject, failureReject;
   const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
   const armed = new Promise((resolve, reject) => { armedResolve = resolve; armedReject = reject; });
@@ -71,7 +77,11 @@ function monitorProtocol(child, onCapture) {
         pending = pending.slice(newline + 1);
         if (!line) continue;
         const event = JSON.parse(line);
-        if (event.kind === "READY") readyResolve(event);
+        if (event.kind === "STARTUP") {
+          if (event.stage !== startupStages[startup.length]) throw new Error("TYPEGEN_MONITOR_PROTOCOL_INVALID");
+          startup.push(event.stage);
+        }
+        else if (event.kind === "READY") readyResolve(event);
         else if (event.kind === "ARMED") armedResolve(event);
         else if (event.kind === "CAPTURED") onCapture(event.identity);
         else if (event.kind === "FINAL") { final = event; child.stdin.end(); }
@@ -82,12 +92,13 @@ function monitorProtocol(child, onCapture) {
   });
   child.once("error", readyReject);
   child.once("error", armedReject);
-  child.once("exit", () => readyReject(new Error("TYPEGEN_MONITOR_EXITED_BEFORE_READY")));
-  child.once("exit", () => armedReject(new Error("TYPEGEN_MONITOR_EXITED_BEFORE_ARMED")));
+  // close, not exit: drain FINAL/startup stdout before attaching diagnostics.
+  child.once("close", () => readyReject(new Error("TYPEGEN_MONITOR_EXITED_BEFORE_READY")));
+  child.once("close", () => armedReject(new Error("TYPEGEN_MONITOR_EXITED_BEFORE_ARMED")));
   // Consume the diagnostic pipe without copying arbitrary native exception
   // text, commands or environment into a receipt. Failure codes stay bounded.
   child.stderr.resume();
-  return { ready, armed, failure, final: () => final };
+  return { ready, armed, failure, final: () => final, startup: () => [...startup] };
 }
 
 function validNativeRoot(identity, pid, creatorPid) {
@@ -145,11 +156,15 @@ export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, 
       // Fail closed until a platform-specific ownership boundary is provided.
       throw new Error("TYPEGEN_NATIVE_OWNERSHIP_PLATFORM_UNSUPPORTED");
     }
-    monitor = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+    // Native monitor has no app/CLI environment contract. Match the existing
+    // native watcher boundary rather than inheriting pwsh/Node/app settings.
+    const nativeEnvironment = minimalSafeWindowsNativeEnvironment(environment);
+    const powershell = path.win32.join(nativeEnvironment.SystemRoot ?? "C:/Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
+    monitor = spawn(powershell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
       path.join(directory, "next-typegen-owner-monitor.ps1"), "-RootPid", String(child.pid), "-CreatorPid", String(process.pid),
       "-ExecutablePath", process.execPath, "-EarliestCreationMs", String(earliestCreationMs),
       "-LatestCreationMs", String(latestCreationMs), "-DeadlineMs", String(Math.max(1000, Math.floor(deadline - performance.now()))),
-      "-ExitDeadlineMs", String(exitDeadlineMs)], { cwd: root, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      "-ExitDeadlineMs", String(exitDeadlineMs)], { cwd: root, env: nativeEnvironment, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     monitorExit = exitOf(monitor, "close");
     monitorExit.catch(() => {});
     protocol = monitorProtocol(monitor, identity => onPhase({ kind: "NATIVE_DESCENDANT_CAPTURED", identity, at: new Date().toISOString() }));
@@ -166,6 +181,7 @@ export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, 
     if (armed.pid !== child.pid || armed.nativeStartFileTime !== receipt.nativeRoot.nativeStartFileTime) {
       throw new Error("TYPEGEN_NATIVE_ARM_IDENTITY_MISMATCH");
     }
+    receipt.nativeArmedBeforeCliRelease = true;
     receipt.cliReleasedAt = new Date().toISOString();
     child.send({ kind: "RUN", pid: child.pid });
     receipt.execution = "EXECUTED";
@@ -220,6 +236,7 @@ export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, 
     }
     receipt.finishedAt = new Date().toISOString();
     receipt.elapsedMs = performance.now() - started;
+    if (failure) receipt.monitorStartupStages = protocol?.startup() ?? [];
   }
   if (failure) { failure.receipt = receipt; failure.exitCode = receipt.exitCode; failure.exitSignal = receipt.exitSignal; throw failure; }
   return receipt;
