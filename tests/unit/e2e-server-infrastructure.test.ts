@@ -30,9 +30,64 @@ import {
 import { readPlaywrightCaseEvidence, summarizePlaywrightCaseEvidence } from "../../scripts/testing/protected-evidence.mjs";
 import { enforcePostE2eProcessQuiescence } from "../../scripts/testing/post-e2e-process-quiescence.mjs";
 import { captureInitialOwnedRoot, E2eInitialIdentityError } from "../../scripts/testing/e2e-startup-identity.mjs";
+import { installApiConnectionClose } from "../../scripts/testing/e2e-api-connection-close.cjs";
 
 const processRow = (pid: number, parentPid: number, createdAt = "2026-09-30T12:00:00.1234560Z") => ({
   pid, parentPid, createdAt, name: "node.exe",
+});
+
+describe("isolated API-only connection policy", () => {
+  it("closes exact owned API requests, not browser assets, unrelated ports or external hosts", () => {
+    const outgoing = { setHeader: vi.fn() };
+    const original = vi.fn(() => outgoing);
+    const transport = { request: original } as unknown as typeof http;
+    const restore = installApiConnectionClose(3101, transport);
+    for (const url of ["http://127.0.0.1:3101/api/tasks", "http://localhost:3101/api/auth/status"]) {
+      transport.request(new URL(url));
+    }
+    transport.request({ hostname: "127.0.0.1", port: 3101, path: "/api/tasks", method: "POST" });
+    expect(outgoing.setHeader).toHaveBeenCalledTimes(3);
+    expect(outgoing.setHeader).toHaveBeenCalledWith("Connection", "close");
+    outgoing.setHeader.mockClear();
+    for (const url of ["http://127.0.0.1:3101/_next/static/chunks/app.js", "http://127.0.0.1:3101/campaigns",
+      "http://127.0.0.1:3102/api/tasks", "http://example.com:3101/api/tasks", "https://localhost:3101/api/tasks"]) {
+      transport.request(new URL(url));
+    }
+    transport.request(new URL("http://127.0.0.1:3101/api/tasks"), { hostname: "example.com" });
+    transport.request(new URL("http://127.0.0.1:3101/api/tasks"), { port: 3102 });
+    expect(outgoing.setHeader).not.toHaveBeenCalled();
+    expect(original).toHaveBeenCalledTimes(10);
+    restore();
+    expect(transport.request).toBe(original);
+  });
+
+  it("preserves real API cookies/errors without retry while assets reuse the native pooled connection", async () => {
+    const server = http.createServer((incoming, response) => {
+      incoming.resume();
+      if (incoming.url === "/api/session") response.setHeader("set-cookie", "scoped=accepted; Path=/; HttpOnly");
+      response.statusCode = incoming.url === "/api/error" ? 409 : 200;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ connection: incoming.headers.connection, authenticated: incoming.headers.cookie === "scoped=accepted",
+        remotePort: incoming.socket.remotePort }));
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    const restore = installApiConnectionClose(port);
+    const api = await request.newContext({ baseURL: `http://127.0.0.1:${port}` });
+    try {
+      expect(await (await api.get("/api/session", { maxRetries: 0 })).json()).toMatchObject({ connection: "close" });
+      const error = await api.post("/api/error", { data: {}, maxRetries: 0 });
+      expect(error.status()).toBe(409);
+      expect(await error.json()).toMatchObject({ connection: "close", authenticated: true });
+      const first = await (await api.get("/_next/static/first.js", { maxRetries: 0 })).json();
+      const second = await (await api.get("/_next/static/second.js", { maxRetries: 0 })).json();
+      expect(first.connection).toBe("keep-alive");
+      expect(second.remotePort).toBe(first.remotePort);
+    } finally {
+      restore(); await api.dispose(); server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
 });
 
 describe("E2E startup creator-held native identity", () => {

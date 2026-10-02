@@ -77,9 +77,8 @@ export default defineConfig({
   outputDir: e2eTestResultsDir,
   use: {
     baseURL,
-    // APIRequestContext shares a pooled Node HTTP agent. Close each test
-    // connection after its response so an idle server socket is never replayed.
-    extraHTTPHeaders: { Connection: "close" },
+    // Node API calls get a scoped close policy in run-e2e's Playwright preload.
+    // Do not force Chromium's JS/CSS/font requests to create fresh sockets.
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

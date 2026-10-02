@@ -564,6 +564,7 @@ async function warmup(baseURL, executablePath) {
   }
   const context = await warmupBrowser.newContext({ baseURL, extraHTTPHeaders: { Connection: "close" } });
   const page = await context.newPage();
+  await page.setExtraHTTPHeaders({ Connection: "keep-alive" });
   const loginPageReady = await waitForStartupRoute({
     label: "预热 /login",
     request: () => page.goto("/login", { waitUntil: "domcontentloaded" }),
@@ -808,6 +809,7 @@ async function main() {
     ...(executablePath ? { PLAYWRIGHT_EXECUTABLE_PATH: executablePath } : {}),
   };
   writeMetadata({ schemaVersion: 2, runId, isolationGroup, port, repeatEach, requestRetries: 0, httpConnection: "close",
+    httpConnectionScope: "OWNED_NODE_API_ONLY", browserHttpConnection: "DEFAULT_REUSE",
     nextTracePatch, head: runHead, sourceFingerprint: runSourceFingerprint,
     databasePath: database.runDatabasePath, profilePath, douyinProfilePath, nextDistDir: environment.VERIDIA_NEXT_DIST_DIR,
     htmlReportDirectory: environment.E2E_HTML_REPORT_DIR, testResultsDirectory: environment.E2E_TEST_RESULTS_DIR,
@@ -858,6 +860,7 @@ async function main() {
     }
   }
   const playwrightArgs = [
+    "--require", path.join(root, "scripts", "testing", "e2e-api-connection-close.cjs"),
     path.join(root, "node_modules", "@playwright", "test", "cli.js"),
     "test",
     ...(grepArgument ? [grepArgument] : []),
@@ -873,7 +876,8 @@ async function main() {
   if (failFast) playwrightArgs.push("--max-failures=1");
   const status = await new Promise((resolve, reject) => {
     const earliestCreationMs = Date.now();
-    testProcess = spawn(process.execPath, playwrightArgs, { cwd: root, env: environment, stdio: "inherit", windowsHide: true });
+    testProcess = spawn(process.execPath, playwrightArgs, { cwd: root,
+      env: { ...environment, VERIDIA_E2E_API_CONNECTION_CLOSE_PORT: String(port) }, stdio: "inherit", windowsHide: true });
     testProcess.e2eSpawnReturnedAt = new Date().toISOString();
     testProcess.e2eOwnershipFence = { pid: testProcess.pid, parentPid: process.pid, name: path.basename(process.execPath),
       earliestCreationMs, latestCreationMs: Date.now() };
