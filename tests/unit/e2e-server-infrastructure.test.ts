@@ -436,6 +436,21 @@ describe("E2E server infrastructure", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("retains the specific platform fence before evaluation throws, without retaining arbitrary session payloads", async () => {
+    const dispose = vi.fn(async () => {});
+    const get = vi.fn(async (url: string) => ({ ok: () => true, json: async () => ({ success: true, data: {
+      physicalCloseState: url.includes("platform=DOUYIN") ? "FAILED" : null,
+      physicalCloseFencePresent: url.includes("platform=DOUYIN"), lifecycleGeneration: 1,
+      privateBusinessPayload: "DO_NOT_RETAIN", globalRuntimeDiagnostics: { physicalCloseState: "FAILED", physicalCloseFencePresent: true },
+    } }) }));
+    const result = await logicalProbeLab(async () => ({ get, dispose }), () => { throw new Error("E2E group-end physical close fence FAILED"); })();
+    expect(result).toMatchObject({ status: "FAILED", stage: "IDLE_EVALUATION", observations: 0,
+      latest: { physicalCloseObservation: { platforms: { DOUYIN: { physicalCloseState: "FAILED", physicalCloseFencePresent: true },
+        XIAOHONGSHU: { physicalCloseState: null, physicalCloseFencePresent: false } } } } });
+    expect(JSON.stringify(result)).not.toContain("DO_NOT_RETAIN");
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects expired context creation without making a1ms GET and disposes the actual late context", async () => {
     vi.useFakeTimers();
     try {

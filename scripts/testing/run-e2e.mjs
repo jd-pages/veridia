@@ -718,6 +718,18 @@ async function captureGroupEndLogicalIdle(baseURL) {
       finally { stageTimings.push({ stage, elapsedMs: Date.now() - snapshotStartedAt }); }
       if (xhs.success !== true || douyin.success !== true) throw new Error("E2E group-end authenticated isolated DB session 读取失败");
       stage = "IDLE_EVALUATION";
+      // Retain bounded, non-business diagnostics BEFORE the evaluator can
+      // throw. Never infer a platform/owner from the merged fence state alone.
+      latest = { physicalCloseObservation: {
+        aggregateState: xhs.data?.globalRuntimeDiagnostics?.physicalCloseState ?? null,
+        aggregateFencePresent: xhs.data?.globalRuntimeDiagnostics?.physicalCloseFencePresent ?? null,
+        platforms: Object.fromEntries([["XIAOHONGSHU", xhs.data], ["DOUYIN", douyin.data]].map(([platform, session]) =>
+          [platform, { physicalCloseState: session?.physicalCloseState ?? null,
+            physicalCloseFencePresent: session?.physicalCloseFencePresent ?? null,
+            lifecycleGeneration: session?.lifecycleGeneration ?? null,
+            activeBrowserOwnerGeneration: session?.activeBrowserOwnerGeneration ?? null,
+            browserInstanceCount: session?.browserInstanceCount ?? null,
+            controlReady: session?.controlReady ?? null }])) } };
       latest = evaluateGenerationIdleSnapshot(xhs.data?.globalRuntimeDiagnostics,
         { XIAOHONGSHU: xhs.data, DOUYIN: douyin.data }, health);
       observations += 1;
