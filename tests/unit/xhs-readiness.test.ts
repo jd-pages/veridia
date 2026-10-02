@@ -79,7 +79,15 @@ describe("小红书页面 hydration 就绪门禁", () => {
   }, 15_000);
 
   it("壳层与 JSON-LD 后跳转真实 404 时终态优先于普通提取", async () => {
-    await page.route("https://www.xiaohongshu.com/**", async (route) => {
+    const timings: Record<string, number> = {};
+    const phase = async <T>(name: string, operation: () => Promise<T>) => {
+      const started = performance.now();
+      try { return await operation(); }
+      finally { timings[name] = performance.now() - started; }
+    };
+    let passed = false;
+    try {
+    await phase("routeSetup", () => page.route("https://www.xiaohongshu.com/**", async (route) => {
       const url = new URL(route.request().url());
       if (url.pathname === "/404") {
         await route.fulfill({
@@ -94,26 +102,33 @@ describe("小红书页面 hydration 就绪门禁", () => {
         contentType: "text/html; charset=utf-8",
         body: fixture("generic-shell-delayed-404.html"),
       });
-    });
-    await page.goto(noteUrl, { waitUntil: "domcontentloaded" });
+    }));
+    await phase("pageGoto", () => page.goto(noteUrl, { waitUntil: "domcontentloaded" }));
     const redirects: string[] = [];
     await expect(
-      waitForXhsPageReadiness({
+      phase("readiness", () => waitForXhsPageReadiness({
         page,
         redirectChain: redirects,
         timeoutMs: 2_500,
         pollMs: 25,
         httpStatus: 200,
-      }),
+      })),
     ).resolves.toBe(true);
-    const evidence = await readXhsReadinessPageEvidence(page);
+    expect(timings.readiness).toBeLessThanOrEqual(2_500);
+    const evidence = await phase("readEvidence", () => readXhsReadinessPageEvidence(page));
     expect(evidence.unavailablePage).toMatchObject({
       status: "NOTE_NOT_FOUND",
       errorCode: "-510001",
     });
     expect(evidence.finalUrl).toContain("/404?");
     expect(evidence.visibleText).toContain("你访问的页面不见了");
-    await page.unrouteAll({ behavior: "wait" });
+    await phase("unroute", () => page.unrouteAll({ behavior: "wait" }));
+    passed = true;
+    } finally {
+      if (!passed || process.env.VERIDIA_XHS_HARNESS_TIMINGS === "true") {
+        console.info("[XHS_HARNESS_PHASES]", JSON.stringify({ timings, passed, readinessContractMs: 2_500 }));
+      }
+    }
   });
 
   it("HTTP 200 且原作品 URL 未变时仍以不存在正文判定终态", async () => {
