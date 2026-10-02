@@ -130,6 +130,12 @@ if ($BootstrapProbe) {
 
 # Ownership operations use the exact retained native handle. GetProcessById or
 # a future PID lookup is never the stop authority. No target file is opened.
+Ready-Stage UTILITY_MODULE_IMPORT_START
+# Native compilation/record cmdlets remain unchanged. Resolve the built-in
+# manifest explicitly so Add-Type cannot initiate cold command/module discovery
+# after the module-free CONFIG handshake. Never import a caller/user module.
+Import-Module ([IO.Path]::Combine($PSHOME,'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
+Ready-Stage UTILITY_MODULE_IMPORT_END
 Ready-Stage ADD_TYPE_START
 Add-Type -TypeDefinition @'
 using System;

@@ -5,6 +5,11 @@ const context = { invocationId: "11111111-1111-4111-8111-111111111111", nonce: "
 const notice = (change = {}) => `VERIDIA_NATIVE_READY_STAGE=${JSON.stringify({ ...context, now: undefined,
   role: "Supervisor", pid: 101, stage: "ADD_TYPE_START", utc: "2026-10-02T00:00:00.0000000Z", qpcTicks: "123", qpcFrequency: "10000000", ...change })}\n`;
 describe("bounded private native READY observation (never READY or ownership authority)", () => {
+  test.each(["UTILITY_MODULE_IMPORT_START", "UTILITY_MODULE_IMPORT_END"])("retains explicit built-in module activation boundary %s as diagnostic only", stage => {
+    const observer = createBuildLockReadyObservation(context); observer.push(notice({ stage }));
+    expect(observer.snapshot().records).toEqual([{ role: "Supervisor", pid: 101, stage, utc: "2026-10-02T00:00:00.0000000Z",
+      qpcTicks: "123", qpcFrequency: "10000000", observedMonoMs: 25, authority: "OWNED_STDOUT_NOTICE_NOT_NATIVE_IDENTITY_OR_READY_PROOF" }]);
+  });
   test("accepts split fixed notices and excludes arbitrary private fields", () => {
     const observer = createBuildLockReadyObservation(context), line = notice({ secret: "DO_NOT_EXPORT", rawEnvironment: { credential: "DO_NOT_EXPORT" } });
     observer.push(line.slice(0, 20)); expect(observer.snapshot().records).toEqual([]); observer.push(line.slice(20));
