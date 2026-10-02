@@ -2,6 +2,15 @@ import { expect, test, type Page } from "@playwright/test";
 import dayjs from "dayjs";
 import { dashboardLocalMonth } from "../../lib/dashboard-calendar-month";
 import { E2E_ORIGIN } from "./e2e-origin";
+import { cleanupNonTerminalAutomaticBatches } from "./automation-cleanup";
+import { captureResultsLifecycleFailure } from "./results-lifecycle-diagnostics";
+
+const ownedBatchIds: string[] = [];
+test.afterEach(async ({ page }, info) => {
+  try {
+    if (info.status !== info.expectedStatus) await captureResultsLifecycleFailure(page, info);
+  } finally { await cleanupNonTerminalAutomaticBatches(page, ownedBatchIds.splice(0)); }
+});
 
 async function waitForBatch(page: Page, batchId: string) {
   await expect
@@ -58,6 +67,7 @@ test("风险摘要只展示三类非零风险并下钻到对应结果", async ({
   });
   expect(batchResponse.ok()).toBeTruthy();
   const batchId = (await batchResponse.json()).data.batchId as string;
+  ownedBatchIds.push(batchId);
   await waitForBatch(page, batchId);
 
   const month = dashboardLocalMonth();

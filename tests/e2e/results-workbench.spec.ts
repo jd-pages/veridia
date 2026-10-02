@@ -2,6 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import ExcelJS from "exceljs";
 import path from "node:path";
+import { captureResultsLifecycleFailure } from "./results-lifecycle-diagnostics";
+
+test.afterEach(async ({ page }, info) => {
+  if (info.status !== info.expectedStatus) await captureResultsLifecycleFailure(page, info);
+});
 
 const databaseUrl =
   process.env.E2E_DATABASE_URL?.trim() ||

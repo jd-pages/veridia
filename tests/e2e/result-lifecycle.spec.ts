@@ -3,6 +3,8 @@ import { PrismaClient } from "@prisma/client";
 import ExcelJS from "exceljs";
 import path from "node:path";
 import { E2E_ORIGIN } from "./e2e-origin";
+import { captureResultsLifecycleFailure } from "./results-lifecycle-diagnostics";
+import { cleanupNonTerminalAutomaticBatches } from "./automation-cleanup";
 
 const databaseUrl =
   process.env.E2E_DATABASE_URL?.trim() ||
@@ -16,12 +18,17 @@ async function login(page: Page) {
 }
 
 async function waitForBatch(page: Page, batchId: string) {
+  try {
   await expect.poll(async () => {
     const payload = await (
       await page.request.get(`/api/automation/batches?batchId=${batchId}`)
     ).json();
     return payload.data[0]?.status;
   }, { timeout: 120_000 }).toMatch(/^(?:COMPLETED|COMPLETED_WITH_ERRORS)$/u);
+  } catch (error) {
+    await captureResultsLifecycleFailure(page, test.info());
+    throw error;
+  }
 }
 
 test("删除当前审核结果后同日重新导入立即释放单条重复占用", async ({ page }) => {
@@ -462,6 +469,7 @@ test("重新审核保留历史版本并在原始导入槽位原位替换", async
     }
     expect(exportedOrders).toEqual(Object.values(orderNumbers));
   } finally {
+    await cleanupNonTerminalAutomaticBatches(page, createdBatchIds);
     if (importRecordId) {
       const results = await prisma.auditResult.findMany({
         where: { task: { importRecordId } },
