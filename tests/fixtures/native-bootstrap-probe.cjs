@@ -13,8 +13,20 @@ const root = path.resolve(__dirname, "../.."), id = randomUUID(), invocationId =
 const directory = path.join(root, ".playwright/build-lock-diagnostics-fixtures", `lab-${id}`, `run-${invocationId}`);
 fs.mkdirSync(directory, { recursive: true });
 const configuration = path.join(directory, "configuration.json"), supportIdentity = "b".repeat(64);
-fs.writeFileSync(configuration, JSON.stringify({ schemaVersion: 1, directory, target: path.join(path.dirname(directory), "trace"), invocationId, nonce,
-  supportIdentity, label: "SYNTHETIC_TOOL_VALIDATION" }), { flag: "wx" });
+const configurationValue = { schemaVersion: 1, root, directory, target: path.join(path.dirname(directory), "trace"), invocationId, nonce,
+  supportIdentity, creatorPid: process.pid, creatorParentPid: process.ppid, label: "SYNTHETIC_TOOL_VALIDATION", leaseMs: 21000,
+  leaseDeadlineUtc: new Date(Date.now() + 21000).toISOString(), readyMs: 15000, graceMs: 300, finalMs: 700,
+  intervalMs: 25, maxObservationBytes: 1048576, fixtureMode: "NORMAL" };
+const configurationCase = process.argv.find(arg => arg.startsWith("--configuration-case="))?.slice("--configuration-case=".length);
+if (configurationCase === "missing-field") delete configurationValue.readyMs;
+if (configurationCase === "identity") configurationValue.schemaVersion = 2;
+if (configurationCase === "directory") configurationValue.directory = root;
+if (configurationCase === "formal") { configurationValue.label = "FORMAL_VERIFY_TRACE"; configurationValue.fixtureMode = "IGNORE_STOP"; }
+if (configurationCase === "fixture") configurationValue.target = path.join(root, "unrelated-trace");
+if (configurationCase === "label") configurationValue.label = "UNKNOWN_LABEL";
+const configurationText = configurationCase === "malformed-json" ? "{invalid" : configurationCase === "object-array" ? "[]" :
+  configurationCase === "duplicate-case" ? JSON.stringify(configurationValue).replace('"schemaVersion":1', '"schemaVersion":1,"SchemaVersion":1') : JSON.stringify(configurationValue);
+fs.writeFileSync(configuration, configurationText, { flag: "wx" });
 const env = process.argv.includes("--legacy") ? { NODE_ENV: "test", SystemRoot: process.env.SystemRoot } : minimalSafeWindowsNativeEnvironment();
 const omitted = process.argv.find(arg => arg.startsWith("--omit="))?.slice(7);
 // Empty explicitly, otherwise libuv silently re-injects some omitted keys.
@@ -25,7 +37,7 @@ const child = spawn(path.join(process.env.SystemRoot, "System32/WindowsPowerShel
     "-Configuration", configuration, "-Role", "Supervisor", "-BootstrapProbe"],
   { cwd: root, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
 const stages = [], bootstrapStages = [], prefix = "VERIDIA_NATIVE_READY_STAGE=";
-let buffer = "", safeStderr = "", errorCode = null, timedOut = false;
+let buffer = "", safeStderr = "", errorCode = null, timedOut = false, bootstrapTiming = null;
 child.once("spawn", () => stages.push("POWERSHELL_SPAWNED"));
 child.once("error", error => { errorCode = error.code ?? "SPAWN_ERROR"; });
 child.stderr.on("data", chunk => { safeStderr = redactBuildLockDiagnosticText(safeStderr + String(chunk)); });
@@ -40,7 +52,10 @@ child.stdout.on("data", chunk => {
     if (line.startsWith(prefix)) {
       let record; try { record = JSON.parse(line.slice(prefix.length)); } catch { continue; }
       if (record.invocationId === invocationId && record.nonce === nonce && record.supportIdentity === supportIdentity &&
-        record.pid === child.pid && record.role === "Supervisor" && record.stage === "CONFIG_VALIDATED") stages.push("CONFIG_VALIDATED_RECEIVED");
+        record.pid === child.pid && record.role === "Supervisor" && record.stage === "CONFIG_VALIDATED") {
+        stages.push("CONFIG_VALIDATED_RECEIVED");
+        bootstrapTiming = record.bootstrapTiming ?? null;
+      }
     }
   }
   if (buffer.length > 4096) { buffer = ""; errorCode = "STDOUT_CAP"; }
@@ -53,7 +68,7 @@ child.once("close", (code, signal) => {
   process.stdout.write(`${JSON.stringify({ label: "CI_NATIVE_BOOTSTRAP_PROBE", node: process.version, status: passed ? "PASS" : "FAILED",
     environmentKeys: Object.keys(env), omitted: omitted ?? null, stages, bootstrapStages, pid: child.pid ?? null, spawnTimestamp,
     closeObserved: true, code, signal, errorCode, safeStderr: safeStderr || null, elapsedMs,
-    failureStage: passed ? null : bootstrapStages.at(-1) ?? stages.at(-1) ?? "POWERSHELL_SPAWN" })}\n`);
+    bootstrapTiming, failureStage: passed ? null : bootstrapStages.at(-1) ?? stages.at(-1) ?? "POWERSHELL_SPAWN" })}\n`);
   process.exitCode = passed ? 0 : 1;
 });
 }

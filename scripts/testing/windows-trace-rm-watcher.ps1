@@ -6,17 +6,38 @@ param(
 [Console]::Out.WriteLine('VERIDIA_NATIVE_SCRIPT_ENTERED='+$Role+':'+$PID)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
+$bootstrapWatch = [Diagnostics.Stopwatch]::StartNew()
+$configReadWatch=$null; $configParseWatch=$null; $configValidateWatch=$null; $bootstrapJson=$null
 function Bootstrap-Stage([string]$Stage) {
   [Console]::Out.WriteLine('VERIDIA_NATIVE_BOOTSTRAP_STAGE='+$Role+':'+$PID+':'+$Stage)
 }
+try {
 Bootstrap-Stage UTF8_ENCODING_START
 $utf8 = [Text.UTF8Encoding]::new($false)
 Bootstrap-Stage UTF8_ENCODING_READY
 Bootstrap-Stage CONFIG_READ_START
+$configReadWatch = [Diagnostics.Stopwatch]::StartNew()
 $configurationText = [IO.File]::ReadAllText($Configuration, $utf8)
+$configReadWatch.Stop()
 Bootstrap-Stage CONFIG_READ_READY
 Bootstrap-Stage CONFIG_PARSE_START
-$cfg = $configurationText | ConvertFrom-Json
+$configParseWatch = [Diagnostics.Stopwatch]::StartNew()
+# Windows PowerShell 5.1: ConvertFrom-Json activates Utility/module analysis on
+# this cold critical path. Use the framework assembly directly, not Add-Type,
+# New-Object, Import-Module, a host cache or third-party JSON implementation.
+$null = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
+$bootstrapJson = [System.Web.Script.Serialization.JavaScriptSerializer]::new()
+$configurationObject = $bootstrapJson.DeserializeObject($configurationText)
+if ($configurationObject -isnot [Collections.Generic.Dictionary[string,object]]) { throw 'CONFIGURATION_OBJECT_INVALID' }
+# Convert to a PS object so StrictMode still rejects missing properties; a raw
+# dictionary would silently return null for them and weaken existing validation.
+$configurationProperties = @{}
+foreach ($key in $configurationObject.Keys) {
+  if ($configurationProperties.ContainsKey($key)) { throw 'CONFIGURATION_DUPLICATE_FIELD' }
+  $configurationProperties[$key]=$configurationObject[$key]
+}
+$cfg = [pscustomobject]$configurationProperties
+$configParseWatch.Stop()
 Bootstrap-Stage CONFIG_PARSE_READY
 $directory = [IO.Path]::GetFullPath($cfg.directory)
 $target = [IO.Path]::GetFullPath($cfg.target)
@@ -64,6 +85,10 @@ function Safe-Text([string]$Value) {
   return $v
 }
 Bootstrap-Stage CONFIG_VALIDATE_START
+$configValidateWatch = [Diagnostics.Stopwatch]::StartNew()
+foreach ($name in @('schemaVersion','root','directory','target','invocationId','nonce','supportIdentity','creatorPid','creatorParentPid','label','leaseMs','leaseDeadlineUtc','readyMs','graceMs','finalMs','intervalMs','maxObservationBytes','fixtureMode')) {
+  if ($null -eq $cfg.PSObject.Properties[$name]) { throw 'CONFIGURATION_FIELD_MISSING' }
+}
 if ($cfg.schemaVersion -ne 1 -or $cfg.invocationId -notmatch '^[0-9a-f-]{36}$' -or $cfg.nonce -notmatch '^[0-9a-f-]{36}$') { throw 'CONFIGURATION_IDENTITY_INVALID' }
 if ($directory -ne [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Configuration))) { throw 'CONFIGURATION_DIRECTORY_INVALID' }
 if ($cfg.label -eq 'FORMAL_VERIFY_TRACE') {
@@ -72,16 +97,34 @@ if ($cfg.label -eq 'FORMAL_VERIFY_TRACE') {
   if ($directory -notmatch '[\\/]\.playwright[\\/]build-lock-diagnostics-fixtures[\\/]lab-[0-9a-f-]{36}[\\/]run-[0-9a-f-]{36}$' -or [IO.Path]::GetDirectoryName($target) -ne [IO.Path]::GetDirectoryName($directory)) { throw 'FIXTURE_SCOPE_INVALID' }
 } else { throw 'LABEL_INVALID' }
 Bootstrap-Stage CONFIG_VALIDATE_READY
+$configValidateWatch.Stop()
+$bootstrapTiming = @{configReadMs=$configReadWatch.Elapsed.TotalMilliseconds;configParseMs=$configParseWatch.Elapsed.TotalMilliseconds;configValidateMs=$configValidateWatch.Elapsed.TotalMilliseconds;bootstrapTotalMs=$bootstrapWatch.Elapsed.TotalMilliseconds}
+} catch {
+  # Safe numeric failure-only evidence. Abruptly killed children cannot emit an
+  # end measurement; the controller must leave those durations unavailable.
+  if ($null -ne $bootstrapJson) {
+    $failureTiming=@{role=$Role;pid=$PID;configReadMs=$null;configParseMs=$null;configValidateMs=$null;bootstrapTotalMs=$bootstrapWatch.Elapsed.TotalMilliseconds}
+    if ($null -ne $configReadWatch) { $failureTiming.configReadMs=$configReadWatch.Elapsed.TotalMilliseconds }
+    if ($null -ne $configParseWatch) { $failureTiming.configParseMs=$configParseWatch.Elapsed.TotalMilliseconds }
+    if ($null -ne $configValidateWatch) { $failureTiming.configValidateMs=$configValidateWatch.Elapsed.TotalMilliseconds }
+    [Console]::Error.WriteLine('VERIDIA_NATIVE_BOOTSTRAP_FAILURE_TIMING='+$bootstrapJson.Serialize($failureTiming))
+  }
+  throw
+}
 
 # Fixed low-volume startup notices, consumed privately by the owning controller.
 # They cannot prove native identity/readiness and contain no raw env or errors.
 function Ready-Stage([string]$Stage) {
   $r=[ordered]@{invocationId=$cfg.invocationId;nonce=$cfg.nonce;supportIdentity=$cfg.supportIdentity;role=$Role;pid=$PID;stage=$Stage;utc=Utc;qpcTicks=Qpc;qpcFrequency=[Diagnostics.Stopwatch]::Frequency.ToString()}
-  [Console]::Out.WriteLine('VERIDIA_NATIVE_READY_STAGE='+($r|ConvertTo-Json -Compress))
+  if ($Stage -eq 'CONFIG_VALIDATED') { $r.bootstrapTiming=$bootstrapTiming }
+  # The CONFIG acknowledgement must not re-introduce Utility autoload through
+  # ConvertTo-Json immediately after the module-free parse.
+  [Console]::Out.WriteLine('VERIDIA_NATIVE_READY_STAGE='+$bootstrapJson.Serialize($r))
 }
 Ready-Stage CONFIG_VALIDATED
 if ($BootstrapProbe) {
   if ($cfg.label -ne 'SYNTHETIC_TOOL_VALIDATION') { throw 'BOOTSTRAP_PROBE_REQUIRES_SYNTHETIC_SCOPE' }
+  if (@(Get-Module Microsoft.PowerShell.Utility).Count -ne 0) { throw 'BOOTSTRAP_PROBE_UNEXPECTED_UTILITY_MODULE' }
   exit 0
 }
 

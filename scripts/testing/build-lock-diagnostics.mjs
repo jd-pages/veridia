@@ -130,7 +130,7 @@ function memberRecord(io, state, filename) {
   return record;
 }
 function track(child, now, state, role) {
-  const tracker = { child, spawnedAt: new Date().toISOString(), spawnedMono: now(), scriptEntered: false, bootstrapStages: [],
+  const tracker = { child, spawnedAt: new Date().toISOString(), spawnedMono: now(), scriptEntered: false, bootstrapStages: [], bootstrapTiming: null,
     closed: false, closedMono: null, exitCode: null, signal: null, spawnError: null, safeStartupDiagnostic: "" };
   child.once("error", error => { tracker.spawnError = error; });
   child.once("close", (code, signal) => { tracker.closed = true; tracker.closedMono = now(); tracker.exitCode = code; tracker.signal = signal; });
@@ -143,6 +143,14 @@ function track(child, now, state, role) {
     entryBuffer += String(chunk);
     for (let end = entryBuffer.indexOf("\n"); end >= 0; end = entryBuffer.indexOf("\n")) {
       const line = entryBuffer.slice(0, end).replace(/\r$/u, "");
+      if (line.startsWith("VERIDIA_NATIVE_READY_STAGE=")) {
+        let record; try { record = JSON.parse(line.slice("VERIDIA_NATIVE_READY_STAGE=".length)); } catch { /* bounded diagnostic only */ }
+        if (record?.invocationId === state.invocationId && record.nonce === state.nonce && record.supportIdentity === state.supportIdentity &&
+          record.role === role && record.pid === child.pid && record.stage === "CONFIG_VALIDATED") {
+          const timing = record.bootstrapTiming, keys = ["configReadMs", "configParseMs", "configValidateMs", "bootstrapTotalMs"];
+          if (timing && keys.every(key => Number.isFinite(timing[key]) && timing[key] >= 0)) tracker.bootstrapTiming = Object.fromEntries(keys.map(key => [key, timing[key]]));
+        }
+      }
       if (line === `VERIDIA_NATIVE_SCRIPT_ENTERED=${role}:${child.pid}`) tracker.scriptEntered = true;
       const bootstrapPrefix = `VERIDIA_NATIVE_BOOTSTRAP_STAGE=${role}:${child.pid}:`;
       const stage = line.startsWith(bootstrapPrefix) ? line.slice(bootstrapPrefix.length) : null;
@@ -165,8 +173,20 @@ async function until(predicate, ms, now) {
   }
   return false;
 }
-function compactChild(tracker) { return { pid: tracker.child.pid ?? null, actualCloseObserved: tracker.closed,
-  spawnedAt: tracker.spawnedAt, scriptEntered: tracker.scriptEntered, bootstrapStages: [...tracker.bootstrapStages],
+function compactChild(tracker) {
+  let bootstrapTiming = tracker.bootstrapTiming;
+  if (!bootstrapTiming) {
+    const line = tracker.safeStartupDiagnostic.split(/\r?\n/u).find(value => value.startsWith("VERIDIA_NATIVE_BOOTSTRAP_FAILURE_TIMING="));
+    if (line) {
+      let record; try { record = JSON.parse(line.slice("VERIDIA_NATIVE_BOOTSTRAP_FAILURE_TIMING=".length)); } catch { /* diagnostic only */ }
+      const keys = ["configReadMs", "configParseMs", "configValidateMs", "bootstrapTotalMs"];
+      if (record?.pid === tracker.child.pid && keys.every(key => record[key] === null || (Number.isFinite(record[key]) && record[key] >= 0))) {
+        bootstrapTiming = Object.fromEntries(keys.map(key => [key, record[key]]));
+      }
+    }
+  }
+  return { pid: tracker.child.pid ?? null, actualCloseObserved: tracker.closed,
+  spawnedAt: tracker.spawnedAt, scriptEntered: tracker.scriptEntered, bootstrapStages: [...tracker.bootstrapStages], bootstrapTiming,
   configValidatedReceived: tracker.stages.snapshot().records.some(record => record.role !== "Worker" && record.stage === "CONFIG_VALIDATED"),
   exitCode: tracker.exitCode, signal: tracker.signal, spawnError: tracker.spawnError ? errorProjection(tracker.spawnError) : null,
   safeStartupDiagnostic: tracker.safeStartupDiagnostic || null }; }
@@ -471,6 +491,8 @@ function projectReceipt(value) {
     bootstrapStages: Array.isArray(input.bootstrapStages) ? input.bootstrapStages.filter(stage => ["UTF8_ENCODING_START", "UTF8_ENCODING_READY", "CONFIG_READ_START", "CONFIG_READ_READY", "CONFIG_PARSE_START", "CONFIG_PARSE_READY", "CONFIG_VALIDATE_START", "CONFIG_VALIDATE_READY"].includes(stage)).slice(0, 8) : [],
     configValidatedReceived: input.configValidatedReceived === true,
     exitCode: Number.isInteger(input.exitCode) ? input.exitCode : null, signal: redactBuildLockDiagnosticText(input.signal), spawnError: input.spawnError ? errorProjection(input.spawnError) : null,
+    bootstrapTiming: input.bootstrapTiming && ["configReadMs", "configParseMs", "configValidateMs", "bootstrapTotalMs"].every(key => input.bootstrapTiming[key] === null || (Number.isFinite(input.bootstrapTiming[key]) && input.bootstrapTiming[key] >= 0))
+      ? Object.fromEntries(["configReadMs", "configParseMs", "configValidateMs", "bootstrapTotalMs"].map(key => [key, input.bootstrapTiming[key]])) : null,
     safeStartupDiagnostic: redactBuildLockDiagnosticText(input.safeStartupDiagnostic) } : null;
   const support = Object.fromEntries(["controller", "declaration", "watcher", "monitor", "wrapper"].map(key => [key, { relativePath: value.support?.[key]?.relativePath, sha256: value.support?.[key]?.sha256 }]));
   return { schemaVersion: 1, status: value.status, invocationId: value.invocationId, head: value.head, sourceFingerprint: value.sourceFingerprint,

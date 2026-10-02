@@ -14,6 +14,11 @@ const root = process.cwd(), head = "a".repeat(40), sourceFingerprint = "b".repea
 const birth = "134352873660197859";
 const context = { head, sourceFingerprint, environment: { NODE_ENV: "test" as const } };
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+function retainConfigParseTiming(label: string, timing: Record<string, number>) {
+  const directory = path.join(root, ".playwright/native-config-parse-timings");
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, `${randomUUID()}.json`), JSON.stringify({ label, observedAt: new Date().toISOString(), timing }), { flag: "wx" });
+}
 test("CI_NATIVE_BOOTSTRAP_PROBE receives current watcher CONFIG within 5 seconds in safe Windows environment", () => {
   if (process.platform !== "win32") return;
   const result = spawnSync(process.execPath, [path.join(root, "tests/fixtures/native-bootstrap-probe.cjs")],
@@ -22,7 +27,29 @@ test("CI_NATIVE_BOOTSTRAP_PROBE receives current watcher CONFIG within 5 seconds
   const value = JSON.parse(result.stdout.trim());
   expect(value).toMatchObject({ status: "PASS", closeObserved: true, stages: ["POWERSHELL_SPAWNED", "SCRIPT_ENTERED", "CONFIG_VALIDATED_RECEIVED"] });
   expect(value.elapsedMs).toBeLessThan(5000);
+  expect(value.bootstrapStages).toContain("CONFIG_PARSE_READY");
+  expect(value.bootstrapTiming.configParseMs).toBeLessThan(1000);
+  expect(value.bootstrapTiming.configReadMs).toBeGreaterThanOrEqual(0);
+  expect(value.bootstrapTiming.configValidateMs).toBeGreaterThanOrEqual(0);
+  expect(value.bootstrapTiming.bootstrapTotalMs).toBeGreaterThanOrEqual(value.bootstrapTiming.configParseMs);
+  retainConfigParseTiming("CI_NATIVE_BOOTSTRAP_PROBE", value.bootstrapTiming);
   console.info(`VERIDIA_CI_NATIVE_BOOTSTRAP_PROBE=${JSON.stringify(value)}`);
+}, 10000);
+
+test("module-free configuration parser preserves fail-closed identity, scope and missing-field validation", () => {
+  if (process.platform !== "win32") return;
+  for (const [configurationCase, failure] of [["identity", "CONFIGURATION_IDENTITY_INVALID"], ["directory", "CONFIGURATION_DIRECTORY_INVALID"],
+    ["formal", "FORMAL_SCOPE_INVALID"], ["fixture", "FIXTURE_SCOPE_INVALID"], ["label", "LABEL_INVALID"],
+    ["missing-field", "CONFIGURATION_FIELD_MISSING"], ["malformed-json", "DeserializeObject"],
+    ["object-array", "CONFIGURATION_OBJECT_INVALID"], ["duplicate-case", "CONFIGURATION_DUPLICATE_FIELD"]]) {
+    const result = spawnSync(process.execPath, [path.join(root, "tests/fixtures/native-bootstrap-probe.cjs"), `--configuration-case=${configurationCase}`],
+      { cwd: root, env: minimalSafeWindowsNativeEnvironment(), stdio: "pipe", windowsHide: true, encoding: "utf8", timeout: 6000 });
+    expect(result.status, result.stderr || result.stdout).toBe(1);
+    const value = JSON.parse(result.stdout.trim());
+    expect(value.stages).not.toContain("CONFIG_VALIDATED_RECEIVED");
+    expect(value.safeStderr).toContain(failure);
+    expect(value.bootstrapStages).not.toContain("CONFIG_VALIDATE_READY");
+  }
 }, 10000);
 test("minimal native environment cannot forward secrets, PATH or application settings", () => {
   const environment = minimalSafeWindowsNativeEnvironment({ SystemRoot: "C:/Windows", TEMP: "E:/Temp", NODE_OPTIONS: "--eval=secret",
@@ -269,6 +296,11 @@ describe("actual native owned GUID lifecycle (never formal Build)", () => {
     expect(Date.parse(value.nativeLeaseStop.utc)).toBeLessThanOrEqual(Date.parse(value.leaseWindow.blockEndedAt));
     expect(value.worker).toMatchObject({ failure: null, reason: "LEASE_EXPIRED", pid: value.proof.pid, nativeStartFileTime: value.proof.nativeStartFileTime });
     expect(value.proof.forced).toBe(false);
+    for (const role of ["supervisor", "guardian"]) {
+      expect(value.evidence.native[role].bootstrapStages).toContain("CONFIG_PARSE_READY");
+      expect(value.evidence.native[role].bootstrapTiming.configParseMs).toBeLessThan(1000);
+      retainConfigParseTiming(`${mode}:${role}`, value.evidence.native[role].bootstrapTiming);
+    }
     expect(Date.parse(value.proof.utc)).toBeGreaterThanOrEqual(Date.parse(value.leaseWindow.blockStartedAt));
     expect(Date.parse(value.proof.utc)).toBeLessThanOrEqual(Date.parse(value.leaseWindow.blockEndedAt));
     expect(Number.isFinite(value.leaseWindow.readyDurationMs)).toBe(true);
