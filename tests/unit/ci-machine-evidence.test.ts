@@ -573,6 +573,67 @@ describe("CI machine evidence retention", () => {
     expect(result.index.files.some(file => file.path.startsWith("vitest-"))).toBe(false);
     expect(result.index.ownedRuns).toHaveLength(1);
   });
+  it("admits measured empty groups for a directly selected affected Protected behavior", () => {
+    const root = sourceRoot(); completeSources(root); beginWindow(root, "affected");
+    const verification = verificationFixture(root); verification.mode = "AFFECTED";
+    verification.unitTests = { total: 0, passed: 0 };
+    verification.timings = verification.timings.filter(value => value.name === "E2E DATA_RULES");
+    verification.protectedGroups = [];
+    verification.protectedBehaviors[0].key = "E2E_SERVER_CONNECTION_STABILITY";
+    writeJson(root, ".playwright/verification-affected.json", verification);
+    const result = exportEvidence(root, "affected");
+    expect(result.status).toBe("PASSED"); expect(result.index.issues).toEqual([]);
+    const exported = JSON.parse(fs.readFileSync(path.join(result.outputDirectory, "verification.json"), "utf8"));
+    expect(exported.evidence.protectedGroups).toEqual([]);
+  });
+  it.each([undefined, null, "EXAMPLE", {}])("rejects missing or malformed affected group measurement: %j", groups => {
+    const root = sourceRoot(); completeSources(root); beginWindow(root, "affected");
+    const verification = verificationFixture(root); verification.mode = "AFFECTED";
+    verification.unitTests = { total: 0, passed: 0 };
+    verification.timings = verification.timings.filter(value => value.name === "E2E DATA_RULES");
+    Object.assign(verification, { protectedGroups: groups });
+    writeJson(root, ".playwright/verification-affected.json", verification);
+    const result = exportEvidence(root, "affected");
+    expect(result.status).not.toBe("PASSED"); expect(result.index.issues).toContain("PROTECTED_ACTUAL_CASE_EVIDENCE_UNAVAILABLE");
+  });
+  it("empty affected groups cannot admit an actual failed Vitest case", () => {
+    const root = sourceRoot(); completeSources(root); beginWindow(root, "affected");
+    const verification = verificationFixture(root); verification.mode = "AFFECTED"; verification.passed = false;
+    verification.unitTests = { total: 1, passed: 0 }; verification.protectedGroups = [];
+    verification.timings = [{ name: "Affected explicit unit", passed: false, seconds: 0.001 },
+      ...verification.timings.filter(value => value.name === "E2E DATA_RULES")];
+    const unit = vitestFixture(); unit.success = false;
+    unit.numPassedTests = 0; unit.numFailedTests = 1;
+    unit.numPassedTestSuites = 0; unit.numFailedTestSuites = 1;
+    unit.testResults[0].status = "failed"; unit.testResults[0].assertionResults[0].status = "failed";
+    unit.testResults[0].assertionResults[0].failureMessages = ["SYNTHETIC_UNIT_FAILURE"];
+    writeJson(root, ".playwright/vitest-affected-affected-explicit.json", unit, unitModified);
+    writeJson(root, ".playwright/verification-affected.json", verification);
+    const result = exportEvidence(root, "affected");
+    expect(result.status).toBe("FAILED");
+    expect(result.index.issues).toContain("VITEST_NOT_ALL_PASS:affected-explicit");
+  });
+  it.each(["empty-behaviors", "failed-behavior", "empty-cases", "failed-case", "not-run-case"])("empty affected groups never waive real behavior/case evidence: %s", mode => {
+    const root = sourceRoot(); completeSources(root); beginWindow(root, "affected");
+    const verification = verificationFixture(root); verification.mode = "AFFECTED";
+    verification.unitTests = { total: 0, passed: 0 };
+    verification.timings = verification.timings.filter(value => value.name === "E2E DATA_RULES");
+    verification.protectedGroups = [];
+    if (mode === "empty-behaviors") verification.protectedBehaviors = [];
+    else if (mode === "failed-behavior") verification.protectedBehaviors[0].status = "FAILED";
+    else if (mode === "empty-cases") verification.protectedBehaviors[0].cases = [];
+    else verification.protectedBehaviors[0].cases[0].status = mode === "failed-case" ? "FAILED" : "NOT_RUN";
+    writeJson(root, ".playwright/verification-affected.json", verification);
+    const result = exportEvidence(root, "affected");
+    expect(result.status).not.toBe("PASSED"); expect(result.index.issues).toContain("PROTECTED_ACTUAL_CASE_EVIDENCE_UNAVAILABLE");
+  });
+  it.each([{ label: "empty", groups: [] }, { label: "missing", groups: undefined }, { label: "null", groups: null }, { label: "string", groups: "EXAMPLE" }])("FULL still rejects empty or missing Protected groups: $label", ({ groups }) => {
+    const root = sourceRoot(); completeSources(root);
+    const verification = verificationFixture(root); Object.assign(verification, { protectedGroups: groups });
+    writeJson(root, ".playwright/verification-full.json", verification);
+    const result = exportEvidence(root);
+    expect(result.status).not.toBe("PASSED"); expect(result.index.issues).toContain("PROTECTED_ACTUAL_CASE_EVIDENCE_UNAVAILABLE");
+  });
   it("workflow retains safe post-job evidence without uploading raw hidden run/env/database trees", () => {
     const workflow = fs.readFileSync(path.resolve(".github/workflows/veridia-ci.yml"), "utf8");
     expect(workflow).toContain("node scripts/testing/ci-machine-evidence.mjs --mode=");

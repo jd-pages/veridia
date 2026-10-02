@@ -534,7 +534,10 @@ export function exportCiMachineEvidence({ root = process.cwd(), mode, context: i
     verification.e2eExecuted !== groupTotals || verification.e2eFailed !== 0 || verification.e2eNotRun !== 0) index.issues.push("E2E_TOTAL_NOT_ALL_PASS");
   if (verification.protectedRegression === "FAILED" || verification.protectedRegression === "NOT_RUN" ||
     (mode === "full" && verification.protectedRegression !== "PASSED")) index.issues.push("PROTECTED_EVIDENCE_NOT_ALL_PASS");
-  if (verification.protectedRegression === "PASSED" && (!verification.protectedGroups?.length || !verification.protectedBehaviors?.length ||
+  // Direct affected behavior selection can legitimately have no named group.
+  // A measured empty array is not missing evidence; FULL still needs groups.
+  if (verification.protectedRegression === "PASSED" && (!Array.isArray(verification.protectedGroups) ||
+    (mode === "full" && verification.protectedGroups.length === 0) || !verification.protectedBehaviors?.length ||
     verification.protectedBehaviors.some(behavior => behavior.status !== "PASSED" || !behavior.cases?.length ||
       behavior.cases.some(value => value.status !== "PASSED")))) index.issues.push("PROTECTED_ACTUAL_CASE_EVIDENCE_UNAVAILABLE");
   if (windowAvailable && (verification.sourcePassed === false || units.some(unit => unit.evidence.success === false) || index.ownedRuns.some(run => run.status === "FAILED"))) index.status = "FAILED";
