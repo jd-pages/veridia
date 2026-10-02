@@ -10,10 +10,10 @@ function Bootstrap-Stage([string]$Stage) {
   [Console]::Out.WriteLine('VERIDIA_NATIVE_BOOTSTRAP_STAGE='+$Role+':'+$PID+':'+$Stage)
 }
 Bootstrap-Stage UTF8_ENCODING_START
-$utf8 = New-Object Text.UTF8Encoding $false
+$utf8 = [Text.UTF8Encoding]::new($false)
 Bootstrap-Stage UTF8_ENCODING_READY
 Bootstrap-Stage CONFIG_READ_START
-$configurationText = Get-Content -LiteralPath $Configuration -Raw
+$configurationText = [IO.File]::ReadAllText($Configuration, $utf8)
 Bootstrap-Stage CONFIG_READ_READY
 Bootstrap-Stage CONFIG_PARSE_START
 $cfg = $configurationText | ConvertFrom-Json
