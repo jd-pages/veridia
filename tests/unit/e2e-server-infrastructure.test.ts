@@ -29,9 +29,46 @@ import {
 } from "../../scripts/testing/e2e-server-infrastructure.mjs";
 import { readPlaywrightCaseEvidence, summarizePlaywrightCaseEvidence } from "../../scripts/testing/protected-evidence.mjs";
 import { enforcePostE2eProcessQuiescence } from "../../scripts/testing/post-e2e-process-quiescence.mjs";
+import { captureInitialOwnedRoot, E2eInitialIdentityError } from "../../scripts/testing/e2e-startup-identity.mjs";
 
 const processRow = (pid: number, parentPid: number, createdAt = "2026-09-30T12:00:00.1234560Z") => ({
   pid, parentPid, createdAt, name: "node.exe",
+});
+
+describe("E2E startup creator-held native identity", () => {
+  const child = () => ({ pid: 20, exitCode: null, signalCode: null, kill: vi.fn(() => true) }) as unknown as ChildProcess;
+  it("pins the original live creator handle across census and preserves actual native birth, not JS clock bounds", () => {
+    const owned = child();
+    const actual = processRow(20, 1);
+    const result = captureInitialOwnedRoot(owned, { capture: () => ({ processes: [actual], ports: [] }), parentPid: 1, name: "node.exe", commandIdentity: "FIXED_TEST_CHILD" });
+    expect(owned.kill).toHaveBeenNthCalledWith(1, 0);
+    expect(owned.kill).toHaveBeenNthCalledWith(2, 0);
+    expect(result.evidence).toMatchObject({ status: "PASS", nativeBirthTime: actual.createdAt, creatorHandleLiveBefore: true, creatorHandleLiveAfter: true });
+    expect(validateInitialOwnedRoot(actual, (owned as ChildProcess & { e2eOwnershipFence: Parameters<typeof validateInitialOwnedRoot>[1] }).e2eOwnershipFence)).toBe(true);
+  });
+  it.each(["parent", "birth", "missing", "closed", "provider", "deadline"])("rejects %s without adopting unknown identity and retains safe stages", fault => {
+    const owned = child(); let calls = 0;
+    if (fault === "closed") vi.mocked(owned.kill).mockReturnValueOnce(true).mockReturnValueOnce(false);
+    let failure;
+    try { captureInitialOwnedRoot(owned, { capture: () => {
+      if (fault === "provider") throw new Error("password=must-not-leak");
+      return { processes: fault === "missing" ? [] : [processRow(20, fault === "parent" ? 99 : 1, fault === "birth" ? "invalid" : undefined)], ports: [] };
+    }, parentPid: 1, name: "node.exe", commandIdentity: "FIXED_TEST_CHILD", now: () => fault === "deadline" ? calls++ * 13000 : 0 }); }
+    catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(E2eInitialIdentityError);
+    expect(JSON.stringify((failure as E2eInitialIdentityError).evidence)).not.toContain("must-not-leak");
+    expect((owned as ChildProcess & { e2eOwnershipFence?: unknown }).e2eOwnershipFence).toBeUndefined();
+  });
+  it("E2E_SERVER_INITIAL_PROCESS_IDENTITY native start and rejected-child shutdown stay below 30 seconds", () => {
+    if (process.platform !== "win32") return;
+    const result = spawnSync(process.execPath, [path.resolve("tests/fixtures/e2e-startup-identity-probe.mjs")],
+      { cwd: process.cwd(), windowsHide: true, encoding: "utf8", timeout: 20000 });
+    expect(result.status, result.stdout || result.stderr).toBe(0);
+    const evidence = JSON.parse(result.stdout.trim());
+    expect(evidence).toMatchObject({ status: "PASS", initial: { status: "PASS" }, injectedFailure: { status: "FAILED" }, close: { closeObserved: true } });
+    expect(evidence.failureDurationMs).toBeLessThanOrEqual(30000);
+    console.info(`VERIDIA_E2E_IDENTITY_STAGE=${JSON.stringify(evidence)}`);
+  }, 25000);
 });
 
 const fixtureFileTime = (birth: string) => (BigInt(Date.parse(birth)) * 10_000n + 116444736000000000n + BigInt(birth.slice(23, 27))).toString();

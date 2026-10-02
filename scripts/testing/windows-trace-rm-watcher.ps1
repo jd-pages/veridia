@@ -1,7 +1,9 @@
 param(
   [Parameter(Mandatory=$true)][string]$Configuration,
-  [ValidateSet('Supervisor','Guardian','Worker')][string]$Role = 'Supervisor'
+  [ValidateSet('Supervisor','Guardian','Worker')][string]$Role = 'Supervisor',
+  [switch]$BootstrapProbe
 )
+[Console]::Out.WriteLine('VERIDIA_NATIVE_SCRIPT_ENTERED='+$Role+':'+$PID)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 $utf8 = New-Object Text.UTF8Encoding $false
@@ -66,6 +68,10 @@ function Ready-Stage([string]$Stage) {
   [Console]::Out.WriteLine('VERIDIA_NATIVE_READY_STAGE='+($r|ConvertTo-Json -Compress))
 }
 Ready-Stage CONFIG_VALIDATED
+if ($BootstrapProbe) {
+  if ($cfg.label -ne 'SYNTHETIC_TOOL_VALIDATION') { throw 'BOOTSTRAP_PROBE_REQUIRES_SYNTHETIC_SCOPE' }
+  exit 0
+}
 
 # Ownership operations use the exact retained native handle. GetProcessById or
 # a future PID lookup is never the stop authority. No target file is opened.

@@ -39,7 +39,7 @@ export function readBuildLockDiagnosticsEvidence(relativeReceiptPath: string, co
 };
 export function createBuildLockDiagnosticsFixtureController(options: {
   platform?: string; io?: typeof import("node:fs"); spawnChild?: typeof import("node:child_process").spawn; monotonic?: () => number;
-  fixture: { id: string; mode?: "NORMAL" | "IGNORE_STOP" | "STALL_GUARDIAN_AFTER_PROOF" | "INVALID_QUERY_SESSION"; policy?: Partial<typeof BUILD_LOCK_DIAGNOSTICS_POLICY> };
+  fixture: { id: string; mode?: "NORMAL" | "IGNORE_STOP" | "STALL_GUARDIAN_AFTER_PROOF" | "INVALID_QUERY_SESSION"; bootstrapDeadlineMs?: number; policy?: Partial<typeof BUILD_LOCK_DIAGNOSTICS_POLICY> };
 }): {
   begin(options: { head: string; sourceFingerprint: string; wrapperPath?: string; environment?: NodeJS.ProcessEnv }): Promise<BuildLockDiagnosticSession>;
   end(session: BuildLockDiagnosticSession, outcome?: BuildLockDiagnosticOutcome): Promise<BuildLockDiagnosticEvidence>;

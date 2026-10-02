@@ -8,6 +8,7 @@ import { performance } from "node:perf_hooks";
 import { chromium, request } from "playwright";
 import ts from "typescript";
 import { copyE2eDatabaseForRun } from "./e2e-database-template.mjs";
+import { captureInitialOwnedRoot, closeRejectedCreatorChild, E2eInitialIdentityError } from "./e2e-startup-identity.mjs";
 import { collectSourceFingerprint } from "../source-fingerprint.mjs";
 import { applyNextTraceSingleFlight } from "./next-trace-single-flight.mjs";
 import { captureWarmupApiAuthCookieSnapshot } from "./warmup-api-auth-cookie-snapshot.mjs";
@@ -212,6 +213,7 @@ function startNextServer(port, environment, log) {
   });
   // Establish cleanup ownership before any fallible diagnostic I/O.
   serverProcess = child;
+  child.e2eSpawnReturnedAt = new Date().toISOString();
   child.e2eOwnershipFence = { pid: child.pid, parentPid: process.pid, name: path.basename(process.execPath),
     earliestCreationMs, latestCreationMs: Date.now() };
   child.on("error", (error) => {
@@ -236,7 +238,10 @@ function startNextServer(port, environment, log) {
     serverExitSignal: null,
   });
   if (process.platform === "win32") {
-    rememberOwnedTree(child, captureWindowsRuntime(port));
+    const initial = captureInitialOwnedRoot(child, { parentPid: process.pid, name: path.basename(process.execPath),
+      commandIdentity: "PROJECT_PINNED_NODE_NEXT_CLI", capture: budget => captureWindowsRuntime(port, undefined, budget) });
+    writeMetadata({ serverInitialIdentity: initial.evidence });
+    rememberOwnedTree(child, initial.runtime);
     processObserver ??= startWindowsRuntimeObservation({ port, runId, wrapperIdentity, record: runtime => {
       rememberOwnedTree(serverProcess, runtime);
       rememberOwnedTree(testProcess, runtime);
@@ -868,11 +873,17 @@ async function main() {
   const status = await new Promise((resolve, reject) => {
     const earliestCreationMs = Date.now();
     testProcess = spawn(process.execPath, playwrightArgs, { cwd: root, env: environment, stdio: "inherit", windowsHide: true });
+    testProcess.e2eSpawnReturnedAt = new Date().toISOString();
     testProcess.e2eOwnershipFence = { pid: testProcess.pid, parentPid: process.pid, name: path.basename(process.execPath),
       earliestCreationMs, latestCreationMs: Date.now() };
     testProcess.on("error", reject);
     testProcess.on("exit", (code) => resolve(code ?? 1));
-    if (process.platform === "win32") rememberOwnedTree(testProcess, captureWindowsRuntime(port));
+    if (process.platform === "win32") {
+      const initial = captureInitialOwnedRoot(testProcess, { parentPid: process.pid, name: path.basename(process.execPath),
+        commandIdentity: "PROJECT_PINNED_NODE_PLAYWRIGHT_CLI", capture: budget => captureWindowsRuntime(port, undefined, budget) });
+      writeMetadata({ testInitialIdentity: initial.evidence });
+      rememberOwnedTree(testProcess, initial.runtime);
+    }
   });
   // Join the serial native sampler before the bounded API probe, never leaving
   // an in-flight collector to race the subsequent fresh physical fences.
@@ -906,6 +917,18 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, async () => { awa
 main().catch(async (error) => {
   process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`);
   try { writeMetadata({ infrastructureError: error instanceof Error ? error.message : String(error) }); } catch {}
+  if (error instanceof E2eInitialIdentityError) {
+    // Do not enter the 45s full teardown or wait for the 1800s outer timer when
+    // initial identity is untrusted. No migration/browser/E2E continuation.
+    const rejected = error.evidence.spawnReturnedPid === testProcess?.pid ? testProcess : serverProcess;
+    const close = await closeRejectedCreatorChild(rejected);
+    recordMetadataBestEffort({ initialIdentityFailure: error.evidence, rejectedCreatorClose: close, status: "FAILED", cleaned: false });
+    try { cleanupTestNextGeneratedTypes(root, nextDistDir); if (nextEnvSnapshot) restoreFile(path.join(root, "next-env.d.ts"), nextEnvSnapshot); }
+    catch { recordMetadataBestEffort({ rejectedStartupSourceRestoration: "FAILED" }); }
+    try { preserveFailureDiagnostics(); } catch {}
+    clearTimeout(timeout);
+    process.exit(1);
+  }
   try { preserveFailureDiagnostics(); } catch {}
   try { await cleanup("infrastructure-error"); }
   catch (cleanupError) { recordMetadataBestEffort({ cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError), cleaned: false }); }

@@ -130,13 +130,23 @@ function memberRecord(io, state, filename) {
   return record;
 }
 function track(child, now, state, role) {
-  const tracker = { child, closed: false, closedMono: null, exitCode: null, signal: null, spawnError: null, safeStartupDiagnostic: "" };
+  const tracker = { child, spawnedAt: new Date().toISOString(), spawnedMono: now(), scriptEntered: false,
+    closed: false, closedMono: null, exitCode: null, signal: null, spawnError: null, safeStartupDiagnostic: "" };
   child.once("error", error => { tracker.spawnError = error; });
   child.once("close", (code, signal) => { tracker.closed = true; tracker.closedMono = now(); tracker.exitCode = code; tracker.signal = signal; });
   // Native scripts never forward provider errors/raw commands via normal stdout.
   tracker.stages = createBuildLockReadyObservation({ invocationId: state.invocationId, nonce: state.nonce,
     supportIdentity: state.supportIdentity, role, pid: child.pid, now: () => now() - state.startedMono });
-  child.stdout?.on("data", chunk => tracker.stages.push(chunk));
+  let entryBuffer = "";
+  child.stdout?.on("data", chunk => {
+    tracker.stages.push(chunk);
+    entryBuffer += String(chunk);
+    for (let end = entryBuffer.indexOf("\n"); end >= 0; end = entryBuffer.indexOf("\n")) {
+      if (entryBuffer.slice(0, end).replace(/\r$/u, "") === `VERIDIA_NATIVE_SCRIPT_ENTERED=${role}:${child.pid}`) tracker.scriptEntered = true;
+      entryBuffer = entryBuffer.slice(end + 1);
+    }
+    if (entryBuffer.length > 4096) entryBuffer = "";
+  });
   child.stdout?.resume();
   child.stderr?.on("data", chunk => { tracker.safeStartupDiagnostic = redactBuildLockDiagnosticText(`${tracker.safeStartupDiagnostic}${String(chunk)}`); });
   return tracker;
@@ -152,6 +162,8 @@ async function until(predicate, ms, now) {
   return false;
 }
 function compactChild(tracker) { return { pid: tracker.child.pid ?? null, actualCloseObserved: tracker.closed,
+  spawnedAt: tracker.spawnedAt, scriptEntered: tracker.scriptEntered,
+  configValidatedReceived: tracker.stages.snapshot().records.some(record => record.role !== "Worker" && record.stage === "CONFIG_VALIDATED"),
   exitCode: tracker.exitCode, signal: tracker.signal, spawnError: tracker.spawnError ? errorProjection(tracker.spawnError) : null,
   safeStartupDiagnostic: tracker.safeStartupDiagnostic || null }; }
 function validBirth(value) { return typeof value === "string" && /^[1-9][0-9]{15,20}$/u.test(value); }
@@ -175,6 +187,7 @@ function createController({ root = moduleRoot, platform = process.platform, io =
   monotonic = () => Number(process.hrtime.bigint() / 1000000n), fixture = null } = {}) {
   const canonicalRoot = path.resolve(root);
   if (fixture && (!uuid(fixture.id) || canonicalRoot !== moduleRoot)) throw new Error("OWNED_FIXTURE_SCOPE_REQUIRED");
+  if (fixture?.bootstrapDeadlineMs !== undefined && (!positive(fixture.bootstrapDeadlineMs) || fixture.bootstrapDeadlineMs > 5000)) throw new Error("FIXTURE_BOOTSTRAP_DIAGNOSTIC_BUDGET_INVALID");
   const policy = fixture ? { ...BUILD_LOCK_DIAGNOSTICS_POLICY, ...fixture.policy } : BUILD_LOCK_DIAGNOSTICS_POLICY;
   if (fixture && (!["NORMAL", "IGNORE_STOP", "STALL_GUARDIAN_AFTER_PROOF", "INVALID_QUERY_SESSION"].includes(fixture.mode ?? "NORMAL") ||
     ![policy.leaseMs, policy.readyMs, policy.graceMs, policy.finalMs].every(value => Number.isSafeInteger(value) && value > 0))) throw new Error("FIXTURE_POLICY_INVALID");
@@ -220,6 +233,13 @@ function createController({ root = moduleRoot, platform = process.platform, io =
               const record = memberRecord(io, state, name); diagnostic ||= redactBuildLockDiagnosticText(record.failure);
             }
             throw new Error(`NATIVE_COLLECTOR_EXITED_BEFORE_READY${diagnostic ? `: ${diagnostic}` : ""}`);
+          }
+          // Synthetic diagnosis only, measured after actual spawn (not the
+          // fixture's deliberate pre-spawn fault). Never native READY authority.
+          if (fixture?.bootstrapDeadlineMs) for (const tracker of [state.supervisor, state.guardian]) {
+            if (monotonic() - tracker.spawnedMono >= fixture.bootstrapDeadlineMs && !compactChild(tracker).configValidatedReceived) {
+              throw new Error("NATIVE_BOOTSTRAP_STAGE_TIMEOUT");
+            }
           }
           return ["supervisor-created.json", "worker-created.json", "guardian-armed.json", "worker-ready.json"].every(name => io.existsSync(path.join(directory, name)));
         }, Math.max(0, policy.readyMs - (monotonic() - startedMono)), monotonic);
@@ -443,6 +463,8 @@ function validateMember(record, receipt, name) {
 function projectIdentity(value) { return value && positive(value.pid) && validBirth(value.nativeStartFileTime) ? { pid: value.pid, nativeStartFileTime: value.nativeStartFileTime } : null; }
 function projectReceipt(value) {
   const child = input => input ? { pid: positive(input.pid) ? input.pid : null, actualCloseObserved: input.actualCloseObserved === true,
+    spawnedAt: utc(input.spawnedAt) ? input.spawnedAt : null, scriptEntered: input.scriptEntered === true,
+    configValidatedReceived: input.configValidatedReceived === true,
     exitCode: Number.isInteger(input.exitCode) ? input.exitCode : null, signal: redactBuildLockDiagnosticText(input.signal), spawnError: input.spawnError ? errorProjection(input.spawnError) : null,
     safeStartupDiagnostic: redactBuildLockDiagnosticText(input.safeStartupDiagnostic) } : null;
   const support = Object.fromEntries(["controller", "declaration", "watcher", "monitor", "wrapper"].map(key => [key, { relativePath: value.support?.[key]?.relativePath, sha256: value.support?.[key]?.sha256 }]));

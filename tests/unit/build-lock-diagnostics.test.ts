@@ -5,6 +5,8 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { describe, expect, test } from "vitest";
+import { createRequire } from "node:module";
+const { minimalSafeWindowsNativeEnvironment, WINDOWS_NATIVE_BLOCKED_DEFAULTS } = createRequire(import.meta.url)("../../scripts/testing/windows-native-environment.cjs");
 import { BUILD_LOCK_DIAGNOSTICS_POLICY, createBuildLockDiagnosticsFixtureController, redactBuildLockDiagnosticText,
   readBuildLockDiagnosticsEvidence } from "../../scripts/testing/build-lock-diagnostics.mjs";
 
@@ -12,6 +14,40 @@ const root = process.cwd(), head = "a".repeat(40), sourceFingerprint = "b".repea
 const birth = "134352873660197859";
 const context = { head, sourceFingerprint, environment: { NODE_ENV: "test" as const } };
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+test("CI_NATIVE_BOOTSTRAP_PROBE receives current watcher CONFIG within 5 seconds in safe Windows environment", () => {
+  if (process.platform !== "win32") return;
+  const result = spawnSync(process.execPath, [path.join(root, "tests/fixtures/native-bootstrap-probe.cjs")],
+    { cwd: root, env: minimalSafeWindowsNativeEnvironment(), stdio: "pipe", windowsHide: true, encoding: "utf8", timeout: 6000 });
+  expect(result.status, result.stderr || result.stdout).toBe(0);
+  const value = JSON.parse(result.stdout.trim());
+  expect(value).toMatchObject({ status: "PASS", closeObserved: true, stages: ["POWERSHELL_SPAWNED", "SCRIPT_ENTERED", "CONFIG_VALIDATED_RECEIVED"] });
+  expect(value.elapsedMs).toBeLessThan(5000);
+  console.info(`VERIDIA_CI_NATIVE_BOOTSTRAP_PROBE=${JSON.stringify(value)}`);
+}, 10000);
+test("minimal native environment cannot forward secrets, PATH or application settings", () => {
+  const environment = minimalSafeWindowsNativeEnvironment({ SystemRoot: "C:/Windows", TEMP: "E:/Temp", NODE_OPTIONS: "--eval=secret",
+    PATH: "unsafe", GITHUB_TOKEN: "secret", DATABASE_URL: "production", WINDIR: "C:/Windows", ComSpec: "C:/Windows/System32/cmd.exe", TMP: "E:/Temp", PATHEXT: ".EXE;.CMD" });
+  expect(Object.keys(environment).sort()).toEqual(["ComSpec", "NODE_ENV", "PSModuleAnalysisCachePath", "PATHEXT", "SystemRoot", "TEMP", "TMP", "WINDIR", ...WINDOWS_NATIVE_BLOCKED_DEFAULTS].sort());
+  for (const key of WINDOWS_NATIVE_BLOCKED_DEFAULTS) expect(environment[key]).toBe("");
+  expect(environment.NODE_ENV).toBe("test");
+});
+test("synthetic missing CONFIG fails at bootstrap stage before unchanged formal READY budget", async () => {
+  const spawnChild = (() => {
+    const child = Object.assign(new EventEmitter(), { pid: 22001, stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough(),
+      kill: () => { queueMicrotask(() => child.emit("close", null, "SIGTERM")); return true; }, unref: () => child });
+    return child;
+  }) as unknown as typeof spawn;
+  const controller = createBuildLockDiagnosticsFixtureController({ platform: "win32", spawnChild,
+    fixture: { id: randomUUID(), bootstrapDeadlineMs: 50, policy: { readyMs: 15000, graceMs: 50, finalMs: 100 } } });
+  const started = performance.now();
+  let failure;
+  try { await controller.begin(context); } catch (error) { failure = error as Error & { diagnostics: { native: unknown; startupFailure: unknown } }; }
+  expect(failure?.message).toBe("NATIVE_BOOTSTRAP_STAGE_TIMEOUT");
+  expect(performance.now() - started).toBeLessThan(1000);
+  expect(failure?.diagnostics.startupFailure).toMatchObject({ readyBudgetMs: 15000, supervisor: { records: [] }, guardian: { records: [] } });
+  expect(failure?.diagnostics.native).toMatchObject({ supervisor: { actualCloseObserved: true, configValidatedReceived: false, scriptEntered: false },
+    guardian: { actualCloseObserved: true } });
+});
 function file(session: { receiptRelativePath: string }, name: string) { return path.join(root, path.dirname(session.receiptRelativePath), name); }
 function json(filename: string) { return JSON.parse(fs.readFileSync(filename, "utf8")); }
 async function waitForOwnedProof(session: { receiptRelativePath: string }, reason: string) {
@@ -220,7 +256,7 @@ describe("actual native owned GUID lifecycle (never formal Build)", () => {
   test.each(["lease", "lease-startup-delay"])("independent lease expires during synchronous child with %s startup", mode => {
     if (process.platform !== "win32") { expect(process.platform).not.toBe("win32"); return; }
     const result = spawnSync(process.execPath, [path.join(root, "tests/fixtures/build-lock-diagnostics-child.cjs"), mode, randomUUID()],
-      { cwd: root, windowsHide: true, timeout: 25000, encoding: "utf8", env: { NODE_ENV: "test", SystemRoot: process.env.SystemRoot } });
+      { cwd: root, windowsHide: true, timeout: 25000, encoding: "utf8", env: minimalSafeWindowsNativeEnvironment() });
     expect(result.status, result.stderr).toBe(0); const value = JSON.parse(result.stdout.trim());
     expect(value).toMatchObject({ label: "SYNTHETIC_TOOL_VALIDATION", evidence: { status: "DIAGNOSTICS_INCOMPLETE", native: { workerExitConfirmed: true } }, proof: { workerExited: true } });
     expect(value.leaseWindow).toMatchObject({ readyMs: 15000, activeLeaseMs: 6000, injectedStartupDelayMs: mode === "lease-startup-delay" ? 6500 : 0 });

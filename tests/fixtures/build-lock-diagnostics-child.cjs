@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { setTimeout: wait } = require("node:timers/promises");
+const { minimalSafeWindowsNativeEnvironment } = require("../../scripts/testing/windows-native-environment.cjs");
 if (process.argv[2] === "owned-sleep") {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.argv[3]));
 } else if (process.argv[2] === "build") {
@@ -17,7 +18,7 @@ if (process.argv[2] === "owned-sleep") {
     const id = process.argv[3];
     const readyMs = 15000, activeLeaseMs = 6000;
     let injectedStartupDelay = false;
-    const controller = createBuildLockDiagnosticsFixtureController({ fixture: { id,
+    const controller = createBuildLockDiagnosticsFixtureController({ fixture: { id, bootstrapDeadlineMs: 5000,
       // The synthetic fixture's absolute lease must include the existing READY
       // budget. The production lease and all test/child timeouts are unchanged.
       policy: { leaseMs: readyMs + activeLeaseMs, readyMs, graceMs: 300, finalMs: 700 } },
@@ -46,7 +47,7 @@ if (process.argv[2] === "owned-sleep") {
     if (!(Date.parse(started) < leaseDeadline && leaseDeadline - Date.parse(started) <= activeLeaseMs)) throw new Error("FIXTURE_LEASE_WINDOW_ALREADY_EXPIRED");
     // Own fixed-purpose child, not a Node timer: collector must enforce its
     // lease while this controller's Node event loop is synchronously blocked.
-    const blocker = spawnSync(process.execPath, [__filename, "owned-sleep", "6500"], { windowsHide: true, timeout: 8000, env: { NODE_ENV: "test", SystemRoot: process.env.SystemRoot } });
+    const blocker = spawnSync(process.execPath, [__filename, "owned-sleep", "6500"], { windowsHide: true, timeout: 8000, env: minimalSafeWindowsNativeEnvironment() });
     const ended = new Date().toISOString();
     // Capture the native stop before Node can write its own STOP_SIGNAL.
     const nativeLeaseStop = JSON.parse(fs.readFileSync(path.join(directory, "stop.json"), "utf8"));
@@ -65,6 +66,7 @@ if (process.argv[2] === "owned-sleep") {
     process.stderr.write(`VERIDIA_NATIVE_READY_FAILURE=${JSON.stringify({ label: "SYNTHETIC_TOOL_VALIDATION",
       mode: process.argv[2], fixtureId: process.argv[3], invocationId: error.diagnostics?.invocationId ?? null,
       startup: error.diagnostics?.startupFailure ?? null,
+      bootstrap: native ? { supervisor: native.supervisor, guardian: native.guardian } : null,
       close: native ? { workerExitConfirmed: native.workerExitConfirmed, creatorForceStopped: native.creatorForceStopped,
         supervisorCloseObserved: native.supervisor?.actualCloseObserved ?? null, guardianCloseObserved: native.guardian?.actualCloseObserved ?? null } : null })}\n`);
     process.stderr.write(`${error.name}: ${error.message}\n`); process.exitCode = 1;
