@@ -59,6 +59,7 @@ type State = {
   contextOwnershipKind?: "INTERACTIVE" | "EXTRACTION" | "NONE";
   physicalCloseFence?: Promise<void>;
   physicalCloseState?: "PENDING" | "FAILED";
+  physicalCloseFailure?: { phase: string; name: string; diagnostic?: WindowsBrowserProfileOwnershipError["diagnostic"] };
 };
 const globalState = globalThis as typeof globalThis & { douyinBrowserManagerState?: State };
 const state = globalState.douyinBrowserManagerState ?? (globalState.douyinBrowserManagerState = {
@@ -179,6 +180,7 @@ async function launchContextNow(lifecycle?: BrowserLifecycleIdentity) {
     try { connection = await launchWindowsHiddenChromium(browserType, PROFILE_DIRECTORY); }
     catch (error) {
       if (error instanceof WindowsBrowserProfileOwnershipError) {
+        state.physicalCloseFailure = { phase: "LAUNCH_OWNERSHIP", name: error.name, diagnostic: error.diagnostic };
         state.physicalCloseState = "FAILED";
         state.physicalCloseFence = Promise.reject(error);
         void state.physicalCloseFence.catch(() => undefined);
@@ -281,10 +283,12 @@ async function closeContextNow() {
   state.contextOwner = undefined;
   state.contextOwnershipKind = "NONE";
   const physical = (async () => {
+    let phase = "CONTEXT_CLOSE";
     try {
       if (close) await close();
       else if (context) await context.close();
       if (launching) {
+        phase = "CANCELLED_LAUNCH_WAIT";
         try { await launching; }
         catch (error) { if (!(error instanceof DouyinPageGenerationInvalidatedError)) throw error; }
       }
@@ -293,6 +297,8 @@ async function closeContextNow() {
     } catch (error) {
       if (state.lifecycleGeneration === closingGeneration) {
         state.physicalCloseState = "FAILED";
+        state.physicalCloseFailure = { phase, name: error instanceof Error ? error.name : "UNKNOWN_ERROR_TYPE",
+          ...(error instanceof WindowsBrowserProfileOwnershipError ? { diagnostic: error.diagnostic } : {}) };
         state.controlError = "抖音物理 Profile 尚未验证释放，禁止重用";
       }
       throw error;
@@ -306,6 +312,7 @@ async function closeContextNow() {
     if (state.physicalCloseFence === physical) {
       state.physicalCloseFence = undefined;
       state.physicalCloseState = undefined;
+      state.physicalCloseFailure = undefined;
     }
   }).catch(() => undefined);
   await boundedOperation("关闭抖音物理 Persistent Context", physical);
@@ -463,6 +470,7 @@ export async function getDouyinSessionDiagnostics() {
       lifecycleGeneration: state.lifecycleGeneration,
       contextOwnershipKind: state.contextOwnershipKind,
       physicalCloseState: state.physicalCloseState || null,
+      physicalCloseFailure: state.physicalCloseFailure || null,
       physicalCloseFencePresent: Boolean(state.physicalCloseFence),
     } : {}),
   };

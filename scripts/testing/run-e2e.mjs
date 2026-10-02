@@ -725,6 +725,7 @@ async function captureGroupEndLogicalIdle(baseURL) {
         aggregateFencePresent: xhs.data?.globalRuntimeDiagnostics?.physicalCloseFencePresent ?? null,
         platforms: Object.fromEntries([["XIAOHONGSHU", xhs.data], ["DOUYIN", douyin.data]].map(([platform, session]) =>
           [platform, { physicalCloseState: session?.physicalCloseState ?? null,
+            physicalCloseFailure: session?.physicalCloseFailure ?? null,
             physicalCloseFencePresent: session?.physicalCloseFencePresent ?? null,
             lifecycleGeneration: session?.lifecycleGeneration ?? null,
             activeBrowserOwnerGeneration: session?.activeBrowserOwnerGeneration ?? null,

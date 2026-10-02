@@ -125,6 +125,7 @@ type XhsBrowserState = {
   lifecyclePendingOperations?: Map<number, Record<string, unknown>>;
   physicalCloseFence?: Promise<void>;
   physicalCloseState?: "PENDING" | "FAILED";
+  physicalCloseFailure?: { phase: string; name: string; diagnostic?: WindowsBrowserProfileOwnershipError["diagnostic"] };
 };
 
 const globalForAutomation = globalThis as typeof globalThis & {
@@ -745,6 +746,7 @@ async function ensureBrowserContext(
     .catch(async (error) => {
       if (launchGeneration !== state.lifecycleGeneration) throw error;
       if (error instanceof WindowsBrowserProfileOwnershipError) {
+        state.physicalCloseFailure = { phase: "LAUNCH_OWNERSHIP", name: error.name, diagnostic: error.diagnostic };
         state.physicalCloseState = "FAILED";
         state.physicalCloseFence = Promise.reject(error);
         void state.physicalCloseFence.catch(() => undefined);
@@ -1044,6 +1046,7 @@ export async function getXhsAuditPageDiagnostics() {
         lifecycleStages: [...(state.lifecycleStages || [])],
         lifecyclePendingOperations: [...(state.lifecyclePendingOperations?.values() || [])],
         physicalCloseState: state.physicalCloseState || null,
+        physicalCloseFailure: state.physicalCloseFailure || null,
         globalRuntimeDiagnostics: getE2eBrowserTeardownRuntimeSnapshot().globalRuntimeDiagnostics,
       }
       : {}),
@@ -1089,10 +1092,12 @@ export function closeXhsBrowserContext(
     state.launchOwner = undefined;
     state.closeOwnerGeneration = closingOwner?.ownerGeneration;
     const physicalGeneration = state.lifecycleGeneration;
+    let phase = "CONTEXT_CLOSE";
     try {
       if (closeBrowser) await observeLifecycleOperation("CONTEXT_CLOSE", closeBrowser);
       else if (context) await observeLifecycleOperation("CONTEXT_CLOSE", () => context.close());
       if (launching) {
+        phase = "CANCELLED_LAUNCH_WAIT";
         try { await observeLifecycleOperation("CANCELLED_LAUNCH_WAIT", () => launching); }
         catch (error) {
           if (!(error instanceof XhsPageGenerationInvalidatedError)) throw error;
@@ -1109,6 +1114,8 @@ export function closeXhsBrowserContext(
     } catch (error) {
       if (state.lifecycleGeneration === physicalGeneration) {
         state.physicalCloseState = "FAILED";
+        state.physicalCloseFailure = { phase, name: error instanceof Error ? error.name : "UNKNOWN_ERROR_TYPE",
+          ...(error instanceof WindowsBrowserProfileOwnershipError ? { diagnostic: error.diagnostic } : {}) };
         state.profileLocked = true;
         state.contextClosedUnexpectedly = true;
         state.controlState = "RESTART_REQUIRED";
@@ -1128,6 +1135,7 @@ export function closeXhsBrowserContext(
     if (state.physicalCloseFence === closing) {
       state.physicalCloseFence = undefined;
       state.physicalCloseState = undefined;
+      state.physicalCloseFailure = undefined;
     }
   }).catch(() => undefined);
   // Keep the physical fence even if the public deadline rejects. Late old

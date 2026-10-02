@@ -13,7 +13,10 @@ export type WindowsBrowserProcessIdentity = {
 const OWNER_PROBE_TIMEOUT_MS = 2_000;
 
 export class WindowsBrowserProfileOwnershipError extends Error {
-  constructor(message: string) { super(message); this.name = "WindowsBrowserProfileOwnershipError"; }
+  constructor(message: string, readonly diagnostic?: {
+    phase: string; reason: string; exitCode?: number | null; elapsedMs?: number;
+    nativeStage?: string; nativeFailureCode?: string;
+  }) { super(message); this.name = "WindowsBrowserProfileOwnershipError"; }
 }
 
 // CommandLineToArgvW rules, including backslashes immediately before quotes.
@@ -140,14 +143,15 @@ function guardScript(input: {
   const encoded = Buffer.from(JSON.stringify(input), "utf8").toString("base64");
   // Only exact executable/profile matches leave this process. Raw command
   // lines, environment, browser URLs and credentials are never emitted.
-  return `$ErrorActionPreference='Stop'; Add-Type -TypeDefinition @'
+  return `$ErrorActionPreference='Stop'; $phase='PARSER_COMPILE'; $owned=@(); $handles=@(); try { Add-Type -TypeDefinition @'
 ${nativeArgumentParser}
 '@;
+$phase='REQUEST_PARSE';
 $request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json;
 $expectedExecutable = [IO.Path]::GetFullPath($request.executablePath);
 $expectedProfile = [IO.Path]::GetFullPath($request.profilePath).TrimEnd('\\');
 $owned = @(); $handles = @();
-try {
+  $phase='PROCESS_CENSUS';
   $name = [IO.Path]::GetFileName($expectedExecutable).Replace("'", "''");
   foreach ($candidate in @(Get-CimInstance Win32_Process -Filter "Name='$name'")) {
     if (![string]::Equals($candidate.ExecutablePath, $expectedExecutable, [StringComparison]::OrdinalIgnoreCase)) { continue }
@@ -156,6 +160,7 @@ try {
     $profiles = @($argv | Where-Object { $_.StartsWith('--user-data-dir=', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.Substring(16) });
     if ($profiles.Count -ne 1 -or !$profiles[0]) { continue }
     if (![string]::Equals([IO.Path]::GetFullPath($profiles[0]).TrimEnd('\\'), $expectedProfile, [StringComparison]::OrdinalIgnoreCase)) { continue }
+    $phase='NATIVE_HANDLE_BIND';
     try { $process = [Diagnostics.Process]::GetProcessById([int]$candidate.ProcessId); $null = $process.Handle } catch {
       if (Get-CimInstance Win32_Process -Filter "ProcessId=$($candidate.ProcessId)") { throw 'LIVE_PROCESS_HANDLE_UNAVAILABLE' }
       continue
@@ -179,8 +184,18 @@ try {
   # All identities are validated before any termination. Process.Handle was
   # opened before StartTime; Kill therefore targets that OS handle, not a PID
   # which may have been reused between validation and termination.
+  $phase='VALIDATED_TERMINATION';
   foreach ($process in $handles) { if (!$process.HasExited) { $process.Kill() } }
+  $phase='RESULT_EMIT';
   ConvertTo-Json -InputObject @($owned) -Depth 4 -Compress
+} catch {
+  $code='NATIVE_PROBE_SCRIPT_EXCEPTION';
+  foreach ($allowed in @('PROFILE_OWNERSHIP_UNAVAILABLE','LIVE_PROCESS_HANDLE_UNAVAILABLE','LIVE_PROCESS_BIRTH_MISMATCH','UNVERIFIED_PROFILE_OWNER')) {
+    if ($_.Exception.Message -eq $allowed) { $code=$allowed }
+  }
+  # Only this fixed vocabulary crosses stderr, never raw native exceptions.
+  [Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_FAILURE='+$phase+':'+$code);
+  exit 1
 } finally { foreach ($process in $handles) { $process.Dispose() } }`;
 }
 
@@ -193,21 +208,30 @@ export async function captureWindowsBrowserProfileOwners(
   const profile = path.win32.resolve(profilePath);
   const script = guardScript({ executablePath: executable, profilePath: profile, terminate });
   const output = await new Promise<string>((resolve, reject) => {
+    const startedAt = Date.now();
     const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand",
-      Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+      Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let settled = false;
-    const finish = (value?: string) => {
+    let diagnostic: { nativeStage?: string; nativeFailureCode?: string } = {};
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr = `${stderr}${chunk.toString("utf8")}`.slice(-2_000);
+      const record = stderr.match(/VERIDIA_PROFILE_PROBE_FAILURE=(PARSER_COMPILE|REQUEST_PARSE|PROCESS_CENSUS|NATIVE_HANDLE_BIND|VALIDATED_TERMINATION|RESULT_EMIT):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER)\r?\n/u);
+      if (record) diagnostic = { nativeStage: record[1], nativeFailureCode: record[2] };
+    });
+    const finish = (value?: string, reason = "NATIVE_PROBE_EXIT", exitCode?: number | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (value !== undefined) resolve(value);
-      else reject(new WindowsBrowserProfileOwnershipError("Chromium 物理 Profile 所有权检查失败，禁止复用未验证的 Profile"));
+      else reject(new WindowsBrowserProfileOwnershipError("Chromium 物理 Profile 所有权检查失败，禁止复用未验证的 Profile",
+        { phase: "PROFILE_OWNER_PROBE", reason, exitCode, elapsedMs: Date.now() - startedAt, ...diagnostic }));
     };
-    const timer = setTimeout(() => { child.kill(); finish(); }, OWNER_PROBE_TIMEOUT_MS);
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); if (stdout.length > 100_000) { child.kill(); finish(); } });
-    child.once("error", () => finish());
-    child.once("close", code => finish(code === 0 ? stdout : undefined));
+    const timer = setTimeout(() => { child.kill(); finish(undefined, "NATIVE_PROBE_DEADLINE"); }, OWNER_PROBE_TIMEOUT_MS);
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); if (stdout.length > 100_000) { child.kill(); finish(undefined, "NATIVE_PROBE_OUTPUT_LIMIT"); } });
+    child.once("error", () => finish(undefined, "NATIVE_PROBE_SPAWN_FAILED"));
+    child.once("close", code => finish(code === 0 ? stdout : undefined, "NATIVE_PROBE_EXIT", code));
   });
   let identities: WindowsBrowserProcessIdentity[];
   try { identities = JSON.parse(output.trim()) as WindowsBrowserProcessIdentity[]; }
