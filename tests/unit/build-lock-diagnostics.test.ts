@@ -27,7 +27,8 @@ test("CI_NATIVE_BOOTSTRAP_PROBE receives current watcher CONFIG within 5 seconds
 test("minimal native environment cannot forward secrets, PATH or application settings", () => {
   const environment = minimalSafeWindowsNativeEnvironment({ SystemRoot: "C:/Windows", TEMP: "E:/Temp", NODE_OPTIONS: "--eval=secret",
     PATH: "unsafe", GITHUB_TOKEN: "secret", DATABASE_URL: "production", WINDIR: "C:/Windows", ComSpec: "C:/Windows/System32/cmd.exe", TMP: "E:/Temp", PATHEXT: ".EXE;.CMD" });
-  expect(Object.keys(environment).sort()).toEqual(["ComSpec", "NODE_ENV", "PSModuleAnalysisCachePath", "PATHEXT", "SystemRoot", "TEMP", "TMP", "WINDIR", ...WINDOWS_NATIVE_BLOCKED_DEFAULTS].sort());
+  expect(Object.keys(environment).sort()).toEqual(["ComSpec", "NODE_ENV", "PSModulePath", "PSModuleAnalysisCachePath", "PATHEXT", "SystemRoot", "TEMP", "TMP", "WINDIR", ...WINDOWS_NATIVE_BLOCKED_DEFAULTS].sort());
+  expect(environment.PSModulePath).toBe(path.join("C:/Windows", "System32/WindowsPowerShell/v1.0/Modules"));
   for (const key of WINDOWS_NATIVE_BLOCKED_DEFAULTS) expect(environment[key]).toBe("");
   expect(environment.NODE_ENV).toBe("test");
 });

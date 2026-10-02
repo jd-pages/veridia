@@ -6,8 +6,18 @@ param(
 [Console]::Out.WriteLine('VERIDIA_NATIVE_SCRIPT_ENTERED='+$Role+':'+$PID)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
+function Bootstrap-Stage([string]$Stage) {
+  [Console]::Out.WriteLine('VERIDIA_NATIVE_BOOTSTRAP_STAGE='+$Role+':'+$PID+':'+$Stage)
+}
+Bootstrap-Stage UTF8_ENCODING_START
 $utf8 = New-Object Text.UTF8Encoding $false
-$cfg = Get-Content -LiteralPath $Configuration -Raw | ConvertFrom-Json
+Bootstrap-Stage UTF8_ENCODING_READY
+Bootstrap-Stage CONFIG_READ_START
+$configurationText = Get-Content -LiteralPath $Configuration -Raw
+Bootstrap-Stage CONFIG_READ_READY
+Bootstrap-Stage CONFIG_PARSE_START
+$cfg = $configurationText | ConvertFrom-Json
+Bootstrap-Stage CONFIG_PARSE_READY
 $directory = [IO.Path]::GetFullPath($cfg.directory)
 $target = [IO.Path]::GetFullPath($cfg.target)
 $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -53,6 +63,7 @@ function Safe-Text([string]$Value) {
   if ($v.Length -gt 8192) { $v = $v.Substring(0,8192) + '[TRUNCATED]' }
   return $v
 }
+Bootstrap-Stage CONFIG_VALIDATE_START
 if ($cfg.schemaVersion -ne 1 -or $cfg.invocationId -notmatch '^[0-9a-f-]{36}$' -or $cfg.nonce -notmatch '^[0-9a-f-]{36}$') { throw 'CONFIGURATION_IDENTITY_INVALID' }
 if ($directory -ne [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Configuration))) { throw 'CONFIGURATION_DIRECTORY_INVALID' }
 if ($cfg.label -eq 'FORMAL_VERIFY_TRACE') {
@@ -60,6 +71,7 @@ if ($cfg.label -eq 'FORMAL_VERIFY_TRACE') {
 } elseif ($cfg.label -eq 'SYNTHETIC_TOOL_VALIDATION') {
   if ($directory -notmatch '[\\/]\.playwright[\\/]build-lock-diagnostics-fixtures[\\/]lab-[0-9a-f-]{36}[\\/]run-[0-9a-f-]{36}$' -or [IO.Path]::GetDirectoryName($target) -ne [IO.Path]::GetDirectoryName($directory)) { throw 'FIXTURE_SCOPE_INVALID' }
 } else { throw 'LABEL_INVALID' }
+Bootstrap-Stage CONFIG_VALIDATE_READY
 
 # Fixed low-volume startup notices, consumed privately by the owning controller.
 # They cannot prove native identity/readiness and contain no raw env or errors.

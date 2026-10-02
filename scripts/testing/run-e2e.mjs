@@ -241,6 +241,7 @@ function startNextServer(port, environment, log) {
     const initial = captureInitialOwnedRoot(child, { parentPid: process.pid, name: path.basename(process.execPath),
       commandIdentity: "PROJECT_PINNED_NODE_NEXT_CLI", capture: budget => captureWindowsRuntime(port, undefined, budget) });
     writeMetadata({ serverInitialIdentity: initial.evidence });
+    process.stdout.write(`VERIDIA_E2E_INITIAL_IDENTITY=${JSON.stringify({ role: "SERVER", head: runHead, sourceFingerprint: runSourceFingerprint, ...initial.evidence })}\n`);
     rememberOwnedTree(child, initial.runtime);
     processObserver ??= startWindowsRuntimeObservation({ port, runId, wrapperIdentity, record: runtime => {
       rememberOwnedTree(serverProcess, runtime);
@@ -882,6 +883,7 @@ async function main() {
       const initial = captureInitialOwnedRoot(testProcess, { parentPid: process.pid, name: path.basename(process.execPath),
         commandIdentity: "PROJECT_PINNED_NODE_PLAYWRIGHT_CLI", capture: budget => captureWindowsRuntime(port, undefined, budget) });
       writeMetadata({ testInitialIdentity: initial.evidence });
+      process.stdout.write(`VERIDIA_E2E_INITIAL_IDENTITY=${JSON.stringify({ role: "PLAYWRIGHT", head: runHead, sourceFingerprint: runSourceFingerprint, ...initial.evidence })}\n`);
       rememberOwnedTree(testProcess, initial.runtime);
     }
   });

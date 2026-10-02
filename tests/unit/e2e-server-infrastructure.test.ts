@@ -964,6 +964,8 @@ describe("E2E server infrastructure", () => {
       return declaration.body;
     };
     const server = functionBody("startNextServer").getText(parsed);
+    expect(server).toContain("VERIDIA_E2E_INITIAL_IDENTITY=");
+    expect(server).toContain("...initial.evidence");
     expect(server.indexOf("child.e2eOwnershipFence =")).toBeGreaterThanOrEqual(0);
     expect(server.indexOf("serverProcess = child")).toBeLessThan(server.indexOf("child.e2eOwnershipFence ="));
     expect(server.indexOf("child.e2eOwnershipFence =")).toBeLessThan(server.indexOf("recordMetadataBestEffort("));

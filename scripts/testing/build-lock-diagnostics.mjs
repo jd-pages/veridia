@@ -130,7 +130,7 @@ function memberRecord(io, state, filename) {
   return record;
 }
 function track(child, now, state, role) {
-  const tracker = { child, spawnedAt: new Date().toISOString(), spawnedMono: now(), scriptEntered: false,
+  const tracker = { child, spawnedAt: new Date().toISOString(), spawnedMono: now(), scriptEntered: false, bootstrapStages: [],
     closed: false, closedMono: null, exitCode: null, signal: null, spawnError: null, safeStartupDiagnostic: "" };
   child.once("error", error => { tracker.spawnError = error; });
   child.once("close", (code, signal) => { tracker.closed = true; tracker.closedMono = now(); tracker.exitCode = code; tracker.signal = signal; });
@@ -142,7 +142,11 @@ function track(child, now, state, role) {
     tracker.stages.push(chunk);
     entryBuffer += String(chunk);
     for (let end = entryBuffer.indexOf("\n"); end >= 0; end = entryBuffer.indexOf("\n")) {
-      if (entryBuffer.slice(0, end).replace(/\r$/u, "") === `VERIDIA_NATIVE_SCRIPT_ENTERED=${role}:${child.pid}`) tracker.scriptEntered = true;
+      const line = entryBuffer.slice(0, end).replace(/\r$/u, "");
+      if (line === `VERIDIA_NATIVE_SCRIPT_ENTERED=${role}:${child.pid}`) tracker.scriptEntered = true;
+      const bootstrapPrefix = `VERIDIA_NATIVE_BOOTSTRAP_STAGE=${role}:${child.pid}:`;
+      const stage = line.startsWith(bootstrapPrefix) ? line.slice(bootstrapPrefix.length) : null;
+      if (["UTF8_ENCODING_START", "UTF8_ENCODING_READY", "CONFIG_READ_START", "CONFIG_READ_READY", "CONFIG_PARSE_START", "CONFIG_PARSE_READY", "CONFIG_VALIDATE_START", "CONFIG_VALIDATE_READY"].includes(stage) && tracker.bootstrapStages.length < 8) tracker.bootstrapStages.push(stage);
       entryBuffer = entryBuffer.slice(end + 1);
     }
     if (entryBuffer.length > 4096) entryBuffer = "";
@@ -162,7 +166,7 @@ async function until(predicate, ms, now) {
   return false;
 }
 function compactChild(tracker) { return { pid: tracker.child.pid ?? null, actualCloseObserved: tracker.closed,
-  spawnedAt: tracker.spawnedAt, scriptEntered: tracker.scriptEntered,
+  spawnedAt: tracker.spawnedAt, scriptEntered: tracker.scriptEntered, bootstrapStages: [...tracker.bootstrapStages],
   configValidatedReceived: tracker.stages.snapshot().records.some(record => record.role !== "Worker" && record.stage === "CONFIG_VALIDATED"),
   exitCode: tracker.exitCode, signal: tracker.signal, spawnError: tracker.spawnError ? errorProjection(tracker.spawnError) : null,
   safeStartupDiagnostic: tracker.safeStartupDiagnostic || null }; }
@@ -464,6 +468,7 @@ function projectIdentity(value) { return value && positive(value.pid) && validBi
 function projectReceipt(value) {
   const child = input => input ? { pid: positive(input.pid) ? input.pid : null, actualCloseObserved: input.actualCloseObserved === true,
     spawnedAt: utc(input.spawnedAt) ? input.spawnedAt : null, scriptEntered: input.scriptEntered === true,
+    bootstrapStages: Array.isArray(input.bootstrapStages) ? input.bootstrapStages.filter(stage => ["UTF8_ENCODING_START", "UTF8_ENCODING_READY", "CONFIG_READ_START", "CONFIG_READ_READY", "CONFIG_PARSE_START", "CONFIG_PARSE_READY", "CONFIG_VALIDATE_START", "CONFIG_VALIDATE_READY"].includes(stage)).slice(0, 8) : [],
     configValidatedReceived: input.configValidatedReceived === true,
     exitCode: Number.isInteger(input.exitCode) ? input.exitCode : null, signal: redactBuildLockDiagnosticText(input.signal), spawnError: input.spawnError ? errorProjection(input.spawnError) : null,
     safeStartupDiagnostic: redactBuildLockDiagnosticText(input.safeStartupDiagnostic) } : null;

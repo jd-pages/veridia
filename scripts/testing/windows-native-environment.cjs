@@ -21,6 +21,10 @@ function minimalSafeWindowsNativeEnvironment(source = process.env) {
     const actual = Object.keys(source).find(name => name.toUpperCase() === key.toUpperCase());
     if (actual && typeof source[actual] === "string" && source[actual].length) result[key] = source[actual];
   }
+  // A cropped environment must not invoke implicit machine/user module search.
+  // This watcher uses only Windows PowerShell's own built-in cmdlets. Pin their
+  // search directory instead of copying the hosted runner's PSModulePath.
+  result.PSModulePath = path.join(result.SystemRoot ?? "C:/Windows", "System32/WindowsPowerShell/v1.0/Modules");
   return result;
 }
 module.exports = { MINIMAL_SAFE_WINDOWS_NATIVE_ENV, WINDOWS_NATIVE_BLOCKED_DEFAULTS, minimalSafeWindowsNativeEnvironment };

@@ -24,7 +24,7 @@ const child = spawn(path.join(process.env.SystemRoot, "System32/WindowsPowerShel
   ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "scripts/testing/windows-trace-rm-watcher.ps1"),
     "-Configuration", configuration, "-Role", "Supervisor", "-BootstrapProbe"],
   { cwd: root, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
-const stages = [], prefix = "VERIDIA_NATIVE_READY_STAGE=";
+const stages = [], bootstrapStages = [], prefix = "VERIDIA_NATIVE_READY_STAGE=";
 let buffer = "", safeStderr = "", errorCode = null, timedOut = false;
 child.once("spawn", () => stages.push("POWERSHELL_SPAWNED"));
 child.once("error", error => { errorCode = error.code ?? "SPAWN_ERROR"; });
@@ -34,6 +34,9 @@ child.stdout.on("data", chunk => {
   for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
     const line = buffer.slice(0, end).trim(); buffer = buffer.slice(end + 1);
     if (line === `VERIDIA_NATIVE_SCRIPT_ENTERED=Supervisor:${child.pid}`) stages.push("SCRIPT_ENTERED");
+    const bootstrapPrefix = `VERIDIA_NATIVE_BOOTSTRAP_STAGE=Supervisor:${child.pid}:`;
+    const bootstrapStage = line.startsWith(bootstrapPrefix) ? line.slice(bootstrapPrefix.length) : null;
+    if (["UTF8_ENCODING_START", "UTF8_ENCODING_READY", "CONFIG_READ_START", "CONFIG_READ_READY", "CONFIG_PARSE_START", "CONFIG_PARSE_READY", "CONFIG_VALIDATE_START", "CONFIG_VALIDATE_READY"].includes(bootstrapStage) && bootstrapStages.length < 8) bootstrapStages.push(bootstrapStage);
     if (line.startsWith(prefix)) {
       let record; try { record = JSON.parse(line.slice(prefix.length)); } catch { continue; }
       if (record.invocationId === invocationId && record.nonce === nonce && record.supportIdentity === supportIdentity &&
@@ -48,9 +51,9 @@ child.once("close", (code, signal) => {
   const elapsedMs = performance.now() - started;
   const passed = code === 0 && !errorCode && !timedOut && elapsedMs < 5000 && stages.includes("CONFIG_VALIDATED_RECEIVED");
   process.stdout.write(`${JSON.stringify({ label: "CI_NATIVE_BOOTSTRAP_PROBE", node: process.version, status: passed ? "PASS" : "FAILED",
-    environmentKeys: Object.keys(env), omitted: omitted ?? null, stages, pid: child.pid ?? null, spawnTimestamp,
+    environmentKeys: Object.keys(env), omitted: omitted ?? null, stages, bootstrapStages, pid: child.pid ?? null, spawnTimestamp,
     closeObserved: true, code, signal, errorCode, safeStderr: safeStderr || null, elapsedMs,
-    failureStage: passed ? null : stages.at(-1) ?? "POWERSHELL_SPAWN" })}\n`);
+    failureStage: passed ? null : bootstrapStages.at(-1) ?? stages.at(-1) ?? "POWERSHELL_SPAWN" })}\n`);
   process.exitCode = passed ? 0 : 1;
 });
 }
