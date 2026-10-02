@@ -56,7 +56,7 @@ export function evaluateGenerationIdleSnapshot(runtime: unknown, sessions: unkno
 };
 export function captureWindowsRuntime(port: number, execute?: (...args: unknown[]) => unknown, timeoutMs?: number): RuntimeSnapshot;
 export interface UnknownRuntimeProcess { pid: number; parentPid: number; name: string; createdAt: string | null;
-  scopeReason: "UNSCOPED_OPAQUE_NAMED_CANDIDATE" | "UNVERIFIED_HISTORICAL_PARENT_CANDIDATE" | "PROJECT_OR_RUN_PROFILE_MATCH" | "DIAGNOSTIC_COLLECTOR_DIRECT_CHILD_CANDIDATE"; }
+  scopeReason: "UNSCOPED_OPAQUE_NAMED_CANDIDATE" | "UNVERIFIED_HISTORICAL_PARENT_CANDIDATE" | "PROJECT_OR_RUN_PROFILE_MATCH" | "DIAGNOSTIC_COLLECTOR_DIRECT_CHILD_CANDIDATE" | "RUN_PORT_LISTENER" | "CURRENT_CAPTURED_ANCESTRY_MATCH"; }
 export interface DiagnosticCollectorIdentity extends RuntimeProcess {
   nativeCreationFileTime: string; callerIdentity: RuntimeProcess; callerNativeCreationFileTime: string;
   identityVerified: true; directCallerVerified: true; queryStartedAt: string; queryEndedAt: string;
@@ -95,9 +95,10 @@ export interface HistoricalParentFailureDiagnostics {
     capturedParentIdentityCount: number; capturedParentIdentitiesTruncated: boolean; capturedParentIdentities: HistoricalParentDiagnosticIdentity[];
     ownershipGranted: false; terminationAuthorized: false; originalUnknownClassificationChanged: false }[];
 }
-export function captureWindowsScopedResiduals(input: { projectRoot: string; profilePaths: string[]; identities: RuntimeProcess[]; wrapperIdentity: RuntimeProcess; timeoutMs?: number }, execute?: (...args: unknown[]) => unknown): {
+export function captureWindowsScopedResiduals(input: { projectRoot: string; profilePaths: string[]; identities: RuntimeProcess[]; wrapperIdentity: RuntimeProcess; timeoutMs?: number; identityForensics?: boolean; ports?: number[]; portListeners?: { pid: number; port: number }[] }, execute?: (...args: unknown[]) => unknown): {
   ownedProcesses: RuntimeProcess[]; unknownProcesses: UnknownRuntimeProcess[]; opaqueUnscopedCandidates: UnknownRuntimeProcess[];
   rawUnknownProcesses: UnknownRuntimeProcess[];
+  historicalParentReferences: (RuntimeProcess & { classification: "HISTORICAL_PARENT_REFERENCE_WITHOUT_PROJECT_AFFINITY"; ownershipGranted: false; terminationAuthorized: false })[];
   diagnosticCollector: DiagnosticCollectorIdentity; diagnosticCollectorCandidates: DiagnosticCollectorCandidate[];
   diagnosticCollectorObservation: "OBSERVED" | "NOT_OBSERVED";
   historicalParentFailureDiagnostics: HistoricalParentFailureDiagnostics;

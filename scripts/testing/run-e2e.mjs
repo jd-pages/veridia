@@ -297,7 +297,9 @@ async function captureFinalPhysicalFence(remainingBudget, label) {
     capture: remainingMs => captureWindowsRuntime(runPort, undefined, Math.min(15_000, remainingMs)) });
   const residuals = captureWindowsScopedResiduals({ projectRoot: root,
     profilePaths: ["xhs-profile", "douyin-profile"].map(name => path.join(runDirectory, name)),
-    identities, wrapperIdentity, timeoutMs: Math.min(15_000, remainingBudget()) });
+    identities, wrapperIdentity, timeoutMs: Math.min(15_000, remainingBudget()),
+    identityForensics: label === "after-process-cleanup" && process.env?.VERIDIA_E2E_IDENTITY_FORENSICS === "1",
+    ports: [runPort], portListeners: fence.runtime.ports });
   runtimeAfterCleanup = { label, capturedAt: new Date().toISOString(),
     processes: matchingOwnedProcesses(fence.runtime.processes, identities), ports: fence.runtime.ports, residuals,
     allCapturedIdentityCount: identities.length, physicalFence: { observations: fence.observations, elapsedMs: fence.elapsedMs } };

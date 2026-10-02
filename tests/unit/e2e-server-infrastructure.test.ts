@@ -1144,11 +1144,28 @@ describe("E2E server infrastructure", () => {
       { ...fixture(100018, "E:/collector-fixture-profile", "C:/Windows/System32/conhost.exe", "conhost.exe"), ParentProcessId: -1 },
       { ...fixture(100019, null, null, "conhost.exe"), ParentProcessId: -1 },
       { ...fixture(200000, "foreign reused parent"), birth: "2026-10-01T00:00:00.0000000Z" },
+      { ...fixture(100020, "foreign executable", "C:/foreign/agent.exe", "ExternalSecurityAgent.exe"), ParentProcessId: 200000 },
+      fixture(100021, `${project}\\external-helper.mjs`, "C:/foreign/agent.exe", "ExternalSecurityAgent.exe"),
+      fixture(100022, "foreign listener", "C:/foreign/agent.exe", "ExternalSecurityAgent.exe"),
+      { ...fixture(100023, "foreign child of captured live parent", "C:/foreign/agent.exe", "ExternalSecurityAgent.exe"), ParentProcessId: 100010,
+        birth: "2026-10-01T00:00:00.0000000Z" },
+      fixture(100024, "captured exact child", "C:/foreign/agent.exe", "ExternalSecurityAgent.exe"),
+      { ...fixture(100025, "PID reuse is not ownership", "C:/foreign/agent.exe", "ExternalSecurityAgent.exe"), ParentProcessId: 200000,
+        birth: "2026-10-01T00:00:01.0000000Z" },
+      fixture(100026, 'external --profile=E:/collector-fixture-profile', "C:/foreign/agent.exe", "ExternalSecurityAgent.exe"),
+      { ...fixture(100027, "weak missing historical parent", "C:/foreign/agent.exe", "ExternalSecurityAgent.exe"), ParentProcessId: 200001,
+        birth: "2026-10-01T00:00:01.0000000Z" },
+      { ...fixture(100028, "ambient observer child", "C:/foreign/agent.exe", "ExternalSecurityAgent.exe"), ParentProcessId: wrapper!.pid,
+        birth: new Date(Date.parse(wrapper!.createdAt) + 1).toISOString().replace("Z", "0000Z") },
+      { ...fixture(100029, `${project}\\owned-resource.mjs`, "C:/foreign/agent.exe", "ExternalSecurityAgent.exe"), ParentProcessId: wrapper!.pid,
+        birth: new Date(Date.parse(wrapper!.createdAt) + 1).toISOString().replace("Z", "0000Z") },
     ];
     const historical = processRow(200000, 1);
     const knownOpaque = processRow(100010, 999);
+    const knownExternal = { ...processRow(100024, 999), name: "ExternalSecurityAgent.exe" };
     const observed = captureWindowsScopedResiduals({ projectRoot: project, profilePaths: [path.join(project, ".playwright", "unit-profile"), "E:/collector-fixture-profile"],
-      identities: [historical, knownOpaque, processRow(200001, 1, "invalid-birth")], wrapperIdentity: wrapper! }, (command, args, options) => {
+      identities: [historical, knownOpaque, knownExternal, processRow(200001, 1, "invalid-birth")], wrapperIdentity: wrapper!,
+      portListeners: [{ pid: 100022, port: 53022 }] }, (command, args, options) => {
       const nativeArgs = args as string[];
       const nativeOptions = options as { input: string };
       const actualScript = nativeArgs[3];
@@ -1161,16 +1178,21 @@ describe("E2E server infrastructure", () => {
       return spawnSync(command as string, [...nativeArgs.slice(0, 3), script], { ...nativeOptions, encoding: "utf8", windowsHide: true,
         input: JSON.stringify({ ...JSON.parse(nativeOptions.input), fixtureRows: rows }) });
     });
-    expect(observed).toMatchObject({ wrapperIdentityVerified: true, ownedProcesses: [knownOpaque], opaqueUnscopedCandidateCount: 3 });
-    expect(observed.unknownProcesses.map(item => item.pid)).toEqual([100001, 100002, 100003, 100004, 100008, 100009, 100011, 100012, 100014, 100015, 100016, 100017, 100018, 100019]);
-    expect(observed.rawUnknownProcesses.map(item => item.pid)).toContain(100013);
-    expect(observed.excludedHistoricalParentCandidates).toEqual([expect.objectContaining({ pid: 100013,
-      exclusion: "CHILD_BIRTH_PRECEDES_ALL_CAPTURED_PARENT_INCARNATIONS", ownershipGranted: false, terminationAuthorized: false,
-      capturedParentIdentities: [{ pid: historical.pid, parentPid: historical.parentPid, createdAt: historical.createdAt }] })]);
+    expect(observed).toMatchObject({ wrapperIdentityVerified: true, ownedProcesses: [knownOpaque, knownExternal], opaqueUnscopedCandidateCount: 3 });
+    expect(observed.unknownProcesses.map(item => item.pid)).toEqual([100001, 100002, 100003, 100004, 100007, 100015, 100017, 100018, 100019, 100021, 100022, 100023, 100026, 100029]);
+    expect(observed.unknownProcesses.find(item => item.pid === 100028)).toBeUndefined();
+    expect(observed.unknownProcesses.find(item => item.pid === 100029)?.scopeReason).toBe("PROJECT_OR_RUN_PROFILE_MATCH");
+    expect(observed.rawUnknownProcesses.map(item => item.pid)).not.toContain(100013);
+    expect(observed.excludedHistoricalParentCandidates).toEqual([]);
+    expect(observed.historicalParentReferences.map(item => item.pid)).toEqual([100009, 100013, 100014, 100016, 100020, 100025, 100027]);
+    expect(observed.historicalParentReferences.every(item => item.ownershipGranted === false && item.terminationAuthorized === false)).toBe(true);
     expect(observed.opaqueUnscopedCandidates.map(item => item.pid)).toEqual([100008, 100011, 100012]);
-    expect(observed.unknownProcesses.find(item => item.pid === 100011)?.scopeReason).toBe("UNSCOPED_OPAQUE_NAMED_CANDIDATE");
-    expect(observed.unknownProcesses.find(item => item.pid === 100009)?.scopeReason).toBe("UNVERIFIED_HISTORICAL_PARENT_CANDIDATE");
-    expect(observed.unknownProcesses.find(item => item.pid === 100012)).toMatchObject({ createdAt: null, scopeReason: "UNSCOPED_OPAQUE_NAMED_CANDIDATE" });
+    expect(observed.unknownProcesses.find(item => item.pid === 100011)).toBeUndefined();
+    expect(observed.unknownProcesses.find(item => item.pid === 100021)?.scopeReason).toBe("PROJECT_OR_RUN_PROFILE_MATCH");
+    expect(observed.unknownProcesses.find(item => item.pid === 100022)?.scopeReason).toBe("RUN_PORT_LISTENER");
+    expect(observed.unknownProcesses.find(item => item.pid === 100023)?.scopeReason).toBe("CURRENT_CAPTURED_ANCESTRY_MATCH");
+    expect(observed.unknownProcesses.find(item => item.pid === 100026)?.scopeReason).toBe("PROJECT_OR_RUN_PROFILE_MATCH");
+    expect(observed.opaqueUnscopedCandidates.find(item => item.pid === 100012)).toMatchObject({ createdAt: null, scopeReason: "UNSCOPED_OPAQUE_NAMED_CANDIDATE" });
     expect(observed.scopeLimitations).toContain("HISTORICAL_PARENT_PID_IS_NOT_TERMINATION_AUTHORITY");
     expect(observed.diagnosticCollectorCandidates.map(item => [item.pid, item.scopeKnownNonProjectProfile])).toEqual([
       [100017, false], [100018, false], [100019, false],

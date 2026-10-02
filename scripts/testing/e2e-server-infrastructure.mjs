@@ -529,16 +529,41 @@ export function captureWindowsRuntime(port, execute = spawnSync, timeoutMs = 15_
   return JSON.parse(result.stdout.trim());
 }
 
-export function captureWindowsScopedResiduals({ projectRoot, profilePaths, identities, wrapperIdentity, timeoutMs = 15_000 }, execute = spawnSync) {
+export function captureWindowsScopedResiduals({ projectRoot, profilePaths, identities, wrapperIdentity, timeoutMs = 15_000, identityForensics = false, ports = [], portListeners = [] }, execute = spawnSync) {
   if (!path.isAbsolute(projectRoot) || !Array.isArray(profilePaths) || !Array.isArray(identities) ||
     !validBirth(wrapperIdentity) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 15_000) throw new Error("E2E residual scope/物理身份不完整");
+  if (typeof identityForensics !== "boolean" || !Array.isArray(ports) || ports.some(port => !Number.isSafeInteger(port) || port < 1 || port > 65535)) throw new Error("E2E forensic scope invalid");
+  if (!Array.isArray(portListeners) || portListeners.some(item => !Number.isSafeInteger(item.pid) || item.pid < 1 || !Number.isSafeInteger(item.port) || item.port < 1 || item.port > 65535)) throw new Error("E2E port affinity measurement invalid");
   const script = `$ErrorActionPreference='Stop';
 $scope=[Console]::In.ReadToEnd() | ConvertFrom-Json;
 $marker=([string]$scope.projectRoot).Replace('/','\\').ToLowerInvariant();
 $expected=@{}; $historicalParentPids=@{}; foreach($identity in $scope.identities){$expected["$($identity.pid):$($identity.createdAt)"]=$true;$historicalParentPids[[string]$identity.pid]=$true};
-$owned=@(); $unknown=@(); $opaque=@(); $collectorCandidates=@(); $heldChildren=@(); $collectorHandle=$null; $wrapperHandle=$null;
+$owned=@(); $unknown=@(); $opaque=@(); $historicalReferences=@(); $collectorCandidates=@(); $heldChildren=@(); $collectorHandle=$null; $wrapperHandle=$null;
 function RowBirth($item){if($item.CreationDate){$item.CreationDate.ToUniversalTime().ToString('o')}else{$null}};
 function BirthFileTime($birth){[DateTimeOffset]::ParseExact($birth,'yyyy-MM-ddTHH:mm:ss.fffffffZ',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal).UtcDateTime.ToFileTimeUtc()};
+function ProjectProfileAffinity($item){
+  $command=([string]$item.CommandLine).Replace('/','\\').ToLowerInvariant();$executable=([string]$item.ExecutablePath).Replace('/','\\').ToLowerInvariant();
+  if($command.Contains($marker+'\\') -or $command.Contains('"'+$marker+'"') -or $command -eq $marker -or $executable.StartsWith($marker+'\\')){return $true};
+  foreach($profile in $scope.profilePaths){$m=([string]$profile).Replace('/','\\').ToLowerInvariant();if($command.Contains($m) -or $executable.Contains($m)){return $true}};
+  return $false;
+};
+function CurrentOwnedAncestorAffinity($item){
+  $seen=@{};$current=$item;
+  for($depth=0;$depth -lt 64;$depth++){
+    $cb=RowBirth $current;if(!$cb){return $false};$ppid=[int]$current.ParentProcessId;
+    if($ppid -le 0 -or $seen.ContainsKey([string]$ppid)){return $false};$seen[[string]$ppid]=$true;
+    $rows=@($processRowsByPid[[string]$ppid]);if($rows.Count -ne 1 -or !$rows[0]){return $false};
+    $parent=$rows[0];$pb=RowBirth $parent;if(!$pb -or [DateTimeOffset]::Parse($pb) -gt [DateTimeOffset]::Parse($cb)){return $false};
+    # Exact current birth, not the reused numeric PID. Observation affinity
+    # never adopts a new child into the native termination identities.
+    if($expected.ContainsKey("$($ppid):$pb")){return $true};
+    # The live observer/caller is not a retired teardown identity. Reaching
+    # that boundary alone cannot turn its ambient children into residuals.
+    # Direct project/profile/port affinity was checked on the candidate first.
+    if($ppid -eq [int]$scope.wrapperIdentity.pid -and $pb -eq $scope.wrapperIdentity.createdAt){return $false};
+    if(ProjectProfileAffinity $parent){return $true};$current=$parent;
+  };return $false;
+};
 try {
   # Self proof is collected before candidate filtering. These handles confer
   # observation identity only; this collector never grants Kill authority.
@@ -546,6 +571,7 @@ try {
   $collectorNative=$collectorHandle.StartTime.ToUniversalTime().ToFileTimeUtc();
   $queryStarted=[DateTime]::UtcNow;
   $items=@(Get-CimInstance Win32_Process);
+  $processRowsByPid=@{};foreach($processRow in $items){$key=[string]$processRow.ProcessId;$processRowsByPid[$key]=@($processRowsByPid[$key] | Where-Object {$null -ne $_})+@($processRow)};
   $selfRows=@($items | Where-Object {[int]$_.ProcessId -eq $PID});
   $wrapperRows=@($items | Where-Object {[int]$_.ProcessId -eq [int]$scope.wrapperIdentity.pid});
   if($selfRows.Count -ne 1 -or $wrapperRows.Count -ne 1){throw 'COLLECTOR_OR_WRAPPER_IDENTITY_UNAVAILABLE'};
@@ -567,6 +593,8 @@ try {
     $related=$false; $opaqueNamed=$false; $scopeKnown=$false;
     $named=$item.Name -match '^(node|chrome|chromium|headless_shell|chrome-headless-shell|electron|VERIDIA)\\.exe$';
     $conhost=$item.Name -ieq 'conhost.exe';
+    $scopeKnown=![string]::IsNullOrWhiteSpace([string]$item.CommandLine) -and ![string]::IsNullOrWhiteSpace([string]$item.ExecutablePath);
+    $related=ProjectProfileAffinity $item;
     if($named -or ($directCollectorChild -and $conhost)) {
       # A conhost exclusion must independently disprove project/profile scope.
       # Missing command/path evidence is not a non-project proof.
@@ -574,15 +602,25 @@ try {
       $scopeKnown=![string]::IsNullOrWhiteSpace([string]$item.CommandLine) -and ![string]::IsNullOrWhiteSpace([string]$item.ExecutablePath);
       $command=([string]$item.CommandLine).Replace('/','\\').ToLowerInvariant();
       $executable=([string]$item.ExecutablePath).Replace('/','\\').ToLowerInvariant();
-      $related=$command.Contains($marker+'\\') -or $command.Contains('"'+$marker+'"') -or $executable.StartsWith($marker+'\\');
+      $related=$related -or $command.Contains($marker+'\\') -or $command.Contains('"'+$marker+'"') -or $executable.StartsWith($marker+'\\');
       if($directCollectorChild -and $conhost){$related=$command.Contains($marker) -or $executable.Contains($marker)};
       foreach($profile in $scope.profilePaths){$profileMarker=([string]$profile).Replace('/','\\').ToLowerInvariant();if($command.Contains($profileMarker) -or ($directCollectorChild -and $conhost -and $executable.Contains($profileMarker))){$related=$true}};
     }
     $historicalParent=$historicalParentPids.ContainsKey([string]$item.ParentProcessId);
-    if(!$known -and !$related -and !$opaqueNamed -and !$historicalParent -and !$directCollectorChild){continue};
+    $portAffinity=@($scope.portListeners | Where-Object {[int]$_.pid -eq [int]$item.ProcessId}).Count -gt 0;
+    $lineageAffinity=$false;
+    if(!$known -and !$related -and !$directCollectorChild){$lineageAffinity=CurrentOwnedAncestorAffinity $item};
+    if(!$known -and !$related -and !$historicalParent -and !$directCollectorChild -and !$portAffinity -and !$lineageAffinity){
+      if($opaqueNamed){$opaque+=@{pid=[int]$item.ProcessId;parentPid=[int]$item.ParentProcessId;name=$item.Name;createdAt=$birth;scopeReason='UNSCOPED_OPAQUE_NAMED_CANDIDATE'}};
+      continue;
+    };
     $row=@{pid=[int]$item.ProcessId;parentPid=[int]$item.ParentProcessId;name=$item.Name;createdAt=$birth};
     if($known){$owned+=$row;continue};
-    $row.scopeReason=$(if($opaqueNamed){'UNSCOPED_OPAQUE_NAMED_CANDIDATE'}elseif($related){'PROJECT_OR_RUN_PROFILE_MATCH'}elseif($historicalParent){'UNVERIFIED_HISTORICAL_PARENT_CANDIDATE'}else{'DIAGNOSTIC_COLLECTOR_DIRECT_CHILD_CANDIDATE'});
+    if($historicalParent -and $scopeKnown -and !$related -and !$portAffinity -and !$lineageAffinity -and !$directCollectorChild){
+      $historicalReferences+=@{pid=$row.pid;parentPid=$row.parentPid;name=$row.name;createdAt=$row.createdAt;
+        classification='HISTORICAL_PARENT_REFERENCE_WITHOUT_PROJECT_AFFINITY';ownershipGranted=$false;terminationAuthorized=$false};continue;
+    };
+    $row.scopeReason=$(if($related){'PROJECT_OR_RUN_PROFILE_MATCH'}elseif($portAffinity){'RUN_PORT_LISTENER'}elseif($lineageAffinity){'CURRENT_CAPTURED_ANCESTRY_MATCH'}elseif($opaqueNamed){'UNSCOPED_OPAQUE_NAMED_CANDIDATE'}elseif($historicalParent){'UNVERIFIED_HISTORICAL_PARENT_CANDIDATE'}else{'DIAGNOSTIC_COLLECTOR_DIRECT_CHILD_CANDIDATE'});
     $unknown+=$row;if($opaqueNamed){$opaque+=$row};
     if($directCollectorChild -and $conhost) {
       $nativeBirth=$null;$nativeVerified=$false;
@@ -673,6 +711,42 @@ try {
         ($held.parent.ProcessName+'.exe') -ieq $held.proof.parent.name -and ($held.child.ProcessName+'.exe') -ieq $held.proof.child.name);
     } catch {$held.proof.sameHandlesLiveAtBothBoundaries=$false;$held.proof.nativeIdentityMatchesAtBothBoundaries=$false};
   }
+  $forensics=$null;
+  if($scope.identityForensics){
+    # Read-only observations only. These fields never grant cleanup authority.
+    $listeners=@();$portStatus='AVAILABLE';
+    if($historicalCandidates.Count -gt 0){try {$listeners=@(Get-NetTCPConnection -State Listen -ErrorAction Stop)}catch{$portStatus='UNAVAILABLE'}};
+    function ForensicRow($r){
+      $rb=RowBirth $r;$native=$null;$nativeStatus='UNAVAILABLE';
+      try{$h=[Diagnostics.Process]::GetProcessById([int]$r.ProcessId);$heldChildren+=$h;$null=$h.Handle;
+        $native=[string]$h.StartTime.ToUniversalTime().ToFileTimeUtc();
+        if($rb -and !$h.HasExited -and [decimal]::Floor([decimal]$native/10) -eq [decimal]::Floor([decimal](BirthFileTime $rb)/10)){$nativeStatus='MATCHED'}
+      }catch{};
+      $cmd=[string]$r.CommandLine;$exe=[string]$r.ExecutablePath;
+      $text=($cmd+' '+$exe).Replace('/','\\').ToLowerInvariant();$profiles=@();
+      foreach($profile in $scope.profilePaths){if($text.Contains(([string]$profile).Replace('/','\\').ToLowerInvariant())){$profiles+=[string]$profile}};
+      @{pid=[int]$r.ProcessId;parentPid=[int]$r.ParentProcessId;name=[string]$r.Name;createdAt=$rb;
+        sessionId=[int]$r.SessionId;nativeCreationFileTime=$native;nativeIdentityStatus=$nativeStatus;
+        executablePath=$(if($exe){$exe}else{'UNAVAILABLE'});commandLine=$(if($cmd){$cmd}else{'UNAVAILABLE'});
+        capturedExactBirth=$expected.ContainsKey("$($r.ProcessId):$rb");projectAffinity=$text.Contains($marker);
+        runDirectoryAffinity=$text.Contains('.playwright\\e2e-runs');profileAffinity=@($profiles);
+        relevantListeners=@($listeners | Where-Object {[int]$_.OwningProcess -eq [int]$r.ProcessId -and $scope.ports -contains [int]$_.LocalPort} | ForEach-Object {@{port=[int]$_.LocalPort;owningPid=[int]$_.OwningProcess}});
+        portObservationStatus=$portStatus;exitAt='UNAVAILABLE';resourceHandleObservation='UNAVAILABLE_NO_READ_ONLY_HANDLE_PROVIDER'};
+    };
+    $records=@();
+    foreach($candidate in @($historicalCandidates | Select-Object -First 16)){
+      $rows=@($items | Where-Object {[int]$_.ProcessId -eq [int]$candidate.pid});if($rows.Count -ne 1){continue};
+      $tree=@();$seen=@{};$current=$rows[0];$end='ROOT';
+      for($depth=0;$depth -lt 32;$depth++){
+        if($seen.ContainsKey([string]$current.ProcessId)){$end='CYCLE';break};$seen[[string]$current.ProcessId]=$true;
+        $tree+=ForensicRow $current;$parents=@($items | Where-Object {[int]$_.ProcessId -eq [int]$current.ParentProcessId});
+        if($parents.Count -ne 1){$end='PARENT_UNAVAILABLE_OR_AMBIGUOUS';break};$current=$parents[0];$end='DEPTH_LIMIT';
+      };
+      $records+=@{candidate=(ForensicRow $rows[0]);sameSnapshotAncestry=@($tree);ancestryEnd=$end};
+    };
+    $forensics=@{scope='READ_ONLY_SAME_CIM_SNAPSHOT_NOT_OWNERSHIP_AUTHORITY';candidateCount=$historicalCandidates.Count;
+      records=@($records);recordsTruncated=($historicalCandidates.Count -gt 16);ownershipGranted=$false;terminationAuthorized=$false};
+  };
   $queryEnded=[DateTime]::UtcNow;
   $collector=@{pid=[int]$self.ProcessId;parentPid=[int]$self.ParentProcessId;name=$self.Name;createdAt=$collectorBirth;
     nativeCreationFileTime=[string]$collectorNative;callerIdentity=@{pid=[int]$wrapper.ProcessId;parentPid=[int]$wrapper.ParentProcessId;name=$wrapper.Name;createdAt=$wrapperBirth};callerNativeCreationFileTime=[string]$wrapperNative;
@@ -680,18 +754,18 @@ try {
     queryStartedFileTime=[string]$queryStarted.ToFileTimeUtc();queryEndedFileTime=[string]$queryEnded.ToFileTimeUtc();
     birthPrecision='CIM_MICROSECOND_MATCH_NATIVE_FILETIME_FLOOR10';ownershipGranted=$false;terminationAuthorized=$false};
   @{ownedProcesses=@($owned);unknownProcesses=@($unknown);opaqueUnscopedCandidates=@($opaque);opaqueUnscopedCandidateCount=@($opaque).Count;
-    wrapperIdentityVerified=$true;diagnosticCollector=$collector;diagnosticCollectorCandidates=@($collectorCandidates);historicalParentReuseCandidates=@($historicalReuseProofs);
+    wrapperIdentityVerified=$true;diagnosticCollector=$collector;diagnosticCollectorCandidates=@($collectorCandidates);historicalParentReuseCandidates=@($historicalReuseProofs);identityForensics=$forensics;historicalParentReferences=@($historicalReferences);
     historicalParentObservations=@{schemaVersion=1;scope='SAME_CIM_SNAPSHOT_HISTORICAL_PARENT_OBSERVATION_ONLY';candidateLimit=16;
       candidateTotal=$historicalCandidates.Count;candidateTruncated=($historicalCandidates.Count -gt 16);records=@($historicalObservations);
       queryStartedAt=$collector.queryStartedAt;queryEndedAt=$collector.queryEndedAt;ownershipGranted=$false;terminationAuthorized=$false};
     scope='NAMED_PROJECT_OR_RUN_PROFILE_OR_EXACT_CAPTURED_BIRTH_OR_UNVERIFIED_HISTORICAL_PARENT';
-    scopeLimitations=@('SAMPLED_NOT_EXHAUSTIVE','OPAQUE_NAMED_CANDIDATES_ARE_UNKNOWN_NOT_OWNED','HISTORICAL_PARENT_PID_IS_NOT_TERMINATION_AUTHORITY','COLLECTOR_DIRECT_CHILD_EXCLUSION_IS_OBSERVATION_ONLY')} | ConvertTo-Json -Depth 8 -Compress
+    scopeLimitations=@('SAMPLED_NOT_EXHAUSTIVE','OPAQUE_NAMED_CANDIDATES_ARE_DIAGNOSTIC_ONLY_WITHOUT_PROJECT_AFFINITY','HISTORICAL_PARENT_PID_IS_NOT_TERMINATION_AUTHORITY','COLLECTOR_DIRECT_CHILD_EXCLUSION_IS_OBSERVATION_ONLY')} | ConvertTo-Json -Depth 12 -Compress
 } finally {
   foreach($heldChild in $heldChildren){$heldChild.Dispose()};
   if($wrapperHandle){$wrapperHandle.Dispose()};if($collectorHandle){$collectorHandle.Dispose()};
 }`;
   const result = execute("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-    encoding: "utf8", input: JSON.stringify({ projectRoot, profilePaths, identities, wrapperIdentity }), windowsHide: true, timeout: timeoutMs,
+    encoding: "utf8", input: JSON.stringify({ projectRoot, profilePaths, identities, wrapperIdentity, identityForensics, ports, portListeners }), windowsHide: true, timeout: timeoutMs,
   });
   if (result.error || result.status !== 0) throw new Error("E2E scoped residual 测量失败；禁止猜测0或终止未知进程");
   const snapshot = JSON.parse(result.stdout.trim());
@@ -873,6 +947,9 @@ try {
     }
   }
   const snapshotWithoutRawParentEvidence = { ...snapshot };
+  if (identityForensics && snapshot.identityForensics) snapshotWithoutRawParentEvidence.identityForensics = redactE2eDiagnosticValue(snapshot.identityForensics,
+    [process.env.AUTH_SECRET, process.env.EXTENSION_TOKEN, process.env.OPENAI_API_KEY].filter(Boolean));
+  else delete snapshotWithoutRawParentEvidence.identityForensics;
   delete snapshotWithoutRawParentEvidence.historicalParentObservations;
   delete snapshotWithoutRawParentEvidence.historicalParentReuseCandidates;
   return { ...snapshotWithoutRawParentEvidence, rawUnknownProcesses: [...snapshot.unknownProcesses], unknownProcesses: unknown,

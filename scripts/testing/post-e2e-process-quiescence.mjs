@@ -133,7 +133,7 @@ export async function enforcePostE2eProcessQuiescence(input, adapters = {}) {
         listeners.push(...runtime.ports);
       }
       const residuals = scoped({ projectRoot: input.root, profilePaths, identities: validated.identities,
-        wrapperIdentity, timeoutMs: Math.min(15_000, remaining()) });
+        wrapperIdentity, timeoutMs: Math.min(15_000, remaining()), ports, portListeners: listeners });
       if (residuals?.wrapperIdentityVerified !== true || !Array.isArray(residuals.ownedProcesses) || !Array.isArray(residuals.unknownProcesses)) {
         throw new Error("E2E_QUIESCENCE_SCOPED_SNAPSHOT_UNAVAILABLE");
       }

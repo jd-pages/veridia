@@ -103,6 +103,19 @@ describe("POST_E2E_PROCESS_QUIESCENCE fresh native fence", () => {
     const hooks = { ...adapters(), scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [], unknownProcesses: [wrapper] }) };
     await expect(enforcePostE2eProcessQuiescence(fixture(), hooks)).rejects.toThrow("UNKNOWN_PROJECT_OR_PROFILE_RESIDUAL");
   });
+  it("does not treat a classifier's historical reference without affinity as a project residual", async () => {
+    const hooks = { ...adapters(), scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [], unknownProcesses: [],
+      historicalParentReferences: [{ pid: 9000, parentPid: 100, name: "ExternalSecurityAgent.exe",
+        createdAt: "2026-10-01T00:00:01.5000000Z", classification: "HISTORICAL_PARENT_REFERENCE_WITHOUT_PROJECT_AFFINITY",
+        ownershipGranted: false, terminationAuthorized: false }] }) };
+    expect(await enforcePostE2eProcessQuiescence(fixture(), hooks)).toMatchObject({ status: "PASSED", unknownProcessCount: 0 });
+  });
+  it.each(["PROJECT_OR_RUN_PROFILE_MATCH", "RUN_PORT_LISTENER", "CURRENT_CAPTURED_ANCESTRY_MATCH"])(
+    "the same external name remains blocking with actual %s affinity", async scopeReason => {
+      const hooks = { ...adapters(), scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [],
+        unknownProcesses: [{ ...wrapper, pid: 9000, name: "ExternalSecurityAgent.exe", scopeReason }] }) };
+      await expect(enforcePostE2eProcessQuiescence(fixture(), hooks)).rejects.toThrow("UNKNOWN_PROJECT_OR_PROFILE_RESIDUAL");
+    });
   it("fails if a cleaned profile reappears", async () => {
     await expect(enforcePostE2eProcessQuiescence(fixture(), { ...adapters(), exists: () => true })).rejects.toThrow("PROFILE_REAPPEARED");
   });
