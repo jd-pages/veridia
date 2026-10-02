@@ -59,8 +59,17 @@ if ($cfg.label -eq 'FORMAL_VERIFY_TRACE') {
   if ($directory -notmatch '[\\/]\.playwright[\\/]build-lock-diagnostics-fixtures[\\/]lab-[0-9a-f-]{36}[\\/]run-[0-9a-f-]{36}$' -or [IO.Path]::GetDirectoryName($target) -ne [IO.Path]::GetDirectoryName($directory)) { throw 'FIXTURE_SCOPE_INVALID' }
 } else { throw 'LABEL_INVALID' }
 
+# Fixed low-volume startup notices, consumed privately by the owning controller.
+# They cannot prove native identity/readiness and contain no raw env or errors.
+function Ready-Stage([string]$Stage) {
+  $r=[ordered]@{invocationId=$cfg.invocationId;nonce=$cfg.nonce;supportIdentity=$cfg.supportIdentity;role=$Role;pid=$PID;stage=$Stage;utc=Utc;qpcTicks=Qpc;qpcFrequency=[Diagnostics.Stopwatch]::Frequency.ToString()}
+  [Console]::Out.WriteLine('VERIDIA_NATIVE_READY_STAGE='+($r|ConvertTo-Json -Compress))
+}
+Ready-Stage CONFIG_VALIDATED
+
 # Ownership operations use the exact retained native handle. GetProcessById or
 # a future PID lookup is never the stop authority. No target file is opened.
+Ready-Stage ADD_TYPE_START
 Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;
@@ -108,11 +117,13 @@ public static class VeridiaBuildRmNative {
   }
 }
 '@
+Ready-Stage ADD_TYPE_END
 [VeridiaBuildRmNative]::WatchEof()
 $self = [VeridiaBuildRmNative]::OpenProcess(0x100000 -bor 0x1000,$false,[uint32]$PID)
 if ($self -eq [IntPtr]::Zero) { throw 'SELF_NATIVE_HANDLE_UNAVAILABLE' }
 $selfBirth = [VeridiaBuildRmNative]::Birth($self)
 $selfParent = [VeridiaBuildRmNative]::Parent($self)
+Ready-Stage SELF_BOUND
 $nodeHandle = [IntPtr]::Zero
 $workerHandle = [IntPtr]::Zero
 $supervisorHandle = [IntPtr]::Zero
@@ -129,21 +140,27 @@ try {
     $remainingMs = ([DateTime]::Parse($cfg.leaseDeadlineUtc).ToUniversalTime() - [DateTime]::UtcNow).TotalMilliseconds
     if ($remainingMs -le 0 -or $remainingMs -gt $cfg.leaseMs) { throw 'LEASE_START_CLOCK_UNAVAILABLE' }
     $leaseDeadline = [Diagnostics.Stopwatch]::GetTimestamp() + [long]($remainingMs * [Diagnostics.Stopwatch]::Frequency / 1000)
+    Ready-Stage SUPERVISOR_ENROLLED
     New-Json 'supervisor-created.json' ([ordered]@{event='supervisor-created';pid=$PID;nativeStartFileTime=$selfBirth;parentPid=$selfParent;creatorNativeStartFileTime=[VeridiaBuildRmNative]::Birth($nodeHandle);leaseDeadlineQpc=$leaseDeadline.ToString()})
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = [IO.Path]::Combine($PSHOME,'powershell.exe');$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
     $args = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-Configuration',$Configuration,'-Role','Worker')
     $psi.Arguments = (@($args | ForEach-Object { if($_ -match '["\r\n]'){throw 'ARGUMENT_INVALID'}; '"'+$_+'"' }) -join ' ')
+    Ready-Stage WORKER_SPAWN_START
     $worker = [Diagnostics.Process]::Start($psi)
+    Ready-Stage WORKER_SPAWN_RETURN
     $workerBirth = $worker.StartTime.ToUniversalTime().ToFileTimeUtc().ToString()
     $workerHandle = [VeridiaBuildRmNative]::Enroll([uint32]$worker.Id,$workerBirth,[uint32]$PID,$true)
     $workerIdentity = @{pid=$worker.Id;nativeStartFileTime=$workerBirth;parentPid=$PID}
+    Ready-Stage WORKER_ENROLLED
     New-Json 'worker-created.json' ([ordered]@{event='worker-created';pid=$worker.Id;nativeStartFileTime=$workerBirth;parentPid=$PID;supervisorNativeStartFileTime=$selfBirth;creatorNativeStartFileTime=[VeridiaBuildRmNative]::Birth($nodeHandle);leaseDeadlineQpc=$leaseDeadline.ToString()})
   } else {
+    Ready-Stage WAIT_WORKER_CREATED
     while (-not ($workerIdentity = Read-Record 'worker-created.json')) {
       if ($watch.ElapsedMilliseconds -gt $cfg.readyMs -or [VeridiaBuildRmNative]::Eof) { throw 'ENROLLMENT_DEADLINE_OR_EOF' }
       [Threading.Thread]::Sleep(25)
     }
+    Ready-Stage WORKER_CREATED_OBSERVED
     $leaseDeadline = [long]$workerIdentity.leaseDeadlineQpc
     if ($workerIdentity.qpcFrequency -ne [Diagnostics.Stopwatch]::Frequency.ToString()) { throw 'NATIVE_CLOCK_DOMAIN_MISMATCH' }
     if ($Role -eq 'Guardian') {
@@ -151,6 +168,7 @@ try {
       $nodeHandle = [VeridiaBuildRmNative]::Enroll([uint32]$cfg.creatorPid,$workerIdentity.creatorNativeStartFileTime,[uint32]$cfg.creatorParentPid,$false)
       $supervisorHandle = [VeridiaBuildRmNative]::Enroll([uint32]$workerIdentity.parentPid,$workerIdentity.supervisorNativeStartFileTime,[uint32]$cfg.creatorPid,$false)
       $workerHandle = [VeridiaBuildRmNative]::Enroll([uint32]$workerIdentity.pid,$workerIdentity.nativeStartFileTime,[uint32]$workerIdentity.parentPid,$true)
+      Ready-Stage GUARDIAN_ENROLLED
       New-Json 'guardian-armed.json' ([ordered]@{event='guardian-armed';pid=$PID;nativeStartFileTime=$selfBirth;parentPid=$selfParent;workerPid=$workerIdentity.pid;workerNativeStartFileTime=$workerIdentity.nativeStartFileTime;workerHandleHeld=$true;supervisorNativeStartFileTime=$workerIdentity.supervisorNativeStartFileTime})
     } else {
       if ($PID -ne $workerIdentity.pid -or $selfBirth -ne $workerIdentity.nativeStartFileTime -or $selfParent -ne $workerIdentity.parentPid) { throw 'WORKER_CREATED_IDENTITY_MISMATCH' }
@@ -198,6 +216,7 @@ try {
         if ($cfg.fixtureMode -eq 'IGNORE_STOP' -and $samples -gt 0) { [Threading.Thread]::Sleep(25);continue }
         $startTicks=[Diagnostics.Stopwatch]::GetTimestamp();$startUtc=Utc
         $gap=$null;if($null -ne $lastStart){$gap=($startTicks-$lastStart)*1000/[Diagnostics.Stopwatch]::Frequency;$maxGap=[math]::Max($maxGap,$gap)};$lastStart=$startTicks
+        if($samples -eq 0){Ready-Stage FIRST_RM_START}
         $key=New-Object Text.StringBuilder 33
         $startResult=[VeridiaBuildRmNative]::RmStartSession([ref]$rmSession,0,$key)
         if($startResult -ne 0){throw ('RM_START_'+$startResult)};$rmStarted=$true
@@ -210,10 +229,12 @@ try {
         $endResult=[VeridiaBuildRmNative]::RmEndSession($rmSession);$rmStarted=$false
         if($r.Error -ne 0){$queryErrors++;throw ('RM_QUERY_'+$r.Error)}
         if($endResult -ne 0){throw ('RM_END_'+$endResult)}
+        if($samples -eq 0){Ready-Stage FIRST_RM_END}
         $samples++;$queryTotal+=$r.Ms;$maxQuery=[math]::Max($maxQuery,$r.Ms);$lastEnd=Utc
         $users=@($r.Users|Sort-Object {$_.Process.Pid},{$_.Process.Birth.Value})
         $exists=[IO.File]::Exists($target)
         $state=$exists.ToString()+'|'+(@($users|ForEach-Object {$_.Process.Pid.ToString()+':'+$_.Process.Birth.Value.ToString()}) -join ',')
+        if($samples -eq 1){Ready-Stage FIRST_METADATA_START}
         if($state -ne $lastState){
           $holders=@()
           foreach($u in $users){
@@ -237,7 +258,7 @@ try {
           $file=[IO.File]::Open([IO.Path]::Combine($directory,'owners.jsonl'),[IO.FileMode]::Append,[IO.FileAccess]::Write,[IO.FileShare]::Read)
           try{$file.Write($line,0,$line.Length)}finally{$file.Dispose()};$bytesWritten+=$line.Length;$changes++;$lastState=$state
         }
-        if($samples -eq 1){New-Json 'worker-ready.json' ([ordered]@{event='worker-ready';pid=$PID;nativeStartFileTime=$selfBirth;parentPid=$selfParent;firstQueryValid=$true;rmEndResult=0;targetExistsMetadataOnly=$exists;targetFileOpen='NEVER'})}
+        if($samples -eq 1){Ready-Stage FIRST_PUBLICATION_END;Ready-Stage WORKER_READY_START;New-Json 'worker-ready.json' ([ordered]@{event='worker-ready';pid=$PID;nativeStartFileTime=$selfBirth;parentPid=$selfParent;firstQueryValid=$true;rmEndResult=0;targetExistsMetadataOnly=$exists;targetFileOpen='NEVER'})}
         $remaining=$cfg.intervalMs-([Diagnostics.Stopwatch]::GetTimestamp()-$startTicks)*1000/[Diagnostics.Stopwatch]::Frequency
         if($remaining -gt 0){[Threading.Thread]::Sleep([int][math]::Ceiling($remaining))}
       }

@@ -29,7 +29,9 @@ if (process.argv[2] === "owned-sleep") {
         }
         return spawn(...args);
       } } : {}) });
+    const readyStartedMono = process.hrtime.bigint();
     const session = await controller.begin({ head: "a".repeat(40), sourceFingerprint: "b".repeat(64), environment: { NODE_ENV: "test" } });
+    const readyDurationMs = Number(process.hrtime.bigint() - readyStartedMono) / 1e6;
     let endedSession = false;
     try {
     const root = path.resolve(__dirname, "../..");
@@ -54,7 +56,17 @@ if (process.argv[2] === "owned-sleep") {
     const worker = JSON.parse(fs.readFileSync(path.join(directory, "worker-summary.json"), "utf8"));
     if (blocker.status !== 0 || Date.parse(ended) < leaseDeadline) throw new Error("FIXTURE_SYNCHRONOUS_BLOCK_DID_NOT_CROSS_LEASE");
     process.stdout.write(`${JSON.stringify({ label: "SYNTHETIC_TOOL_VALIDATION", evidence, proof, worker, nativeLeaseStop,
-      leaseWindow: { readyMs, activeLeaseMs, leaseDeadlineUtc: configuration.leaseDeadlineUtc, blockStartedAt: started, blockEndedAt: ended, injectedStartupDelayMs: injectedStartupDelay ? 6500 : 0 } })}\n`);
+      leaseWindow: { readyMs, readyDurationMs, activeLeaseMs, leaseDeadlineUtc: configuration.leaseDeadlineUtc, blockStartedAt: started, blockEndedAt: ended, injectedStartupDelayMs: injectedStartupDelay ? 6500 : 0 } })}\n`);
     } finally { if (!endedSession) await controller.end(session); }
-  })().catch(error => { process.stderr.write(`${error.name}: ${error.message}\n`); process.exitCode = 1; });
+  })().catch(error => {
+    // Failure-only fixed projection. No raw configuration, environment, command
+    // lines or owners. Preserve the primary failure and original exit1.
+    const native = error.diagnostics?.native;
+    process.stderr.write(`VERIDIA_NATIVE_READY_FAILURE=${JSON.stringify({ label: "SYNTHETIC_TOOL_VALIDATION",
+      mode: process.argv[2], fixtureId: process.argv[3], invocationId: error.diagnostics?.invocationId ?? null,
+      startup: error.diagnostics?.startupFailure ?? null,
+      close: native ? { workerExitConfirmed: native.workerExitConfirmed, creatorForceStopped: native.creatorForceStopped,
+        supervisorCloseObserved: native.supervisor?.actualCloseObserved ?? null, guardianCloseObserved: native.guardian?.actualCloseObserved ?? null } : null })}\n`);
+    process.stderr.write(`${error.name}: ${error.message}\n`); process.exitCode = 1;
+  });
 }

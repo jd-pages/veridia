@@ -30,7 +30,7 @@ function fixture(mode: "NORMAL" | "IGNORE_STOP" | "STALL_GUARDIAN_AFTER_PROOF" |
   return createBuildLockDiagnosticsFixtureController({ fixture: { id: randomUUID(), mode,
     policy: { leaseMs: 15000, readyMs: 15000, graceMs: 350, finalMs: 650, ...policy } } });
 }
-function mock({ unlinkFailure = false, receiptFailure = false, omitProof = false, wrongBirth = false, readinessObservedMs = null as number | null, finalizationLate = false } = {}) {
+function mock({ unlinkFailure = false, receiptFailure = false, omitProof = false, wrongBirth = false, observationFailure = false, readinessObservedMs = null as number | null, finalizationLate = false } = {}) {
   const children: ChildProcess[] = [], writes: string[] = [];
   let committed = false;
   let configuration: Record<string, unknown>, directory = "";
@@ -57,7 +57,17 @@ function mock({ unlinkFailure = false, receiptFailure = false, omitProof = false
     }
     return child;
   }) as unknown as typeof spawn;
+  let observationFailed = false;
   const io = { ...fs,
+    existsSync: ((filename: fs.PathLike) => {
+      // The late monotonic fixture throws before READY member reads. Fault only
+      // the first pre-teardown observation, not the cleanup that follows it.
+      if (observationFailure && !observationFailed && String(filename).endsWith("supervisor-created.json") &&
+        fs.existsSync(path.join(directory, "worker-ready.json"))) {
+        observationFailed = true; throw new Error("SYNTHETIC_OBSERVATION_IO_FAILURE");
+      }
+      return fs.existsSync(filename);
+    }) as typeof fs.existsSync,
     writeFileSync: ((filename: fs.PathOrFileDescriptor, ...args: unknown[]) => {
       const name = String(filename); writes.push(name);
       if (receiptFailure && name.endsWith("receipt.json")) throw Object.assign(new Error("fixture write failure"), { code: "EACCES" });
@@ -107,9 +117,31 @@ describe("failure-only Build lock diagnostics: injected controller", () => {
     expect(session.status).toBe("READY"); await boundary.controller.end(session);
     await expect(mock({ readinessObservedMs: 501 }).controller.begin(context)).rejects.toThrow("NATIVE_READY_DEADLINE");
   });
+  test("failed READY snapshots member presence before teardown without admitting late records", async () => {
+    const { controller } = mock({ readinessObservedMs: 501 });
+    let caught: Error & { diagnostics?: { startupFailure?: { measurement: string; readyBudgetMs: number; elapsedMs: number; members: { name: string; present: boolean }[] } } } | undefined;
+    try { await controller.begin(context); } catch (error) { caught = error as typeof caught; }
+    expect(caught?.message).toBe("NATIVE_READY_DEADLINE");
+    expect(caught?.diagnostics?.startupFailure).toMatchObject({ measurement: "PRE_TEARDOWN_OBSERVATION_NOT_CAUSAL_ATTRIBUTION", readyBudgetMs: 500, elapsedMs: 501 });
+    expect(caught?.diagnostics?.startupFailure?.members).toEqual(["supervisor-created.json", "worker-created.json", "guardian-armed.json", "worker-ready.json"].map(name => ({ name, present: true })));
+    // Existing late-readiness failure stays a failure even though files exist.
+    expect(caught?.diagnostics).toMatchObject({ status: "DIAGNOSTICS_INCOMPLETE", readiness: null });
+  });
   test("late final serialization/flush cannot produce a local diagnostic PASS", async () => {
     const { controller } = mock({ finalizationLate: true }); const session = await controller.begin(context); const started = new Date().toISOString();
     expect(await controller.end(session, { buildStatus: 0, buildStartedAt: started, buildEndedAt: new Date().toISOString() })).toMatchObject({ status: "DIAGNOSTICS_INCOMPLETE", receiptSha256: null, nativeBuild: { status: "EXIT0" } });
+  });
+  test("failed startup observation cannot replace READY deadline or skip owned close", async () => {
+    const { controller, writes } = mock({ readinessObservedMs: 501, observationFailure: true });
+    let caught: Error & { diagnostics?: Record<string, unknown> } | undefined;
+    try { await controller.begin(context); } catch (error) { caught = error as typeof caught; }
+    expect(caught?.message).toBe("NATIVE_READY_DEADLINE");
+    expect(caught?.diagnostics).toMatchObject({ status: "DIAGNOSTICS_INCOMPLETE", readiness: null,
+      startupFailure: { measurement: "NOT_MEASURED", members: null },
+      // Failed READY did not admit a worker identity. Do not turn its unbound
+      // synthetic proof into workerExitConfirmed merely because it exists.
+      native: { workerExitConfirmed: false, supervisor: { actualCloseObserved: true }, guardian: { actualCloseObserved: true } } });
+    expect(writes.some(value => value.endsWith("stop.json"))).toBe(true);
   });
   test("receipt write failure preserves native Build failure and returns incomplete", async () => {
     const { controller, writes } = mock({ receiptFailure: true }); const session = await controller.begin(context); const started = new Date().toISOString();
@@ -202,6 +234,14 @@ describe("actual native owned GUID lifecycle (never formal Build)", () => {
     expect(value.proof.forced).toBe(false);
     expect(Date.parse(value.proof.utc)).toBeGreaterThanOrEqual(Date.parse(value.leaseWindow.blockStartedAt));
     expect(Date.parse(value.proof.utc)).toBeLessThanOrEqual(Date.parse(value.leaseWindow.blockEndedAt));
+    expect(Number.isFinite(value.leaseWindow.readyDurationMs)).toBe(true);
+    expect(value.leaseWindow.readyDurationMs).toBeGreaterThan(0);
+    expect(value.leaseWindow.readyDurationMs).toBeLessThan(15000);
+    // Bounded stress receipt only; no raw identity/configuration/environment.
+    console.info(`VERIDIA_NATIVE_READY_TIMING=${JSON.stringify({ mode, readyDurationMs: value.leaseWindow.readyDurationMs,
+      workerExitConfirmed: value.evidence.native.workerExitConfirmed,
+      supervisorCloseObserved: value.evidence.native.supervisor.actualCloseObserved,
+      guardianCloseObserved: value.evidence.native.guardian.actualCloseObserved })}`);
   }, 30000);
   test("public monitor observes exact target fatal error without consuming/replacing it", () => {
     const id = randomUUID(), nonce = randomUUID(), directory = path.join(root, ".playwright/build-lock-diagnostics-fixtures", `lab-${id}`);

@@ -1,4 +1,11 @@
 export interface BuildLockDiagnosticIdentity { pid: number; nativeStartFileTime: string }
+export const BUILD_LOCK_READY_STAGES: readonly string[];
+export interface ReadyStageObservation { role: string; pid: number; stage: string; utc: string; qpcTicks: string; qpcFrequency: string; observedMonoMs: number; authority: string }
+export function createBuildLockReadyObservation(options: { invocationId: string; nonce: string; supportIdentity: string; role: string; pid: number; now: () => number }): {
+  push(chunk: unknown): void;
+  snapshot(): { measurement: string; truncated: boolean; records: ReadyStageObservation[] };
+};
+export function projectBuildLockReadyStartupFailure(value: unknown): Record<string, unknown> | null;
 export interface BuildLockDiagnosticSession {
   status: "READY" | "NOT_APPLICABLE";
   invocationId: string;

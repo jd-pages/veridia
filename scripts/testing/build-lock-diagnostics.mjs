@@ -5,6 +5,68 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { readNextTraceSingleFlightStatus, NEXT_TRACE_SINGLE_FLIGHT_PATCH } from "./next-trace-single-flight.mjs";
+// Observability only: a stdout stage notice is never native ownership authority
+// and cannot satisfy READY. Unparsed/free-text output is never retained.
+export const BUILD_LOCK_READY_STAGES = Object.freeze([
+  "CONFIG_VALIDATED", "ADD_TYPE_START", "ADD_TYPE_END", "SELF_BOUND",
+  "SUPERVISOR_ENROLLED", "WORKER_SPAWN_START", "WORKER_SPAWN_RETURN", "WORKER_ENROLLED",
+  "WAIT_WORKER_CREATED", "WORKER_CREATED_OBSERVED", "GUARDIAN_ENROLLED",
+  "FIRST_RM_START", "FIRST_RM_END", "FIRST_METADATA_START", "FIRST_PUBLICATION_END", "WORKER_READY_START"
+]);
+const prefix = "VERIDIA_NATIVE_READY_STAGE=";
+export function createBuildLockReadyObservation({ invocationId, nonce, supportIdentity, role, pid, now }) {
+  let buffer = "", exhausted = false;
+  const records = [];
+  return {
+    push(chunk) {
+      if (exhausted) return;
+      buffer += String(chunk);
+      for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+        const line = buffer.slice(0, end).replace(/\r$/u, ""); buffer = buffer.slice(end + 1);
+        if (!line.startsWith(prefix) || line.length > 2048) continue;
+        let value; try { value = JSON.parse(line.slice(prefix.length)); } catch { continue; }
+        if (!value || typeof value !== "object" || Array.isArray(value) ||
+          value.invocationId !== invocationId || value.nonce !== nonce || value.supportIdentity !== supportIdentity ||
+          !BUILD_LOCK_READY_STAGES.includes(value.stage) || !Number.isSafeInteger(value.pid) || value.pid < 1 ||
+          !((value.role === role && value.pid === pid) || (role === "Supervisor" && value.role === "Worker")) ||
+          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/u.test(value.utc ?? "") || !Number.isFinite(Date.parse(value.utc)) ||
+          !/^[0-9]+$/u.test(value.qpcTicks ?? "") || !/^[1-9][0-9]*$/u.test(value.qpcFrequency ?? "")) continue;
+        if (records.length >= 32) { exhausted = true; buffer = ""; return; }
+        let observedMonoMs; try { observedMonoMs = now(); } catch { exhausted = true; buffer = ""; return; }
+        if (typeof observedMonoMs !== "number" || !Number.isFinite(observedMonoMs) || observedMonoMs < 0) { exhausted = true; buffer = ""; return; }
+        records.push({ role: value.role, pid: value.pid, stage: value.stage, utc: value.utc,
+          qpcTicks: value.qpcTicks, qpcFrequency: value.qpcFrequency, observedMonoMs,
+          authority: "OWNED_STDOUT_NOTICE_NOT_NATIVE_IDENTITY_OR_READY_PROOF" });
+      }
+      if (buffer.length > 4096) { exhausted = true; buffer = ""; }
+    },
+    snapshot() { return { measurement: "OWNED_STDOUT_STAGE_NOTICES", truncated: exhausted, records: records.map(value => ({ ...value })) }; }
+  };
+}
+export function projectBuildLockReadyStartupFailure(value) {
+  if (value === null || value === undefined) return null;
+  const unavailable = { measurement: "NOT_MEASURED", observedAt: null, elapsedMs: null, readyBudgetMs: null,
+    members: null, supervisor: null, guardian: null };
+  if (value.measurement !== "PRE_TEARDOWN_OBSERVATION_NOT_CAUSAL_ATTRIBUTION" || !utc(value.observedAt) ||
+    !finite(value.elapsedMs) || !positive(value.readyBudgetMs) || !Array.isArray(value.members) || value.members.length !== 4) return unavailable;
+  const names = ["supervisor-created.json", "worker-created.json", "guardian-armed.json", "worker-ready.json"];
+  if (value.members.some((item, i) => !item || item.name !== names[i] || typeof item.present !== "boolean")) return unavailable;
+  const stages = (input, role) => {
+    if (input === null) return null;
+    if (!input || input.measurement !== "OWNED_STDOUT_STAGE_NOTICES" || typeof input.truncated !== "boolean" ||
+      !Array.isArray(input.records) || input.records.length > 32 || input.records.some(item => !item ||
+      !([role, ...(role === "Supervisor" ? ["Worker"] : [])].includes(item.role)) || !positive(item.pid) ||
+      !BUILD_LOCK_READY_STAGES.includes(item.stage) || !utc(item.utc) || !finite(item.observedMonoMs) ||
+      !/^[0-9]+$/u.test(item.qpcTicks ?? "") || !/^[1-9][0-9]*$/u.test(item.qpcFrequency ?? ""))) return { measurement: "NOT_MEASURED", truncated: null, records: null };
+    return { measurement: "OWNED_STDOUT_STAGE_NOTICES", truncated: input.truncated,
+      records: input.records.map(item => ({ role: item.role, pid: item.pid, stage: item.stage, utc: item.utc,
+        qpcTicks: item.qpcTicks, qpcFrequency: item.qpcFrequency, observedMonoMs: item.observedMonoMs,
+        authority: "OWNED_STDOUT_NOTICE_NOT_NATIVE_IDENTITY_OR_READY_PROOF" })) };
+  };
+  return { measurement: "PRE_TEARDOWN_OBSERVATION_NOT_CAUSAL_ATTRIBUTION", observedAt: value.observedAt,
+    elapsedMs: value.elapsedMs, readyBudgetMs: value.readyBudgetMs, members: value.members.map(item => ({ name: item.name, present: item.present })),
+    supervisor: stages(value.supervisor, "Supervisor"), guardian: stages(value.guardian, "Guardian") };
+}
 
 const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const sha = data => createHash("sha256").update(data).digest("hex");
@@ -67,11 +129,14 @@ function memberRecord(io, state, filename) {
     !/^[0-9]+$/u.test(record.qpcTicks ?? "") || !/^[1-9][0-9]*$/u.test(record.qpcFrequency ?? "")) throw new Error("NATIVE_RECORD_BINDING_INVALID");
   return record;
 }
-function track(child, now) {
+function track(child, now, state, role) {
   const tracker = { child, closed: false, closedMono: null, exitCode: null, signal: null, spawnError: null, safeStartupDiagnostic: "" };
   child.once("error", error => { tracker.spawnError = error; });
   child.once("close", (code, signal) => { tracker.closed = true; tracker.closedMono = now(); tracker.exitCode = code; tracker.signal = signal; });
   // Native scripts never forward provider errors/raw commands via normal stdout.
+  tracker.stages = createBuildLockReadyObservation({ invocationId: state.invocationId, nonce: state.nonce,
+    supportIdentity: state.supportIdentity, role, pid: child.pid, now: () => now() - state.startedMono });
+  child.stdout?.on("data", chunk => tracker.stages.push(chunk));
   child.stdout?.resume();
   child.stderr?.on("data", chunk => { tracker.safeStartupDiagnostic = redactBuildLockDiagnosticText(`${tracker.safeStartupDiagnostic}${String(chunk)}`); });
   return tracker;
@@ -146,8 +211,8 @@ function createController({ root = moduleRoot, platform = process.platform, io =
       try {
         const args = role => ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", supportPaths.watcher, "-Configuration", path.join(directory, "configuration.json"), "-Role", role];
         const executable = path.join(process.env.SystemRoot ?? "C:/Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
-        state.supervisor = track(spawnChild(executable, args("Supervisor"), { cwd: canonicalRoot, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }), monotonic);
-        state.guardian = track(spawnChild(executable, args("Guardian"), { cwd: canonicalRoot, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }), monotonic);
+        state.supervisor = track(spawnChild(executable, args("Supervisor"), { cwd: canonicalRoot, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }), monotonic, state, "Supervisor");
+        state.guardian = track(spawnChild(executable, args("Guardian"), { cwd: canonicalRoot, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }), monotonic, state, "Guardian");
         const ready = await until(() => {
           if (state.supervisor.spawnError || state.guardian.spawnError || state.supervisor.closed || state.guardian.closed) {
             let diagnostic = state.supervisor.safeStartupDiagnostic || state.guardian.safeStartupDiagnostic;
@@ -167,6 +232,13 @@ function createController({ root = moduleRoot, platform = process.platform, io =
           VERIDIA_BUILD_LOCK_TARGET: target, VERIDIA_BUILD_LOCK_ENTRY: path.join(canonicalRoot, "node_modules/next/dist/bin/next") };
         return session;
       } catch (error) {
+        // Capture before end writes STOP or closes children. Presence alone is
+        // not a valid bound native record and is never substituted for READY.
+        try { state.startupFailure = { observedAt: new Date().toISOString(), elapsedMs: monotonic() - startedMono,
+          readyBudgetMs: policy.readyMs, measurement: "PRE_TEARDOWN_OBSERVATION_NOT_CAUSAL_ATTRIBUTION",
+          members: ["supervisor-created.json", "worker-created.json", "guardian-armed.json", "worker-ready.json"].map(name => ({ name, present: io.existsSync(path.join(directory, name)) })),
+          supervisor: state.supervisor?.stages.snapshot() ?? null, guardian: state.guardian?.stages.snapshot() ?? null }; }
+        catch { state.startupFailure = { measurement: "NOT_MEASURED" }; }
         state.failures.push(errorProjection(error));
         const diagnostics = await this.end(session, { buildStatus: null, buildStartedAt: null, buildEndedAt: null });
         error.diagnostics = diagnostics;
@@ -257,7 +329,7 @@ function createController({ root = moduleRoot, platform = process.platform, io =
       const base = { schemaVersion: 1, purpose: "FORMAL_BUILD_FAILURE_ONLY_RM_DIAGNOSTICS", invocationId: state.invocationId, nonce: state.nonce,
         head: state.head, sourceFingerprint: state.sourceFingerprint, label: state.label, platform: state.platform, target: state.target,
         status: state.platform !== "win32" ? "NOT_APPLICABLE" : state.failures.length ? "DIAGNOSTICS_INCOMPLETE" : "PASSED",
-        startedAt: state.startedAt, endedAt: new Date().toISOString(), ready: state.ready,
+        startedAt: state.startedAt, endedAt: new Date().toISOString(), ready: state.ready, startupFailure: state.startupFailure ?? null,
         policy: state.policy, support: state.support, supportIdentity: state.supportIdentity, reporter: { ...state.reporter, endSha256: endReporterSha256 }, nativeBuild,
         native: state.platform !== "win32" ? null : { samples: summary?.samples ?? null, ownerStateChanges: summary?.ownerStateChanges ?? null,
           workerStartedAt: summary?.startedAt ?? null, workerEndedAt: summary?.endedAt ?? null, lastQueryEndedAt: summary?.lastQueryEndedAt ?? null,
@@ -378,6 +450,7 @@ function projectReceipt(value) {
     startedAt: value.startedAt, endedAt: value.endedAt, target: value.target, platform: value.platform, label: value.label,
     retention: value.retention, nativeBuild: { status: value.nativeBuild.status, exitStatus: Number.isInteger(value.nativeBuild.exitStatus) ? value.nativeBuild.exitStatus : null,
       startedAt: value.nativeBuild.startedAt, endedAt: value.nativeBuild.endedAt, primaryError: value.nativeBuild.primaryError ? { name: redactBuildLockDiagnosticText(value.nativeBuild.primaryError.name), code: redactBuildLockDiagnosticText(value.nativeBuild.primaryError.code) } : null },
+    startupFailure: projectBuildLockReadyStartupFailure(value.startupFailure),
     support, supportIdentity: value.supportIdentity, reporter: { version: value.reporter.version, beginSha256: value.reporter.beginSha256, endSha256: value.reporter.endSha256, measurement: value.reporter.measurement },
     readiness: value.ready ? { worker: projectIdentity(value.ready.worker), supervisor: projectIdentity(value.ready.supervisor), guardian: projectIdentity(value.ready.guardian),
       creatorNode: projectIdentity(value.ready.creatorNode),
