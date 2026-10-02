@@ -14,22 +14,30 @@ if (process.argv[2] === "owned-sleep") {
   throw error;
 } else {
   (async () => {
-    const { createBuildLockDiagnosticsFixtureController } = await import("../../scripts/testing/build-lock-diagnostics.mjs");
+    const { createBuildLockDiagnosticsFixtureController, createBuildLockReadyObservation } = await import("../../scripts/testing/build-lock-diagnostics.mjs");
     const id = process.argv[3];
     const readyMs = 15000, activeLeaseMs = 6000;
     let injectedStartupDelay = false;
+    let guardianObservation;
     const controller = createBuildLockDiagnosticsFixtureController({ fixture: { id, bootstrapDeadlineMs: 5000,
       // The synthetic fixture's absolute lease must include the existing READY
       // budget. The production lease and all test/child timeouts are unchanged.
       policy: { leaseMs: readyMs + activeLeaseMs, readyMs, graceMs: 300, finalMs: 700 } },
-      ...(process.argv[2] === "lease-startup-delay" ? { spawnChild: (...args) => {
-        if (!injectedStartupDelay) {
+      spawnChild: (...args) => {
+        if (process.argv[2] === "lease-startup-delay" && !injectedStartupDelay) {
           injectedStartupDelay = true;
           // Controlled counterexample: the old 6s lease expired before READY.
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 6500);
         }
-        return spawn(...args);
-      } } : {}) });
+        const child = spawn(...args);
+        const role = args[1][args[1].indexOf("-Role") + 1];
+        if (role === "Guardian") {
+          const cfg = JSON.parse(fs.readFileSync(args[1][args[1].indexOf("-Configuration") + 1], "utf8"));
+          guardianObservation = createBuildLockReadyObservation({ ...cfg, role, pid: child.pid, now: () => performance.now() });
+          child.stdout.on("data", chunk => guardianObservation.push(chunk));
+        }
+        return child;
+      } });
     const readyStartedMono = process.hrtime.bigint();
     const session = await controller.begin({ head: "a".repeat(40), sourceFingerprint: "b".repeat(64), environment: { NODE_ENV: "test" } });
     const readyDurationMs = Number(process.hrtime.bigint() - readyStartedMono) / 1e6;
@@ -56,7 +64,11 @@ if (process.argv[2] === "owned-sleep") {
     const proof = JSON.parse(fs.readFileSync(path.join(directory, "worker-exit-proof.json"), "utf8"));
     const worker = JSON.parse(fs.readFileSync(path.join(directory, "worker-summary.json"), "utf8"));
     if (blocker.status !== 0 || Date.parse(ended) < leaseDeadline) throw new Error("FIXTURE_SYNCHRONOUS_BLOCK_DID_NOT_CROSS_LEASE");
-    process.stdout.write(`${JSON.stringify({ label: "SYNTHETIC_TOOL_VALIDATION", evidence, proof, worker, nativeLeaseStop,
+    const stages = guardianObservation.snapshot().records.map(record => record.stage);
+    const guardianReadPath = Object.fromEntries(["CONTROL_RECORD_READ_START", "CONTROL_RECORD_READ_READY", "CONTROL_RECORD_PARSE_READY", "WORKER_CREATED_OBSERVED", "GUARDIAN_ENROLLED"].map(stage => [stage, stages.includes(stage)]));
+    const workerReady = JSON.parse(fs.readFileSync(path.join(directory, "worker-ready.json"), "utf8"));
+    process.stdout.write(`${JSON.stringify({ label: "SYNTHETIC_TOOL_VALIDATION", evidence, proof, worker, nativeLeaseStop, guardianReadPath,
+      workerReadyIdentityConfirmed: workerReady.pid === proof.pid && workerReady.nativeStartFileTime === proof.nativeStartFileTime && workerReady.firstQueryValid === true,
       leaseWindow: { readyMs, readyDurationMs, activeLeaseMs, leaseDeadlineUtc: configuration.leaseDeadlineUtc, blockStartedAt: started, blockEndedAt: ended, injectedStartupDelayMs: injectedStartupDelay ? 6500 : 0 } })}\n`);
     } finally { if (!endedSession) await controller.end(session); }
   })().catch(error => {

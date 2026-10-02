@@ -296,6 +296,9 @@ describe("actual native owned GUID lifecycle (never formal Build)", () => {
     expect(Date.parse(value.nativeLeaseStop.utc)).toBeLessThanOrEqual(Date.parse(value.leaseWindow.blockEndedAt));
     expect(value.worker).toMatchObject({ failure: null, reason: "LEASE_EXPIRED", pid: value.proof.pid, nativeStartFileTime: value.proof.nativeStartFileTime });
     expect(value.proof.forced).toBe(false);
+    expect(value.guardianReadPath).toEqual({ CONTROL_RECORD_READ_START: true, CONTROL_RECORD_READ_READY: true,
+      CONTROL_RECORD_PARSE_READY: true, WORKER_CREATED_OBSERVED: true, GUARDIAN_ENROLLED: true });
+    expect(value.workerReadyIdentityConfirmed).toBe(true);
     for (const role of ["supervisor", "guardian"]) {
       expect(value.evidence.native[role].bootstrapStages).toContain("CONFIG_PARSE_READY");
       expect(value.evidence.native[role].bootstrapTiming.configParseMs).toBeLessThan(1000);

@@ -66,10 +66,26 @@ function New-Json([string]$Name, $Record) {
 function Read-Record([string]$Name) {
   $file = [IO.Path]::Combine($directory,$Name)
   if (-not [IO.File]::Exists($file)) { return $null }
-  $r = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+  # Emit each boundary once per control record, not on every polling read.
+  # Notices are diagnostic only; the existing bound record/native enrollment
+  # remain the sole control and READY authorities.
+  $observe = -not $controlReadObserved.ContainsKey($Name)
+  if ($observe) { Ready-Stage CONTROL_RECORD_READ_START }
+  $text = [IO.File]::ReadAllText($file, $utf8)
+  if ($observe) { Ready-Stage CONTROL_RECORD_READ_READY }
+  $object = $bootstrapJson.DeserializeObject($text)
+  if ($object -isnot [Collections.Generic.Dictionary[string,object]]) { throw 'CONTROL_RECORD_OBJECT_INVALID' }
+  $properties = @{}
+  foreach ($key in $object.Keys) {
+    if ($properties.ContainsKey($key)) { throw 'CONTROL_RECORD_DUPLICATE_FIELD' }
+    $properties[$key] = $object[$key]
+  }
+  $r = [pscustomobject]$properties
+  if ($observe) { Ready-Stage CONTROL_RECORD_PARSE_READY; $controlReadObserved[$Name] = $true }
   if ($r.invocationId -ne $cfg.invocationId -or $r.nonce -ne $cfg.nonce -or $r.target -ne $target -or $r.supportIdentity -ne $cfg.supportIdentity) { throw 'CONTROL_IDENTITY_MISMATCH' }
   return $r
 }
+$controlReadObserved = @{}
 function Stop-Present { return $null -ne (Read-Record 'stop.json') }
 function Safe-Text([string]$Value) {
   if (-not $Value) { return $null }
