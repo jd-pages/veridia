@@ -7,6 +7,12 @@ describe("抖音图文图片证据稳定性", () => {
   let page: Page;
   const contentId = "7658919904867844532";
   const canonicalUrl = `https://www.douyin.com/note/${contentId}`;
+  async function setFixtureContent(html: string) {
+    const startedAt = performance.now();
+    console.info("DOUYIN_IMAGE_FIXTURE_STAGE", { phase: "SET_CONTENT_START" });
+    await page.setContent(html);
+    console.info("DOUYIN_IMAGE_FIXTURE_STAGE", { phase: "SET_CONTENT_END", elapsedMs: performance.now() - startedAt });
+  }
 
   beforeAll(async () => {
     browser = await chromium.launch({ headless: true, channel: "chrome" });
@@ -31,17 +37,21 @@ describe("抖音图文图片证据稳定性", () => {
   }, 30_000);
 
   async function extract(structured?: Record<string, unknown>) {
-    return playwrightDouyinAdapter.extract(page, canonicalUrl, {
+    const startedAt = performance.now();
+    console.info("DOUYIN_IMAGE_FIXTURE_STAGE", { phase: "EXTRACT_START" });
+    const result = await playwrightDouyinAdapter.extract(page, canonicalUrl, {
       canonicalUrl,
       contentId,
       structured: structured
         ? { item: structured, responseUrl: canonicalUrl }
         : null,
     });
+    console.info("DOUYIN_IMAGE_FIXTURE_STAGE", { phase: "EXTRACT_END", elapsedMs: performance.now() - startedAt });
+    return result;
   }
 
   it("DOM 轮播按 slide 身份统计并排除头像与推荐图", async () => {
-    await page.setContent(`
+    await setFixtureContent(`
       <main data-e2e="note-detail">
         <img class="avatar" src="https://cdn.example/avatar.jpg">
         <div data-testid="douyin-image-carousel">
@@ -59,7 +69,7 @@ describe("抖音图文图片证据稳定性", () => {
   });
 
   it("结构化与 DOM 指向同一两张图片时不会累计成四张", async () => {
-    await page.setContent(`
+    await setFixtureContent(`
       <main data-e2e="note-detail">
         <div data-testid="douyin-image-carousel">
           <div data-index="0"><img src="https://cdn.example/a.jpg"></div>
@@ -80,7 +90,7 @@ describe("抖音图文图片证据稳定性", () => {
   });
 
   it("lazy DOM 图片在证据连续稳定后得到最终两张", async () => {
-    await page.setContent(`
+    await setFixtureContent(`
       <main data-e2e="note-detail">
         <div id="carousel" data-testid="douyin-image-carousel">
           <div data-index="0"><img data-src="https://cdn.example/a.jpg"></div>
@@ -106,14 +116,14 @@ describe("抖音图文图片证据稳定性", () => {
     ];
     const counts: number[] = [];
     for (const variant of variants) {
-      await page.setContent(`<main data-e2e="note-detail">${variant}<div data-e2e="detail-desc">DOM变体正文</div></main>`);
+      await setFixtureContent(`<main data-e2e="note-detail">${variant}<div data-e2e="detail-desc">DOM变体正文</div></main>`);
       counts.push((await extract()).imageCount || 0);
     }
     expect(counts).toEqual([2, 2]);
   });
 
   it("Protected DOUYIN_PUBLIC_IMAGE_TEXT_CONTENT_ACCURACY：真实三张轮播不被十个 clone/preload img/source 放大且正文同源", async () => {
-    await page.setContent(`
+    await setFixtureContent(`
       <main data-e2e="note-detail">
         <section class="video-playing-item">
           <h3>爱他美澳洲白金版 当前作品完整正文
@@ -177,7 +187,7 @@ describe("抖音图文图片证据稳定性", () => {
       1,
       `7:${JSON.stringify(flightValue)}`,
     ])})`;
-    await page.setContent(`
+    await setFixtureContent(`
       <main data-e2e="note-detail">
         <div class="dySwiperSlide"><img src="https://cdn.example/1.webp"><img src="https://cdn.example/1-alt.webp"><video><source src="https://cdn.example/1.mp4"></video></div>
         <div class="dySwiperSlide"><img src="https://cdn.example/2.webp"><img src="https://cdn.example/2-alt.webp"><video><source src="https://cdn.example/2.mp4"></video></div>

@@ -261,6 +261,46 @@ async function verifyPageArbiterFixtures() {
 }
 
 describe("小红书持久会话与访问节奏", () => {
+  it("恢复页面 close 无响应时有界失败，不重试、不伪报已关闭或关闭自有页面", async () => {
+    const context = new FakeArbiterContext();
+    const owned: FakeOwnedPages = { audit: context.open("https://xhs.test/audit") };
+    const stale = context.open("https://xhs.test/restored");
+    let resolveClose!: () => void;
+    let closeCalls = 0;
+    stale.close = () => {
+      closeCalls += 1;
+      return new Promise<void>((resolve) => {
+        resolveClose = () => { stale.closed = true; resolve(); };
+      });
+    };
+    const events: string[] = [];
+    const arbiter = new XhsContextPageArbiter<FakeArbiterPage>({
+      context, generation: 1, getOwnedPages: () => owned,
+      isCurrentGeneration: () => true,
+      safeUrl: (url) => url.split("?")[0],
+      log: (event) => events.push(event),
+      onAsyncInvariantFailure: () => undefined,
+      closeOperationTimeoutMs: 20,
+    });
+    const startedAt = Date.now();
+    await expect(arbiter.reconcile("AUDIT_PAGE_CREATED")).rejects.toThrow("XHS_STALE_PAGE_CLOSE_DEADLINE");
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(closeCalls).toBe(1);
+    expect(stale.isClosed()).toBe(false);
+    expect(owned.audit?.isClosed()).toBe(false);
+    expect(events).toContain("XHS_PAGE_INVARIANT_FAILED");
+    expect(events).not.toContain("XHS_STALE_PAGE_CLOSED");
+    expect(events).not.toContain("XHS_PAGE_RECONCILE_COMPLETE");
+    // A late close completion belongs to the disposed generation; it cannot
+    // resume reconciliation, report success, or touch the retained audit page.
+    arbiter.dispose();
+    resolveClose();
+    await Promise.resolve();
+    expect(events).not.toContain("XHS_STALE_PAGE_CLOSED");
+    expect(events).not.toContain("XHS_PAGE_RECONCILE_COMPLETE");
+    expect(owned.audit?.isClosed()).toBe(false);
+  });
+
   it("登录、检测和审核复用唯一 persistent context 与固定 Profile", async () => {
     const browser = source("lib/automation/browser.ts");
     const extract = source("lib/automation/extract.ts");

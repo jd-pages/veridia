@@ -58,6 +58,7 @@ type ArbiterOptions<P extends XhsArbiterPage> = {
     opener: P,
   ) => XhsPageRole | undefined;
   closeRetryDelaysMs?: number[];
+  closeOperationTimeoutMs?: number;
   context: XhsArbiterContext<P>;
   generation: number;
   getOwnedPages: () => OwnedPages<P>;
@@ -83,6 +84,14 @@ export type XhsPageReconcileResult = {
 const DEFAULT_QUIET_WINDOW_MS = 300;
 const DEFAULT_MAX_STABILIZATION_MS = 1_500;
 const DEFAULT_CLOSE_RETRY_DELAYS_MS = [50, 100, 200];
+const DEFAULT_CLOSE_OPERATION_TIMEOUT_MS = 2_000;
+
+class XhsStalePageCloseDeadlineError extends Error {
+  constructor() {
+    super("XHS_STALE_PAGE_CLOSE_DEADLINE");
+    this.name = "XhsStalePageCloseDeadlineError";
+  }
+}
 
 const wait = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
@@ -111,6 +120,7 @@ export class XhsPageInvariantError extends Error {
 export class XhsContextPageArbiter<P extends XhsArbiterPage = Page> {
   private readonly metadata = new WeakMap<P, PageMetadata>();
   private readonly closeRetryDelaysMs: number[];
+  private readonly closeOperationTimeoutMs: number;
   private readonly maxStabilizationMs: number;
   private readonly quietWindowMs: number;
   private disposed = false;
@@ -122,6 +132,8 @@ export class XhsContextPageArbiter<P extends XhsArbiterPage = Page> {
   constructor(private readonly options: ArbiterOptions<P>) {
     this.closeRetryDelaysMs =
       options.closeRetryDelaysMs || DEFAULT_CLOSE_RETRY_DELAYS_MS;
+    this.closeOperationTimeoutMs =
+      options.closeOperationTimeoutMs ?? DEFAULT_CLOSE_OPERATION_TIMEOUT_MS;
     this.maxStabilizationMs =
       options.maxStabilizationMs || DEFAULT_MAX_STABILIZATION_MS;
     this.quietWindowMs = options.quietWindowMs || DEFAULT_QUIET_WINDOW_MS;
@@ -398,8 +410,19 @@ export class XhsContextPageArbiter<P extends XhsArbiterPage = Page> {
     });
     let lastError: unknown;
     for (let attempt = 0; attempt <= this.closeRetryDelaysMs.length; attempt += 1) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        await page.close();
+        // A stalled CDP close must not monopolize the serialized reconcile tail.
+        // Timeout is an invariant failure, never evidence that the page closed.
+        await Promise.race([
+          page.close(),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(
+              () => reject(new XhsStalePageCloseDeadlineError()),
+              this.closeOperationTimeoutMs,
+            );
+          }),
+        ]);
         if (!page.isClosed()) {
           throw new Error("page.close() 返回后 Page 仍未关闭");
         }
@@ -412,10 +435,13 @@ export class XhsContextPageArbiter<P extends XhsArbiterPage = Page> {
         return;
       } catch (error) {
         lastError = error;
+        if (error instanceof XhsStalePageCloseDeadlineError) break;
         if (page.isClosed()) return;
         const delay = this.closeRetryDelaysMs[attempt];
         if (delay === undefined) break;
         await wait(delay);
+      } finally {
+        if (timer) clearTimeout(timer);
       }
     }
     const error = new XhsPageInvariantError(
