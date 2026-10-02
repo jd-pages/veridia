@@ -209,6 +209,20 @@ export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, 
   } catch (error) {
     failure = error;
     receipt.failure = error.message;
+    // Publish BEFORE cleanup/global harness timeout can hide the error receipt.
+    // Vitest truncates nested custom Error properties. This bounded vocabulary
+    // carries only protocol stages and lifecycle facts, never native stderr,
+    // environment, CLI arguments or raw exception text.
+    console.error(`VERIDIA_TYPEGEN_FAILURE_STAGE=${JSON.stringify({
+      failureCode: /^TYPEGEN_[A-Z_]+$/u.test(error.message) ? error.message : "TYPEGEN_NATIVE_EXCEPTION",
+      elapsedMs: performance.now() - started,
+      startupStages: protocol?.startup() ?? [],
+      nativeCapturedBeforeCliRelease: receipt.nativeCapturedBeforeCliRelease === true,
+      nativeArmedBeforeCliRelease: receipt.nativeArmedBeforeCliRelease === true,
+      cliReleased: receipt.executed,
+      monitorExitCode: monitor?.exitCode ?? null,
+      monitorSignal: monitor?.signalCode ?? null,
+    })}`);
   } finally {
     if (failure) {
       if (monitor?.exitCode === null && monitor?.signalCode === null) {

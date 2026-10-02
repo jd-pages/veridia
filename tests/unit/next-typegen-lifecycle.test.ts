@@ -197,10 +197,24 @@ describe("actual self-owned Windows native launcher (never real Next)", () => {
   it("a native-quiescent failed CLI retains exit 7 and still fails", async () => {
     if (process.platform !== "win32") { await assertNonWindowsFailClosed(); return; }
     const output = path.join(ownDirectory(), "failure.json");
-    const error = await runOwnedNodeTypegenCommand({ entry: fixture, args: ["failure", output], stdio: "ignore", deadlineMs: 10000 })
-      .catch(value => value as Error & { receipt: TypegenReceipt });
-    expect(error).toMatchObject({ message: "TYPEGEN_COMMAND_FAILED", receipt: { status: "FAILED", exitCode: 7,
-      processQuiescence: { status: "PASSED", remainingCapturedIdentityCount: 0 } } });
+    const diagnostic = vi.spyOn(console, "error");
+    try {
+      const error = await runOwnedNodeTypegenCommand({ entry: fixture, args: ["failure", output], stdio: "ignore", deadlineMs: 10000 })
+        .catch(value => value as Error & { receipt: TypegenReceipt });
+      expect(error).toMatchObject({ message: "TYPEGEN_COMMAND_FAILED", receipt: { status: "FAILED", exitCode: 7,
+        processQuiescence: { status: "PASSED", remainingCapturedIdentityCount: 0 } } });
+      const line = diagnostic.mock.calls.map(call => call[0]).find(value =>
+        typeof value === "string" && value.startsWith("VERIDIA_TYPEGEN_FAILURE_STAGE="));
+      expect(line).toBeDefined();
+      const published = JSON.parse(String(line).slice(String(line).indexOf("=" ) + 1));
+      expect(published).toMatchObject({ failureCode: "TYPEGEN_COMMAND_FAILED", cliReleased: true,
+        nativeCapturedBeforeCliRelease: true, nativeArmedBeforeCliRelease: true,
+        startupStages: ["SCRIPT_ENTERED", "ARGS_VALIDATED", "ROOT_PROCESS_OPEN_START", "ROOT_PROCESS_OPEN_READY",
+          "ROOT_IDENTITY_BOUND", "READY_EMIT_START", "READY_EMITTED"] });
+      expect(Object.keys(published).sort()).toEqual(["cliReleased", "elapsedMs", "failureCode", "monitorExitCode",
+        "monitorSignal", "nativeArmedBeforeCliRelease", "nativeCapturedBeforeCliRelease", "startupStages"]);
+      expect(String(line)).not.toContain(output);
+    } finally { diagnostic.mockRestore(); }
   }, 15000);
 
   it("retains a live child's native birth under its live parent and waits for both exits", async () => {
