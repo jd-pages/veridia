@@ -15,7 +15,7 @@ const OWNER_PROBE_TIMEOUT_MS = 2_000;
 export class WindowsBrowserProfileOwnershipError extends Error {
   constructor(message: string, readonly diagnostic?: {
     phase: string; reason: string; exitCode?: number | null; elapsedMs?: number;
-    nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number;
+    nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number; nativeStageObservedElapsedMs?: number;
   }) { super(message); this.name = "WindowsBrowserProfileOwnershipError"; }
 }
 
@@ -23,7 +23,7 @@ export class WindowsBrowserProfileOwnershipError extends Error {
 // native probe. Diagnostics never grant ownership or change its deadline.
 export function parseWindowsProfileProbeDiagnostic(text: string) {
   const result: { nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number } = {};
-  const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|PARSER_COMPILE|REQUEST_PARSE|PROCESS_CENSUS|NATIVE_HANDLE_BIND|VALIDATED_TERMINATION|RESULT_EMIT):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
+  const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|PARSER_COMPILE|REQUEST_PARSE|PROCESS_CENSUS|PROFILE_ARGUMENT_READ|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
   for (const match of text.matchAll(stage)) {
     const elapsed = Number(match[2]);
     if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 60_000) {
@@ -31,7 +31,7 @@ export function parseWindowsProfileProbeDiagnostic(text: string) {
       result.nativeStageElapsedMs = elapsed;
     }
   }
-  const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(PARSER_COMPILE|REQUEST_PARSE|PROCESS_CENSUS|NATIVE_HANDLE_BIND|VALIDATED_TERMINATION|RESULT_EMIT):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER)\r?\n/u);
+  const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(PARSER_COMPILE|REQUEST_PARSE|PROCESS_CENSUS|PROFILE_ARGUMENT_READ|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER)\r?\n/u);
   if (failure) { result.nativeStage = failure[1]; result.nativeFailureCode = failure[2]; }
   return result;
 }
@@ -180,16 +180,24 @@ $owned = @(); $handles = @();
   foreach ($candidate in @(Get-CimInstance Win32_Process -Filter "Name='$name'")) {
     if (![string]::Equals($candidate.ExecutablePath, $expectedExecutable, [StringComparison]::OrdinalIgnoreCase)) { continue }
     if (!$candidate.CommandLine -or !$candidate.CreationDate) { throw 'PROFILE_OWNERSHIP_UNAVAILABLE' }
+    Set-ProbeStage 'PROFILE_ARGUMENT_READ';
     $argv = [VeridiaBrowserArgv]::Parse($candidate.CommandLine);
     $profiles = @($argv | Where-Object { $_.StartsWith('--user-data-dir=', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.Substring(16) });
     if ($profiles.Count -ne 1 -or !$profiles[0]) { continue }
     if (![string]::Equals([IO.Path]::GetFullPath($profiles[0]).TrimEnd('\\'), $expectedProfile, [StringComparison]::OrdinalIgnoreCase)) { continue }
     Set-ProbeStage 'NATIVE_HANDLE_BIND';
-    try { $process = [Diagnostics.Process]::GetProcessById([int]$candidate.ProcessId); $null = $process.Handle } catch {
+    try {
+      Set-ProbeStage 'NATIVE_PROCESS_OPEN';
+      $process = [Diagnostics.Process]::GetProcessById([int]$candidate.ProcessId);
+      Set-ProbeStage 'NATIVE_HANDLE_OPEN';
+      $null = $process.Handle
+    } catch {
       if (Get-CimInstance Win32_Process -Filter "ProcessId=$($candidate.ProcessId)") { throw 'LIVE_PROCESS_HANDLE_UNAVAILABLE' }
       continue
     }
+    Set-ProbeStage 'NATIVE_BIRTH_READ';
     $birthStamp = $process.StartTime.ToUniversalTime().ToFileTimeUtc().ToString();
+    Set-ProbeStage 'NATIVE_BIRTH_VALIDATE';
     $cimStamp = $candidate.CreationDate.ToUniversalTime().ToFileTimeUtc();
     if ([decimal]::Floor([decimal]$birthStamp / 10) -ne [decimal]::Floor([decimal]$cimStamp / 10)) {
       $process.Dispose();
@@ -198,12 +206,13 @@ $owned = @(); $handles = @();
     }
     $isBrowser = @($argv | Where-Object { $_.StartsWith('--type=', [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0;
     $identity = @{pid=[int]$candidate.ProcessId; parentPid=[int]$candidate.ParentProcessId; browserProcess=$isBrowser; birthStamp=$birthStamp; executablePath=$expectedExecutable; profilePath=$expectedProfile};
+    Set-ProbeStage 'NATIVE_IDENTITY_APPEND';
     $owned += $identity;
     if ($request.terminate) {
       $match = @($request.terminate | Where-Object { $_.pid -eq $identity.pid -and $_.birthStamp -eq $birthStamp -and [string]::Equals($_.executablePath, $expectedExecutable, [StringComparison]::OrdinalIgnoreCase) -and [string]::Equals($_.profilePath.TrimEnd('\\'), $expectedProfile, [StringComparison]::OrdinalIgnoreCase) });
       if ($match.Count -ne 1) { $process.Dispose(); throw 'UNVERIFIED_PROFILE_OWNER' }
       $handles += $process;
-    } else { $process.Dispose() }
+    } else { Set-ProbeStage 'NATIVE_HANDLE_DISPOSE'; $process.Dispose() }
   }
   # All identities are validated before any termination. Process.Handle was
   # opened before StartTime; Kill therefore targets that OS handle, not a PID
@@ -237,11 +246,16 @@ export async function captureWindowsBrowserProfileOwners(
       Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let settled = false;
-    let diagnostic: ReturnType<typeof parseWindowsProfileProbeDiagnostic> = {};
+    let diagnostic: ReturnType<typeof parseWindowsProfileProbeDiagnostic> & { nativeStageObservedElapsedMs?: number } = {};
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => {
       stderr = `${stderr}${chunk.toString("utf8")}`.slice(-2_000);
-      diagnostic = { ...diagnostic, ...parseWindowsProfileProbeDiagnostic(stderr) };
+      const observed = parseWindowsProfileProbeDiagnostic(stderr);
+      if (observed.nativeStage !== undefined &&
+        (observed.nativeStage !== diagnostic.nativeStage || observed.nativeStageElapsedMs !== diagnostic.nativeStageElapsedMs)) {
+        diagnostic.nativeStageObservedElapsedMs = Date.now() - startedAt;
+      }
+      diagnostic = { ...diagnostic, ...observed };
     });
     const finish = (value?: string, reason = "NATIVE_PROBE_EXIT", exitCode?: number | null) => {
       if (settled) return;

@@ -47,6 +47,25 @@ it("a native birth rejection remains failed and exports only fixed diagnostic fi
   expect(child.kill).not.toHaveBeenCalled();
 });
 
+it("retains the precise native sub-operation and both clocks without extending the total budget", async () => {
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: {
+    reason: "NATIVE_PROBE_DEADLINE", elapsedMs: 2000, nativeStage: "NATIVE_HANDLE_OPEN",
+    nativeStageElapsedMs: 1365, nativeStageObservedElapsedMs: 1900,
+  } });
+  await vi.advanceTimersByTimeAsync(1900);
+  child.stderr.emit("data", Buffer.from("VERIDIA_PROFILE_PROBE_STAGE=NATIVE_HANDLE_OPEN:1365\n"));
+  // Incomplete or unrecognized stderr cannot overwrite the last measured stage.
+  await vi.advanceTimersByTimeAsync(50);
+  child.stderr.emit("data", Buffer.from("private token\nVERIDIA_PROFILE_PROBE_STAGE=PRIVATE_SECRET:1400\n"));
+  await vi.advanceTimersByTimeAsync(50);
+  await assertion;
+  expect(child.kill).toHaveBeenCalledTimes(1);
+  expect(fixture.spawn).toHaveBeenCalledTimes(1);
+  child.emit("close", 1);
+});
+
 it("stage evidence cannot replace valid owner JSON or bless successful exit with invalid output", async () => {
   const child = childFixture();
   const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
