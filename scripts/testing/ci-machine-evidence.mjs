@@ -3,7 +3,8 @@ import path from "node:path";
 import process from "node:process";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { redactE2eDiagnosticText } from "./e2e-server-infrastructure.mjs";
+import { redactE2eDiagnosticText, redactE2eDiagnosticValue } from "./e2e-server-infrastructure.mjs";
+import { projectPostE2eResidualEvidence } from "./post-e2e-process-quiescence.mjs";
 import { NEXT_TRACE_SINGLE_FLIGHT_PATCH } from "./next-trace-single-flight.mjs";
 import { readFormalNextPrepareEvidence } from "./formal-next-prepare-evidence.mjs";
 import { readBuildLockDiagnosticsEvidence } from "./build-lock-diagnostics.mjs";
@@ -37,6 +38,7 @@ function projectQuiescence(input, secrets) {
   const identity = item => ({ pid: positive(item?.pid), parentPid: positive(item?.parentPid), name: text(item?.name, secrets), createdAt: date(item?.createdAt) });
   return { measurement: value ? "AVAILABLE" : "NOT_RUN", schemaVersion: count(value?.schemaVersion),
     status: status(value?.status, ["PASSED", "FAILED", "NOT_APPLICABLE", "NOT_REQUIRED"]),
+    nativeResidualEvidence: redactE2eDiagnosticValue(projectPostE2eResidualEvidence(value?.nativeResidualEvidence), secrets),
     runId: text(value?.runId, secrets), group: text(value?.group, secrets), head: hash(value?.head, 40),
     sourceFingerprint: hash(value?.sourceFingerprint, 64), observedAt: date(value?.observedAt),
     ownershipScope: text(value?.ownershipScope, secrets), coverage: text(value?.coverage, secrets),

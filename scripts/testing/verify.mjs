@@ -20,7 +20,7 @@ import {
   redactReleaseText,
 } from "../release-failure.mjs";
 import { collectSourceFingerprint } from "../source-fingerprint.mjs";
-import { enforcePostE2eProcessQuiescence, validateStoredQuiescenceReceipts } from "./post-e2e-process-quiescence.mjs";
+import { enforcePostE2eProcessQuiescence, validateStoredQuiescenceReceipts, getPostE2eResidualFailureEvidence } from "./post-e2e-process-quiescence.mjs";
 import { readFormalNextPrepareEvidence } from "./formal-next-prepare-evidence.mjs";
 import { assertNextTraceSingleFlight } from "./next-trace-single-flight.mjs";
 import { beginBuildLockDiagnostics, endBuildLockDiagnostics } from "./build-lock-diagnostics.mjs";
@@ -290,6 +290,8 @@ async function guardedProductionBuild(withStandalone) {
         status: 0, output: JSON.stringify(postE2eProcessQuiescence), durationSeconds: (Date.now() - started) / 1000 });
     } catch (error) {
       postE2eProcessQuiescence = { status: "FAILED", error: redactReleaseText(error instanceof Error ? error.message : String(error)) };
+      const residualEvidence = getPostE2eResidualFailureEvidence(error);
+      if (residualEvidence) postE2eProcessQuiescence.nativeResidualEvidence = residualEvidence;
       record({ name: "POST_E2E_PROCESS_QUIESCENCE", passed: false, status: 1,
         output: `Error: ${postE2eProcessQuiescence.error}`, durationSeconds: (Date.now() - started) / 1000 });
     }

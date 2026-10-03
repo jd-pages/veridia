@@ -206,6 +206,18 @@ function failedDiagnosticFixture(root: string) {
 }
 
 describe("CI machine evidence retention", () => {
+  it("retains a bounded UNKNOWN handoff identity receipt without arbitrary payload or authority", () => {
+    const safe = projectVerificationEvidence({ postE2eProcessQuiescence: { status: "FAILED", nativeResidualEvidence: {
+      unknownProcessCount: 1, unknownProcesses: [{ pid: 9000, parentPid: 100, name: "node.exe", createdAt: nativeBirth,
+        scopeReason: "CURRENT_CAPTURED_ANCESTRY_MATCH", commandLine: "private-command", environment: "private-env" }],
+      arbitrary: "private-payload", ownershipGranted: true, terminationAuthorized: true,
+    } } });
+    expect(safe.postE2eProcessQuiescence).toMatchObject({ status: "FAILED", nativeResidualEvidence: {
+      unknownProcessCount: 1, unknownProcesses: [{ pid: 9000, parentPid: 100, name: "node.exe", createdAt: nativeBirth,
+        scopeReason: "CURRENT_CAPTURED_ANCESTRY_MATCH" }], ownershipGranted: false, terminationAuthorized: false,
+    } });
+    expect(JSON.stringify(safe)).not.toContain("private-");
+  });
   it("projects native fields without inherited env, arbitrary payloads, credentials or private paths", () => {
     const native = nativeFixture();
     Object.assign(native.config, { env: { innocentLookingName: "unrecognized-inherited-private-value" },

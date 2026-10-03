@@ -1,6 +1,8 @@
 import type { captureWindowsScopedResiduals, waitForOwnedProcessQuiescence } from "./e2e-server-infrastructure.mjs";
 
 export const E2E_OWNERSHIP_SCOPE: string;
+export function projectPostE2eResidualEvidence(value: unknown): Record<string, unknown> | null;
+export function getPostE2eResidualFailureEvidence(error: unknown): Record<string, unknown> | null;
 export function validateStoredQuiescenceReceipts(input: Parameters<typeof validatePostE2eReceipts>[0]): ReturnType<typeof validatePostE2eReceipts>;
 export function validatePostE2eReceipts(input: {
   root: string; receipts: unknown[]; groups: string[]; head: string; sourceFingerprint: string; startedAt: string; now: string;

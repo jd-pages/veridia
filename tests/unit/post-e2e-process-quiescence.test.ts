@@ -2,7 +2,8 @@ import path from "node:path";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { E2E_OWNERSHIP_SCOPE, enforcePostE2eProcessQuiescence, validatePostE2eReceipts, validateStoredQuiescenceReceipts } from "../../scripts/testing/post-e2e-process-quiescence.mjs";
+import { E2E_OWNERSHIP_SCOPE, enforcePostE2eProcessQuiescence, validatePostE2eReceipts, validateStoredQuiescenceReceipts,
+  getPostE2eResidualFailureEvidence, projectPostE2eResidualEvidence } from "../../scripts/testing/post-e2e-process-quiescence.mjs";
 
 function fixture() {
   const root = process.cwd();
@@ -102,6 +103,27 @@ describe("POST_E2E_PROCESS_QUIESCENCE fresh native fence", () => {
   it("fails unknown residuals without terminating or adopting them", async () => {
     const hooks = { ...adapters(), scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [], unknownProcesses: [wrapper] }) };
     await expect(enforcePostE2eProcessQuiescence(fixture(), hooks)).rejects.toThrow("UNKNOWN_PROJECT_OR_PROFILE_RESIDUAL");
+  });
+  it("retains the actual blocking snapshot on its exact error without granting authority", async () => {
+    const unknown = { ...wrapper, pid: 9000, scopeReason: "RUN_PORT_LISTENER", commandLine: "secret-command", env: "secret-env" };
+    const error = await enforcePostE2eProcessQuiescence(fixture(), {
+      ...adapters(), scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [], unknownProcesses: [unknown] }),
+    }).catch(value => value);
+    expect(error.message).toBe("E2E_QUIESCENCE_UNKNOWN_PROJECT_OR_PROFILE_RESIDUAL");
+    expect(getPostE2eResidualFailureEvidence(error)).toMatchObject({ unknownProcessCount: 1, identitiesTruncated: false,
+      unknownProcesses: [{ pid: 9000, parentPid: 99, name: "node.exe", createdAt: wrapper.createdAt, scopeReason: "RUN_PORT_LISTENER" }],
+      ownershipGranted: false, terminationAuthorized: false });
+    expect(JSON.stringify(getPostE2eResidualFailureEvidence(error))).not.toContain("secret");
+    expect(getPostE2eResidualFailureEvidence({ nativeResidualEvidence: unknown })).toBeNull();
+  });
+  it("bounds residual diagnostics and never copies arbitrary keys or invalid identity text", () => {
+    const evidence = projectPostE2eResidualEvidence({ unknownProcesses: Array.from({ length: 17 }, () => ({
+      pid: -1, parentPid: "secret", name: "secret/path", createdAt: "secret-date", scopeReason: "secret-reason", commandLine: "secret-command",
+    })) });
+    expect(evidence).toMatchObject({ unknownProcessCount: 17, identitiesTruncated: true, ownershipGranted: false, terminationAuthorized: false });
+    expect((evidence!.unknownProcesses as unknown[])).toHaveLength(16);
+    expect(JSON.stringify(evidence)).not.toContain("secret");
+    expect(projectPostE2eResidualEvidence({})).toBeNull();
   });
   it("does not treat a classifier's historical reference without affinity as a project residual", async () => {
     const hooks = { ...adapters(), scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [], unknownProcesses: [],

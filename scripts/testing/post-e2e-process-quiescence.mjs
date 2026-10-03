@@ -10,6 +10,26 @@ export const E2E_OWNERSHIP_SCOPE = "CAPTURED_NATIVE_BIRTH_LINEAGES_WITH_LIVE_PAR
 const safeCounter = value => Number.isSafeInteger(value) && value >= 0;
 const date = value => typeof value === "string" && Number.isFinite(Date.parse(value));
 const birth = value => typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/u.test(value) && date(value);
+const residualFailureEvidence = new WeakMap();
+// Observation only. Never publish command lines, arbitrary source keys, paths,
+// environment, or new termination authority with an UNKNOWN fence failure.
+export function projectPostE2eResidualEvidence(value) {
+  if (!value || !Array.isArray(value.unknownProcesses)) return null;
+  const reasons = ["UNSCOPED_OPAQUE_NAMED_CANDIDATE", "UNVERIFIED_HISTORICAL_PARENT_CANDIDATE",
+    "PROJECT_OR_RUN_PROFILE_MATCH", "DIAGNOSTIC_COLLECTOR_DIRECT_CHILD_CANDIDATE", "RUN_PORT_LISTENER", "CURRENT_CAPTURED_ANCESTRY_MATCH"];
+  const pid = number => Number.isSafeInteger(number) && number >= 0 && number <= 2147483647 ? number : null;
+  return { schemaVersion: 1, scope: "UNKNOWN_RESIDUAL_OBSERVATION_ONLY_NO_TERMINATION_AUTHORITY",
+    unknownProcessCount: safeCounter(value.unknownProcessCount) ? value.unknownProcessCount : value.unknownProcesses.length,
+    identitiesTruncated: value.identitiesTruncated === true || value.unknownProcesses.length > 16,
+    unknownProcesses: value.unknownProcesses.slice(0, 16).map(item => ({ pid: pid(item?.pid), parentPid: pid(item?.parentPid),
+      name: typeof item?.name === "string" && /^[\p{L}\p{N}_. ()\[\]-]{1,260}$/u.test(item.name) ? item.name : null,
+      createdAt: birth(item?.createdAt) ? item.createdAt : null,
+      scopeReason: reasons.includes(item?.scopeReason) ? item.scopeReason : null })),
+    ownershipGranted: false, terminationAuthorized: false };
+}
+export function getPostE2eResidualFailureEvidence(error) {
+  return error && typeof error === "object" ? residualFailureEvidence.get(error) ?? null : null;
+}
 const inside = (parent, target) => {
   const relative = path.relative(parent, target);
   return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
@@ -137,7 +157,11 @@ export async function enforcePostE2eProcessQuiescence(input, adapters = {}) {
       if (residuals?.wrapperIdentityVerified !== true || !Array.isArray(residuals.ownedProcesses) || !Array.isArray(residuals.unknownProcesses)) {
         throw new Error("E2E_QUIESCENCE_SCOPED_SNAPSHOT_UNAVAILABLE");
       }
-      if (residuals.unknownProcesses.length) throw new Error("E2E_QUIESCENCE_UNKNOWN_PROJECT_OR_PROFILE_RESIDUAL");
+      if (residuals.unknownProcesses.length) {
+        const error = new Error("E2E_QUIESCENCE_UNKNOWN_PROJECT_OR_PROFILE_RESIDUAL");
+        residualFailureEvidence.set(error, projectPostE2eResidualEvidence(residuals));
+        throw error;
+      }
       if (profilePaths.some(profile => exists(profile))) throw new Error("E2E_QUIESCENCE_PROFILE_REAPPEARED_AFTER_CLEANUP");
       remaining();
       return { processes: [...processes, ...residuals.ownedProcesses], ports: listeners };
