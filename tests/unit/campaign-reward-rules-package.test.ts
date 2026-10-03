@@ -41,7 +41,7 @@ afterAll(async () => {
 }, 30_000);
 
 describe.sequential("Reward package feature-driven compatibility", () => {
-  it("canonical LEGACY导出min17，旧单档奖励min22，不含新四字段且旧往返可用", async () => {
+  it("canonical LEGACY导出min17，不含新四字段且旧往返可用", async () => {
     const canonical = await exportCurrentRulePayload({ minimumAppVersion: "1.1.17", ruleVersion: "rules-2026.09.30.170" }, source);
     expect(canonical.minimumAppVersion).toBe("1.1.17");
     for (const campaign of canonical.campaigns) {
@@ -50,15 +50,26 @@ describe.sequential("Reward package feature-driven compatibility", () => {
       }
     }
     await expect(applyRulePayload(canonical, "GITHUB", target)).resolves.toBeDefined();
+  });
+
+  // These are separate compatibility contracts and each performs a complete
+  // real SQLite round trip. Do not make their combined runtime one test's
+  // default budget, or let a timed-out mutation race the next case.
+  it("旧单档奖励导出min22，不含新四字段且旧往返可用", async () => {
     const selected = await source.campaign.findFirstOrThrow({ where: { deletedAt: null } });
     await source.campaign.update({ where: { id: selected.id }, data: { interactionRewardEnabled: true, interactionRewardThreshold: 10 } });
-    const single = await exportCurrentRulePayload({ minimumAppVersion: "1.1.17", ruleVersion: "rules-2026.09.30.220" }, source);
-    expect(single.minimumAppVersion).toBe("1.1.22");
-    expect(single.campaigns.every((campaign) => !Object.hasOwn(campaign, "rewardMode"))).toBe(true);
-    await expect(applyRulePayload(single, "GITHUB", target)).resolves.toBeDefined();
-    expect(await target.campaign.findFirstOrThrow({ where: { name: selected.name, month: selected.month } }))
-      .toMatchObject({ interactionRewardEnabled: true, interactionRewardThreshold: 10 });
-    await source.campaign.update({ where: { id: selected.id }, data: { interactionRewardEnabled: false, interactionRewardThreshold: 0 } });
+    try {
+      const single = await exportCurrentRulePayload({ minimumAppVersion: "1.1.17", ruleVersion: "rules-2026.09.30.220" }, source);
+      expect(single.minimumAppVersion).toBe("1.1.22");
+      expect(single.campaigns.every((campaign) => !Object.hasOwn(campaign, "rewardMode"))).toBe(true);
+      await expect(applyRulePayload(single, "GITHUB", target)).resolves.toBeDefined();
+      expect(await target.campaign.findFirstOrThrow({ where: { name: selected.name, month: selected.month } }))
+        .toMatchObject({ interactionRewardEnabled: true, interactionRewardThreshold: 10 });
+    } finally {
+      await source.campaign.update({ where: { id: selected.id }, data: {
+        interactionRewardEnabled: selected.interactionRewardEnabled, interactionRewardThreshold: selected.interactionRewardThreshold,
+      } });
+    }
   });
 
   it("LEGACY显式override与阶梯模式导出min41完整配置，不放宽应用版本guard", async () => {
