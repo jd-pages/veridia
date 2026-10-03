@@ -71,6 +71,13 @@ export function projectBuildLockReadyStartupFailure(value) {
 
 const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const sha = data => createHash("sha256").update(data).digest("hex");
+// Producer and reader bind the same declared reporter fields regardless of
+// whether beginSha256 was assigned after an installed-status observation.
+export function buildLockDiagnosticSupportIdentity(support, reporter) {
+  return sha(JSON.stringify({ support, reporter: {
+    version: reporter.version, beginSha256: reporter.beginSha256, measurement: reporter.measurement,
+  } }));
+}
 const uuid = value => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value);
 const hash = (value, length = 64) => typeof value === "string" && new RegExp(`^[0-9a-f]{${length}}$`, "u").test(value);
 const utc = value => typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:\d{4})?Z$/u.test(value) &&
@@ -235,7 +242,7 @@ function createController({ root = moduleRoot, platform = process.platform, io =
         measurement: "SYNTHETIC_PINNED_INPUT_NOT_ACTUAL_DEPENDENCY_PROOF" } : await readNextTraceSingleFlightStatus().then(status => ({ version: status.version, sha256: status.inputSha256, measurement: "ACTUAL_INSTALLED_COMPILED_REPORTER" }));
       if (!fixture) { reporter.beginSha256 = reporter.sha256; delete reporter.sha256; }
       if (!fixture && (reporter.version !== NEXT_TRACE_SINGLE_FLIGHT_PATCH.nextVersion || ![NEXT_TRACE_SINGLE_FLIGHT_PATCH.originalSha256, NEXT_TRACE_SINGLE_FLIGHT_PATCH.patchedSha256].includes(reporter.beginSha256))) throw new Error("BUILD_REPORTER_IDENTITY_INVALID");
-      const supportIdentity = sha(JSON.stringify({ support, reporter }));
+      const supportIdentity = buildLockDiagnosticSupportIdentity(support, reporter);
       const state = { root: canonicalRoot, directory, relativeDirectory, receiptRelativePath, invocationId, nonce, head, sourceFingerprint,
         startedAt, startedMono, support, supportIdentity, reporter, target, platform, policy, label: fixture ? "SYNTHETIC_TOOL_VALIDATION" : "FORMAL_VERIFY_TRACE",
         io, monotonic, failures: [], finished: false, ready: null, supervisor: null, guardian: null, forced: false, fixture };
@@ -570,7 +577,7 @@ export function readBuildLockDiagnosticsEvidence(relativeReceiptPath, { root = m
     watcher: "scripts/testing/windows-trace-rm-watcher.ps1", monitor: "scripts/testing/build-trace-failure-monitor.cjs", wrapper: "scripts/testing/verify.mjs" };
   for (const key of keys) { const item = receipt.support[key]; if (item?.relativePath !== expectedPaths[key]) throw new Error("DIAGNOSTIC_SUPPORT_PATH_NOT_ALLOWED"); const source = bound(fs, root, item.relativePath); regular(fs, source); if (!hash(item.sha256) || sha(fs.readFileSync(source)) !== item.sha256) throw new Error("DIAGNOSTIC_SUPPORT_SOURCE_CHANGED"); }
   const beginReporter = { version: receipt.reporter?.version, beginSha256: receipt.reporter?.beginSha256, measurement: receipt.reporter?.measurement };
-  if (sha(JSON.stringify({ support: receipt.support, reporter: beginReporter })) !== receipt.supportIdentity || receipt.reporter?.version !== NEXT_TRACE_SINGLE_FLIGHT_PATCH.nextVersion ||
+  if (buildLockDiagnosticSupportIdentity(receipt.support, beginReporter) !== receipt.supportIdentity || receipt.reporter?.version !== NEXT_TRACE_SINGLE_FLIGHT_PATCH.nextVersion ||
     ![NEXT_TRACE_SINGLE_FLIGHT_PATCH.originalSha256, NEXT_TRACE_SINGLE_FLIGHT_PATCH.patchedSha256].includes(receipt.reporter?.beginSha256) ||
     ![NEXT_TRACE_SINGLE_FLIGHT_PATCH.originalSha256, NEXT_TRACE_SINGLE_FLIGHT_PATCH.patchedSha256].includes(receipt.reporter?.endSha256) ||
     (receipt.reporter?.beginSha256 === NEXT_TRACE_SINGLE_FLIGHT_PATCH.patchedSha256 && receipt.reporter?.endSha256 !== NEXT_TRACE_SINGLE_FLIGHT_PATCH.patchedSha256) ||

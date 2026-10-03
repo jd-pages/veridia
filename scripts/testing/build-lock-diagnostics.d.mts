@@ -46,3 +46,4 @@ export function createBuildLockDiagnosticsFixtureController(options: {
   terminateOwnedSupervisor(session: BuildLockDiagnosticSession): boolean;
   closeOwnedControl(session: BuildLockDiagnosticSession): void;
 };
+export function buildLockDiagnosticSupportIdentity(support: Record<string, unknown>, reporter: { version: string; beginSha256: string; measurement: string }): string;

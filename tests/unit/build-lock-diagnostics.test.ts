@@ -8,9 +8,25 @@ import { describe, expect, test } from "vitest";
 import { createRequire } from "node:module";
 const { minimalSafeWindowsNativeEnvironment, WINDOWS_NATIVE_BLOCKED_DEFAULTS } = createRequire(import.meta.url)("../../scripts/testing/windows-native-environment.cjs");
 import { BUILD_LOCK_DIAGNOSTICS_POLICY, createBuildLockDiagnosticsFixtureController, redactBuildLockDiagnosticText,
-  readBuildLockDiagnosticsEvidence } from "../../scripts/testing/build-lock-diagnostics.mjs";
+  readBuildLockDiagnosticsEvidence, buildLockDiagnosticSupportIdentity } from "../../scripts/testing/build-lock-diagnostics.mjs";
 
 const root = process.cwd(), head = "a".repeat(40), sourceFingerprint = "b".repeat(64);
+test("formal installed reporter hash uses the reader's canonical field order without ignoring changed identity values", () => {
+  const support = { controller: { relativePath: "scripts/testing/build-lock-diagnostics.mjs", sha256: "a".repeat(64) } };
+  const producer: Record<string, string> = { version: "fixture-next", sha256: "b".repeat(64), measurement: "ACTUAL_INSTALLED_COMPILED_REPORTER" };
+  producer.beginSha256 = producer.sha256;
+  delete producer.sha256;
+  const reader = { version: producer.version, beginSha256: producer.beginSha256, measurement: producer.measurement };
+  // Reproduce the formal producer's late assignment: old raw JSON hashing
+  // disagreed deterministically with the reader although values were equal.
+  expect(JSON.stringify(producer)).not.toBe(JSON.stringify(reader));
+  const identity = buildLockDiagnosticSupportIdentity(support, producer as typeof reader);
+  expect(identity).toBe(buildLockDiagnosticSupportIdentity(support, reader));
+  for (const field of ["version", "beginSha256", "measurement"] as const) {
+    expect(identity).not.toBe(buildLockDiagnosticSupportIdentity(support, { ...reader, [field]: "changed" }));
+  }
+  expect(identity).not.toBe(buildLockDiagnosticSupportIdentity({ ...support, controller: { ...support.controller, sha256: "c".repeat(64) } }, reader));
+});
 const birth = "134352873660197859";
 const context = { head, sourceFingerprint, environment: { NODE_ENV: "test" as const } };
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
