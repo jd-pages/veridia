@@ -15,8 +15,25 @@ const OWNER_PROBE_TIMEOUT_MS = 2_000;
 export class WindowsBrowserProfileOwnershipError extends Error {
   constructor(message: string, readonly diagnostic?: {
     phase: string; reason: string; exitCode?: number | null; elapsedMs?: number;
-    nativeStage?: string; nativeFailureCode?: string;
+    nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number;
   }) { super(message); this.name = "WindowsBrowserProfileOwnershipError"; }
+}
+
+// Only a fixed stage vocabulary and a bounded clock value may leave the
+// native probe. Diagnostics never grant ownership or change its deadline.
+export function parseWindowsProfileProbeDiagnostic(text: string) {
+  const result: { nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number } = {};
+  const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|PARSER_COMPILE|REQUEST_PARSE|PROCESS_CENSUS|NATIVE_HANDLE_BIND|VALIDATED_TERMINATION|RESULT_EMIT):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
+  for (const match of text.matchAll(stage)) {
+    const elapsed = Number(match[2]);
+    if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 60_000) {
+      result.nativeStage = match[1];
+      result.nativeStageElapsedMs = elapsed;
+    }
+  }
+  const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(PARSER_COMPILE|REQUEST_PARSE|PROCESS_CENSUS|NATIVE_HANDLE_BIND|VALIDATED_TERMINATION|RESULT_EMIT):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER)\r?\n/u);
+  if (failure) { result.nativeStage = failure[1]; result.nativeFailureCode = failure[2]; }
+  return result;
 }
 
 // CommandLineToArgvW rules, including backslashes immediately before quotes.
@@ -143,15 +160,22 @@ function guardScript(input: {
   const encoded = Buffer.from(JSON.stringify(input), "utf8").toString("base64");
   // Only exact executable/profile matches leave this process. Raw command
   // lines, environment, browser URLs and credentials are never emitted.
-  return `$ErrorActionPreference='Stop'; $phase='PARSER_COMPILE'; $owned=@(); $handles=@(); try { Add-Type -TypeDefinition @'
+  return `[Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_STAGE=SCRIPT_ENTERED:0'); [Console]::Error.Flush();
+$ErrorActionPreference='Stop'; $probeClock=[Diagnostics.Stopwatch]::StartNew();
+function Set-ProbeStage([string]$value) {
+  $script:phase=$value;
+  [Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_STAGE='+$value+':'+$probeClock.ElapsedMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture));
+  [Console]::Error.Flush()
+}
+$phase='PARSER_COMPILE'; $owned=@(); $handles=@(); try { Set-ProbeStage 'PARSER_COMPILE'; Add-Type -TypeDefinition @'
 ${nativeArgumentParser}
 '@;
-$phase='REQUEST_PARSE';
+Set-ProbeStage 'REQUEST_PARSE';
 $request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json;
 $expectedExecutable = [IO.Path]::GetFullPath($request.executablePath);
 $expectedProfile = [IO.Path]::GetFullPath($request.profilePath).TrimEnd('\\');
 $owned = @(); $handles = @();
-  $phase='PROCESS_CENSUS';
+  Set-ProbeStage 'PROCESS_CENSUS';
   $name = [IO.Path]::GetFileName($expectedExecutable).Replace("'", "''");
   foreach ($candidate in @(Get-CimInstance Win32_Process -Filter "Name='$name'")) {
     if (![string]::Equals($candidate.ExecutablePath, $expectedExecutable, [StringComparison]::OrdinalIgnoreCase)) { continue }
@@ -160,7 +184,7 @@ $owned = @(); $handles = @();
     $profiles = @($argv | Where-Object { $_.StartsWith('--user-data-dir=', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.Substring(16) });
     if ($profiles.Count -ne 1 -or !$profiles[0]) { continue }
     if (![string]::Equals([IO.Path]::GetFullPath($profiles[0]).TrimEnd('\\'), $expectedProfile, [StringComparison]::OrdinalIgnoreCase)) { continue }
-    $phase='NATIVE_HANDLE_BIND';
+    Set-ProbeStage 'NATIVE_HANDLE_BIND';
     try { $process = [Diagnostics.Process]::GetProcessById([int]$candidate.ProcessId); $null = $process.Handle } catch {
       if (Get-CimInstance Win32_Process -Filter "ProcessId=$($candidate.ProcessId)") { throw 'LIVE_PROCESS_HANDLE_UNAVAILABLE' }
       continue
@@ -184,9 +208,9 @@ $owned = @(); $handles = @();
   # All identities are validated before any termination. Process.Handle was
   # opened before StartTime; Kill therefore targets that OS handle, not a PID
   # which may have been reused between validation and termination.
-  $phase='VALIDATED_TERMINATION';
+  Set-ProbeStage 'VALIDATED_TERMINATION';
   foreach ($process in $handles) { if (!$process.HasExited) { $process.Kill() } }
-  $phase='RESULT_EMIT';
+  Set-ProbeStage 'RESULT_EMIT';
   ConvertTo-Json -InputObject @($owned) -Depth 4 -Compress
 } catch {
   $code='NATIVE_PROBE_SCRIPT_EXCEPTION';
@@ -213,12 +237,11 @@ export async function captureWindowsBrowserProfileOwners(
       Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let settled = false;
-    let diagnostic: { nativeStage?: string; nativeFailureCode?: string } = {};
+    let diagnostic: ReturnType<typeof parseWindowsProfileProbeDiagnostic> = {};
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => {
       stderr = `${stderr}${chunk.toString("utf8")}`.slice(-2_000);
-      const record = stderr.match(/VERIDIA_PROFILE_PROBE_FAILURE=(PARSER_COMPILE|REQUEST_PARSE|PROCESS_CENSUS|NATIVE_HANDLE_BIND|VALIDATED_TERMINATION|RESULT_EMIT):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER)\r?\n/u);
-      if (record) diagnostic = { nativeStage: record[1], nativeFailureCode: record[2] };
+      diagnostic = { ...diagnostic, ...parseWindowsProfileProbeDiagnostic(stderr) };
     });
     const finish = (value?: string, reason = "NATIVE_PROBE_EXIT", exitCode?: number | null) => {
       if (settled) return;

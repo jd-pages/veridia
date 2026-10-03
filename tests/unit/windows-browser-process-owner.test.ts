@@ -3,6 +3,7 @@ import {
   exactBrowserProfileArgument, parseWindowsCommandLine,
   authorizeInitialWindowsBrowserOwners, authorizeWindowsBrowserDescendants,
   releaseWindowsBrowserProfileOwners, sameWindowsBrowserProcess,
+  parseWindowsProfileProbeDiagnostic,
   type WindowsBrowserProcessIdentity,
 } from "@/lib/automation/windows-browser-process-owner";
 
@@ -14,6 +15,23 @@ const oldOwner: WindowsBrowserProcessIdentity = {
 };
 
 describe("exact physical browser ownership fence", () => {
+  it("retains only the last complete native phase without exporting arbitrary stderr", () => {
+    const prefix = "VERIDIA_PROFILE_PROBE_STAGE=SCRIPT_ENTERED:0\r\nVERIDIA_PROFILE_PROBE_STAGE=PARSER_COMPILE:2\n";
+    expect(parseWindowsProfileProbeDiagnostic(`${prefix}private command env token\nVERIDIA_PROFILE_PROBE_STAGE=PROCESS_CENSUS:`))
+      .toEqual({ nativeStage: "PARSER_COMPILE", nativeStageElapsedMs: 2 });
+    expect(parseWindowsProfileProbeDiagnostic(`${prefix}VERIDIA_PROFILE_PROBE_STAGE=PROCESS_CENSUS:110\r\n`))
+      .toEqual({ nativeStage: "PROCESS_CENSUS", nativeStageElapsedMs: 110 });
+    expect(parseWindowsProfileProbeDiagnostic("VERIDIA_PROFILE_PROBE_STAGE=PRIVATE_SECRET:1\nVERIDIA_PROFILE_PROBE_STAGE=RESULT_EMIT:999999\n"))
+      .toEqual({});
+  });
+
+  it("retains fixed native rejection codes but never treats phase evidence as ownership", () => {
+    expect(parseWindowsProfileProbeDiagnostic("VERIDIA_PROFILE_PROBE_STAGE=NATIVE_HANDLE_BIND:900\nVERIDIA_PROFILE_PROBE_FAILURE=NATIVE_HANDLE_BIND:LIVE_PROCESS_BIRTH_MISMATCH\n"))
+      .toEqual({ nativeStage: "NATIVE_HANDLE_BIND", nativeStageElapsedMs: 900, nativeFailureCode: "LIVE_PROCESS_BIRTH_MISMATCH" });
+    expect(parseWindowsProfileProbeDiagnostic("VERIDIA_PROFILE_PROBE_FAILURE=NATIVE_HANDLE_BIND:private exception\n"))
+      .toEqual({});
+  });
+
   it("parses quoted Windows arguments, not profile substrings or duplicate switches", () => {
     expect(parseWindowsCommandLine('"C:\\Program Files\\Chrome\\chrome.exe" "--user-data-dir=E:\\isolated browser\\xhs-profile" --start-minimized'))
       .toEqual(["C:\\Program Files\\Chrome\\chrome.exe", "--user-data-dir=E:\\isolated browser\\xhs-profile", "--start-minimized"]);
