@@ -26,6 +26,7 @@ $remainingAfterCleanup = @()
 $inputStream = $null
 $cleanupErrors = @()
 $protocolJson = $null
+$rootBirthCheck = $null
 function Startup([string]$Stage) {
   [Console]::Out.WriteLine('{"kind":"STARTUP","stage":"'+$Stage+'"}')
   [Console]::Out.Flush()
@@ -38,6 +39,17 @@ function Test-SameCapturedBirth {
 function Test-CimBirthAvailable {
   param($Row)
   return $null -ne $Row -and $Row.CreationDate -is [DateTime]
+}
+function Get-TypegenRootBirthCheck {
+  param([DateTime]$NativeCreated,[DateTime]$SampledCreated,[bool]$HasExited,[long]$EarliestMs,[long]$LatestMs)
+  $nativeUtc = $NativeCreated.ToUniversalTime()
+  $nativeStamp = $nativeUtc.ToFileTimeUtc()
+  $sampledStamp = $SampledCreated.ToUniversalTime().ToFileTimeUtc()
+  $millis = ([DateTimeOffset]$nativeUtc).ToUnixTimeMilliseconds()
+  return @{nativeStartFileTime=$nativeStamp.ToString();sampledStartFileTime=$sampledStamp.ToString();
+    nativeCreationMs=$millis;earliestCreationMs=$EarliestMs;latestCreationMs=$LatestMs;
+    hasExited=$HasExited;beforeCreationWindow=($millis -lt $EarliestMs);afterCreationWindow=($millis -gt $LatestMs);
+    sampledBirthMatches=(Test-SameCapturedBirth $nativeStamp $sampledStamp)}
 }
 function Get-TypegenProcessRows {
   param([int]$ProcessId = 0)
@@ -122,10 +134,9 @@ try {
   Startup ROOT_NATIVE_HANDLE_READY
   Startup ROOT_PROCESS_OPEN_READY
   $created = $native.StartTime.ToUniversalTime()
-  $millis = ([DateTimeOffset]$created).ToUnixTimeMilliseconds()
-  if ($native.HasExited -or $millis -lt $EarliestCreationMs -or $millis -gt $LatestCreationMs -or
-      [decimal]::Floor([decimal]$created.ToFileTimeUtc()/10) -ne
-      [decimal]::Floor([decimal]$row.CreationDate.ToUniversalTime().ToFileTimeUtc()/10)) {
+  $rootBirthCheck = Get-TypegenRootBirthCheck $created $row.CreationDate $native.HasExited $EarliestCreationMs $LatestCreationMs
+  if ($rootBirthCheck.hasExited -or $rootBirthCheck.beforeCreationWindow -or $rootBirthCheck.afterCreationWindow -or
+      !$rootBirthCheck.sampledBirthMatches) {
     $native.Dispose()
     throw 'TYPEGEN_ROOT_NATIVE_BIRTH_MISMATCH'
   }
@@ -281,6 +292,7 @@ try {
     FinalizationStage FINAL_EMIT_START
     Emit @{kind='FINAL';status=$status;failure=$failure;released=$released;root=$identities[$RootPid];
     failureLine=$failureLine;failureType=$failureType;
+    rootBirthCheck=$rootBirthCheck;
     identities=@($identities.Values);sampleCount=$sampleCount;elapsedMs=$clock.Elapsed.TotalMilliseconds;
     uncertainResidualCandidates=@($uncertain.Values);remainingBeforeCleanup=$remainingBeforeCleanup;
     remainingAfterCleanup=$remainingAfterCleanup;cleanupErrors=$cleanupErrors;

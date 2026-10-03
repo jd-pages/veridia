@@ -123,6 +123,16 @@ function validNativeRoot(identity, pid, creatorPid) {
     typeof identity.createdAt === "string" && Number.isFinite(Date.parse(identity.createdAt));
 }
 
+// Fixed birth-check vocabulary only; never forward arbitrary FINAL payloads.
+function safeRootBirthCheck(value) {
+  if (!value || !["nativeStartFileTime", "sampledStartFileTime"].every(key =>
+    typeof value[key] === "string" && /^[1-9][0-9]+$/u.test(value[key])) ||
+    !["nativeCreationMs", "earliestCreationMs", "latestCreationMs"].every(key => Number.isSafeInteger(value[key])) ||
+    !["hasExited", "beforeCreationWindow", "afterCreationWindow", "sampledBirthMatches"].every(key => typeof value[key] === "boolean")) return null;
+  return Object.fromEntries(["nativeStartFileTime", "sampledStartFileTime", "nativeCreationMs", "earliestCreationMs",
+    "latestCreationMs", "hasExited", "beforeCreationWindow", "afterCreationWindow", "sampledBirthMatches"].map(key => [key, value[key]]));
+}
+
 // Generic only to make the actual launcher testable with self-owned fixtures.
 // Formal prepare supplies the exact installed Next CLI and ["typegen"].
 export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, args = ["typegen"],
@@ -239,6 +249,8 @@ export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, 
       cliReleased: receipt.executed,
       monitorExitCode: monitor?.exitCode ?? null,
       monitorSignal: monitor?.signalCode ?? null,
+      nativeFailureCode: /^TYPEGEN_[A-Z_]+$/u.test(protocol?.final()?.failure ?? "") ? protocol.final().failure : null,
+      rootBirthCheck: safeRootBirthCheck(protocol?.final()?.rootBirthCheck),
     })}`);
   } finally {
     if (failure) {

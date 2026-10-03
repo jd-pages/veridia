@@ -213,7 +213,7 @@ describe("actual self-owned Windows native launcher (never real Next)", () => {
           "ROOT_NATIVE_HANDLE_START", "ROOT_NATIVE_HANDLE_READY", "ROOT_PROCESS_OPEN_READY",
           "ROOT_IDENTITY_BOUND", "READY_EMIT_START", "READY_EMITTED"] });
       expect(Object.keys(published).sort()).toEqual(["cliReleased", "elapsedMs", "failureCode", "finalizationStages", "monitorExitCode",
-        "monitorSignal", "nativeArmedBeforeCliRelease", "nativeCapturedBeforeCliRelease", "startupStages"]);
+        "monitorSignal", "nativeArmedBeforeCliRelease", "nativeCapturedBeforeCliRelease", "nativeFailureCode", "rootBirthCheck", "startupStages"]);
       expect(String(line)).not.toContain(output);
     } finally { diagnostic.mockRestore(); }
   }, 15000);
@@ -317,6 +317,35 @@ if(@(Get-TypegenProcessRows).Count -lt 1) { throw 'CENSUS_QUERY_INVALID' }
     expect(JSON.parse(result.stdout)).toEqual([true, true, false]);
     expect(monitor).toContain("CAPTURED_PID_REUSED_UNKNOWN_CURRENT_BIRTH");
     expect(monitor.indexOf("CAPTURED_PID_REUSED_UNKNOWN_CURRENT_BIRTH")).toBeLessThan(monitor.indexOf("$grew = $true"));
+  });
+
+  it("actual root birth predicate keeps each rejection independently observable without relaxing the creation window", () => {
+    const monitor = fs.readFileSync(path.resolve("scripts/testing/next-typegen-owner-monitor.ps1"), "utf8");
+    const sameBirth = monitor.match(/function Test-SameCapturedBirth \{[\s\S]*?\n\}/u)?.[0];
+    const check = monitor.match(/function Get-TypegenRootBirthCheck \{[\s\S]*?\n\}/u)?.[0];
+    expect(sameBirth).toBeDefined();
+    expect(check).toBeDefined();
+    if (process.platform !== "win32") return;
+    const script = `${sameBirth}\n${check}\n$stamp=[DateTime]::FromFileTimeUtc(134352894793735696)
+$millis=([DateTimeOffset]$stamp).ToUnixTimeMilliseconds()
+@((Get-TypegenRootBirthCheck $stamp $stamp $false $millis $millis),
+  (Get-TypegenRootBirthCheck $stamp $stamp $false ($millis+1) ($millis+2)),
+  (Get-TypegenRootBirthCheck $stamp $stamp $false ($millis-2) ($millis-1)),
+  (Get-TypegenRootBirthCheck $stamp $stamp $true $millis $millis),
+  (Get-TypegenRootBirthCheck $stamp ([DateTime]::FromFileTimeUtc(134352894793735710)) $false $millis $millis)) | ConvertTo-Json -Compress`;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64")], { encoding: "utf8", windowsHide: true, timeout: 3000 });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([
+      expect.objectContaining({ hasExited: false, beforeCreationWindow: false, afterCreationWindow: false, sampledBirthMatches: true }),
+      expect.objectContaining({ beforeCreationWindow: true, afterCreationWindow: false }),
+      expect.objectContaining({ beforeCreationWindow: false, afterCreationWindow: true }),
+      expect.objectContaining({ hasExited: true }),
+      expect.objectContaining({ sampledBirthMatches: false }),
+    ]);
+    expect(monitor).toContain("$rootBirthCheck.hasExited -or $rootBirthCheck.beforeCreationWindow -or $rootBirthCheck.afterCreationWindow");
+    expect(monitor).toContain("!$rootBirthCheck.sampledBirthMatches");
   });
 
   it("missing sampled birth never grants ownership and the wait uses one retained snapshot", () => {
