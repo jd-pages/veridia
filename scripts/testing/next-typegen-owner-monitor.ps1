@@ -37,9 +37,44 @@ function Test-CimBirthAvailable {
   param($Row)
   return $null -ne $Row -and $Row.CreationDate -is [DateTime]
 }
+function Get-TypegenProcessRows {
+  param([int]$ProcessId = 0)
+  # Keep Win32_Process parent/executable/birth evidence, but do not activate
+  # CimCmdlets/module discovery in the cropped native-monitor environment.
+  # Query/handle stages remain distinct; this is not a claim about which old
+  # provider/module/handle call blocked on the hosted runner.
+  $query = 'SELECT ProcessId,ParentProcessId,CreationDate FROM Win32_Process'
+  if ($ProcessId -gt 0) {
+    $query = 'SELECT ProcessId,ParentProcessId,CreationDate,ExecutablePath FROM Win32_Process WHERE ProcessId=' + $ProcessId
+  }
+  $options = [System.Management.EnumerationOptions]::new()
+  $options.Timeout = [TimeSpan]::FromSeconds(2)
+  $options.ReturnImmediately = $true
+  $options.Rewindable = $false
+  $searcher = [System.Management.ManagementObjectSearcher]::new('root\cimv2',$query,$options)
+  $collection = $null
+  try {
+    $collection = $searcher.Get()
+    foreach ($processRow in $collection) {
+      try {
+        $birth = $null
+        if ($processRow['CreationDate']) {
+          try { $birth = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$processRow['CreationDate']) }
+          catch { $birth = $null } # Invalid birth never grants ownership.
+        }
+        $projection = @{ProcessId=[int]$processRow['ProcessId'];ParentProcessId=[int]$processRow['ParentProcessId'];CreationDate=$birth}
+        if ($ProcessId -gt 0) { $projection.ExecutablePath = [string]$processRow['ExecutablePath'] }
+        $projection
+      } finally { $processRow.Dispose() }
+    }
+  } finally {
+    if ($collection) { $collection.Dispose() }
+    $searcher.Dispose()
+  }
+}
 function Emit($value) {
   # Protocol publication must not activate PowerShell Utility/module analysis
-  # before READY. Ownership still uses CIM + retained native handle/birth.
+  # before READY. Ownership still uses Win32_Process + retained handle/birth.
   [Console]::Out.WriteLine($protocolJson.Serialize($value))
   [Console]::Out.Flush()
 }
@@ -61,14 +96,21 @@ try {
   $creator = [Diagnostics.Process]::GetProcessById($CreatorPid)
   $null = $creator.Handle
   Startup ROOT_PROCESS_OPEN_START
-  $row = Get-CimInstance Win32_Process -Filter "ProcessId=$RootPid" -OperationTimeoutSec 2
+  Startup ROOT_QUERY_START
+  $null = [Reflection.Assembly]::Load('System.Management, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a')
+  $rootRows = @(Get-TypegenProcessRows $RootPid)
+  Startup ROOT_QUERY_READY
+  if ($rootRows.Count -ne 1) { throw 'TYPEGEN_ROOT_CREATOR_OR_EXECUTABLE_MISMATCH' }
+  $row = $rootRows[0]
   if (!$row -or $row.ParentProcessId -ne $CreatorPid -or
       ![string]::Equals([string]$row.ExecutablePath,$ExecutablePath,[StringComparison]::OrdinalIgnoreCase)) {
     throw 'TYPEGEN_ROOT_CREATOR_OR_EXECUTABLE_MISMATCH'
   }
   if (!(Test-CimBirthAvailable $row)) { throw 'TYPEGEN_ROOT_CIM_BIRTH_UNAVAILABLE' }
+  Startup ROOT_NATIVE_HANDLE_START
   $native = [Diagnostics.Process]::GetProcessById($RootPid)
   $null = $native.Handle
+  Startup ROOT_NATIVE_HANDLE_READY
   Startup ROOT_PROCESS_OPEN_READY
   $created = $native.StartTime.ToUniversalTime()
   $millis = ([DateTimeOffset]$created).ToUnixTimeMilliseconds()
@@ -102,8 +144,7 @@ try {
     if ($clock.ElapsedMilliseconds -ge $DeadlineMs) { throw 'TYPEGEN_STAGE_DEADLINE' }
     # This is sampled discovery, not a Windows Job and not exhaustive child
     # admission. Parent must still be alive with its retained native handle.
-    $rows = @(Get-CimInstance Win32_Process -OperationTimeoutSec 2 |
-      Select-Object ProcessId,ParentProcessId,CreationDate)
+    $rows = @(Get-TypegenProcessRows)
     $sampleCount++
     foreach ($candidate in $rows) {
       $pidValue = [int]$candidate.ProcessId

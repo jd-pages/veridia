@@ -58,7 +58,8 @@ function exitOf(child, event = "exit") {
 function monitorProtocol(child, onCapture) {
   let pending = "", outputBytes = 0, final;
   const startup = [];
-  const startupStages = ["SCRIPT_ENTERED", "ARGS_VALIDATED", "ROOT_PROCESS_OPEN_START", "ROOT_PROCESS_OPEN_READY",
+  const startupStages = ["SCRIPT_ENTERED", "ARGS_VALIDATED", "ROOT_PROCESS_OPEN_START", "ROOT_QUERY_START", "ROOT_QUERY_READY",
+    "ROOT_NATIVE_HANDLE_START", "ROOT_NATIVE_HANDLE_READY", "ROOT_PROCESS_OPEN_READY",
     "ROOT_IDENTITY_BOUND", "READY_EMIT_START", "READY_EMITTED"];
   let readyResolve, readyReject, armedResolve, armedReject, failureReject;
   const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });

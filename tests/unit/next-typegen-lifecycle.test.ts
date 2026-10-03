@@ -209,7 +209,8 @@ describe("actual self-owned Windows native launcher (never real Next)", () => {
       const published = JSON.parse(String(line).slice(String(line).indexOf("=" ) + 1));
       expect(published).toMatchObject({ failureCode: "TYPEGEN_COMMAND_FAILED", cliReleased: true,
         nativeCapturedBeforeCliRelease: true, nativeArmedBeforeCliRelease: true,
-        startupStages: ["SCRIPT_ENTERED", "ARGS_VALIDATED", "ROOT_PROCESS_OPEN_START", "ROOT_PROCESS_OPEN_READY",
+        startupStages: ["SCRIPT_ENTERED", "ARGS_VALIDATED", "ROOT_PROCESS_OPEN_START", "ROOT_QUERY_START", "ROOT_QUERY_READY",
+          "ROOT_NATIVE_HANDLE_START", "ROOT_NATIVE_HANDLE_READY", "ROOT_PROCESS_OPEN_READY",
           "ROOT_IDENTITY_BOUND", "READY_EMIT_START", "READY_EMITTED"] });
       expect(Object.keys(published).sort()).toEqual(["cliReleased", "elapsedMs", "failureCode", "monitorExitCode",
         "monitorSignal", "nativeArmedBeforeCliRelease", "nativeCapturedBeforeCliRelease", "startupStages"]);
@@ -262,6 +263,36 @@ describe("actual self-owned Windows native launcher (never real Next)", () => {
     expect(monitor).toContain("$stamp -lt $parent.StartTime.ToUniversalTime().ToFileTimeUtc()");
     expect(monitor).toContain("PARENT_EXITED_BEFORE_NATIVE_LINEAGE_CAPTURE");
     expect(monitor).not.toMatch(/Stop-Process|taskkill|Start-Sleep/u);
+  });
+
+  it("reads actual Win32_Process identity without cmdlet/module auto loading and disposes each census", () => {
+    const monitor = fs.readFileSync(path.resolve("scripts/testing/next-typegen-owner-monitor.ps1"), "utf8");
+    const query = monitor.match(/function Get-TypegenProcessRows \{[\s\S]*?\n\}/u)?.[0];
+    expect(query).toBeDefined();
+    expect(monitor).not.toContain("Get-CimInstance");
+    expect(query).toContain("$options.Timeout = [TimeSpan]::FromSeconds(2)");
+    expect(query).toContain("$processRow.Dispose()");
+    expect(query).toContain("$collection.Dispose()");
+    expect(query).toContain("$searcher.Dispose()");
+    if (process.platform !== "win32") return;
+    const script = `$ErrorActionPreference='Stop'; $PSModuleAutoLoadingPreference='None';
+$null=[Reflection.Assembly]::Load('System.Management, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a')
+${query}
+$rows=@(Get-TypegenProcessRows $PID)
+if($rows.Count -ne 1 -or $rows[0].ProcessId -ne $PID -or $rows[0].ParentProcessId -le 0 -or $rows[0].CreationDate -isnot [DateTime] -or !$rows[0].ExecutablePath) { throw 'IDENTITY_QUERY_INVALID' }
+$held=[Diagnostics.Process]::GetProcessById($PID)
+try {
+  $null=$held.Handle
+  if([decimal]::Floor([decimal]$held.StartTime.ToUniversalTime().ToFileTimeUtc()/10) -ne [decimal]::Floor([decimal]$rows[0].CreationDate.ToUniversalTime().ToFileTimeUtc()/10)) { throw 'BIRTH_QUERY_MISMATCH' }
+  if(![string]::Equals($rows[0].ExecutablePath,$held.MainModule.FileName,[StringComparison]::OrdinalIgnoreCase)) { throw 'EXECUTABLE_QUERY_MISMATCH' }
+} finally { $held.Dispose() }
+if(@(Get-TypegenProcessRows).Count -lt 1) { throw 'CENSUS_QUERY_INVALID' }
+[Console]::Out.WriteLine('WIN32_PROCESS_QUERY_WITHOUT_MODULE_AUTOLOAD_PASS')`;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64")], { encoding: "utf8", windowsHide: true, timeout: 3000 });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("WIN32_PROCESS_QUERY_WITHOUT_MODULE_AUTOLOAD_PASS");
   });
 
   it("actual monitor pure birth function distinguishes PID replacement from CIM precision", async () => {
