@@ -9,8 +9,10 @@ param(
 )
 [Console]::Out.WriteLine('{"kind":"STARTUP","stage":"SCRIPT_ENTERED"}')
 $ErrorActionPreference = 'Stop'
+$PSModuleAutoLoadingPreference = 'None'
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $handles = @{}
+$captureOrder = [Collections.Generic.List[int]]::new()
 $identities = @{}
 $creator = $null
 $released = $false
@@ -78,6 +80,10 @@ function Emit($value) {
   [Console]::Out.WriteLine($protocolJson.Serialize($value))
   [Console]::Out.Flush()
 }
+function FinalizationStage([string]$Stage) {
+  if (!$protocolJson) { return } # Preserve the serializer-startup fail-closed fallback.
+  Emit @{kind='FINALIZATION';stage=$Stage;elapsedMs=$clock.Elapsed.TotalMilliseconds}
+}
 function Remember($row, $native, $parentIdentity) {
   $stamp = $native.StartTime.ToUniversalTime().ToFileTimeUtc()
   $identity = @{pid=[int]$row.ProcessId;parentPid=[int]$row.ParentProcessId;nativeStartFileTime=$stamp.ToString();
@@ -85,6 +91,9 @@ function Remember($row, $native, $parentIdentity) {
     capturedElapsedMs=$clock.Elapsed.TotalMilliseconds;parentNativeStartFileTime=$parentIdentity}
   $handles[[int]$row.ProcessId] = $native
   $identities[[int]$row.ProcessId] = $identity
+  # Admission requires a retained live parent. Reverse insertion order is
+  # therefore child-before-parent, without Utility module discovery at cleanup.
+  $captureOrder.Add([int]$row.ProcessId)
 }
 function LiveIdentities {
   return @($handles.Keys | Where-Object {!$handles[$_].HasExited} | ForEach-Object {$identities[$_]})
@@ -216,10 +225,16 @@ try {
       }
     }
     if ($handles[$RootPid].HasExited) {
-      if ($null -eq $rootExitAt) { $rootExitAt = $clock.ElapsedMilliseconds }
+      if ($null -eq $rootExitAt) {
+        $rootExitAt = $clock.ElapsedMilliseconds
+        FinalizationStage ROOT_EXIT_OBSERVED
+      }
       $live = @(LiveIdentities)
       if ($live.Count -eq 0 -and $uncertain.Count -eq 0) { $status='PASSED'; break }
-      if ($clock.ElapsedMilliseconds - $rootExitAt -ge $ExitDeadlineMs) { throw 'TYPEGEN_CAPTURED_TREE_NOT_QUIESCENT' }
+      if ($clock.ElapsedMilliseconds - $rootExitAt -ge $ExitDeadlineMs) {
+        FinalizationStage CAPTURED_TREE_NOT_QUIESCENT
+        throw 'TYPEGEN_CAPTURED_TREE_NOT_QUIESCENT'
+      }
     }
     # Wait on the retained handle: this is a bounded process-exit condition,
     # not an unconditional sleep used to assume that cleanup finished.
@@ -239,28 +254,39 @@ try {
   $failureLine = $_.InvocationInfo.ScriptLineNumber
   $failureType = $_.Exception.GetType().FullName
 } finally {
+  if ($protocolJson) { FinalizationStage CLEANUP_ENTERED }
   $remainingBeforeCleanup = @(LiveIdentities)
+  if ($protocolJson) { FinalizationStage REMAINING_BEFORE_CLEANUP }
   if ($status -ne 'PASSED') {
     # Only already-retained native handles with proven birth/lineage may be
     # terminated. Unknown residuals remain evidence and never grant authority.
-    foreach ($identity in @($remainingBeforeCleanup | Sort-Object capturedElapsedMs -Descending)) {
-      try { if (!$handles[$identity.pid].HasExited) { $handles[$identity.pid].Kill() } }
-      catch { $cleanupErrors += @{pid=$identity.pid;operation='Kill';error=$_.Exception.GetType().Name} }
+    FinalizationStage HELD_HANDLE_TERMINATE_START
+    for ($index = $captureOrder.Count - 1; $index -ge 0; $index--) {
+      $capturedPid = $captureOrder[$index]
+      try { if (!$handles[$capturedPid].HasExited) { $handles[$capturedPid].Kill() } }
+      catch { $cleanupErrors += @{pid=$capturedPid;operation='Kill';error=$_.Exception.GetType().Name} }
     }
+    FinalizationStage HELD_HANDLE_TERMINATE_RETURN
     $cleanupUntil = $clock.ElapsedMilliseconds + $ExitDeadlineMs
     foreach ($identity in $remainingBeforeCleanup) {
       $remainingBudget = [Math]::Max(0,$cleanupUntil - $clock.ElapsedMilliseconds)
       try { $null = $handles[$identity.pid].WaitForExit([int]$remainingBudget) }
       catch { $cleanupErrors += @{pid=$identity.pid;operation='WaitForExit';error=$_.Exception.GetType().Name} }
     }
+    FinalizationStage HELD_HANDLE_JOIN_RETURN
   }
   $remainingAfterCleanup = @(LiveIdentities)
-  if ($protocolJson) { Emit @{kind='FINAL';status=$status;failure=$failure;released=$released;root=$identities[$RootPid];
+  if ($protocolJson) {
+    FinalizationStage REMAINING_AFTER_CLEANUP
+    FinalizationStage FINAL_EMIT_START
+    Emit @{kind='FINAL';status=$status;failure=$failure;released=$released;root=$identities[$RootPid];
     failureLine=$failureLine;failureType=$failureType;
     identities=@($identities.Values);sampleCount=$sampleCount;elapsedMs=$clock.Elapsed.TotalMilliseconds;
     uncertainResidualCandidates=@($uncertain.Values);remainingBeforeCleanup=$remainingBeforeCleanup;
     remainingAfterCleanup=$remainingAfterCleanup;cleanupErrors=$cleanupErrors;
-    scope='NATIVE_HANDLE_BIRTH_FENCED_SAMPLED_DESCENDANTS_NOT_EXHAUSTIVE'} }
+    scope='NATIVE_HANDLE_BIRTH_FENCED_SAMPLED_DESCENDANTS_NOT_EXHAUSTIVE'}
+    FinalizationStage FINAL_EMITTED
+  }
   else { [Console]::Out.WriteLine('{"kind":"FINAL","status":"FAILED","failure":"TYPEGEN_PROTOCOL_SERIALIZER_STARTUP_FAILED"}') }
   foreach ($handle in $handles.Values) { $handle.Dispose() }
   if ($creator) { $creator.Dispose() }

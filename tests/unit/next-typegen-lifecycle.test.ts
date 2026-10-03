@@ -212,7 +212,7 @@ describe("actual self-owned Windows native launcher (never real Next)", () => {
         startupStages: ["SCRIPT_ENTERED", "ARGS_VALIDATED", "ROOT_PROCESS_OPEN_START", "ROOT_QUERY_START", "ROOT_QUERY_READY",
           "ROOT_NATIVE_HANDLE_START", "ROOT_NATIVE_HANDLE_READY", "ROOT_PROCESS_OPEN_READY",
           "ROOT_IDENTITY_BOUND", "READY_EMIT_START", "READY_EMITTED"] });
-      expect(Object.keys(published).sort()).toEqual(["cliReleased", "elapsedMs", "failureCode", "monitorExitCode",
+      expect(Object.keys(published).sort()).toEqual(["cliReleased", "elapsedMs", "failureCode", "finalizationStages", "monitorExitCode",
         "monitorSignal", "nativeArmedBeforeCliRelease", "nativeCapturedBeforeCliRelease", "startupStages"]);
       expect(String(line)).not.toContain(output);
     } finally { diagnostic.mockRestore(); }
@@ -247,6 +247,11 @@ describe("actual self-owned Windows native launcher (never real Next)", () => {
     const actual = JSON.parse(fs.readFileSync(output, "utf8"));
     expect((error as Error & { receipt: TypegenReceipt }).receipt.nativeMonitor).toMatchObject({
       remainingBeforeCleanup: expect.arrayContaining([expect.objectContaining({ pid: actual.childPid })]) });
+    expect((error as Error & { receipt: TypegenReceipt }).receipt.monitorFinalizationStages).toEqual([
+      "ROOT_EXIT_OBSERVED", "CAPTURED_TREE_NOT_QUIESCENT", "CLEANUP_ENTERED", "REMAINING_BEFORE_CLEANUP",
+      "HELD_HANDLE_TERMINATE_START", "HELD_HANDLE_TERMINATE_RETURN", "HELD_HANDLE_JOIN_RETURN",
+      "REMAINING_AFTER_CLEANUP", "FINAL_EMIT_START", "MONITOR_STDOUT_FINAL_RECEIVED", "FINAL_EMITTED", "MONITOR_CLOSE_OBSERVED",
+    ]);
   }, 15000);
 
   it("bounds a self-owned stalled CLI, kills only the creator handle and never reports acceptance", async () => {
@@ -263,6 +268,10 @@ describe("actual self-owned Windows native launcher (never real Next)", () => {
     expect(monitor).toContain("$stamp -lt $parent.StartTime.ToUniversalTime().ToFileTimeUtc()");
     expect(monitor).toContain("PARENT_EXITED_BEFORE_NATIVE_LINEAGE_CAPTURE");
     expect(monitor).not.toMatch(/Stop-Process|taskkill|Start-Sleep/u);
+    expect(monitor).not.toContain("Sort-Object");
+    expect(monitor).toContain("$PSModuleAutoLoadingPreference = 'None'");
+    expect(monitor).toContain("$captureOrder.Add([int]$row.ProcessId)");
+    expect(monitor).toContain("$index = $captureOrder.Count - 1; $index -ge 0; $index--");
   });
 
   it("reads actual Win32_Process identity without cmdlet/module auto loading and disposes each census", () => {

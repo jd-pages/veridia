@@ -57,7 +57,10 @@ function exitOf(child, event = "exit") {
 
 function monitorProtocol(child, onCapture) {
   let pending = "", outputBytes = 0, final;
-  const startup = [];
+  const startup = [], finalization = [];
+  const finalizationStages = ["ROOT_EXIT_OBSERVED", "CAPTURED_TREE_NOT_QUIESCENT", "CLEANUP_ENTERED",
+    "REMAINING_BEFORE_CLEANUP", "HELD_HANDLE_TERMINATE_START", "HELD_HANDLE_TERMINATE_RETURN",
+    "HELD_HANDLE_JOIN_RETURN", "REMAINING_AFTER_CLEANUP", "FINAL_EMIT_START", "FINAL_EMITTED"];
   const startupStages = ["SCRIPT_ENTERED", "ARGS_VALIDATED", "ROOT_PROCESS_OPEN_START", "ROOT_QUERY_START", "ROOT_QUERY_READY",
     "ROOT_NATIVE_HANDLE_START", "ROOT_NATIVE_HANDLE_READY", "ROOT_PROCESS_OPEN_READY",
     "ROOT_IDENTITY_BOUND", "READY_EMIT_START", "READY_EMITTED"];
@@ -85,7 +88,16 @@ function monitorProtocol(child, onCapture) {
         else if (event.kind === "READY") readyResolve(event);
         else if (event.kind === "ARMED") armedResolve(event);
         else if (event.kind === "CAPTURED") onCapture(event.identity);
-        else if (event.kind === "FINAL") { final = event; child.stdin.end(); }
+        else if (event.kind === "FINALIZATION") {
+          if (!finalizationStages.includes(event.stage) || finalization.includes(event.stage) ||
+            !Number.isFinite(event.elapsedMs) || event.elapsedMs < 0) throw new Error("TYPEGEN_MONITOR_PROTOCOL_INVALID");
+          finalization.push(event.stage);
+        }
+        else if (event.kind === "FINAL") {
+          final = event;
+          finalization.push("MONITOR_STDOUT_FINAL_RECEIVED");
+          child.stdin.end();
+        }
         else throw new Error("TYPEGEN_MONITOR_PROTOCOL_INVALID");
       }
     } catch (error) { readyReject(error); armedReject(error); failureReject(error);
@@ -94,12 +106,15 @@ function monitorProtocol(child, onCapture) {
   child.once("error", readyReject);
   child.once("error", armedReject);
   // close, not exit: drain FINAL/startup stdout before attaching diagnostics.
-  child.once("close", () => readyReject(new Error("TYPEGEN_MONITOR_EXITED_BEFORE_READY")));
+  child.once("close", () => {
+    finalization.push("MONITOR_CLOSE_OBSERVED");
+    readyReject(new Error("TYPEGEN_MONITOR_EXITED_BEFORE_READY"));
+  });
   child.once("close", () => armedReject(new Error("TYPEGEN_MONITOR_EXITED_BEFORE_ARMED")));
   // Consume the diagnostic pipe without copying arbitrary native exception
   // text, commands or environment into a receipt. Failure codes stay bounded.
   child.stderr.resume();
-  return { ready, armed, failure, final: () => final, startup: () => [...startup] };
+  return { ready, armed, failure, final: () => final, startup: () => [...startup], finalization: () => [...finalization] };
 }
 
 function validNativeRoot(identity, pid, creatorPid) {
@@ -218,6 +233,7 @@ export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, 
       failureCode: /^TYPEGEN_[A-Z_]+$/u.test(error.message) ? error.message : "TYPEGEN_NATIVE_EXCEPTION",
       elapsedMs: performance.now() - started,
       startupStages: protocol?.startup() ?? [],
+      finalizationStages: protocol?.finalization() ?? [],
       nativeCapturedBeforeCliRelease: receipt.nativeCapturedBeforeCliRelease === true,
       nativeArmedBeforeCliRelease: receipt.nativeArmedBeforeCliRelease === true,
       cliReleased: receipt.executed,
@@ -252,6 +268,13 @@ export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, 
     receipt.finishedAt = new Date().toISOString();
     receipt.elapsedMs = performance.now() - started;
     if (failure) receipt.monitorStartupStages = protocol?.startup() ?? [];
+    receipt.monitorFinalizationStages = protocol?.finalization() ?? [];
+    if (failure) console.error(`VERIDIA_TYPEGEN_FAILURE_FINALIZATION=${JSON.stringify({
+      finalizationStages: receipt.monitorFinalizationStages,
+      nativeFinalReceived: receipt.monitorFinalizationStages.includes("MONITOR_STDOUT_FINAL_RECEIVED"),
+      monitorExitCode: monitor?.exitCode ?? null,
+      monitorSignal: monitor?.signalCode ?? null,
+    })}`);
   }
   if (failure) { failure.receipt = receipt; failure.exitCode = receipt.exitCode; failure.exitSignal = receipt.exitSignal; throw failure; }
   return receipt;
