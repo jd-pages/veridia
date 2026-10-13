@@ -106,8 +106,14 @@ try {
   StartupStage 'SOURCE_READ_START'
   $nativeSource=[IO.File]::ReadAllText($SourcePath)
   StartupStage 'SOURCE_READ_END'
+  # Load the required built-in dependency by its exact manifest, as the native
+  # build watcher does. Do not let Add-Type combine module discovery with C#
+  # compilation; both operations stay inside the same caller READY deadline.
+  StartupStage 'UTILITY_MODULE_IMPORT_ENTER'
+  Import-Module ([IO.Path]::Combine($PSHOME,'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
+  StartupStage 'UTILITY_MODULE_IMPORT_RETURN'
   StartupStage 'NATIVE_COMPILE_ENTER'
-  Add-Type -TypeDefinition $nativeSource
+  Microsoft.PowerShell.Utility\Add-Type -TypeDefinition $nativeSource
   StartupStage 'NATIVE_COMPILE_RETURN'
   StartupStage 'PROVIDER_IDENTITY_ENTER'
   $self=[VeridiaWmiFreeRuntime]::VerifyProvider($WrapperPid,$WrapperPid,$WrapperCreatedAt)

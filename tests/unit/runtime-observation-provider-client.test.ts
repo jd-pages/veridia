@@ -102,13 +102,26 @@ test("valid READY/query/EOF/native close; compact receipts retain no inventory",
 test("fixed startup stages survive pipe fragmentation but cannot authorize READY or leak stderr", async () => {
   const f = fixture();
   f.child.stderr.emit("data", Buffer.from("private token\nVERIDIA_OBSERVER_STARTUP_STAGE=SCRIPT_ENTERED:0\nVERIDIA_OBSERVER_STARTUP_STAGE=NATIVE_COMPILE_EN"));
-  f.child.stderr.emit("data", Buffer.from("TER:25\r\nVERIDIA_OBSERVER_STARTUP_STAGE=PRIVATE_TOKEN:30\n"));
+  f.child.stderr.emit("data", Buffer.from("TER:25\r\nVERIDIA_OBSERVER_STARTUP_STAGE=PRIVATE_TOKEN:30\nVERIDIA_OBSERVER_STARTUP_STAGE=UTILITY_MODULE_IMPORT_ENTER:15\nVERIDIA_OBSERVER_STARTUP_STAGE=UTILITY_MODULE_IMPORT_RETURN:20\n"));
   const snapshot = f.client.snapshot();
   assert.equal(snapshot.state, "STARTING");
   assert.deepEqual(snapshot.receipts.filter(row => row.event === "NATIVE_STARTUP_STAGE").map(row => ({stage: row.stage, scriptElapsedMs: row.scriptElapsedMs})),
-    [{stage:"SCRIPT_ENTERED",scriptElapsedMs:0},{stage:"NATIVE_COMPILE_ENTER",scriptElapsedMs:25}]);
+    [{stage:"SCRIPT_ENTERED",scriptElapsedMs:0},{stage:"NATIVE_COMPILE_ENTER",scriptElapsedMs:25},
+      {stage:"UTILITY_MODULE_IMPORT_ENTER",scriptElapsedMs:15},{stage:"UTILITY_MODULE_IMPORT_RETURN",scriptElapsedMs:20}]);
   assert.equal(JSON.stringify(snapshot).includes("private token"), false);
   await enter(f); await joined(f);
+});
+test("provider loads only the exact built-in Utility manifest before native compilation", () => {
+  const source = readFileSync(new URL("../../scripts/testing/runtime-observation-provider.ps1", import.meta.url), "utf8");
+  const start = source.indexOf("StartupStage 'UTILITY_MODULE_IMPORT_ENTER'");
+  const load = source.indexOf("Import-Module ([IO.Path]::Combine($PSHOME,'Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop", start);
+  const loaded = source.indexOf("StartupStage 'UTILITY_MODULE_IMPORT_RETURN'", load);
+  const compileStart = source.indexOf("StartupStage 'NATIVE_COMPILE_ENTER'", loaded);
+  const compile = source.indexOf("Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition $nativeSource", compileStart);
+  const identity = source.indexOf("[VeridiaWmiFreeRuntime]::VerifyProvider", compile);
+  assert.ok(start >= 0 && load > start && loaded > load && compileStart > loaded && compile > compileStart && identity > compile);
+  assert.equal((source.match(/Import-Module /gu) || []).length, 1);
+  assert.equal(source.includes("Start-Sleep"), false);
 });
 test("READY budget includes synchronous provider spawn/compile setup cost", async () => {
   const f = fixture({ spawnCost: 500 });

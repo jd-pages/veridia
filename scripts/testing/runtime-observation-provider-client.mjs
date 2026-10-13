@@ -278,7 +278,7 @@ export function createPersistentRuntimeProvider({ runId, observerId, wrapperIden
       const lines = `${stderrCarry}${String(chunk)}`.split(/\r?\n/u);
       stderrCarry = (lines.pop() || "").slice(-512);
       for (const line of lines) {
-        const stage = line.match(/^VERIDIA_OBSERVER_STARTUP_STAGE=(SCRIPT_ENTERED|ARGS_VALIDATED|SOURCE_READ_START|SOURCE_READ_END|NATIVE_COMPILE_ENTER|NATIVE_COMPILE_RETURN|PROVIDER_IDENTITY_ENTER|PROVIDER_IDENTITY_RETURN|READY_EMIT_ENTER|READY_EMIT_RETURN):([0-9]+(?:\.[0-9]+)?)$/u);
+        const stage = line.match(/^VERIDIA_OBSERVER_STARTUP_STAGE=(SCRIPT_ENTERED|ARGS_VALIDATED|SOURCE_READ_START|SOURCE_READ_END|UTILITY_MODULE_IMPORT_ENTER|UTILITY_MODULE_IMPORT_RETURN|NATIVE_COMPILE_ENTER|NATIVE_COMPILE_RETURN|PROVIDER_IDENTITY_ENTER|PROVIDER_IDENTITY_RETURN|READY_EMIT_ENTER|READY_EMIT_RETURN):([0-9]+(?:\.[0-9]+)?)$/u);
         const scriptElapsedMs = stage ? Number(stage[2]) : NaN;
         if (stage && Number.isFinite(scriptElapsedMs) && scriptElapsedMs >= 0 && scriptElapsedMs <= 60000 && startupStageCount < 12) {
           startupStageCount++; receipt("NATIVE_STARTUP_STAGE", { stage: stage[1], scriptElapsedMs });
