@@ -8,10 +8,15 @@ param(
 )
 # Persistent read-only periodic provider. No WMI, database, navigation, kill or retry.
 $ErrorActionPreference='Stop'
-[Console]::InputEncoding=New-Object Text.UTF8Encoding($false)
-[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)
 $sequence=0
 $providerClock=[Diagnostics.Stopwatch]::StartNew()
+function StartupStage([string]$stage) {
+  [Console]::Error.WriteLine('VERIDIA_OBSERVER_STARTUP_STAGE='+$stage+':'+$providerClock.ElapsedMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture))
+  [Console]::Error.Flush()
+}
+StartupStage 'SCRIPT_ENTERED'
+[Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $self=$null
 function Emit($frame) { [Console]::Out.WriteLine(($frame | ConvertTo-Json -Depth 7 -Compress)); [Console]::Out.Flush() }
 function Identity($event) { return @{event=$event;runId=$RunId;observerId=$ObserverId;wrapperPid=$WrapperPid;providerPid=$PID;port=$Port;
@@ -97,10 +102,20 @@ function SafeBirthGuardFailure($record) {
 try {
   if($RunId -notmatch '^[A-Za-z0-9_.-]{1,256}$' -or $ObserverId -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' -or
      $Port -lt 1 -or $Port -gt 65535 -or $WrapperPid -lt 1 -or $WrapperCreatedAt -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$') { throw 'PROVIDER_INPUT_INVALID' }
-  Add-Type -TypeDefinition ([IO.File]::ReadAllText($SourcePath))
+  StartupStage 'ARGS_VALIDATED'
+  StartupStage 'SOURCE_READ_START'
+  $nativeSource=[IO.File]::ReadAllText($SourcePath)
+  StartupStage 'SOURCE_READ_END'
+  StartupStage 'NATIVE_COMPILE_ENTER'
+  Add-Type -TypeDefinition $nativeSource
+  StartupStage 'NATIVE_COMPILE_RETURN'
+  StartupStage 'PROVIDER_IDENTITY_ENTER'
   $self=[VeridiaWmiFreeRuntime]::VerifyProvider($WrapperPid,$WrapperPid,$WrapperCreatedAt)
+  StartupStage 'PROVIDER_IDENTITY_RETURN'
   $ready=Identity 'READY';$ready.providerCreatedAt=$self.createdAt
+  StartupStage 'READY_EMIT_ENTER'
   Emit $ready
+  StartupStage 'READY_EMIT_RETURN'
   while($null -ne ($line=ReadBoundedLine)) {
     $command=$line | ConvertFrom-Json
     if($command.command -ne 'QUERY' -or $command.runId -cne $RunId -or $command.observerId -cne $ObserverId -or

@@ -42,7 +42,10 @@ function fixture({ spawnCost = 0, spawnThrow = false } = {}) {
   const client = createPersistentRuntimeProvider({ runId, observerId, wrapperIdentity, port: 3100,
     now: () => clock, setTimer: (fn, delay) => { const id = ++nextTimer; timers.set(id, { fn, at: clock + delay, delay }); return id; },
     clearTimer: id => { timers.delete(Number(id)); }, spawnImpl: (command, args, options) => {
-      assert.equal(command, "powershell.exe"); assert.equal(options.windowsHide, true);
+      assert.equal(command.replaceAll("\\", "/").endsWith("/System32/WindowsPowerShell/v1.0/powershell.exe"), true); assert.equal(options.windowsHide, true);
+      assert.equal(options.env.PATH, "");
+      assert.equal(options.env.PSModulePath.replaceAll("\\", "/").endsWith("/System32/WindowsPowerShell/v1.0/Modules"), true);
+      assert.equal(options.env.DATABASE_URL, undefined); assert.equal(options.env.GITHUB_TOKEN, undefined);
       assert.deepEqual(options.stdio, ["pipe", "pipe", "pipe"]);
       assert.equal(args[args.indexOf("-ExecutionPolicy") + 1], "Bypass");
       assert.equal(args[args.indexOf("-File") + 1].replaceAll("\\", "/").endsWith("/scripts/testing/runtime-observation-provider.ps1"), true);
@@ -94,6 +97,18 @@ test("valid READY/query/EOF/native close; compact receipts retain no inventory",
   assert.equal(receipt.processCount, 3); assert.equal(receipt.idleSentinelCount, 1); assert.equal(receipt.heldComparisonCount, 2);
   assert.equal(runtime.processes[0].liveAtCaptureEnd, null); assert.equal(runtime.processes[0].ownershipAuthority, false);
   assert.equal(JSON.stringify(final).includes('"processes"'), false);
+});
+
+test("fixed startup stages survive pipe fragmentation but cannot authorize READY or leak stderr", async () => {
+  const f = fixture();
+  f.child.stderr.emit("data", Buffer.from("private token\nVERIDIA_OBSERVER_STARTUP_STAGE=SCRIPT_ENTERED:0\nVERIDIA_OBSERVER_STARTUP_STAGE=NATIVE_COMPILE_EN"));
+  f.child.stderr.emit("data", Buffer.from("TER:25\r\nVERIDIA_OBSERVER_STARTUP_STAGE=PRIVATE_TOKEN:30\n"));
+  const snapshot = f.client.snapshot();
+  assert.equal(snapshot.state, "STARTING");
+  assert.deepEqual(snapshot.receipts.filter(row => row.event === "NATIVE_STARTUP_STAGE").map(row => ({stage: row.stage, scriptElapsedMs: row.scriptElapsedMs})),
+    [{stage:"SCRIPT_ENTERED",scriptElapsedMs:0},{stage:"NATIVE_COMPILE_ENTER",scriptElapsedMs:25}]);
+  assert.equal(JSON.stringify(snapshot).includes("private token"), false);
+  await enter(f); await joined(f);
 });
 test("READY budget includes synchronous provider spawn/compile setup cost", async () => {
   const f = fixture({ spawnCost: 500 });

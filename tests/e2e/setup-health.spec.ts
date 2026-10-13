@@ -1,10 +1,25 @@
-import { expect, test } from "@playwright/test";
+import { expect, test as base } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 
 const packageVersion = JSON.parse(
   fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"),
 ).version as string;
+
+// Same Playwright page creation, deadline and teardown. Fixed phase receipts
+// distinguish a fixture stall from a /setup route or assertion failure.
+const test = base.extend({
+  page: async ({ context }, runPage) => {
+    const started = performance.now();
+    const browser = context.browser();
+    console.log(`SETUP_PAGE_FIXTURE_STAGE=${JSON.stringify({ stage: "PAGE_CREATE_ENTER", at: new Date().toISOString(),
+      browserConnected: browser?.isConnected() ?? null, contextCount: browser?.contexts().length ?? null, pageCount: context.pages().length })}`);
+    const page = await context.newPage();
+    console.log(`SETUP_PAGE_FIXTURE_STAGE=${JSON.stringify({ stage: "PAGE_CREATE_RETURN", elapsedMs: performance.now() - started,
+      browserConnected: browser?.isConnected() ?? null, pageCount: context.pages().length })}`);
+    await runPage(page);
+  },
+});
 
 test("健康检查返回合法 JSON", async ({ request }) => {
   const response = await request.get("/api/health");

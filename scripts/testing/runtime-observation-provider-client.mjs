@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { TextDecoder } from "node:util";
+import path from "node:path";
+import nativeEnvironment from "./windows-native-environment.cjs";
 
 // Read-only persistent native census. Importing this module starts no provider.
 const CAP_MS = 15_000;
@@ -100,7 +102,7 @@ export function createPersistentRuntimeProvider({ runId, observerId, wrapperIden
   let child, startupTimer, sequence = 0, pending = null, stopPromise, stopDeadlineMs;
   let eofSent = false, eofAcknowledged = false, stdoutEnded = false, closeObserved = false;
   let exitObserved = false, exitCode = null, closeCode = null, joined = false;
-  let buffer = "", stderrBytes = 0;
+  let buffer = "", stderrBytes = 0, stderrCarry = "", startupStageCount = 0;
   // Fatal byte validation; retain BOM so framing does not silently broaden.
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   let resolveReady, rejectReady, resolveClosed;
@@ -231,10 +233,12 @@ export function createPersistentRuntimeProvider({ runId, observerId, wrapperIden
   }
 
   try {
-    child = spawnImpl("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", providerPath,
+    const safeEnvironment = nativeEnvironment.minimalSafeWindowsNativeEnvironment();
+    const powershell = path.win32.join(safeEnvironment.SystemRoot ?? "C:/Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
+    child = spawnImpl(powershell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", providerPath,
       "-SourcePath", nativeSourcePath, "-RunId", runId, "-ObserverId", observerId,
       "-WrapperPid", String(wrapperIdentity.pid), "-WrapperCreatedAt", wrapperIdentity.createdAt, "-Port", String(port)],
-    { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    { windowsHide: true, stdio: ["pipe", "pipe", "pipe"], env: safeEnvironment });
     // Subscribe before pid validation: failed spawn emits an asynchronous error
     // with no pid; it must not become an unhandled process error.
     child?.once?.("error", () => fail("PROVIDER_PROCESS_ERROR"));
@@ -268,7 +272,19 @@ export function createPersistentRuntimeProvider({ runId, observerId, wrapperIden
       } catch { fail("PROVIDER_STDOUT_UTF8_INVALID"); }
       receipt("PROVIDER_STDOUT_END");
     });
-    child.stderr.on("data", chunk => { stderrBytes += chunk.length; if (stderrBytes > 100000) fail("PROVIDER_STDERR_SIZE_EXCEEDED"); });
+    child.stderr.on("data", chunk => {
+      stderrBytes += chunk.length;
+      if (stderrBytes > 100000) { fail("PROVIDER_STDERR_SIZE_EXCEEDED"); return; }
+      const lines = `${stderrCarry}${String(chunk)}`.split(/\r?\n/u);
+      stderrCarry = (lines.pop() || "").slice(-512);
+      for (const line of lines) {
+        const stage = line.match(/^VERIDIA_OBSERVER_STARTUP_STAGE=(SCRIPT_ENTERED|ARGS_VALIDATED|SOURCE_READ_START|SOURCE_READ_END|NATIVE_COMPILE_ENTER|NATIVE_COMPILE_RETURN|PROVIDER_IDENTITY_ENTER|PROVIDER_IDENTITY_RETURN|READY_EMIT_ENTER|READY_EMIT_RETURN):([0-9]+(?:\.[0-9]+)?)$/u);
+        const scriptElapsedMs = stage ? Number(stage[2]) : NaN;
+        if (stage && Number.isFinite(scriptElapsedMs) && scriptElapsedMs >= 0 && scriptElapsedMs <= 60000 && startupStageCount < 12) {
+          startupStageCount++; receipt("NATIVE_STARTUP_STAGE", { stage: stage[1], scriptElapsedMs });
+        }
+      }
+    });
     child.once("exit", (code, signal) => {
       exitObserved = true; exitCode = code;
       // Exit may precede pipe drainage. EOF_ACK is mandatory at close/join,

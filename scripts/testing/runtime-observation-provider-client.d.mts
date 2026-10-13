@@ -33,7 +33,7 @@ export interface PersistentRuntimeProvider { ready: Promise<ProviderObservation>
   query(input: { deadlineMs: number }): Promise<NativeRuntimeSnapshot>; stop(deadlineMs: number): Promise<ProviderObservation>; }
 export interface WrapperIdentity { pid: number; createdAt: string; }
 export function createPersistentRuntimeProvider(input: { runId: string; observerId: string; port: number; wrapperIdentity: WrapperIdentity;
-  startupDeadlineMs?: number; spawnImpl?: (command: string, args: string[], options: { windowsHide: boolean; stdio: string[] }) => ProviderChild;
+  startupDeadlineMs?: number; spawnImpl?: (command: string, args: string[], options: { windowsHide: boolean; stdio: string[]; env: Record<string, string> }) => ProviderChild;
   now?: () => number; setTimer?: (callback: () => void, delay: number) => unknown; clearTimer?: (timer: unknown) => void }): PersistentRuntimeProvider;
 export function validateNativeRuntimeSnapshot(runtime: unknown, input: { port: number; wrapperIdentity: WrapperIdentity;
   providerIdentity: { providerPid: number | null; providerNativeBirthStamp: string | null; providerCreatedAt: string | null;

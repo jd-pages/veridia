@@ -34,7 +34,9 @@ describe("抖音真实 video detail current-content 识别", () => {
   let html = "";
 
   beforeAll(async () => {
-    browser = await chromium.launch({ headless: true, channel: "chrome" });
+    // The fixture is renderer acceptance, not installed-Chrome acceptance.
+    // Use the project's pinned Playwright runtime, not the runner's mutable Chrome.
+    browser = await chromium.launch({ headless: true });
     page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
     await page.route("https://www.douyin.com/**", (route) => route.fulfill({
       status: 200,
@@ -49,19 +51,21 @@ describe("抖音真实 video detail current-content 识别", () => {
 
   async function load(body: string, contentId = CONTENT_A) {
     html = body;
-    await page.goto(`https://www.douyin.com/video/${contentId}`);
+    const started = performance.now();
+    try { await page.goto(`https://www.douyin.com/video/${contentId}`); }
+    finally { console.log(`DOUYIN_FIXTURE_STAGE=${JSON.stringify({ stage: "NAVIGATION", elapsedMs: performance.now() - started })}`); }
   }
 
   async function identity(
     contentId = CONTENT_A,
     targetEvidence: DouyinStructuredTargetEvidence | null = null,
   ) {
-    const evidence = await readDouyinCurrentContentEvidence(
-      page,
-      contentId,
-      targetEvidence,
-    );
-    return readDouyinPageIdentity(page, 200, null, contentId, evidence);
+    const started = performance.now();
+    const evidence = await readDouyinCurrentContentEvidence(page, contentId, targetEvidence);
+    console.log(`DOUYIN_FIXTURE_STAGE=${JSON.stringify({ stage: "CURRENT_CONTENT", elapsedMs: performance.now() - started })}`);
+    const classifyStarted = performance.now();
+    try { return await readDouyinPageIdentity(page, 200, null, contentId, evidence); }
+    finally { console.log(`DOUYIN_FIXTURE_STAGE=${JSON.stringify({ stage: "CLASSIFICATION", elapsedMs: performance.now() - classifyStarted })}`); }
   }
 
   it("Protected DOUYIN_REAL_VIDEO_DETAIL_RECOGNITION：真实新播放器结构以目标绑定证据识别且漂移内容继续 fail closed", async () => {
