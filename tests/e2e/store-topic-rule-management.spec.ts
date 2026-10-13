@@ -22,14 +22,30 @@ test("Protected STORE_BRAND_TOPIC_POLICY_ISOLATION：同店品牌与渠道独立
   const fixture = await createAuditIngestFixture(db);
   const storeName = `品牌共享店-${fixture.product.id}`, alias = `品牌共享上游-${fixture.product.id}`;
   const ids: string[] = [], receipts: Array<Record<string, unknown>> = [];
+  let releaseMetadata!: () => void;
+  const metadataReleased = new Promise<void>(resolve => { releaseMetadata = resolve; });
+  let metadataRequested!: () => void;
+  const metadataStarted = new Promise<void>(resolve => { metadataRequested = resolve; });
   try {
     // Nestle is not in the baseline seed. Make it a real current-system brand
     // in this owned isolated fixture, proving the UI loads brands dynamically.
     await db.product.update({ where: { id: fixture.product.id }, data: { brandName: "雀巢" } });
     expect((await page.request.post("/api/auth/login", { data: { username: "admin", password: "Admin123!" } })).ok()).toBeTruthy();
+    // Hold the real metadata request, not a mocked response or timed sleep.
+    // A new-store Form must never snapshot the initial unloaded brands array.
+    await page.route("**/api/store-topic-rules?*", async route => {
+      metadataRequested();
+      await metadataReleased;
+      await route.continue();
+    });
     await page.goto("/campaigns");
     await page.getByRole("tab", { name: "店铺话题规则" }).click();
-    await page.getByRole("button", { name: /新增店铺/u }).click();
+    await metadataStarted;
+    const createStore = page.getByRole("button", { name: /新增店铺/u });
+    await expect(createStore).toBeDisabled();
+    releaseMetadata();
+    await expect(createStore).toBeEnabled();
+    await createStore.click();
     await page.getByLabel("标准店铺名称").fill(storeName);
     await page.getByRole("button", { name: "添加导入别名" }).click();
     await page.getByTestId("store-alias-0").fill(alias);
@@ -115,6 +131,8 @@ test("Protected STORE_BRAND_TOPIC_POLICY_ISOLATION：同店品牌与渠道独立
     await testInfo.attach("store-brand-policy-isolation-receipt", { body: Buffer.from(JSON.stringify({ database: datasourceUrl, source: "ISOLATED_E2E", productionDbAccess: "NOT_RUN", canonicalId: store.id,
       aliasesPreserved: saved.storeAliases, policies: saved.brandPolicies, receipts, historicalResultId: danoneBefore.id, historicalImmutable: true, invalidSaveRejectedAndRolledBack: true })), contentType: "application/json" });
   } finally {
+    releaseMetadata();
+    await page.unrouteAll({ behavior: "wait" });
     try { await fixture.cleanup(); for (const id of ids) {
       await db.storeTopicEntry.deleteMany({ where: { storeTopicRuleId: id } });
       await db.storeTopicRule.deleteMany({ where: { id } });

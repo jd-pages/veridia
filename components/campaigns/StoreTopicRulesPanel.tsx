@@ -120,7 +120,8 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
   const [platform, setPlatform] = useState<string>("");
   const [status, setStatus] = useState("ALL");
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [metadataLoaded, setMetadataLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<StoreTopicRule | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -142,6 +143,7 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
       setItems(data.items);
       setBrands(data.brands);
       setTotal(data.total);
+      setMetadataLoaded(true);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "加载店铺规则失败");
     } finally {
@@ -154,6 +156,9 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
   }, [load]);
 
   const openCreate = () => {
+    // Form values are a snapshot. Do not freeze an unloaded brands array into
+    // an empty policy list while the first metadata request is still pending.
+    if (loading || !metadataLoaded) return;
     setEditing(null);
     previousStoreNameRef.current = "";
     form.setFieldsValue({
@@ -304,7 +309,8 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
         <Space>
           <Typography.Text type="secondary">共 {total} 条配置</Typography.Text>
           {canManage ? (
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}
+              disabled={loading || !metadataLoaded}>
               新增店铺
             </Button>
           ) : null}

@@ -103,3 +103,43 @@ it("retains all complete sub-operation markers in one chunk and correlates nativ
   child.emit("close", 1);
   vi.unstubAllEnvs();
 });
+
+it("consumes complete stages before bounding a large delayed stderr chunk", async () => {
+  vi.stubEnv("VERIDIA_E2E", "true");
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: {
+    reason: "NATIVE_PROBE_DEADLINE", elapsedMs: 2000, nativeStage: "NATIVE_HANDLE_BIND",
+    stageTimeline: [
+      { stage: "PROCESS_CENSUS_QUERY_ENTER", scriptElapsedMs: 300, observedElapsedMs: 1000 },
+      { stage: "PROCESS_CENSUS_QUERY_RETURN", scriptElapsedMs: 420, observedElapsedMs: 1000 },
+      { stage: "NATIVE_HANDLE_BIND", scriptElapsedMs: 430, observedElapsedMs: 1000 },
+    ],
+  } });
+  await vi.advanceTimersByTimeAsync(1000);
+  child.stderr.emit("data", Buffer.from(`VERIDIA_PROFILE_PROBE_STAGE=PROCESS_CENSUS_QUERY_ENTER:300\nVERIDIA_PROFILE_PROBE_STAGE=PROCESS_CENSUS_QUERY_RETURN:420\n${"private token discarded\n".repeat(200)}VERIDIA_PROFILE_PROBE_STAGE=NATIVE_HANDLE_BIND:430\n`));
+  await vi.advanceTimersByTimeAsync(1000);
+  await assertion;
+  expect(JSON.stringify(getRecoveryDiagnostics()!.nativeProbes.at(-1))).not.toContain("private token");
+  expect(child.kill).toHaveBeenCalledTimes(1);
+  expect(fixture.spawn).toHaveBeenCalledTimes(1);
+  child.emit("close", 1);
+});
+
+it("direct WMI census retains exact fields, disposable query resources and all-before-kill admission", async () => {
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const script = Buffer.from(fixture.spawn.mock.calls[0][1].at(-1), "base64").toString("utf16le");
+  expect(script).not.toContain("Get-CimInstance");
+  expect(script).toContain("SELECT ProcessId,ParentProcessId,ExecutablePath,CommandLine,CreationDate FROM Win32_Process WHERE");
+  expect(script).toContain("$options.Timeout = [TimeSpan]::FromMilliseconds(2000)");
+  expect(script).toContain("ManagementDateTimeConverter]::ToDateTime");
+  expect(script).toContain("finally { $row.Dispose() }");
+  expect(script).toContain("$collection.Dispose()");
+  expect(script).toContain("$searcher.Dispose()");
+  expect(script.indexOf("LIVE_PROCESS_BIRTH_MISMATCH")).toBeLessThan(script.indexOf("$process.Kill()"));
+  expect(script.indexOf("UNVERIFIED_PROFILE_OWNER")).toBeLessThan(script.indexOf("$process.Kill()"));
+  child.stdout.emit("data", Buffer.from("[]"));
+  child.emit("close", 0);
+  await expect(pending).resolves.toEqual([]);
+});

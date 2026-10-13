@@ -183,10 +183,35 @@ $request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encode
 $expectedExecutable = [IO.Path]::GetFullPath($request.executablePath);
 $expectedProfile = [IO.Path]::GetFullPath($request.profilePath).TrimEnd('\\');
 $owned = @(); $handles = @();
+  # Keep the same Win32_Process fields and native handle/birth admission, but
+  # do not activate CimCmdlets/module discovery for every short-lived probe.
+  $null = [Reflection.Assembly]::Load('System.Management, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a');
+  function Get-OwnerProcessRows([string]$filter) {
+    $options = [System.Management.EnumerationOptions]::new();
+    $options.Timeout = [TimeSpan]::FromMilliseconds(${OWNER_PROBE_TIMEOUT_MS});
+    $options.ReturnImmediately = $true; $options.Rewindable = $false;
+    $query = 'SELECT ProcessId,ParentProcessId,ExecutablePath,CommandLine,CreationDate FROM Win32_Process WHERE ' + $filter;
+    $searcher = [System.Management.ManagementObjectSearcher]::new('root\\cimv2', $query, $options);
+    $collection = $null;
+    try {
+      $collection = $searcher.Get();
+      foreach ($row in $collection) {
+        try {
+          $creation = $null;
+          if ($row['CreationDate']) {
+            try { $creation = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$row['CreationDate']) }
+            catch { $creation = $null } # Unavailable birth cannot grant ownership.
+          }
+          [pscustomobject]@{ ProcessId=[int]$row['ProcessId']; ParentProcessId=[int]$row['ParentProcessId'];
+            ExecutablePath=[string]$row['ExecutablePath']; CommandLine=[string]$row['CommandLine']; CreationDate=$creation }
+        } finally { $row.Dispose() }
+      }
+    } finally { if ($collection) { $collection.Dispose() }; $searcher.Dispose() }
+  }
   Set-ProbeStage 'PROCESS_CENSUS';
   $name = [IO.Path]::GetFileName($expectedExecutable).Replace("'", "''");
   Set-ProbeStage 'PROCESS_CENSUS_QUERY_ENTER';
-  $candidates = @(Get-CimInstance Win32_Process -Filter "Name='$name'");
+  $candidates = @(Get-OwnerProcessRows "Name='$name'");
   Set-ProbeStage 'PROCESS_CENSUS_QUERY_RETURN';
   foreach ($candidate in $candidates) {
     Set-ProbeStage 'PROCESS_CENSUS_ENUMERATE';
@@ -204,7 +229,7 @@ $owned = @(); $handles = @();
       Set-ProbeStage 'NATIVE_HANDLE_OPEN';
       $null = $process.Handle
     } catch {
-      if (Get-CimInstance Win32_Process -Filter "ProcessId=$($candidate.ProcessId)") { throw 'LIVE_PROCESS_HANDLE_UNAVAILABLE' }
+      if (@(Get-OwnerProcessRows "ProcessId=$($candidate.ProcessId)").Count -gt 0) { throw 'LIVE_PROCESS_HANDLE_UNAVAILABLE' }
       continue
     }
     Set-ProbeStage 'NATIVE_BIRTH_READ';
@@ -213,7 +238,7 @@ $owned = @(); $handles = @();
     $cimStamp = $candidate.CreationDate.ToUniversalTime().ToFileTimeUtc();
     if ([decimal]::Floor([decimal]$birthStamp / 10) -ne [decimal]::Floor([decimal]$cimStamp / 10)) {
       $process.Dispose();
-      if (Get-CimInstance Win32_Process -Filter "ProcessId=$($candidate.ProcessId)") { throw 'LIVE_PROCESS_BIRTH_MISMATCH' }
+      if (@(Get-OwnerProcessRows "ProcessId=$($candidate.ProcessId)").Count -gt 0) { throw 'LIVE_PROCESS_BIRTH_MISMATCH' }
       continue
     }
     $isBrowser = @($argv | Where-Object { $_.StartsWith('--type=', [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0;
@@ -283,26 +308,28 @@ export async function captureWindowsBrowserProfileOwners(
     let stdout = "";
     let settled = false;
     let diagnostic: ReturnType<typeof parseWindowsProfileProbeDiagnostic> & { nativeStageObservedElapsedMs?: number } = {};
-    let stderr = "";
+    let stderrCarry = "";
     let probeBirthStamp: string | undefined;
     const recordedStages = new Set<string>();
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr = `${stderr}${chunk.toString("utf8")}`.slice(-2_000);
-      const observed = parseWindowsProfileProbeDiagnostic(stderr);
-      for (const nativeSelf of stderr.matchAll(/VERIDIA_PROFILE_PROBE_SELF=([0-9]+):([0-9]+)\r?\n/gu)) {
-        if (Number(nativeSelf[1]) === child.pid) probeBirthStamp = nativeSelf[2];
-      }
-      if (e2e) for (const line of stderr.split(/\r?\n/u).slice(0, -1)) {
+      // Consume complete protocol lines before bounding the incomplete tail.
+      // A delayed large pipe chunk must not erase query-return/owner stages.
+      const lines = `${stderrCarry}${chunk.toString("utf8")}`.split(/\r?\n/u);
+      stderrCarry = (lines.pop() || "").slice(-2_000);
+      for (const line of lines) {
+        const nativeSelf = line.match(/^VERIDIA_PROFILE_PROBE_SELF=([0-9]+):([0-9]+)$/u);
+        if (nativeSelf && Number(nativeSelf[1]) === child.pid) probeBirthStamp = nativeSelf[2];
         const event = parseWindowsProfileProbeDiagnostic(`${line}\n`);
-        if (event.nativeStage === undefined || event.nativeStageElapsedMs === undefined || recordedStages.has(line) || stageTimeline.length >= 64) continue;
-        recordedStages.add(line);
-        stageTimeline.push({ stage: event.nativeStage, scriptElapsedMs: event.nativeStageElapsedMs, observedElapsedMs: Date.now() - startedAt });
+        if (event.nativeStage !== undefined &&
+          (event.nativeStage !== diagnostic.nativeStage || event.nativeStageElapsedMs !== diagnostic.nativeStageElapsedMs)) {
+          diagnostic.nativeStageObservedElapsedMs = Date.now() - startedAt;
+        }
+        diagnostic = { ...diagnostic, ...event };
+        if (e2e && event.nativeStage !== undefined && event.nativeStageElapsedMs !== undefined && !recordedStages.has(line) && stageTimeline.length < 64) {
+          recordedStages.add(line);
+          stageTimeline.push({ stage: event.nativeStage, scriptElapsedMs: event.nativeStageElapsedMs, observedElapsedMs: Date.now() - startedAt });
+        }
       }
-      if (observed.nativeStage !== undefined &&
-        (observed.nativeStage !== diagnostic.nativeStage || observed.nativeStageElapsedMs !== diagnostic.nativeStageElapsedMs)) {
-        diagnostic.nativeStageObservedElapsedMs = Date.now() - startedAt;
-      }
-      diagnostic = { ...diagnostic, ...observed };
     });
     const finish = (value?: string, reason = "NATIVE_PROBE_EXIT", exitCode?: number | null) => {
       if (settled) return;
