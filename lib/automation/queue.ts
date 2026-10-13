@@ -12,6 +12,7 @@ import { jitteredDelay } from "./pacing";
 import { completedAuditBatchUpdate } from "./task-lifecycle";
 import { automationRuntime } from "./platform-runtime";
 import { AuditConfigurationError } from "@/lib/audit-configuration";
+import { recordBrowserControlPause } from "./recovery-diagnostics";
 import {
   automaticAuditQueueState as queueState,
   isAutomaticBatchRuntimeLive,
@@ -619,6 +620,14 @@ async function processBatch(batchId: string) {
         const securityRestricted = ["SECURITY_VERIFICATION", "SECURITY_CHECK"].includes(
           extractionError.code,
         );
+        const pauseReceipt = process.env.VERIDIA_E2E === "true" ? {
+          batchId, taskId: task.id, platform, runEpoch, claimEpoch: lease.claimEpoch,
+          ownerGeneration: currentExtractionHandle?.ownerGeneration, wakeGeneration: currentExtractionHandle?.wakeGeneration,
+          callerProcessId: process.pid, failureCode: extractionError.code,
+          browserControlDiagnostic: extractionError.details?.browserControlDiagnostic,
+          callerFrames: error instanceof Error ? error.stack?.split(/\r?\n/u).filter(line => line.trimStart().startsWith("at ")).slice(0, 8) : undefined,
+        } : undefined;
+        if (pauseReceipt) recordBrowserControlPause({ phase: "PAUSE_TRIGGER", ...pauseReceipt });
         const paused = await prisma.$transaction(async (tx) => {
           await lockValidExecutionLease(tx, lease);
           await tx.auditTask.updateMany({
@@ -652,6 +661,7 @@ async function processBatch(batchId: string) {
             },
           });
         });
+        if (pauseReceipt) recordBrowserControlPause({ phase: "PAUSE_COMMITTED", ...pauseReceipt, affectedBatchCount: paused.count });
         if (!paused.count) {
           await keepProcessingOnlyWhileBatchRuns(lease);
           return;

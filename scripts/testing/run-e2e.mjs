@@ -731,8 +731,13 @@ async function captureGroupEndLogicalIdle(baseURL) {
             activeBrowserOwnerGeneration: session?.activeBrowserOwnerGeneration ?? null,
             browserInstanceCount: session?.browserInstanceCount ?? null,
             controlReady: session?.controlReady ?? null }])) } };
-      latest = evaluateGenerationIdleSnapshot(xhs.data?.globalRuntimeDiagnostics,
-        { XIAOHONGSHU: xhs.data, DOUYIN: douyin.data }, health);
+      latest.failureSiteDiagnostics = { lifecycleStages: xhs.data?.lifecycleStages ?? [],
+        lifecyclePendingOperations: xhs.data?.lifecyclePendingOperations ?? [],
+        recoveryDiagnostics: xhs.data?.recoveryDiagnostics ?? null,
+        contextOwner: xhs.data?.activeBrowserOwnerGeneration ?? null,
+        capturedAt: new Date().toISOString() };
+      latest = { ...evaluateGenerationIdleSnapshot(xhs.data?.globalRuntimeDiagnostics,
+        { XIAOHONGSHU: xhs.data, DOUYIN: douyin.data }, health), failureSiteDiagnostics: latest.failureSiteDiagnostics };
       observations += 1;
       remainingBudget();
       if (latest.idle) return { status: "PASSED", capturedBeforePhysicalTeardown: true,

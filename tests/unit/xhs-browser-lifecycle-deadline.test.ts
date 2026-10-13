@@ -162,4 +162,27 @@ describe("XHS actual browser lifecycle bounded unresolved operations", () => {
     expect(automationGlobal.xhsBrowserManagerState?.physicalCloseFence).toBe(newerFence);
     expect(automationGlobal.xhsBrowserManagerState?.controlState).toBe("READY");
   });
+
+  it("preserves the exact failing probeId and captured closing owner through the failed fence into the next task's control error", async () => {
+    vi.stubEnv("VERIDIA_E2E", "true");
+    // afterEach resets modules; use the same fresh error class as browser.ts.
+    const { WindowsBrowserProfileOwnershipError: ProbeError } = await import("@/lib/automation/windows-browser-process-owner");
+    const owner = { platform: "XIAOHONGSHU" as const, batchId: "prior-batch", taskId: "prior-task",
+      ownerGeneration: 27, runEpoch: 1, claimEpoch: 1, wakeGeneration: null };
+    const failure = new ProbeError("physical ownership unavailable", {
+      phase: "PROFILE_OWNER_PROBE", reason: "NATIVE_PROBE_DEADLINE", probeId: "exact-probe-A", elapsedMs: 2000,
+      nativeStage: "PROCESS_CENSUS_QUERY_ENTER", probeProcessId: 123, probeBirthStamp: "134000000000000001",
+    });
+    const close = vi.fn(async () => { throw failure; });
+    automationGlobal.xhsBrowserManagerState = { context: { close }, closeBrowser: close, contextOwner: owner, browserProcessId: 456 };
+    const { closeXhsBrowserContext, getXhsAuditPage, getXhsAuditPageDiagnostics } = await import("@/lib/automation/browser");
+    await expect(closeXhsBrowserContext()).rejects.toBe(failure);
+    const diagnostics = await getXhsAuditPageDiagnostics();
+    expect(diagnostics.physicalCloseFailure).toMatchObject({ closingOwner: owner, diagnostic: { probeId: "exact-probe-A" } });
+    await expect(getXhsAuditPage()).rejects.toMatchObject({ code: "BROWSER_CONTROL_ERROR", details: {
+      browserControlDiagnostic: { nativeProbe: { probeId: "exact-probe-A" }, physicalCloseFailure: { closingOwner: owner } },
+    } });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(automationGlobal.xhsBrowserManagerState?.physicalCloseState).toBe("FAILED");
+  });
 });

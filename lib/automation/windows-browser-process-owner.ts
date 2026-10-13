@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { recordNativeProfileProbe } from "./recovery-diagnostics";
 
 export type WindowsBrowserProcessIdentity = {
   pid: number;
@@ -18,6 +20,8 @@ export class WindowsBrowserProfileOwnershipError extends Error {
     phase: string; reason: string; exitCode?: number | null; elapsedMs?: number;
     nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number; nativeStageObservedElapsedMs?: number;
     nativeSpawnCode?: string;
+    probeId?: string; probeStartedAt?: string; probeProcessId?: number; probeBirthStamp?: string;
+    stageTimeline?: Array<{ stage: string; scriptElapsedMs: number; observedElapsedMs: number }>;
   }) { super(message); this.name = "WindowsBrowserProfileOwnershipError"; }
 }
 
@@ -25,7 +29,7 @@ export class WindowsBrowserProfileOwnershipError extends Error {
 // native probe. Diagnostics never grant ownership or change its deadline.
 export function parseWindowsProfileProbeDiagnostic(text: string) {
   const result: { nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number } = {};
-  const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|PARSER_COMPILE|REQUEST_PARSE|PROCESS_CENSUS|PROFILE_ARGUMENT_READ|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
+  const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|PARSER_COMPILE|PARSER_COMPILED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|PROFILE_ARGUMENT_READ|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
   for (const match of text.matchAll(stage)) {
     const elapsed = Number(match[2]);
     if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 60_000) {
@@ -33,7 +37,7 @@ export function parseWindowsProfileProbeDiagnostic(text: string) {
       result.nativeStageElapsedMs = elapsed;
     }
   }
-  const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(PARSER_COMPILE|REQUEST_PARSE|PROCESS_CENSUS|PROFILE_ARGUMENT_READ|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER)\r?\n/u);
+  const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(PARSER_COMPILE|PARSER_COMPILED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|PROFILE_ARGUMENT_READ|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER)\r?\n/u);
   if (failure) { result.nativeStage = failure[1]; result.nativeFailureCode = failure[2]; }
   return result;
 }
@@ -164,6 +168,7 @@ function guardScript(input: {
   // lines, environment, browser URLs and credentials are never emitted.
   return `[Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_STAGE=SCRIPT_ENTERED:0'); [Console]::Error.Flush();
 $ErrorActionPreference='Stop'; $probeClock=[Diagnostics.Stopwatch]::StartNew();
+${process.env.VERIDIA_E2E === "true" ? "[Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_SELF='+$PID+':'+[Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToFileTimeUtc().ToString()); [Console]::Error.Flush();" : ""}
 function Set-ProbeStage([string]$value) {
   $script:phase=$value;
   [Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_STAGE='+$value+':'+$probeClock.ElapsedMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture));
@@ -172,6 +177,7 @@ function Set-ProbeStage([string]$value) {
 $phase='PARSER_COMPILE'; $owned=@(); $handles=@(); try { Set-ProbeStage 'PARSER_COMPILE'; Add-Type -TypeDefinition @'
 ${nativeArgumentParser}
 '@;
+Set-ProbeStage 'PARSER_COMPILED';
 Set-ProbeStage 'REQUEST_PARSE';
 $request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json;
 $expectedExecutable = [IO.Path]::GetFullPath($request.executablePath);
@@ -179,7 +185,11 @@ $expectedProfile = [IO.Path]::GetFullPath($request.profilePath).TrimEnd('\\');
 $owned = @(); $handles = @();
   Set-ProbeStage 'PROCESS_CENSUS';
   $name = [IO.Path]::GetFileName($expectedExecutable).Replace("'", "''");
-  foreach ($candidate in @(Get-CimInstance Win32_Process -Filter "Name='$name'")) {
+  Set-ProbeStage 'PROCESS_CENSUS_QUERY_ENTER';
+  $candidates = @(Get-CimInstance Win32_Process -Filter "Name='$name'");
+  Set-ProbeStage 'PROCESS_CENSUS_QUERY_RETURN';
+  foreach ($candidate in $candidates) {
+    Set-ProbeStage 'PROCESS_CENSUS_ENUMERATE';
     if (![string]::Equals($candidate.ExecutablePath, $expectedExecutable, [StringComparison]::OrdinalIgnoreCase)) { continue }
     if (!$candidate.CommandLine -or !$candidate.CreationDate) { throw 'PROFILE_OWNERSHIP_UNAVAILABLE' }
     Set-ProbeStage 'PROFILE_ARGUMENT_READ';
@@ -242,6 +252,16 @@ export async function captureWindowsBrowserProfileOwners(
   const executable = path.win32.resolve(executablePath);
   const profile = path.win32.resolve(profilePath);
   const script = guardScript({ executablePath: executable, profilePath: profile, terminate });
+  const e2e = process.env.VERIDIA_E2E === "true";
+  const probeId = e2e ? randomUUID() : undefined;
+  const probeStartedAt = e2e ? new Date().toISOString() : undefined;
+  const stageTimeline: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["stageTimeline"] = [];
+  const callerFrames = e2e ? new Error().stack?.split(/\r?\n/u).filter(line => line.trimStart().startsWith("at ")).slice(0, 8) : undefined;
+  const record = (details: Record<string, unknown>) => {
+    if (!e2e) return;
+    recordNativeProfileProbe({ probeId, probeStartedAt,
+      callerProcessId: process.pid, callerFrames, profileIdentity: createHash("sha256").update(canonicalWindowsPath(profile)).digest("hex"), ...details });
+  };
   const output = await new Promise<string>((resolve, reject) => {
     const startedAt = Date.now();
     const args = ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
@@ -255,16 +275,29 @@ export async function captureWindowsBrowserProfileOwners(
       reject(new WindowsBrowserProfileOwnershipError("Chromium 物理 Profile 所有权检查失败，禁止复用未验证的 Profile", {
         phase: "PROFILE_OWNER_PROBE", reason: "NATIVE_PROBE_SYNC_SPAWN_FAILED", elapsedMs: Date.now() - startedAt,
         nativeSpawnCode: (error as NodeJS.ErrnoException | null | undefined)?.code,
+        probeId, probeStartedAt,
       }));
+      record({ status: "FAILED", reason: "NATIVE_PROBE_SYNC_SPAWN_FAILED", nativeSpawnCode: (error as NodeJS.ErrnoException)?.code });
       return;
     }
     let stdout = "";
     let settled = false;
     let diagnostic: ReturnType<typeof parseWindowsProfileProbeDiagnostic> & { nativeStageObservedElapsedMs?: number } = {};
     let stderr = "";
+    let probeBirthStamp: string | undefined;
+    const recordedStages = new Set<string>();
     child.stderr.on("data", (chunk: Buffer) => {
       stderr = `${stderr}${chunk.toString("utf8")}`.slice(-2_000);
       const observed = parseWindowsProfileProbeDiagnostic(stderr);
+      for (const nativeSelf of stderr.matchAll(/VERIDIA_PROFILE_PROBE_SELF=([0-9]+):([0-9]+)\r?\n/gu)) {
+        if (Number(nativeSelf[1]) === child.pid) probeBirthStamp = nativeSelf[2];
+      }
+      if (e2e) for (const line of stderr.split(/\r?\n/u).slice(0, -1)) {
+        const event = parseWindowsProfileProbeDiagnostic(`${line}\n`);
+        if (event.nativeStage === undefined || event.nativeStageElapsedMs === undefined || recordedStages.has(line) || stageTimeline.length >= 64) continue;
+        recordedStages.add(line);
+        stageTimeline.push({ stage: event.nativeStage, scriptElapsedMs: event.nativeStageElapsedMs, observedElapsedMs: Date.now() - startedAt });
+      }
       if (observed.nativeStage !== undefined &&
         (observed.nativeStage !== diagnostic.nativeStage || observed.nativeStageElapsedMs !== diagnostic.nativeStageElapsedMs)) {
         diagnostic.nativeStageObservedElapsedMs = Date.now() - startedAt;
@@ -275,9 +308,12 @@ export async function captureWindowsBrowserProfileOwners(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      record({ status: value !== undefined ? "NATIVE_EXIT_SUCCESS" : "FAILED", reason, exitCode,
+        elapsedMs: Date.now() - startedAt, probeProcessId: child.pid, probeBirthStamp, stageTimeline: [...stageTimeline], ...diagnostic });
       if (value !== undefined) resolve(value);
       else reject(new WindowsBrowserProfileOwnershipError("Chromium 物理 Profile 所有权检查失败，禁止复用未验证的 Profile",
-        { phase: "PROFILE_OWNER_PROBE", reason, exitCode, elapsedMs: Date.now() - startedAt, ...diagnostic }));
+        { phase: "PROFILE_OWNER_PROBE", reason, exitCode, elapsedMs: Date.now() - startedAt, ...diagnostic,
+          ...(e2e ? { probeId, probeStartedAt, probeProcessId: child.pid, probeBirthStamp, stageTimeline: [...stageTimeline] } : {}) }));
     };
     const timer = setTimeout(() => { child.kill(); finish(undefined, "NATIVE_PROBE_DEADLINE"); }, OWNER_PROBE_TIMEOUT_MS);
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); if (stdout.length > 100_000) { child.kill(); finish(undefined, "NATIVE_PROBE_OUTPUT_LIMIT"); } });
@@ -293,6 +329,7 @@ export async function captureWindowsBrowserProfileOwners(
     canonicalWindowsPath(identity.profilePath) !== canonicalWindowsPath(profile))) {
     throw new WindowsBrowserProfileOwnershipError("Chromium 物理 Profile 所有权响应无效");
   }
+  record({ status: "OWNERS_VALIDATED", owners: identities.map(({ pid, parentPid, birthStamp, browserProcess }) => ({ pid, parentPid, birthStamp, browserProcess })) });
   return identities;
 }
 

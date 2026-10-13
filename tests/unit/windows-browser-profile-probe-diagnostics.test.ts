@@ -4,9 +4,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const fixture = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: fixture.spawn }));
 import { captureWindowsBrowserProfileOwners } from "@/lib/automation/windows-browser-process-owner";
+import { getRecoveryDiagnostics } from "@/lib/automation/recovery-diagnostics";
 
 beforeEach(() => { vi.useFakeTimers(); fixture.spawn.mockReset(); });
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 function childFixture() {
   const child = Object.assign(new EventEmitter(), {
@@ -75,4 +76,30 @@ it("stage evidence cannot replace valid owner JSON or bless successful exit with
   child.emit("close", 0);
   await assertion;
   expect(child.kill).not.toHaveBeenCalled();
+});
+
+it("retains all complete sub-operation markers in one chunk and correlates native birth with the spawned probe only", async () => {
+  vi.stubEnv("VERIDIA_E2E", "true");
+  const child = Object.assign(childFixture(), { pid: 321 });
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: {
+    reason: "NATIVE_PROBE_DEADLINE", elapsedMs: 2000, nativeStage: "PROCESS_CENSUS_QUERY_ENTER",
+    probeProcessId: 321, probeBirthStamp: "134000000000000001",
+    stageTimeline: [
+      { stage: "PARSER_COMPILED", scriptElapsedMs: 800, observedElapsedMs: 1500 },
+      { stage: "PROCESS_CENSUS", scriptElapsedMs: 850, observedElapsedMs: 1500 },
+      { stage: "PROCESS_CENSUS_QUERY_ENTER", scriptElapsedMs: 851, observedElapsedMs: 1500 },
+    ],
+  } });
+  await vi.advanceTimersByTimeAsync(1500);
+  child.stderr.emit("data", Buffer.from("VERIDIA_PROFILE_PROBE_SELF=999:999\nVERIDIA_PROFILE_PROBE_SELF=321:134000000000000001\nVERIDIA_PROFILE_PROBE_STAGE=PARSER_COMPILED:800\nVERIDIA_PROFILE_PROBE_STAGE=PROCESS_CENSUS:850\nVERIDIA_PROFILE_PROBE_STAGE=PROCESS_CENSUS_QUERY_ENTER:851\n"));
+  await vi.advanceTimersByTimeAsync(500);
+  await assertion;
+  const receipt = getRecoveryDiagnostics()!.nativeProbes.at(-1)!;
+  expect(receipt).toMatchObject({ status: "FAILED", probeProcessId: 321, probeBirthStamp: "134000000000000001" });
+  expect(receipt.probeId).toEqual(expect.any(String));
+  expect(child.kill).toHaveBeenCalledTimes(1);
+  expect(fixture.spawn).toHaveBeenCalledTimes(1);
+  child.emit("close", 1);
+  vi.unstubAllEnvs();
 });

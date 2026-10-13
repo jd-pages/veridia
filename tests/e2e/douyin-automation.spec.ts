@@ -91,6 +91,20 @@ async function waitForTerminalBatch(page: Page, batchId: string) {
     const payload = await response.json();
     latest = payload.data[0] as AutomationBatchSnapshot | undefined;
     if (!latest) throw new Error(`自动审核批次不存在：${batchId}`);
+    if (latest.status === "PAUSED") {
+      // Capture the first failed execution state, before finally cleanup can
+      // close/release its browser. One bounded read, never a business retry.
+      try {
+        const diagnostic = await page.request.get("/api/automation/session?platform=XIAOHONGSHU", { timeout: 3_000, maxRetries: 0 });
+        const { data } = await diagnostic.json();
+        await test.info().attach("mixed-import-first-pause-diagnostic", { contentType: "application/json",
+          body: Buffer.from(JSON.stringify({ batch: automationBatchDiagnostic(latest), capturedAt: new Date().toISOString(),
+            http: diagnostic.status(), lifecycleStages: data?.lifecycleStages,
+            physicalCloseFailure: data?.physicalCloseFailure, recoveryDiagnostics: data?.recoveryDiagnostics,
+            globalRuntimeDiagnostics: data?.globalRuntimeDiagnostics })) });
+      } catch { await test.info().attach("mixed-import-first-pause-diagnostic-unavailable", { contentType: "text/plain", body: Buffer.from("Bounded observation unavailable") }); }
+      throw new Error(`自动审核批次已暂停：${JSON.stringify(automationBatchDiagnostic(latest))}`);
+    }
     if (/^(?:COMPLETED|COMPLETED_WITH_ERRORS)$/u.test(latest.status)) {
       return latest;
     }

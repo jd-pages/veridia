@@ -36,6 +36,7 @@ import {
 import { automaticAuditQueueState } from "./runtime-state";
 import { throwIfAutomaticExtractionAborted } from "./extraction-deadline";
 import { WindowsBrowserProfileOwnershipError } from "./windows-browser-process-owner";
+import { getRecoveryDiagnostics } from "./recovery-diagnostics";
 
 type BrowserLifecycleIdentity = GenerationLifecycleIdentity & {
   signal?: AbortSignal;
@@ -125,7 +126,8 @@ type XhsBrowserState = {
   lifecyclePendingOperations?: Map<number, Record<string, unknown>>;
   physicalCloseFence?: Promise<void>;
   physicalCloseState?: "PENDING" | "FAILED";
-  physicalCloseFailure?: { phase: string; name: string; diagnostic?: WindowsBrowserProfileOwnershipError["diagnostic"] };
+  physicalCloseFailure?: { phase: string; name: string; diagnostic?: WindowsBrowserProfileOwnershipError["diagnostic"];
+    observedAt?: string; closingOwner?: GenerationLifecycleIdentity; lifecycleGeneration?: number };
 };
 
 const globalForAutomation = globalThis as typeof globalThis & {
@@ -512,7 +514,14 @@ function browserControlError(error?: unknown) {
   return new AutomaticExtractionError(
     "BROWSER_CONTROL_ERROR",
     BROWSER_CONTROL_MESSAGE,
-    technicalMessage ? { technicalMessage } : undefined,
+    technicalMessage ? { technicalMessage, ...(process.env.VERIDIA_E2E === "true" ? { browserControlDiagnostic: {
+      observedAt: new Date().toISOString(), callerProcessId: process.pid,
+      lifecycleGeneration: state.lifecycleGeneration, contextOwner: state.contextOwner,
+      contextOwnershipKind: state.contextOwnershipKind, controlState: state.controlState,
+      physicalCloseFailure: state.physicalCloseFailure,
+      nativeProbe: error instanceof WindowsBrowserProfileOwnershipError ? error.diagnostic : undefined,
+      callerFrames: error instanceof Error ? error.stack?.split(/\r?\n/u).filter(line => line.trimStart().startsWith("at ")).slice(0, 8) : undefined,
+    } } : {}) } : undefined,
   );
 }
 
@@ -763,7 +772,8 @@ async function ensureBrowserContext(
       recordE2eBrowserFailure("CONTEXT_LAUNCH_FAILED", error);
       if (launchGeneration !== state.lifecycleGeneration) throw error;
       if (error instanceof WindowsBrowserProfileOwnershipError) {
-        state.physicalCloseFailure = { phase: "LAUNCH_OWNERSHIP", name: error.name, diagnostic: error.diagnostic };
+        state.physicalCloseFailure = { phase: "LAUNCH_OWNERSHIP", name: error.name, diagnostic: error.diagnostic,
+          ...(process.env.VERIDIA_E2E === "true" ? { observedAt: new Date().toISOString(), closingOwner: launchOwner, lifecycleGeneration: launchGeneration } : {}) };
         state.physicalCloseState = "FAILED";
         state.physicalCloseFence = Promise.reject(error);
         void state.physicalCloseFence.catch(() => undefined);
@@ -1065,6 +1075,7 @@ export async function getXhsAuditPageDiagnostics() {
         lifecyclePendingOperations: [...(state.lifecyclePendingOperations?.values() || [])],
         physicalCloseState: state.physicalCloseState || null,
         physicalCloseFailure: state.physicalCloseFailure || null,
+        recoveryDiagnostics: getRecoveryDiagnostics(),
         globalRuntimeDiagnostics: getE2eBrowserTeardownRuntimeSnapshot().globalRuntimeDiagnostics,
       }
       : {}),
@@ -1089,6 +1100,8 @@ export function closeXhsBrowserContext(
     return boundedBrowserControlOperation(state.physicalCloseFence, XHS_PHYSICAL_CLOSE_TIMEOUT_MS);
   }
   const closingOwner = state.contextOwner || state.launchOwner;
+  recordLifecycleStage("CONTEXT_CLOSE_IDENTITY_CAPTURED", { closingOwner,
+    browserProcessId: state.browserProcessId ?? null });
   const closing = (async () => {
     state.pageArbiter?.dispose();
     state.pageArbiter = undefined;
@@ -1133,7 +1146,8 @@ export function closeXhsBrowserContext(
       if (state.lifecycleGeneration === physicalGeneration) {
         state.physicalCloseState = "FAILED";
         state.physicalCloseFailure = { phase, name: error instanceof Error ? error.name : "UNKNOWN_ERROR_TYPE",
-          ...(error instanceof WindowsBrowserProfileOwnershipError ? { diagnostic: error.diagnostic } : {}) };
+          ...(error instanceof WindowsBrowserProfileOwnershipError ? { diagnostic: error.diagnostic } : {}),
+          ...(process.env.VERIDIA_E2E === "true" ? { observedAt: new Date().toISOString(), closingOwner, lifecycleGeneration: physicalGeneration } : {}) };
         state.profileLocked = true;
         state.contextClosedUnexpectedly = true;
         state.controlState = "RESTART_REQUIRED";
