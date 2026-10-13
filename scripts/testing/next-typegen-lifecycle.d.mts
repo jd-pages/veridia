@@ -14,6 +14,7 @@ export interface TypegenReceipt {
 }
 export function formalNextEnvironment(environment?: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 export function skippedNextTypegenReceipt(): TypegenReceipt;
+export function safeNativeQuiescenceDiagnostic(value: unknown): Record<string, unknown> | null;
 export function runOwnedNodeTypegenCommand(options: { root?: string; entry: string; args?: string[];
   environment?: NodeJS.ProcessEnv; deadlineMs?: number; exitDeadlineMs?: number;
   stdio?: "inherit" | "ignore" | "pipe"; onPhase?: (phase: Record<string, unknown>) => void }): Promise<TypegenReceipt>;

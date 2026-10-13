@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { formalNextEnvironment, runOwnedNodeTypegenCommand, skippedNextTypegenReceipt, type TypegenReceipt } from "../../scripts/testing/next-typegen-lifecycle.mjs";
+import { formalNextEnvironment, runOwnedNodeTypegenCommand, safeNativeQuiescenceDiagnostic, skippedNextTypegenReceipt, type TypegenReceipt } from "../../scripts/testing/next-typegen-lifecycle.mjs";
 import { formalNextPrepareExitCode, prepareFormalNext } from "../../scripts/testing/prepare-formal-next.mjs";
 
 const owned: string[] = [];
@@ -23,6 +23,15 @@ afterEach(() => {
 });
 
 describe("formal Next typegen receipt and preparation", () => {
+  it("retains fixed native identities/residual reasons without emitting arguments or treating missing evidence as zero", () => {
+    const value = safeNativeQuiescenceDiagnostic({ root: { pid: 123, parentPid: 4, nativeStartFileTime: "134000000000000001", command: "private-token" },
+      uncertainResidualCandidates: [{ pid: 5, parentPid: 123, reason: "LATE_CHILD_CIM_BIRTH_UNAVAILABLE", privateToken: "private-token" }],
+      environment: { SECRET: "private-token" }, failureLine: 247 });
+    expect(value).toMatchObject({ root: { pid: 123, parentPid: 4, nativeStartFileTime: "134000000000000001" },
+      uncertainResidualCandidates: [{ pid: 5, reason: "LATE_CHILD_CIM_BIRTH_UNAVAILABLE" }], remainingBeforeCleanup: null });
+    expect(JSON.stringify(value)).not.toContain("private-token");
+    expect(safeNativeQuiescenceDiagnostic(null)).toBeNull();
+  });
   it("clears only the existing test-dist overrides without mutating parent environment", () => {
     const original = { VERIDIA_NEXT_DIST_DIR: "test-dist", VERIDIA_NEXT_TSCONFIG_PATH: "test-config",
       E2E_NEXT_DIST_DIR: "test-other", DATABASE_URL: "file:owned-fixture.db", NODE_OPTIONS: "--trace-warnings", NODE_ENV: "test" as const };
@@ -212,8 +221,9 @@ describe("actual self-owned Windows native launcher (never real Next)", () => {
         startupStages: ["SCRIPT_ENTERED", "ARGS_VALIDATED", "ROOT_PROCESS_OPEN_START", "ROOT_QUERY_START", "ROOT_QUERY_READY",
           "ROOT_NATIVE_HANDLE_START", "ROOT_NATIVE_HANDLE_READY", "ROOT_PROCESS_OPEN_READY",
           "ROOT_IDENTITY_BOUND", "READY_EMIT_START", "READY_EMITTED"] });
+      expect(published.nativeQuiescence).toMatchObject({ remainingBeforeCleanup: [], remainingAfterCleanup: [], uncertainResidualCandidates: [] });
       expect(Object.keys(published).sort()).toEqual(["cliReleased", "elapsedMs", "failureCode", "finalizationStages", "monitorExitCode",
-        "monitorSignal", "nativeArmedBeforeCliRelease", "nativeCapturedBeforeCliRelease", "nativeFailureCode", "rootBirthCheck", "startupStages"]);
+        "monitorSignal", "nativeArmedBeforeCliRelease", "nativeCapturedBeforeCliRelease", "nativeFailureCode", "nativeQuiescence", "rootBirthCheck", "startupStages"]);
       expect(String(line)).not.toContain(output);
     } finally { diagnostic.mockRestore(); }
   }, 15000);

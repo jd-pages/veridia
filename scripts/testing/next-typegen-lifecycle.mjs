@@ -133,6 +133,31 @@ function safeRootBirthCheck(value) {
     "latestCreationMs", "hasExited", "beforeCreationWindow", "afterCreationWindow", "sampledBirthMatches"].map(key => [key, value[key]]));
 }
 
+// Retain the actual quiescence rejection rather than letting an assertion's
+// nested Error truncation erase the object. Fixed identity/reason fields only;
+// never commands, environment or monitor stderr, and never kill authority.
+export function safeNativeQuiescenceDiagnostic(value) {
+  if (!value || typeof value !== "object") return null;
+  const pid = value => Number.isSafeInteger(value) && value > 0 ? value : null;
+  const stamp = value => typeof value === "string" && /^[1-9][0-9]{0,31}$/u.test(value) ? value : null;
+  const identities = values => Array.isArray(values) ? values.slice(0, 64).map(item => ({ pid: pid(item?.pid),
+    parentPid: pid(item?.parentPid), nativeStartFileTime: stamp(item?.nativeStartFileTime),
+    parentNativeStartFileTime: stamp(item?.parentNativeStartFileTime) })) : null;
+  const reasons = ["CAPTURED_PID_CIM_BIRTH_UNAVAILABLE", "CAPTURED_PID_REUSED_UNKNOWN_CURRENT_BIRTH",
+    "CAPTURED_PARENT_CIM_BIRTH_UNAVAILABLE", "CANDIDATE_CIM_BIRTH_UNAVAILABLE",
+    "LATE_CHILD_CIM_BIRTH_UNAVAILABLE", "PARENT_EXITED_BEFORE_NATIVE_LINEAGE_CAPTURE"];
+  return { root: identities([value.root])?.[0] ?? null,
+    identities: identities(value.identities), remainingBeforeCleanup: identities(value.remainingBeforeCleanup),
+    remainingAfterCleanup: identities(value.remainingAfterCleanup),
+    uncertainResidualCandidates: Array.isArray(value.uncertainResidualCandidates) ? value.uncertainResidualCandidates.slice(0, 64).map(item => ({
+      pid: pid(item?.pid), parentPid: pid(item?.parentPid), reason: reasons.includes(item?.reason) ? item.reason : "UNRECOGNIZED",
+      expectedNativeStartFileTime: stamp(item?.expectedNativeStartFileTime), observedCimStartFileTime: stamp(item?.observedCimStartFileTime),
+    })) : null,
+    sampleCount: Number.isSafeInteger(value.sampleCount) && value.sampleCount >= 0 ? value.sampleCount : null,
+    failureLine: Number.isSafeInteger(value.failureLine) && value.failureLine > 0 ? value.failureLine : null,
+    cleanupErrorCount: Array.isArray(value.cleanupErrors) ? value.cleanupErrors.length : null };
+}
+
 // Generic only to make the actual launcher testable with self-owned fixtures.
 // Formal prepare supplies the exact installed Next CLI and ["typegen"].
 export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, args = ["typegen"],
@@ -251,6 +276,7 @@ export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, 
       monitorSignal: monitor?.signalCode ?? null,
       nativeFailureCode: /^TYPEGEN_[A-Z_]+$/u.test(protocol?.final()?.failure ?? "") ? protocol.final().failure : null,
       rootBirthCheck: safeRootBirthCheck(protocol?.final()?.rootBirthCheck),
+      nativeQuiescence: safeNativeQuiescenceDiagnostic(protocol?.final()),
     })}`);
   } finally {
     if (failure) {
