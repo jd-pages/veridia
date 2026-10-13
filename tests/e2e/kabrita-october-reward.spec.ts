@@ -64,6 +64,10 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
     const storeRule = await db.storeTopicRule.create({ data: {
       commercePlatform: "JD", storeName, normalizedStoreName: normalizeStoreNameForMatch(storeName), expectedTopic: storeTopic,
       topicEntries: { create: [{ topic: storeTopic, normalizedTopic: normalizeStoreTopicForMatch(storeTopic), topicType: "ACCEPTED" }] },
+      // This fixture explicitly exercises required Kabrita store topics. A
+      // shared template alone no longer opts any brand into audit.
+      brandPolicies: { create: [{ brandName: "佳贝艾特", contentChannel: "XIAOHONGSHU",
+        requireStoreTopic: true, useSharedTemplate: true, reviewStatus: "CONFIRMED", managedBy: "ADMIN" }] },
     } });
     storeTopicRuleId = storeRule.id;
     server = createServer((request, response) => {

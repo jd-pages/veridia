@@ -2,12 +2,258 @@ import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
+import { PrismaClient } from "@prisma/client";
+import { createAuditIngestFixture, auditIngestExtraction } from "../helpers/audit-ingest-fixture";
 import { prisma } from "@/lib/db";
 import { ensureStoreTopicRuleSeeds } from "@/lib/store-topic-rule-service";
 import { E2E_ORIGIN } from "./e2e-origin";
 
 test.beforeAll(async () => {
   await ensureStoreTopicRuleSeeds();
+});
+
+test("Protected STORE_BRAND_TOPIC_POLICY_ISOLATION：同店品牌与渠道独立且历史快照不漂移", async ({ page }, testInfo) => {
+  // New multi-brand scenario includes ten independent formal audits plus UI
+  // editing and screenshots; no existing test or runtime deadline is relaxed.
+  test.setTimeout(90_000);
+  const datasourceUrl = process.env.E2E_DATABASE_URL?.trim();
+  if (!datasourceUrl) throw new Error("必须使用隔离E2E数据库");
+  const db = new PrismaClient({ datasourceUrl });
+  const fixture = await createAuditIngestFixture(db);
+  const storeName = `品牌共享店-${fixture.product.id}`, alias = `品牌共享上游-${fixture.product.id}`;
+  const ids: string[] = [], receipts: Array<Record<string, unknown>> = [];
+  try {
+    // Nestle is not in the baseline seed. Make it a real current-system brand
+    // in this owned isolated fixture, proving the UI loads brands dynamically.
+    await db.product.update({ where: { id: fixture.product.id }, data: { brandName: "雀巢" } });
+    expect((await page.request.post("/api/auth/login", { data: { username: "admin", password: "Admin123!" } })).ok()).toBeTruthy();
+    await page.goto("/campaigns");
+    await page.getByRole("tab", { name: "店铺话题规则" }).click();
+    await page.getByRole("button", { name: /新增店铺/u }).click();
+    await page.getByLabel("标准店铺名称").fill(storeName);
+    await page.getByRole("button", { name: "添加导入别名" }).click();
+    await page.getByTestId("store-alias-0").fill(alias);
+    const card = (brand: string, channel = "XIAOHONGSHU") => page.getByTestId(`store-brand-policy-${brand}-${channel}`);
+    await card("达能").getByRole("switch").first().click();
+    await page.getByTestId("accepted-store-topic-0").fill("共用店铺话题");
+    await page.getByRole("button", { name: "添加必需话题" }).click();
+    await page.getByTestId("required-store-topic-0").fill("共用必需");
+    await expect(card("佳贝艾特").getByRole("switch").first()).not.toBeChecked();
+    await expect(card("雀巢").getByRole("switch").first()).not.toBeChecked();
+    await page.getByTestId("save-store-topic-rule").click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    const getStore = async () => (await (await page.request.get(`/api/store-topic-rules?query=${encodeURIComponent(storeName)}`)).json()).data.items.find((row: { storeName: string }) => row.storeName === storeName);
+    const store = await getStore(); ids.push(store.id);
+    const otherResponse = await page.request.post("/api/store-topic-rules", { data: { commercePlatform: "TMALL", storeName: `${storeName}-其它店`, enabled: true } });
+    expect(otherResponse.ok()).toBeTruthy(); const other = (await otherResponse.json()).data; ids.push(other.id);
+    const audit = async (brandName: string, topics: string[] = [], shop = alias) => {
+      await db.product.update({ where: { id: fixture.product.id }, data: { brandName } });
+      await db.topicRule.updateMany({ where: { campaignId: fixture.campaign.id }, data: { brandName } });
+      const task = await fixture.task({ source: "EXCEL", storeName: shop, commercePlatform: "TMALL", storeMappingStatus: "MATCHED",
+        productStage: brandName === "达能" ? "IFFO_P1" : null });
+      const extraction = auditIngestExtraction(task, { body: "这是一段用来验证店铺品牌独立政策的合成正文，1段产品适合当前阶段，长度满足审核要求。" });
+      const global = await db.topicRule.findMany({ where: { scope: "GLOBAL", brandName, contentChannel: { in: ["ALL", "XIAOHONGSHU"] }, status: "ACTIVE", ruleType: { not: "FORBIDDEN" } } });
+      const actualTopics = [...extraction.topics, ...[...global.map(rule => rule.topic), ...topics].map(displayText => ({ ...extraction.topics[0], displayText }))];
+      const response = await page.request.post(`/api/tasks/${task.id}/audit`, { data: { extraction: { ...extraction, topics: actualTopics, verifiedPlatformTopics: actualTopics } } });
+      expect(response.ok(), await response.text()).toBeTruthy();
+      const result = (await response.json()).data;
+      const detailResponse = await page.request.get(`/api/results/${result.id}`);
+      expect(detailResponse.ok()).toBeTruthy();
+      const detail = (await detailResponse.json()).data;
+      expect(detail.presentation.storeTopic).toMatchObject({ applicable: true, status: result.storeTopicStatus });
+      expect(detail.autoStatus).toBe(result.autoStatus);
+      receipts.push({ brandName, shop, autoStatus: result.autoStatus, storeTopicStatus: result.storeTopicStatus,
+        presentationStoreTopicStatus: detail.presentation.storeTopic.status, resultId: result.id });
+      return result;
+    };
+    const danoneBefore = await audit("达能");
+    expect(danoneBefore).toMatchObject({ autoStatus: "FAILED", storeTopicStatus: "NON_COMPLIANT" });
+    for (const brand of ["佳贝艾特", "雀巢"]) expect(await audit(brand)).toMatchObject({ autoStatus: "PASSED", storeTopicStatus: "NOT_REQUIRED", storeTopicFailureReason: null });
+    expect(await audit("达能", ["#共用店铺话题"])).toMatchObject({ storeTopicStatus: "NON_COMPLIANT" });
+    expect(await audit("达能", ["#共用店铺话题", "#共用必需"])).toMatchObject({ autoStatus: "PASSED", storeTopicStatus: "COMPLIANT" });
+    expect(await audit("达能", [], other.storeName)).toMatchObject({ autoStatus: "PASSED", storeTopicStatus: "NOT_REQUIRED" });
+    const history = await db.auditResult.findUniqueOrThrow({ where: { id: danoneBefore.id }, include: { ruleResults: true, extractionRecord: true } });
+    const edit = async () => {
+      await page.getByRole("button", { name: /刷新/u }).click();
+      const search = page.getByRole("searchbox", { name: "搜索标准店铺或导入别名" });
+      await search.fill(storeName); await search.press("Enter");
+      await page.getByRole("row").filter({ has: page.getByRole("cell", { name: storeName, exact: true }) }).getByRole("button", { name: /编辑/u }).click();
+    };
+    await edit();
+    await expect(card("达能").getByRole("switch").first()).toBeChecked();
+    await card("达能").getByRole("switch").first().click();
+    await card("雀巢").getByRole("switch").first().click();
+    await card("雀巢").getByRole("switch").nth(1).click();
+    const customInput = page.getByRole("combobox", { name: "雀巢可接受话题" });
+    await customInput.fill("#雀巢自定义话题"); await customInput.press("Enter");
+    const screenshot = testInfo.outputPath("store-brand-topic-policy-custom-ui.png");
+    await page.getByRole("dialog").screenshot({ path: screenshot });
+    await testInfo.attach("店铺品牌配置真实UI", { path: screenshot, contentType: "image/png" });
+    await page.getByTestId("save-store-topic-rule").click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(await audit("雀巢")).toMatchObject({ autoStatus: "FAILED", storeTopicStatus: "NON_COMPLIANT" });
+    expect(await audit("雀巢", ["#共用店铺话题", "#共用必需"])).toMatchObject({ storeTopicStatus: "NON_COMPLIANT" });
+    expect(await audit("雀巢", ["#雀巢自定义话题"])).toMatchObject({ autoStatus: "PASSED", storeTopicStatus: "COMPLIANT" });
+    expect(await audit("达能")).toMatchObject({ autoStatus: "PASSED", storeTopicStatus: "NOT_REQUIRED" });
+    // XHS edit must not implicitly enable the same brand on Douyin.
+    const saved = await getStore();
+    expect(saved.brandPolicies.find((row: { brandName: string; contentChannel: string }) => row.brandName === "雀巢" && row.contentChannel === "DOUYIN")).toMatchObject({ requireStoreTopic: false });
+    const invalid = await page.request.patch(`/api/store-topic-rules/${store.id}`, { data: {
+      commercePlatform: "TMALL", storeName, enabled: true, brandPolicies: [{ brandName: "雀巢", contentChannel: "DOUYIN", requireStoreTopic: true, useSharedTemplate: false, acceptedTopics: [], requiredTopics: ["#仅小红书必需"] }],
+    } });
+    expect(invalid.ok()).toBeFalsy();
+    expect((await invalid.json()).error).toContain("没有当前渠道");
+    expect(await getStore()).toEqual(saved);
+    await edit();
+    await expect(card("达能").getByRole("switch").first()).not.toBeChecked();
+    await expect(card("雀巢").getByRole("switch").first()).toBeChecked();
+    await expect(card("雀巢").getByText("#雀巢自定义话题", { exact: true })).toBeVisible();
+    await page.getByTestId("cancel-store-topic-rule").click();
+    expect(await db.auditResult.findUniqueOrThrow({ where: { id: danoneBefore.id }, include: { ruleResults: true, extractionRecord: true } })).toEqual(history);
+    const oldDetail = (await (await page.request.get(`/api/results/${danoneBefore.id}`)).json()).data;
+    expect(oldDetail).toMatchObject({ autoStatus: "FAILED", storeTopicStatus: "NON_COMPLIANT" });
+    await testInfo.attach("store-brand-policy-isolation-receipt", { body: Buffer.from(JSON.stringify({ database: datasourceUrl, source: "ISOLATED_E2E", productionDbAccess: "NOT_RUN", canonicalId: store.id,
+      aliasesPreserved: saved.storeAliases, policies: saved.brandPolicies, receipts, historicalResultId: danoneBefore.id, historicalImmutable: true, invalidSaveRejectedAndRolledBack: true })), contentType: "application/json" });
+  } finally {
+    try { await fixture.cleanup(); for (const id of ids) {
+      await db.storeTopicEntry.deleteMany({ where: { storeTopicRuleId: id } });
+      await db.storeTopicRule.deleteMany({ where: { id } });
+      await db.operationLog.deleteMany({ where: { entityId: id } });
+    } } finally { await db.$disconnect(); }
+  }
+});
+
+test("Protected STORE_MAPPING_DOES_NOT_IMPLY_TOPIC_REQUIREMENT：UI开关、Alias预检与正式审核完全独立", async ({ page }) => {
+  const datasourceUrl = process.env.E2E_DATABASE_URL?.trim();
+  if (!datasourceUrl) throw new Error("店铺映射验收必须使用隔离E2E数据库");
+  const db = new PrismaClient({ datasourceUrl });
+  const fixture = await createAuditIngestFixture(db);
+  const suffix = fixture.product.id;
+  const storeName = `佳贝艾特普通店铺A-${suffix}`;
+  const alias = `上游普通店铺-${suffix}`;
+  const storeTopic = "测试佳贝艾特店铺";
+  const ids: string[] = [];
+  try {
+    expect((await page.request.post("/api/auth/login", {
+      data: { username: "admin", password: "Admin123!" },
+    })).ok()).toBeTruthy();
+    await db.product.update({ where: { id: fixture.product.id }, data: { brandName: "佳贝艾特" } });
+    await db.topicRule.updateMany({ where: { campaignId: fixture.campaign.id }, data: { brandName: "佳贝艾特" } });
+    // Omitting arrays at the API boundary must not infer a requirement from
+    // either the canonical name or the words 旗舰店/专卖店.
+    const omitted = await page.request.post("/api/store-topic-rules", { data: {
+      commercePlatform: "JD", storeName: `普通旗舰店-${suffix}`, enabled: true,
+    } });
+    const omittedPayload = await omitted.json();
+    expect(omitted.ok(), JSON.stringify(omittedPayload)).toBeTruthy();
+    ids.push(omittedPayload.data.id);
+    expect(omittedPayload.data).toMatchObject({ enabled: true, expectedTopic: "", acceptedTopics: [], requiredTopics: [] });
+
+    await page.goto("/campaigns");
+    await page.getByRole("tab", { name: "店铺话题规则" }).click();
+    await page.getByRole("button", { name: /新增店铺/u }).click();
+    const kabritaPolicy = page.getByTestId("store-brand-policy-佳贝艾特-XIAOHONGSHU");
+    const kabritaSwitch = kabritaPolicy.getByRole("switch").first();
+    await expect(kabritaSwitch).not.toBeChecked();
+    await page.getByLabel("标准店铺名称").fill(storeName);
+    await expect(page.getByTestId("accepted-store-topic-0")).toHaveCount(0);
+    await expect(page.getByTestId("required-store-topic-0")).toHaveCount(0);
+    await page.getByRole("button", { name: "添加导入别名" }).click();
+    await page.getByTestId("store-alias-0").fill(alias);
+    await page.getByTestId("save-store-topic-rule").click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    const getStore = async () => {
+      const response = await page.request.get(`/api/store-topic-rules?query=${encodeURIComponent(storeName)}`);
+      expect(response.ok()).toBeTruthy();
+      return (await response.json()).data.items.find((item: { storeName: string }) => item.storeName === storeName);
+    };
+    const store = await getStore();
+    ids.push(store.id);
+    expect(store).toMatchObject({ enabled: true, commercePlatform: "TMALL", acceptedTopics: [], requiredTopics: [], expectedTopic: "" });
+    expect(store.storeAliases).toMatchObject([{ alias }]);
+    // The legacy Tencent layout is a Danone template. Use its real seeded
+    // product/campaign/stage contract to isolate the shared mapping boundary.
+    const products = (await (await page.request.get("/api/products")).json()).data as Array<{ id: string; name: string }>;
+    const previewProduct = products.find(item => item.name === "爱他美澳洲白金版")!;
+    expect(previewProduct).toBeTruthy();
+    const campaigns = (await (await page.request.get(`/api/campaigns?productId=${previewProduct.id}&contentChannel=XIAOHONGSHU`)).json()).data as Array<{ name: string; month: string }>;
+    const previewCampaign = campaigns.find(item => item.month === "2026-07")!;
+    expect(previewCampaign).toBeTruthy();
+    const preview = async (name: string) => {
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("店铺映射预检");
+      sheet.addRow(["笔记链接", "产品", "活动名称", "产品阶段话题", "店铺名称", "成交平台", "内容渠道"]);
+      sheet.addRow([`${E2E_ORIGIN}/mock/xhs?case=passed&identity=${suffix}`, previewProduct.name, previewCampaign.name, "IFFO", name, "天猫", "小红书"]);
+      const response = await page.request.post("/api/import/notes", { multipart: {
+        file: { name: "mapping.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(await workbook.xlsx.writeBuffer()) },
+        commit: "false", tencentExport: "true",
+      } });
+      const payload = await response.json();
+      expect(response.ok(), JSON.stringify(payload)).toBeTruthy();
+      expect(payload.data, JSON.stringify(payload.data.errorRows)).toMatchObject({ validCount: 1, invalidCount: 0 });
+      expect(payload.data.rows[0]).toMatchObject({ storeMappingStatus: "MATCHED", matchedStoreName: storeName });
+      return payload.data.rows[0];
+    };
+    expect((await preview(storeName)).expectedStoreTopics).toEqual([]);
+    expect((await preview(alias)).expectedStoreTopics).toEqual([]);
+    const audit = async (brandName: string, includeStoreTopic = false) => {
+      await db.product.update({ where: { id: fixture.product.id }, data: { brandName } });
+      await db.topicRule.updateMany({ where: { campaignId: fixture.campaign.id }, data: { brandName } });
+      const task = await fixture.task({ source: "EXCEL", storeName: alias, commercePlatform: "TMALL", storeMappingStatus: "MATCHED" });
+      const extraction = auditIngestExtraction(task);
+      const globalTopics = await db.topicRule.findMany({ where: { scope: "GLOBAL", brandName, status: "ACTIVE", contentChannel: { in: ["XIAOHONGSHU", "ALL"] }, ruleType: { not: "FORBIDDEN" } } });
+      const topic = extraction.topics[0];
+      const topics = [...extraction.topics, ...globalTopics.map(rule => ({ ...topic, displayText: rule.topic }))];
+      if (includeStoreTopic) topics.push({ ...topic, displayText: `#${storeTopic}` });
+      const response = await page.request.post(`/api/tasks/${task.id}/audit`, { data: { extraction: { ...extraction, topics, verifiedPlatformTopics: topics } } });
+      expect(response.ok(), await response.text()).toBeTruthy();
+      return (await response.json()).data;
+    };
+    const off = await audit("佳贝艾特");
+    expect(off).toMatchObject({ autoStatus: "PASSED", storeTopicStatus: "NOT_REQUIRED", storeTopicFailureReason: null });
+    const historical = await db.auditResult.findUniqueOrThrow({ where: { id: off.id }, include: { ruleResults: true, extractionRecord: true } });
+    const search = page.getByRole("searchbox", { name: "搜索标准店铺或导入别名" });
+    const edit = async () => {
+      await page.getByRole("button", { name: /刷新/u }).click();
+      await search.fill(storeName);
+      await search.press("Enter");
+      await page.getByRole("row").filter({ hasText: storeName }).getByRole("button", { name: /编辑/u }).click();
+    };
+    await edit();
+    await expect(kabritaSwitch).not.toBeChecked();
+    await kabritaSwitch.click();
+    await expect(page.getByTestId("accepted-store-topic-0")).toHaveValue(storeName);
+    await page.getByTestId("accepted-store-topic-0").fill(storeTopic);
+    await page.getByTestId("save-store-topic-rule").click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect((await audit("佳贝艾特"))).toMatchObject({ autoStatus: "FAILED", storeTopicStatus: "NON_COMPLIANT" });
+    expect((await audit("佳贝艾特", true))).toMatchObject({ autoStatus: "PASSED", storeTopicStatus: "COMPLIANT" });
+    expect((await audit("雀巢"))).toMatchObject({ autoStatus: "PASSED", storeTopicStatus: "NOT_REQUIRED", storeTopicFailureReason: null });
+    await edit();
+    await expect(kabritaSwitch).toBeChecked();
+    await expect(page.getByTestId("accepted-store-topic-0")).toHaveValue(storeTopic);
+    await kabritaSwitch.click();
+    // The reusable template survives disabling one brand. It is not itself a requirement.
+    await expect(page.getByTestId("accepted-store-topic-0")).toHaveValue(storeTopic);
+    await page.getByTestId("save-store-topic-rule").click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(await getStore()).toMatchObject({ id: store.id, enabled: true, commercePlatform: "TMALL", acceptedTopics: [{ topic: `#${storeTopic}` }], requiredTopics: [], storeAliases: [{ alias }] });
+    expect((await preview(alias)).expectedStoreTopics).toEqual([]);
+    expect((await audit("佳贝艾特"))).toMatchObject({ autoStatus: "PASSED", storeTopicStatus: "NOT_REQUIRED", storeTopicFailureReason: null });
+    expect(await db.auditResult.findUniqueOrThrow({ where: { id: off.id }, include: { ruleResults: true, extractionRecord: true } })).toEqual(historical);
+    await edit();
+    await expect(kabritaSwitch).not.toBeChecked();
+    await page.getByTestId("cancel-store-topic-rule").click();
+  } finally {
+    try {
+      await fixture.cleanup();
+      for (const id of ids) {
+        await db.storeTopicEntry.deleteMany({ where: { storeTopicRuleId: id } });
+        await db.storeTopicRule.deleteMany({ where: { id } });
+        await db.operationLog.deleteMany({ where: { entityId: id } });
+      }
+    } finally { await db.$disconnect(); }
+  }
 });
 
 test("Protected STORE_RENAME_IDENTITY_CONTINUITY：规则包正式改名保留 Store ID 和旧名 Alias", async ({
@@ -157,6 +403,7 @@ test("佳贝艾特 Canonical 可不要求店铺话题并保留 STORE_ALIAS", asy
       storeAliases: Array<{ alias: string }>;
       acceptedTopics: Array<{ id: string; topic: string; enabled: boolean }>;
       requiredTopics: Array<{ id: string; topic: string; enabled: boolean }>;
+      brandPolicies: Array<{ brandName: string; contentChannel: string; requireStoreTopic: boolean }>;
     };
   };
 
@@ -167,7 +414,7 @@ test("佳贝艾特 Canonical 可不要求店铺话题并保留 STORE_ALIAS", asy
     explicitAlias,
   ]);
   expect(before.storeAliases.map((item) => item.alias)).toEqual([explicitAlias]);
-  expect(before.acceptedTopics).toEqual([]);
+  expect(before.brandPolicies.filter(policy => policy.brandName === "佳贝艾特").every(policy => !policy.requireStoreTopic)).toBe(true);
 
   const update = await page.request.patch(`/api/store-topic-rules/${before.id}`, {
     data: {
@@ -186,7 +433,8 @@ test("佳贝艾特 Canonical 可不要求店铺话题并保留 STORE_ALIAS", asy
     explicitAlias,
   ]);
   expect(after.storeAliases.map((item) => item.alias)).toEqual([explicitAlias]);
-  expect(after.acceptedTopics).toEqual([]);
+  expect(after.acceptedTopics).toEqual(before.acceptedTopics);
+  expect(after.brandPolicies.filter(policy => policy.brandName === "佳贝艾特").every(policy => !policy.requireStoreTopic)).toBe(true);
 });
 
 test("活动与规则可独立维护店铺话题规则", async ({ page }) => {
@@ -219,6 +467,10 @@ test("活动与规则可独立维护店铺话题规则", async ({ page }) => {
   await page.getByLabel("标准店铺名称").fill(originalName);
   await page.getByRole("button", { name: "添加导入别名" }).click();
   await page.getByTestId("store-alias-0").fill(createdAlias);
+  const danoneSwitch = page.getByTestId("store-brand-policy-达能-XIAOHONGSHU").getByRole("switch").first();
+  await expect(danoneSwitch).not.toBeChecked();
+  await expect(page.getByLabel("可接受店铺话题 1")).toHaveCount(0);
+  await danoneSwitch.click();
   await expect(page.getByLabel("可接受店铺话题 1")).toHaveValue(originalName);
   await page.getByRole("button", { name: "添加话题" }).click();
   await expect(page.getByLabel("可接受店铺话题 2")).toBeVisible();

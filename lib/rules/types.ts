@@ -91,6 +91,9 @@ export interface RulePackageStoreValue {
 }
 
 export interface RulePackageStoreTopicRule {
+  brandPolicies?: Array<{ brandName: string; contentChannel: "XIAOHONGSHU" | "DOUYIN";
+    requireStoreTopic: boolean; useSharedTemplate: boolean; acceptedTopics: string[];
+    requiredTopics: string[]; reviewStatus: "CONFIRMED" | "PENDING_REVIEW" }>;
   key: string;
   commercePlatform: RulePackageCommercePlatform;
   storeName: string;

@@ -226,6 +226,22 @@ function recordLaunchDiagnostic(
   recordLifecycleStage(`LAUNCH_${phase}`, { ...details, lifecycleGeneration, ownerGeneration });
 }
 
+function recordE2eBrowserFailure(phase: string, error: unknown) {
+  if (process.env.VERIDIA_E2E !== "true") return;
+  // Preserve the actual failure before the public safe message replaces it.
+  // Only fresh isolated tests expose this diagnostic. Bounded call frames,
+  // syscall/code and executable identify the failed spawn without collecting
+  // spawn arguments, cookies, raw command lines or production-session data.
+  const nativeError = error as NodeJS.ErrnoException & { path?: string };
+  recordLifecycleStage(phase, {
+    name: error instanceof Error ? error.name : "UNKNOWN",
+    message: error instanceof Error ? error.message.split(/\r?\n/u)[0].replaceAll(PROFILE_DIRECTORY, "<ISOLATED_PROFILE>").slice(0, 500) : "UNKNOWN",
+    ...(error instanceof Error ? { code: nativeError.code, syscall: nativeError.syscall, executable: nativeError.path,
+      frames: error.stack?.split(/\r?\n/u).filter(line => line.trimStart().startsWith("at ")).slice(0, 8) } : {}),
+    ...(error instanceof WindowsBrowserProfileOwnershipError ? { diagnostic: error.diagnostic } : {}),
+  });
+}
+
 async function e2eBoundedObservation<T>(operation: Promise<T>, fallback: T) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -744,6 +760,7 @@ async function ensureBrowserContext(
       return context;
     })
     .catch(async (error) => {
+      recordE2eBrowserFailure("CONTEXT_LAUNCH_FAILED", error);
       if (launchGeneration !== state.lifecycleGeneration) throw error;
       if (error instanceof WindowsBrowserProfileOwnershipError) {
         state.physicalCloseFailure = { phase: "LAUNCH_OWNERSHIP", name: error.name, diagnostic: error.diagnostic };
@@ -895,6 +912,7 @@ export async function getXhsAuditPage(input?: {
         );
         return page;
       } catch (error) {
+        recordE2eBrowserFailure("AUDIT_PAGE_CREATION_FAILED", error);
         throwIfAutomaticExtractionAborted(input?.lifecycle?.signal);
         if (error instanceof XhsPageGenerationInvalidatedError) throw error;
         const pageInvariantFailure = error instanceof XhsPageInvariantError;

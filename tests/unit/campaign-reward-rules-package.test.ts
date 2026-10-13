@@ -24,6 +24,10 @@ beforeAll(async () => {
     return new PrismaClient({ datasourceUrl: `file:${databasePath.replaceAll("\\", "/")}` });
   });
   [source, target] = clients;
+  // These are pre-policy reward compatibility fixtures. Remove only the new
+  // feature from the owned source clone so min17/min22 remain genuine legacy
+  // contracts; target policies and all reward expectations stay unchanged.
+  await source.storeBrandTopicPolicy.deleteMany();
   await source.campaignInteractionRewardTier.deleteMany();
   const campaigns = await source.campaign.findMany({ include: { product: true, products: { include: { product: true } } } });
   for (const campaign of campaigns) {
@@ -44,6 +48,7 @@ describe.sequential("Reward package feature-driven compatibility", () => {
   it("canonical LEGACY导出min17，不含新四字段且旧往返可用", async () => {
     const canonical = await exportCurrentRulePayload({ minimumAppVersion: "1.1.17", ruleVersion: "rules-2026.09.30.170" }, source);
     expect(canonical.minimumAppVersion).toBe("1.1.17");
+    expect(canonical.storeTopicRules?.some(store => store.brandPolicies?.length)).toBe(false);
     for (const campaign of canonical.campaigns) {
       for (const field of ["rewardMode", "basicRewardRequired", "baseRewardAmount", "interactionRewardTiers"]) {
         expect(Object.hasOwn(campaign, field), field).toBe(false);

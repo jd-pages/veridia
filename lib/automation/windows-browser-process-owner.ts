@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import path from "node:path";
 
 export type WindowsBrowserProcessIdentity = {
@@ -16,6 +17,7 @@ export class WindowsBrowserProfileOwnershipError extends Error {
   constructor(message: string, readonly diagnostic?: {
     phase: string; reason: string; exitCode?: number | null; elapsedMs?: number;
     nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number; nativeStageObservedElapsedMs?: number;
+    nativeSpawnCode?: string;
   }) { super(message); this.name = "WindowsBrowserProfileOwnershipError"; }
 }
 
@@ -242,8 +244,20 @@ export async function captureWindowsBrowserProfileOwners(
   const script = guardScript({ executablePath: executable, profilePath: profile, terminate });
   const output = await new Promise<string>((resolve, reject) => {
     const startedAt = Date.now();
-    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand",
-      Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const args = ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
+    let child: ChildProcessByStdio<null, Readable, Readable>;
+    try { child = spawn("powershell.exe", args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (error) {
+      // This authorization is diagnostic only. Production keeps the original
+      // rejection; isolated E2E retains the actual syscall classification.
+      if (process.env.VERIDIA_E2E !== "true") { reject(error); return; }
+      // Synchronous uv spawn failures have no ChildProcess 'error' event.
+      reject(new WindowsBrowserProfileOwnershipError("Chromium 物理 Profile 所有权检查失败，禁止复用未验证的 Profile", {
+        phase: "PROFILE_OWNER_PROBE", reason: "NATIVE_PROBE_SYNC_SPAWN_FAILED", elapsedMs: Date.now() - startedAt,
+        nativeSpawnCode: (error as NodeJS.ErrnoException | null | undefined)?.code,
+      }));
+      return;
+    }
     let stdout = "";
     let settled = false;
     let diagnostic: ReturnType<typeof parseWindowsProfileProbeDiagnostic> & { nativeStageObservedElapsedMs?: number } = {};

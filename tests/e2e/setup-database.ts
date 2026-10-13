@@ -140,6 +140,10 @@ async function main() {
     await activateLocalAccount(await signActivationCode(accountPrivateKey));
   }
   await ensureBuiltinRules();
+  // Fresh fixtures must include the same editable policy initialization as a
+  // fresh installed database. Never use an implicit runtime brand whitelist.
+  const { initializeStoreBrandPolicies } = await import("../../lib/store-brand-topic-policy-service");
+  await prisma.$transaction(tx => initializeStoreBrandPolicies(tx));
   if ((await prisma.auditResult.count()) === 0) {
     const product = await prisma.product.findFirstOrThrow({
       where: { deletedAt: null },

@@ -313,11 +313,11 @@ describe("分层测试门禁", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
       // v1.1.41 adds reward/export/date, atomic membership and the proven
       // idle-connection/no-replay infrastructure contract.
-      behaviorCount: 46,
+      behaviorCount: 48,
       groupCount: 17,
       triggerFiles: {
-        totalEntryCount: 174,
-        exactFileEntryCount: 150,
+        totalEntryCount: 183,
+        exactFileEntryCount: 159,
         directoryEntryCount: 24,
         patternEntryCount: 0,
         duplicateEntryCount: 0,

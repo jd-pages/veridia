@@ -250,6 +250,16 @@ const storeTopicFailurePattern =
   /店铺话题|未命中任何可接受店铺话题|可接受店铺话题|附加必需话题|导入数据未填写店铺名称|导入店铺名称未匹配/u;
 
 function storeTopicScopedPresentationInput(input: PresentationInput) {
+  // New results use their immutable brand policy snapshot, never today's policy
+  // or the pre-policy brand scope. No historical result is rewritten.
+  try {
+    const snapshot = JSON.parse(input.ruleSnapshot);
+    if (snapshot?.storeTopicRequirement?.storeBrandTopicPolicy?.schemaVersion === 1) {
+      // The persisted policy applies even when it says OFF. Keep the identity
+      // mapping visible and its saved NOT_REQUIRED status; never re-audit it.
+      return { applicable: true, input, results: input.ruleResults || [] };
+    }
+  } catch { /* Legacy evidence retains its existing presentation contract. */ }
   const applicable = brandUsesStoreTopicAudit(input.task.product?.brandName);
   if (applicable) {
     return {

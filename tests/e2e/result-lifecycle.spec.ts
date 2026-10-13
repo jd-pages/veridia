@@ -188,6 +188,12 @@ test("重新审核保留历史版本并在原始导入槽位原位替换", async
           { topic: "ROCKCHECK海外旗舰店" },
         ],
         requiredTopics: [{ topic: "天猫" }],
+        // Preserve the scenario's explicit required-store-topic setup, not
+        // implicit template inheritance. Re-audit/history assertions stay exact.
+        brandPolicies: ["XIAOHONGSHU", "DOUYIN"].map(contentChannel => ({
+          brandName: "达能", contentChannel, requireStoreTopic: true,
+          useSharedTemplate: true, acceptedTopics: [], requiredTopics: [], reviewStatus: "CONFIRMED",
+        })),
       },
     });
     const storeRulePayload = await storeRuleResponse.json();

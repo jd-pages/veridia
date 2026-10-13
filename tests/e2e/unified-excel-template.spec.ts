@@ -179,7 +179,7 @@ test("统一模板下载、惠氏/雀巢四行解析、Sheet 错误与跨 Sheet 
       "小红书", "抖音", "小红书", "小红书",
     ]);
     expect(preview.rows.every((row) => row.matchedStoreName)).toBe(true);
-    expect(preview.rows.every((row) => row.storeMappingStatus === "NOT_APPLICABLE"))
+    expect(preview.rows.every((row) => row.storeMappingStatus === "MATCHED"))
       .toBe(true);
     expect(preview.rows.every((row) => row.expectedStoreTopics.length === 0))
       .toBe(true);
@@ -721,6 +721,17 @@ test("统一 Workbook 八行审核加一行未审核后按 ImportRecord 导出�
         .toBe(false);
     }
     const [storeOnly, storeAndBody, storeAndUnknown] = wyethNestleResults;
+    // This fixture represents pre-policy historical misclassification. New
+    // policy snapshots must preserve the recorded decision, not use legacy
+    // brand presentation normalization or today's editable configuration.
+    for (const result of [storeOnly, storeAndBody, storeAndUnknown]) {
+      const legacySnapshot = JSON.parse(result.ruleSnapshot || "{}");
+      if (legacySnapshot.storeTopicRequirement) {
+        delete legacySnapshot.storeTopicRequirement.storeBrandTopicPolicy;
+        delete legacySnapshot.storeTopicRequirement.configurationError;
+      }
+      await prisma.auditResult.update({ where: { id: result.id }, data: { ruleSnapshot: JSON.stringify(legacySnapshot) } });
+    }
     const legacyStoreReason = "未命中任何可接受店铺话题：#FOLO海外专营店";
     await prisma.ruleResult.updateMany({
       where: {

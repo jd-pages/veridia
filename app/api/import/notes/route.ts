@@ -71,10 +71,10 @@ import {
 import {
   normalizeStoreNameForMatch,
   resolveStoreTopicConfig,
-  scopeStoreTopicResolutionByBrand,
   type StoreMappingStatus,
 } from "@/lib/store-topic-config";
 import { loadActiveStoreTopicRules } from "@/lib/store-topic-rule-service";
+import { scopeStoreTopicsByPolicy } from "@/lib/store-brand-topic-policy";
 import { resolveEffectiveAuditTopicRules } from "@/lib/topic-rule-model";
 import { Prisma } from "@prisma/client";
 
@@ -682,9 +682,10 @@ export async function POST(request: Request) {
         }
       }
       if (product) {
-        storeResolution = scopeStoreTopicResolutionByBrand(
+        storeResolution = scopeStoreTopicsByPolicy(
           storeResolution,
           product.brandName,
+          checked.channel,
         );
         checked.commercePlatform = storeResolution.commercePlatform || "";
         checked.expectedStoreTopic = storeResolution.expectedTopic || "";

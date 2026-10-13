@@ -6,17 +6,12 @@ import {
 } from "@/lib/store-topic-rule-service";
 
 describe("可接受店铺话题输入", () => {
-  it("新增店铺时生成第一条默认话题并统一补齐井号", () => {
-    expect(validateAcceptedStoreTopics(undefined, "ROCKCHECK海外专营店"))
-      .toEqual([
-        {
-          id: undefined,
-          topic: "#ROCKCHECK海外专营店",
-          normalizedTopic: "rockcheck海外专营店",
-          enabled: true,
-          topicType: "ACCEPTED",
-        },
-      ]);
+  it("新增店铺默认不生成话题，只有显式输入才统一补齐井号", () => {
+    expect(validateAcceptedStoreTopics(undefined)).toEqual([]);
+    expect(validateStoreTopicGroups({ acceptedTopics: undefined, requiredTopics: undefined }))
+      .toEqual({ acceptedTopics: [], requiredTopics: [] });
+    expect(validateAcceptedStoreTopics([{ topic: "ROCKCHECK海外专营店" }])[0].topic)
+      .toBe("#ROCKCHECK海外专营店");
   });
 
   it("按输入顺序保存两条独立话题，不使用分隔符拆分", () => {

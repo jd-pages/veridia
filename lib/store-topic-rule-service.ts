@@ -6,7 +6,6 @@ import {
   normalizeStoreNameForMatch,
   normalizeStoreTopicForMatch,
   resolveStoreTopicConfig,
-  brandUsesStoreTopicAudit,
   storeTopicWithHash,
   type StoreAliasConfig,
   type StoreAcceptedTopicConfig,
@@ -25,6 +24,8 @@ import {
   parseCommercePlatform,
   type CommercePlatform,
 } from "@/lib/result-source";
+import { scopeStoreTopicsByPolicy } from "@/lib/store-brand-topic-policy";
+import { initializeStoreBrandPolicies } from "@/lib/store-brand-topic-policy-service";
 
 export type StoreTopicEntryType = "ACCEPTED" | "REQUIRED";
 type StoredStoreTopicEntryType =
@@ -51,6 +52,7 @@ interface StoreTopicRuleInput {
   acceptedTopics?: unknown;
   requiredTopics?: unknown;
   storeAliases?: unknown;
+  brandPolicies?: unknown;
 }
 
 interface ValidatedTopic {
@@ -184,13 +186,10 @@ function validateTopicList(input: {
   value: unknown;
   topicType: StoreTopicEntryType;
   allowEmpty: boolean;
-  defaultTopic?: string;
 }) {
-  const rawTopics = input.value === undefined
-    ? input.defaultTopic
-      ? [{ topic: input.defaultTopic }]
-      : []
-    : input.value;
+  // Identity creation is not an opt-in to page topic audit. Only explicitly
+  // submitted topic entries create requirements; legacy seed policy is separate.
+  const rawTopics = input.value === undefined ? [] : input.value;
   if (!Array.isArray(rawTopics)) {
     throw new Error("店铺话题必须使用结构化数组提交。");
   }
@@ -233,24 +232,20 @@ function validateTopicList(input: {
 
 export function validateAcceptedStoreTopics(
   value: unknown,
-  defaultStoreName?: string,
 ) {
   return validateTopicList({
     value,
     topicType: "ACCEPTED",
     allowEmpty: true,
-    defaultTopic: defaultStoreName,
   });
 }
 
 export function validateStoreTopicGroups(input: {
   acceptedTopics: unknown;
   requiredTopics: unknown;
-  defaultStoreName?: string;
 }) {
   const acceptedTopics = validateAcceptedStoreTopics(
     input.acceptedTopics,
-    input.defaultStoreName,
   );
   const requiredTopics = validateTopicList({
     value: input.requiredTopics,
@@ -328,21 +323,11 @@ export async function ensureStoreTopicRuleSeeds() {
           expectedTopic: acceptedTopics[0] || "",
           enabled: true,
         },
-        update:
-          seed.acceptedTopics === undefined
-            ? {}
-            : { expectedTopic: acceptedTopics[0] || "" },
+        update: {},
       });
-      if (seed.acceptedTopics !== undefined) {
-        await tx.storeTopicEntry.updateMany({
-          where: {
-            storeTopicRuleId: rule.id,
-            topicType: { in: ["ACCEPTED", "ACCEPTED_ALIAS", "REQUIRED"] },
-            deletedAt: null,
-          },
-          data: { enabled: false, deletedAt: new Date() },
-        });
-      }
+      if (rule.updatedBy) continue;
+      // Seeds fill missing rows only. An existing shared template may support
+      // another brand's explicit ON policy and cannot be cleared on restart.
       for (const [sortOrder, topic] of acceptedTopics.entries()) {
         await tx.storeTopicEntry.upsert({
           where: {
@@ -360,13 +345,7 @@ export async function ensureStoreTopicRuleSeeds() {
             sortOrder,
             enabled: true,
           },
-          update: {
-            topic,
-            topicType: "ACCEPTED",
-            sortOrder,
-            enabled: true,
-            deletedAt: null,
-          },
+          update: {},
         });
       }
     }
@@ -379,7 +358,7 @@ export async function ensureStoreTopicRuleSeeds() {
           },
         },
       });
-      if (!rule) continue;
+      if (!rule || rule.updatedBy) continue;
       const normalizedTopic = normalizeStoreTopicForMatch(seed.topic);
       await tx.storeTopicEntry.upsert({
         where: {
@@ -397,11 +376,7 @@ export async function ensureStoreTopicRuleSeeds() {
           sortOrder: 1,
           enabled: true,
         },
-        update: {
-          topicType: seed.isStoreAlias ? "ACCEPTED_ALIAS" : "ACCEPTED",
-          enabled: true,
-          deletedAt: null,
-        },
+        update: {},
       });
     }
     for (const seed of storeNameAliasSeeds) {
@@ -420,6 +395,7 @@ export async function ensureStoreTopicRuleSeeds() {
           `CANONICAL_STORE_NOT_FOUND：${seed.commercePlatform} / ${seed.canonicalStoreName}`,
         );
       }
+      if (rule.updatedBy) continue;
       const normalizedAlias = normalizeStoreNameForMatch(seed.alias);
       const canonicalCollision = await tx.storeTopicRule.findFirst({
         where: {
@@ -481,7 +457,7 @@ export async function ensureStoreTopicRuleSeeds() {
           },
         },
       });
-      if (!rule) continue;
+      if (!rule || rule.updatedBy) continue;
       const normalizedTopic = normalizeStoreTopicForMatch(seed.topic);
       await tx.storeTopicEntry.upsert({
         where: {
@@ -502,6 +478,7 @@ export async function ensureStoreTopicRuleSeeds() {
         update: {},
       });
     }
+    await initializeStoreBrandPolicies(tx);
   });
 }
 
@@ -510,6 +487,7 @@ export async function loadActiveStoreTopicRules() {
     await prisma.storeTopicRule.findMany({
       where: { enabled: true, deletedAt: null },
       include: {
+        brandPolicies: true,
         topicEntries: {
           where: { enabled: true, deletedAt: null },
           orderBy: [{ topicType: "asc" }, { sortOrder: "asc" }],
@@ -540,13 +518,12 @@ export async function resolveStoreTopicAuditRequirement(input: {
   expectedStoreTopic?: unknown;
   storeMappingStatus?: unknown;
 }) {
-  if (!brandUsesStoreTopicAudit(input.brandName)) return null;
   if (
     String(input.source ?? "") !== "EXCEL" &&
     !String(input.storeName ?? "").trim() &&
     !String(input.expectedStoreTopic ?? "").trim()
   ) return null;
-  const resolved = await resolveStoreTopicRule(input);
+  const resolved = scopeStoreTopicsByPolicy(await resolveStoreTopicRule(input), input.brandName, input.channel || input.platform);
   return buildStoreTopicAuditRequirement({ ...input, resolved });
 }
 
@@ -573,6 +550,7 @@ export async function listStoreTopicRules(input: {
           : {}),
     },
     include: {
+      brandPolicies: true,
       topicEntries: {
         where: { deletedAt: null },
         orderBy: [{ topicType: "asc" }, { sortOrder: "asc" }],
@@ -590,6 +568,8 @@ export async function listStoreTopicRules(input: {
       )
     : rules;
   return {
+    brands: (await prisma.product.findMany({ where: { deletedAt: null }, select: { brandName: true }, distinct: ["brandName"], orderBy: { brandName: "asc" } }))
+      .map(item => item.brandName).filter(Boolean),
     items: filtered
       .slice((page - 1) * pageSize, page * pageSize)
       .map(withTopicGroups),
@@ -843,6 +823,57 @@ function storeAliasLogSnapshot(aliases: readonly ValidatedStoreAlias[]) {
   }));
 }
 
+async function saveStoreBrandPolicies(
+  tx: Prisma.TransactionClient, storeTopicRuleId: string, raw: unknown,
+  shared: ReturnType<typeof validateStoreTopicGroups>,
+) {
+  const before = await tx.storeBrandTopicPolicy.findMany({ where: { storeTopicRuleId } });
+  if (raw !== undefined && !Array.isArray(raw)) throw new Error("品牌店铺话题配置必须是结构化数组。");
+  const submitted = raw as Array<Record<string, unknown>> | undefined;
+  // Validate the final merged policy set, including untouched policies using
+  // a changed shared template. Partial API writes cannot strand an ON policy.
+  const rows: Array<Record<string, unknown>> = submitted === undefined ? before : [
+    ...before.filter(policy => !submitted.some(row => row.brandName === policy.brandName && row.contentChannel === policy.contentChannel)),
+    ...submitted,
+  ];
+  const available = new Set((await tx.product.findMany({ where: { deletedAt: null }, select: { brandName: true } })).map(item => item.brandName));
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const brandName = String(row.brandName ?? "").trim(), contentChannel = String(row.contentChannel ?? "");
+    if (!brandName || (!available.has(brandName) && !before.some(policy => policy.brandName === brandName)) ||
+      !["XIAOHONGSHU", "DOUYIN"].includes(contentChannel) || typeof row.requireStoreTopic !== "boolean" || typeof row.useSharedTemplate !== "boolean") {
+      throw new Error("品牌、内容渠道或店铺话题审核配置无效。");
+    }
+    const key = `${brandName}\u0000${contentChannel}`;
+    if (seen.has(key)) throw new Error("同一店铺、品牌、内容渠道不能重复配置。");
+    seen.add(key);
+    const isSubmitted = submitted?.includes(row) === true;
+    let custom: { acceptedTopics: string[]; requiredTopics: string[] };
+    try { custom = !isSubmitted ? JSON.parse(String(row.topicConfig)) as { acceptedTopics: string[]; requiredTopics: string[] }
+      : { acceptedTopics: Array.isArray(row.acceptedTopics) ? row.acceptedTopics as string[] : [],
+        requiredTopics: Array.isArray(row.requiredTopics) ? row.requiredTopics as string[] : [] };
+      if (!Array.isArray(custom.acceptedTopics) || !Array.isArray(custom.requiredTopics)) throw new Error("INVALID");
+    } catch { throw new Error("品牌话题配置无效，请重新填写后保存。"); }
+    const groups = validateStoreTopicGroups({ acceptedTopics: custom.acceptedTopics.map(topic => ({ topic })), requiredTopics: custom.requiredTopics.map(topic => ({ topic })) });
+    const effective = row.useSharedTemplate ? shared : groups;
+    if (row.requireStoreTopic && !effective.acceptedTopics.some(topic => topic.enabled) &&
+      (contentChannel !== "XIAOHONGSHU" || !effective.requiredTopics.some(topic => topic.enabled))) {
+      throw new Error(`${brandName}（${contentChannel}）要求店铺话题，但没有当前渠道的有效话题。`);
+    }
+    if (isSubmitted) {
+      const config = { requireStoreTopic: row.requireStoreTopic, useSharedTemplate: row.useSharedTemplate,
+        topicConfig: JSON.stringify({ acceptedTopics: groups.acceptedTopics.filter(topic => topic.enabled).map(topic => topic.topic),
+          requiredTopics: groups.requiredTopics.filter(topic => topic.enabled).map(topic => topic.topic) }),
+        reviewStatus: row.reviewStatus === "PENDING_REVIEW" ? "PENDING_REVIEW" : "CONFIRMED", managedBy: "ADMIN" };
+      await tx.storeBrandTopicPolicy.upsert({
+        where: { storeTopicRuleId_brandName_contentChannel: { storeTopicRuleId, brandName, contentChannel } },
+        create: { storeTopicRuleId, brandName, contentChannel, ...config }, update: config,
+      });
+    }
+  }
+  return { before, after: await tx.storeBrandTopicPolicy.findMany({ where: { storeTopicRuleId } }) };
+}
+
 export async function createStoreTopicRule(
   input: StoreTopicRuleInput,
   user: { id: string; role: string },
@@ -851,7 +882,6 @@ export async function createStoreTopicRule(
   const groups = validateStoreTopicGroups({
     acceptedTopics: input.acceptedTopics,
     requiredTopics: input.requiredTopics,
-    defaultStoreName: identity.storeName,
   });
   const storeAliases = validateStoreAliases(
     input.storeAliases === undefined ? [] : input.storeAliases,
@@ -877,6 +907,8 @@ export async function createStoreTopicRule(
       },
     });
     await replaceTopicEntries(tx, rule.id, topics, [], user.id);
+    await initializeStoreBrandPolicies(tx, rule.id);
+    const policies = await saveStoreBrandPolicies(tx, rule.id, input.brandPolicies, groups);
     await replaceStoreAliases(tx, {
       storeTopicRuleId: rule.id,
       commercePlatform: identity.commercePlatform,
@@ -899,12 +931,14 @@ export async function createStoreTopicRule(
           afterStoreAliases: storeAliasLogSnapshot(storeAliases),
           beforeTopics: [],
           afterTopics: topicLogSnapshot(topics),
+          brandPolicies: policies,
         }),
       },
     });
     const created = await tx.storeTopicRule.findUniqueOrThrow({
       where: { id: rule.id },
       include: {
+        brandPolicies: true,
         topicEntries: {
           where: { deletedAt: null },
           orderBy: [{ topicType: "asc" }, { sortOrder: "asc" }],
@@ -980,6 +1014,7 @@ export async function updateStoreTopicRule(
       },
     });
     await replaceTopicEntries(tx, id, topics, existing.topicEntries, user.id);
+    const policies = await saveStoreBrandPolicies(tx, id, input.brandPolicies, groups);
     if (input.storeAliases !== undefined) {
       await replaceStoreAliases(tx, {
         storeTopicRuleId: id,
@@ -1016,12 +1051,14 @@ export async function updateStoreTopicRule(
             ...beforeRequired.map((topic) => ({ ...topic, topicType: "REQUIRED" as const })),
           ]),
           afterTopics: topicLogSnapshot(topics),
+          brandPolicies: policies,
         }),
       },
     });
     const updated = await tx.storeTopicRule.findUniqueOrThrow({
       where: { id },
       include: {
+        brandPolicies: true,
         topicEntries: {
           where: { deletedAt: null },
           orderBy: [{ topicType: "asc" }, { sortOrder: "asc" }],

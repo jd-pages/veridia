@@ -140,6 +140,8 @@ export interface AuditContext {
   clickableTopicRequired: boolean;
   rules: AuditRule[];
   storeTopicRequirement?: {
+    configurationError?: string | null;
+    storeBrandTopicPolicy?: import("./store-topic-config").StoreTopicResolution["storeBrandTopicPolicy"];
     channel: "XIAOHONGSHU" | "DOUYIN" | null;
     storeName: string | null;
     storeTopicRuleId: string | null;

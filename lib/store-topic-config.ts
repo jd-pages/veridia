@@ -4,6 +4,7 @@ import {
   normalizeDouyinTopicName,
 } from "@/lib/douyin-topic";
 import { classifyTopicCandidates } from "@/lib/topic-clickability";
+import type { StoreBrandTopicPolicyConfig } from "@/lib/store-brand-topic-policy";
 import {
   parseCommercePlatform,
   parseContentChannel,
@@ -20,6 +21,7 @@ export interface StoreTopicConfig {
   acceptedTopics: readonly StoreAcceptedTopicConfig[];
   requiredTopics: readonly StoreAcceptedTopicConfig[];
   enabled: boolean;
+  brandPolicies?: readonly StoreBrandTopicPolicyConfig[];
 }
 
 export interface StoreAliasConfig {
@@ -68,10 +70,9 @@ export type StoreMappingStatus =
   | "STORE_NOT_MAPPED"
   | "NOT_APPLICABLE";
 
-export const STORE_TOPIC_AUDIT_BRANDS = ["达能", "佳贝艾特"] as const;
-
+// Legacy presentation only. New audits and preflight use stored per-brand policy.
 export function brandUsesStoreTopicAudit(brandName: unknown) {
-  return (STORE_TOPIC_AUDIT_BRANDS as readonly string[]).includes(
+  return (["达能", "佳贝艾特"] as readonly string[]).includes(
     String(brandName ?? "").trim(),
   );
 }
@@ -87,6 +88,10 @@ export interface StoreTopicResolution {
   requiredTopics: string[];
   config: StoreTopicConfig | null;
   failureReason: string | null;
+  configurationError?: string | null;
+  storeBrandTopicPolicy?: { schemaVersion: number; brandName: string; contentChannel: string | null;
+    requireStoreTopic: boolean; useSharedTemplate: boolean; reviewStatus: string;
+    expectedTopics: string[]; requiredTopics: string[]; configurationError: string | null };
 }
 
 export function resolveStoreTopicConfig(
@@ -453,14 +458,16 @@ export function buildStoreTopicAuditRequirement(input: {
     expectedTopics: resolved.expectedTopics,
     requiredTopics: resolved.requiredTopics,
     mappingStatus: resolved.status,
+    storeBrandTopicPolicy: resolved.storeBrandTopicPolicy,
+    configurationError: resolved.configurationError,
   };
 }
 
 export function storeTopicAuditForNote(
   note: Pick<ExtractedNote, "topics" | "body" | "url" | "finalUrl">,
-  requirement: ReturnType<typeof buildStoreTopicAuditRequirement>,
+  requirement: NonNullable<import("./types").AuditContext["storeTopicRequirement"]> | null,
 ) {
-  if (!requirement) {
+  if (!requirement || (requirement.storeBrandTopicPolicy?.requireStoreTopic === false && !requirement.configurationError)) {
     return {
       status: "NOT_REQUIRED",
       expectedTopic: null,
@@ -471,6 +478,12 @@ export function storeTopicAuditForNote(
       matchedRequiredTopics: [],
       failureReason: null, needsReview: false,
     } satisfies StoreTopicAuditResult;
+  }
+  if (requirement.configurationError) {
+    return { status: "UNREVIEWABLE", expectedTopic: requirement.expectedTopic,
+      expectedTopics: requirement.expectedTopics, requiredTopics: requirement.requiredTopics,
+      matchedTopic: null, matchedTopics: [], matchedRequiredTopics: [],
+      failureReason: requirement.configurationError, needsReview: true } satisfies StoreTopicAuditResult;
   }
   return validateStoreTopic({
     ...requirement,

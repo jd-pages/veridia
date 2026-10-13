@@ -2,6 +2,25 @@ import { expect, test, type Page } from "@playwright/test";
 import ExcelJS from "exceljs";
 import { E2E_ORIGIN } from "./e2e-origin";
 
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.status === testInfo.expectedStatus) return;
+  // Bounded, read-only evidence from the same authenticated isolated server;
+  // this never retries the failed business operation or relaxes its assertion.
+  try {
+    const response = await page.request.get("/api/automation/session?platform=XIAOHONGSHU", { timeout: 3_000, maxRetries: 0 });
+    const { data } = await response.json();
+    await testInfo.attach("xhs-browser-startup-failure-diagnostic", {
+      body: Buffer.from(JSON.stringify({ status: response.status(),
+        lifecycleStages: data?.lifecycleStages, lifecyclePendingOperations: data?.lifecyclePendingOperations,
+        controlState: data?.controlState, controlReady: data?.controlReady,
+        physicalCloseState: data?.physicalCloseState, physicalCloseFailure: data?.physicalCloseFailure,
+        browserVersion: data?.browserVersion, remoteDebuggingMode: data?.remoteDebuggingMode,
+        globalRuntimeDiagnostics: data?.globalRuntimeDiagnostics,
+      })), contentType: "application/json",
+    });
+  } catch { await testInfo.attach("xhs-browser-startup-diagnostic-unavailable", { body: Buffer.from("NOT_RUN: bounded read-only observation unavailable"), contentType: "text/plain" }); }
+});
+
 async function waitForBatch(page: Page, batchId: string) {
   await expect
     .poll(
@@ -216,6 +235,8 @@ test("同一店铺任意命中第二条可点击话题即通过并保存结构�
       enabled: true,
       acceptedTopics: [{ topic: storeName }, { topic: alternateTopic }],
       requiredTopics: [{ topic: "天猫" }],
+      brandPolicies: [{ brandName: "达能", contentChannel: "XIAOHONGSHU", requireStoreTopic: true,
+        useSharedTemplate: true, acceptedTopics: [], requiredTopics: [] }],
     },
   });
   const createdPayload = await createdResponse.json();

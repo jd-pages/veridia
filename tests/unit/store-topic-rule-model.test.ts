@@ -339,7 +339,7 @@ describe("店铺话题规则数据模型与迁移", () => {
 
   it("管理页明确展示店铺话题为任选其一", () => {
     expect(storeTopicPanel).toContain('title: "店铺话题（任选其一）"');
-    expect(storeTopicPanel).toContain('label="店铺话题（任选其一）"');
+    expect(storeTopicPanel).toContain('label="店铺默认可接受话题（任选其一）"');
   });
 
   it("管理页以独立 STORE_ALIAS DTO 提供导入别名列、搜索和 Form.List", () => {

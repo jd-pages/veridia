@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   App,
+  Alert,
   Button,
   Card,
   Form,
@@ -24,6 +25,7 @@ import {
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import { apiFetch } from "@/lib/client";
+import StoreBrandPolicyFields, { type StoreBrandPolicyFormValue } from "./StoreBrandPolicyFields";
 import {
   commercePlatformLabels,
   commercePlatforms,
@@ -31,6 +33,8 @@ import {
 } from "@/lib/result-source";
 
 interface StoreTopicRule {
+  brandPolicies: Array<{ brandName: string; contentChannel: string; requireStoreTopic: boolean;
+    useSharedTemplate: boolean; topicConfig: string; reviewStatus: string }>;
   id: string;
   commercePlatform: CommercePlatform;
   storeName: string;
@@ -60,6 +64,7 @@ interface StoreTopicRule {
 }
 
 interface StoreTopicRulePage {
+  brands: string[];
   items: StoreTopicRule[];
   total: number;
   page: number;
@@ -70,6 +75,7 @@ interface RuleFormValue {
   commercePlatform: CommercePlatform;
   storeName: string;
   enabled: boolean;
+  brandPolicies: StoreBrandPolicyFormValue[];
   storeAliases: Array<{
     id?: string;
     alias: string;
@@ -106,6 +112,7 @@ function normalizedStoreNameText(value: unknown) {
 export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean }) {
   const { message } = App.useApp();
   const [form] = Form.useForm<RuleFormValue>();
+  const [brands, setBrands] = useState<string[]>([]);
   const [items, setItems] = useState<StoreTopicRule[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -133,6 +140,7 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
         `/api/store-topic-rules?${params}`,
       );
       setItems(data.items);
+      setBrands(data.brands);
       setTotal(data.total);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "加载店铺规则失败");
@@ -152,8 +160,12 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
       commercePlatform: "TMALL",
       storeName: "",
       enabled: true,
+      brandPolicies: brands.flatMap(brandName => ["XIAOHONGSHU", "DOUYIN"].map(contentChannel => ({
+        brandName, contentChannel, requireStoreTopic: false, useSharedTemplate: true,
+        acceptedTopics: [], requiredTopics: [], reviewStatus: "CONFIRMED",
+      }))),
       storeAliases: [],
-      acceptedTopics: [{ topic: "", enabled: true }],
+      acceptedTopics: [],
       requiredTopics: [],
     });
     setModalOpen(true);
@@ -166,6 +178,14 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
       commercePlatform: rule.commercePlatform,
       storeName: rule.storeName,
       enabled: rule.enabled,
+      brandPolicies: [...new Set([...brands, ...(rule.brandPolicies || []).map(policy => policy.brandName)])]
+        .flatMap(brandName => ["XIAOHONGSHU", "DOUYIN"].map(contentChannel => {
+          const policy = rule.brandPolicies?.find(item => item.brandName === brandName && item.contentChannel === contentChannel);
+          let topics = { acceptedTopics: [] as string[], requiredTopics: [] as string[] };
+          try { if (policy) topics = JSON.parse(policy.topicConfig); } catch { /* Invalid ON is rejected by server until repaired. */ }
+          return { brandName, contentChannel, requireStoreTopic: policy?.requireStoreTopic ?? false,
+            useSharedTemplate: policy?.useSharedTemplate ?? true, reviewStatus: policy?.reviewStatus ?? "PENDING_REVIEW", ...topics };
+        })),
       storeAliases: rule.storeAliases.map((alias) => ({
         id: alias.id,
         alias: alias.alias,
@@ -193,7 +213,7 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
         editing ? `/api/store-topic-rules/${editing.id}` : "/api/store-topic-rules",
         {
           method: editing ? "PATCH" : "POST",
-          body: JSON.stringify(values),
+          body: JSON.stringify({ ...values, brandPolicies: form.getFieldValue("brandPolicies") }),
         },
       );
       message.success(editing ? "店铺规则已更新" : "店铺规则已新增");
@@ -237,6 +257,13 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
 
   return (
     <Card className="surface-card">
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="店铺映射与店铺话题审核独立"
+        description="店铺映射按成交平台共享；是否要求店铺话题由管理员按店铺、品牌和内容渠道独立配置。默认共用模板不代表任何品牌自动要求话题；待确认关联不会按店名推断。"
+      />
       <Space wrap style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}>
         <Space wrap>
           <Select
@@ -313,6 +340,16 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
               ) : (
                 <Typography.Text type="secondary">—</Typography.Text>
               ),
+          },
+          {
+            title: "要求话题的品牌",
+            width: 160,
+            render: (_value, rule) => (
+              <Space wrap>{rule.brandPolicies?.some(policy => policy.requireStoreTopic)
+                ? rule.brandPolicies.filter(policy => policy.requireStoreTopic).map(policy => <Tag key={`${policy.brandName}-${policy.contentChannel}`} color="blue">{policy.brandName} / {policy.contentChannel === "DOUYIN" ? "抖音" : "小红书"}</Tag>)
+                : <Tag>无</Tag>}
+                {rule.brandPolicies?.some(policy => policy.reviewStatus === "PENDING_REVIEW") ? <Tag color="orange">有待确认配置</Tag> : null}</Space>
+            ),
           },
           {
             title: "店铺话题（任选其一）",
@@ -416,6 +453,8 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
       <Modal
         open={modalOpen}
         title={editing ? "编辑店铺规则" : "新增店铺"}
+        width={760}
+        styles={{ body: { maxHeight: "65vh", overflowY: "auto", paddingRight: 8 } }}
         okText="保存"
         cancelText="取消"
         okButtonProps={{ "data-testid": "save-store-topic-rule" }}
@@ -534,7 +573,7 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
             </Form.List>
           </Form.Item>
           <Form.Item
-            label="店铺话题（任选其一）"
+            label="店铺默认可接受话题（任选其一）"
             extra="不要求店铺话题时可留空；配置多条时，命中任意一条真实可点击话题即可。"
           >
             <Form.List name="acceptedTopics">
@@ -647,6 +686,7 @@ export default function StoreTopicRulesPanel({ canManage }: { canManage: boolean
               )}
             </Form.List>
           </Form.Item>
+          <StoreBrandPolicyFields form={form} brands={brands} />
           <Form.Item name="enabled" label="状态" valuePropName="checked">
             <Switch checkedChildren="启用" unCheckedChildren="停用" />
           </Form.Item>

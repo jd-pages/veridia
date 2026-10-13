@@ -92,6 +92,26 @@ function base(overrides: Record<string, unknown> = {}) {
 }
 
 describe("immutable audit result presentation", () => {
+  it.each([false, true])("新品牌策略快照要求=%s时保留映射展示和保存的审核状态，不修改历史输入", requireStoreTopic => {
+    const status = requireStoreTopic ? "NON_COMPLIANT" : "NOT_REQUIRED";
+    const input = base({
+      task: { ...base().task, product: { brandName: "雀巢" } },
+      ruleSnapshot: JSON.stringify({ ...JSON.parse(ruleSnapshot), storeTopicRequirement: {
+        storeBrandTopicPolicy: { schemaVersion: 1, brandName: "雀巢", contentChannel: "XIAOHONGSHU", requireStoreTopic },
+      } }),
+      autoStatus: requireStoreTopic ? "FAILED" : "PASSED",
+      storeTopicStatus: status,
+      storeTopicFailureReason: requireStoreTopic ? "缺少品牌店铺话题" : null,
+      failureReasons: requireStoreTopic ? '["缺少品牌店铺话题"]' : "[]",
+    });
+    const before = structuredClone(input);
+    const presentation = buildAuditResultPresentation(input);
+    expect(presentation.storeTopic).toMatchObject({ applicable: true, status });
+    expect(presentation.automaticConclusion.status).toBe(input.autoStatus);
+    expect(presentation.isManualReviewRequired).toBe(false);
+    expect(input).toEqual(before);
+  });
+
   it("Protected VIDEO_MEDIA_PRESENTATION_CONTRACT：历史绑定视频不会显示为零张图片", () => {
     const presentation = buildAuditResultPresentation(base({
       evidenceStatus: "RESULT_BOUND",

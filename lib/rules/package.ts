@@ -11,6 +11,8 @@ import {
   storeTopicWithHash,
 } from "@/lib/store-topic-config";
 import { normalizeTopic } from "@/lib/topic";
+import { initializeStoreBrandPolicies } from "@/lib/store-brand-topic-policy-service";
+import { validateStoreTopicGroups } from "@/lib/store-topic-rule-service";
 import {
   resolveTopicRuleOwnership,
   topicRuleSemanticKey,
@@ -148,6 +150,9 @@ const payloadSchema = z.object({
         acceptedTopics: z.array(storeValueSchema),
         acceptedAliases: z.array(storeValueSchema),
         requiredTopics: z.array(storeValueSchema),
+        brandPolicies: z.array(z.object({ brandName: nonEmpty, contentChannel: z.enum(["XIAOHONGSHU", "DOUYIN"]),
+          requireStoreTopic: z.boolean(), useSharedTemplate: z.boolean(), acceptedTopics: z.array(nonEmpty), requiredTopics: z.array(nonEmpty),
+          reviewStatus: z.enum(["CONFIRMED", "PENDING_REVIEW"]) })).optional(),
       }),
     )
     .optional(),
@@ -322,6 +327,19 @@ export function validateRulePayload(input: unknown): RulePackagePayload {
   }
 
   const productKeys = new Set(payload.products.map((item) => item.key));
+  for (const store of payload.storeTopicRules || []) {
+    const keys = new Set<string>();
+    for (const policy of store.brandPolicies || []) {
+      if (compareRulePackageVersions(payload.minimumAppVersion, "1.1.41") < 0) throw new Error("品牌店铺政策最低软件版本不能低于1.1.41");
+      const key = `${policy.brandName}\u0000${policy.contentChannel}`;
+      if (keys.has(key)) throw new Error("品牌店铺政策重复");
+      keys.add(key);
+      const custom = validateStoreTopicGroups({ acceptedTopics: policy.acceptedTopics.map(topic => ({ topic })), requiredTopics: policy.requiredTopics.map(topic => ({ topic })) });
+      const accepted = policy.useSharedTemplate ? [...store.acceptedTopics, ...store.acceptedAliases].filter(topic => topic.enabled) : custom.acceptedTopics;
+      const required = policy.useSharedTemplate ? store.requiredTopics.filter(topic => topic.enabled) : custom.requiredTopics;
+      if (policy.requireStoreTopic && !accepted.length && (policy.contentChannel === "DOUYIN" || !required.length)) throw new Error("品牌店铺政策开启但没有当前渠道有效话题");
+    }
+  }
   const productBrandByKey = new Map(
     payload.products.map((item) => [item.key, normalizedRuleBrand(item.brand)]),
   );
@@ -499,6 +517,7 @@ export async function exportCurrentRulePayload(options?: {
       database.storeTopicRule.findMany({
         where: { deletedAt: null },
         include: {
+          brandPolicies: true,
           topicEntries: {
             where: { deletedAt: null },
             orderBy: [{ topicType: "asc" }, { sortOrder: "asc" }],
@@ -553,7 +572,7 @@ export async function exportCurrentRulePayload(options?: {
       interactionRewardTiers: campaign.interactionRewardTiers.map(({ threshold, amount }) => ({ threshold, amount })),
     }] as const;
   }));
-  const requiredAppVersion = [...rewardFieldsByCampaignId.values()].some((fields) => fields.rewardMode !== undefined)
+  const requiredAppVersion = storeTopicRules.some(store => store.brandPolicies.length) || [...rewardFieldsByCampaignId.values()].some((fields) => fields.rewardMode !== undefined)
     ? "1.1.41" : campaigns.some((campaign) => campaign.interactionRewardEnabled) ? "1.1.22" : "1.1.17";
   const campaignKeyById = new Map(
     campaigns.map((campaign) => [
@@ -744,6 +763,11 @@ export async function exportCurrentRulePayload(options?: {
         acceptedTopics: valuesByType("ACCEPTED"),
         acceptedAliases: valuesByType("ACCEPTED_ALIAS"),
         requiredTopics: valuesByType("REQUIRED"),
+        ...(rule.brandPolicies.length ? { brandPolicies: rule.brandPolicies.map(policy => ({
+          brandName: policy.brandName, contentChannel: policy.contentChannel,
+          requireStoreTopic: policy.requireStoreTopic, useSharedTemplate: policy.useSharedTemplate,
+          ...JSON.parse(policy.topicConfig), reviewStatus: policy.reviewStatus,
+        })) } : {}),
       };
     }),
     pageStatusRules: DEFAULT_PAGE_STATUS_RULES,
@@ -806,6 +830,8 @@ export async function applyRulePayload(
           commercePlatform: true,
           storeName: true,
           normalizedStoreName: true,
+          updatedBy: true,
+          expectedTopic: true,
           deletedAt: true,
           topicEntries: {
             where: { topicType: "STORE_ALIAS", deletedAt: null },
@@ -857,13 +883,15 @@ export async function applyRulePayload(
             item.acceptedTopics[0]?.value,
         );
         const existingId = resolvedRuleIds.get(item.key);
+        const local = existingRules.find(existing => existing.id === existingId);
+        const preserveAdminTemplate = Boolean(local?.updatedBy);
         const rule = existingId
           ? await tx.storeTopicRule.update({
               where: { id: existingId },
               data: {
                 storeName: item.storeName,
                 normalizedStoreName,
-                expectedTopic,
+                expectedTopic: preserveAdminTemplate ? local!.expectedTopic : expectedTopic,
                 enabled: item.enabled,
                 deletedAt: null,
               },
@@ -902,7 +930,7 @@ export async function applyRulePayload(
             topicType: "REQUIRED",
             normalizedTopic: normalizeStoreTopicForMatch(entry.value),
           })),
-        ];
+        ].filter(entry => !preserveAdminTemplate || entry.topicType === "STORE_ALIAS");
         const retainedEntryIds: string[] = [];
         for (const entry of entries) {
           const stored = await tx.storeTopicEntry.upsert({
@@ -935,16 +963,25 @@ export async function applyRulePayload(
           where: {
             storeTopicRuleId: rule.id,
             deletedAt: null,
+            ...(preserveAdminTemplate ? { topicType: "STORE_ALIAS" } : {}),
             ...(retainedEntryIds.length
               ? { id: { notIn: retainedEntryIds } }
               : {}),
           },
           data: { enabled: false, deletedAt: appliedAt },
         });
+        for (const policy of item.brandPolicies || []) {
+          const where = { storeTopicRuleId: rule.id, brandName: policy.brandName, contentChannel: policy.contentChannel };
+          const currentPolicy = await tx.storeBrandTopicPolicy.findUnique({ where: { storeTopicRuleId_brandName_contentChannel: where } });
+          if (currentPolicy?.managedBy === "ADMIN") continue;
+          const data = { requireStoreTopic: policy.requireStoreTopic, useSharedTemplate: policy.useSharedTemplate,
+            topicConfig: JSON.stringify({ acceptedTopics: policy.acceptedTopics, requiredTopics: policy.requiredTopics }), reviewStatus: policy.reviewStatus, managedBy: "RULES" };
+          await tx.storeBrandTopicPolicy.upsert({ where: { storeTopicRuleId_brandName_contentChannel: where }, create: { ...where, ...data }, update: data });
+        }
       }
       const retainedRuleIds = new Set(resolvedRuleIds.values());
       for (const existing of existingRules) {
-        if (existing.deletedAt || retainedRuleIds.has(existing.id)) continue;
+        if (existing.deletedAt || existing.updatedBy || retainedRuleIds.has(existing.id)) continue;
         await tx.storeTopicEntry.updateMany({
           where: { storeTopicRuleId: existing.id, deletedAt: null },
           data: { enabled: false, deletedAt: appliedAt },
@@ -1247,6 +1284,7 @@ export async function applyRulePayload(
         lastSyncedAt: new Date(),
       },
     });
+    if (source === "BUILTIN") await initializeStoreBrandPolicies(tx);
     const result = { payload, counts };
     await options.finalizeTransaction?.(tx, result);
     return result;
