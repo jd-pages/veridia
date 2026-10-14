@@ -143,3 +143,29 @@ it("direct WMI census retains exact fields, disposable query resources and all-b
   child.emit("close", 0);
   await expect(pending).resolves.toEqual([]);
 });
+
+it("loads the exact built-in Utility manifest before native parser compilation without prewarming", async () => {
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const script = Buffer.from(fixture.spawn.mock.calls[0][1].at(-1), "base64").toString("utf16le");
+  const load = script.indexOf("Import-Module ([IO.Path]::Combine($PSHOME,'Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop");
+  const compile = script.indexOf("Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition", load);
+  expect(load).toBeGreaterThan(0);
+  expect(compile).toBeGreaterThan(load);
+  expect(script).toContain("Set-ProbeStage 'UTILITY_MODULE_IMPORTED'");
+  expect(script).toContain("Set-ProbeStage 'PROFILE_ARGUMENT_PARSED'");
+  expect(script).not.toContain("Start-Sleep");
+  child.stdout.emit("data", Buffer.from("[]")); child.emit("close", 0);
+  await expect(pending).resolves.toEqual([]);
+});
+
+it("module/parser boundary notices cannot extend the deadline or authorize profile ownership", async () => {
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: { reason: "NATIVE_PROBE_DEADLINE", elapsedMs: 2000,
+    nativeStage: "PROFILE_ARGUMENT_PARSED", nativeStageElapsedMs: 1105, nativeStageObservedElapsedMs: 1995 } });
+  await vi.advanceTimersByTimeAsync(1995);
+  child.stderr.emit("data", Buffer.from("VERIDIA_PROFILE_PROBE_STAGE=UTILITY_MODULE_IMPORT:10\nVERIDIA_PROFILE_PROBE_STAGE=UTILITY_MODULE_IMPORTED:35\nVERIDIA_PROFILE_PROBE_STAGE=PROFILE_ARGUMENT_PARSED:1105\n"));
+  await vi.advanceTimersByTimeAsync(5); await assertion;
+  expect(child.kill).toHaveBeenCalledTimes(1); expect(fixture.spawn).toHaveBeenCalledTimes(1); child.emit("close", 1);
+});

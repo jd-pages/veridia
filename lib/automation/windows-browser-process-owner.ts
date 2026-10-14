@@ -29,7 +29,7 @@ export class WindowsBrowserProfileOwnershipError extends Error {
 // native probe. Diagnostics never grant ownership or change its deadline.
 export function parseWindowsProfileProbeDiagnostic(text: string) {
   const result: { nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number } = {};
-  const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|PARSER_COMPILE|PARSER_COMPILED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|PROFILE_ARGUMENT_READ|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
+  const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
   for (const match of text.matchAll(stage)) {
     const elapsed = Number(match[2]);
     if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 60_000) {
@@ -37,7 +37,7 @@ export function parseWindowsProfileProbeDiagnostic(text: string) {
       result.nativeStageElapsedMs = elapsed;
     }
   }
-  const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(PARSER_COMPILE|PARSER_COMPILED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|PROFILE_ARGUMENT_READ|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER)\r?\n/u);
+  const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER)\r?\n/u);
   if (failure) { result.nativeStage = failure[1]; result.nativeFailureCode = failure[2]; }
   return result;
 }
@@ -174,7 +174,13 @@ function Set-ProbeStage([string]$value) {
   [Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_STAGE='+$value+':'+$probeClock.ElapsedMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture));
   [Console]::Error.Flush()
 }
-$phase='PARSER_COMPILE'; $owned=@(); $handles=@(); try { Set-ProbeStage 'PARSER_COMPILE'; Add-Type -TypeDefinition @'
+$phase='UTILITY_MODULE_IMPORT'; $owned=@(); $handles=@(); try {
+# Resolve only the required Windows built-in module. Do not hide cold command
+# discovery inside Add-Type. Import and compile remain in the same 2000ms gate.
+Set-ProbeStage 'UTILITY_MODULE_IMPORT';
+Import-Module ([IO.Path]::Combine($PSHOME,'Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop;
+Set-ProbeStage 'UTILITY_MODULE_IMPORTED';
+Set-ProbeStage 'PARSER_COMPILE'; Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition @'
 ${nativeArgumentParser}
 '@;
 Set-ProbeStage 'PARSER_COMPILED';
@@ -219,6 +225,7 @@ $owned = @(); $handles = @();
     if (!$candidate.CommandLine -or !$candidate.CreationDate) { throw 'PROFILE_OWNERSHIP_UNAVAILABLE' }
     Set-ProbeStage 'PROFILE_ARGUMENT_READ';
     $argv = [VeridiaBrowserArgv]::Parse($candidate.CommandLine);
+    Set-ProbeStage 'PROFILE_ARGUMENT_PARSED';
     $profiles = @($argv | Where-Object { $_.StartsWith('--user-data-dir=', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.Substring(16) });
     if ($profiles.Count -ne 1 -or !$profiles[0]) { continue }
     if (![string]::Equals([IO.Path]::GetFullPath($profiles[0]).TrimEnd('\\'), $expectedProfile, [StringComparison]::OrdinalIgnoreCase)) { continue }
