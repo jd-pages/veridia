@@ -559,6 +559,7 @@ function createContextPageArbiter(
       if (state.context !== context || state.lifecycleGeneration !== generation) {
         return;
       }
+      recordE2eBrowserFailure("ASYNC_PAGE_INVARIANT_FAILED", error);
       console.error(
         "[小红书浏览器] XHS_PAGE_INVARIANT_FAILED",
         JSON.stringify({

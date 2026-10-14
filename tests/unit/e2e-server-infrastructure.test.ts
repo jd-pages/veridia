@@ -152,6 +152,17 @@ function captureCollectorFixture(fixture: ReturnType<typeof scopedCollectorFixtu
     wrapperIdentity: fixture.wrapper }, execute), execute };
 }
 
+function capturedCollectorCollisionFixture() {
+  const fixture = scopedCollectorFixture();
+  Object.assign(fixture.row, { name: "external-helper.exe", createdAt: "2026-09-29T07:02:08.6380030Z",
+    scopeReason: "UNVERIFIED_HISTORICAL_PARENT_CANDIDATE" });
+  Object.assign(fixture.candidate, { name: fixture.row.name, createdAt: fixture.row.createdAt,
+    nativeCreationFileTime: null, nativeBirthVerified: false, scopeKnownNonProjectProfile: false, sameSnapshotUniqueRow: true });
+  const parent = { ...processRow(fixture.row.parentPid, 1, "2026-09-30T00:00:00.0000000Z"), name: "chrome.exe",
+    nativeBirthStamp: fixtureFileTime("2026-09-30T00:00:00.0000000Z") as string | null };
+  return { fixture, parent };
+}
+
 function historicalParentEvidenceFixture(count = 1, currentParentRows: { pid: number; parentPid: number; name: string; createdAt: string | null }[] =
   [processRow(37380, 1, "2026-10-01T00:00:01.0000000Z")]) {
   const fixture = scopedCollectorFixture();
@@ -770,6 +781,59 @@ describe("E2E server infrastructure", () => {
       expect(result.unknownProcesses).toEqual([fixture.row]);
       expect(result.rawUnknownProcesses).toEqual([fixture.row]);
       expect(result.ownedProcesses).toEqual([]);
+      expect(result.excludedHistoricalCollectorParentCandidates).toEqual([]);
+    });
+
+  it("a captured historical parent and current collector PID collision preserves the existing temporal scope proof without native child or termination claims", () => {
+    const { fixture, parent } = capturedCollectorCollisionFixture();
+    const { result, execute } = captureCollectorFixture(fixture, [parent]);
+    expect(result.unknownProcesses).toEqual([]);
+    expect(result.rawUnknownProcesses).toEqual([fixture.row]);
+    expect(result.ownedProcesses).toEqual([]);
+    expect(result.excludedHistoricalCollectorParentCandidates).toEqual([]);
+    expect(result.excludedHistoricalParentCandidates).toEqual([expect.objectContaining({ ...fixture.row,
+      exclusion: "CHILD_BIRTH_PRECEDES_ALL_CAPTURED_PARENT_INCARNATIONS", ownershipGranted: false, terminationAuthorized: false,
+      collectorCollisionObservation: { collectorIdentity: fixture.snapshot.diagnosticCollector,
+        capturedParentNativeBirths: [expect.objectContaining(parent)], childBirthBasis: "SAME_COMPLETE_CIM_SNAPSHOT_NOT_HELD_NATIVE_CHILD_PROOF",
+        sameSnapshotUniqueRow: true, timeOrderingAssumption: "UTC_PROCESS_CREATION_ORDER_SAME_AS_EXISTING_CHILD_BEFORE_PARENT_GUARD",
+        ownershipGranted: false, terminationAuthorized: false } })]);
+    expect(execute.mock.calls[0][1][3]).not.toMatch(/\.Kill\(|taskkill/u);
+  });
+
+  it.each(["no-parent", "missing-parent-native", "parent-native-mismatch", "parent-after-collector", "second-parent-before-child",
+    "same-parent-birth", "newer-child", "same-collector-birth", "name-mismatch", "parent-mismatch", "ambiguous-row",
+    "duplicate-proof", "duplicate-row", "project", "listener", "lineage", "named-process"])
+    ("keeps the captured-parent collector collision UNKNOWN when %s lacks the complete observational proof", variant => {
+      const { fixture, parent } = capturedCollectorCollisionFixture();
+      const parents = [parent];
+      if (variant === "no-parent") parents.length = 0;
+      if (variant === "missing-parent-native") parent.nativeBirthStamp = null;
+      if (variant === "parent-native-mismatch") parent.nativeBirthStamp = fixtureFileTime("2026-09-30T00:00:00.0000010Z");
+      if (variant === "parent-after-collector") {
+        parent.createdAt = "2026-10-01T00:00:02.0000000Z";
+        parent.nativeBirthStamp = fixtureFileTime(parent.createdAt);
+      }
+      if (variant === "second-parent-before-child") parents.push({ ...parent, createdAt: "2026-09-28T00:00:00.0000000Z",
+        nativeBirthStamp: fixtureFileTime("2026-09-28T00:00:00.0000000Z") });
+      if (["same-parent-birth", "newer-child", "same-collector-birth"].includes(variant)) {
+        fixture.row.createdAt = variant === "same-parent-birth" ? parent.createdAt : variant === "same-collector-birth" ?
+          fixture.snapshot.diagnosticCollector.createdAt : "2026-10-01T00:00:02.0000000Z";
+        fixture.candidate.createdAt = fixture.row.createdAt;
+      }
+      if (variant === "name-mismatch") fixture.candidate.name = "another-helper.exe";
+      if (variant === "parent-mismatch") fixture.candidate.parentPid += 1;
+      if (variant === "ambiguous-row") Object.assign(fixture.candidate, { sameSnapshotUniqueRow: false });
+      if (variant === "duplicate-proof") fixture.snapshot.diagnosticCollectorCandidates.push({ ...fixture.candidate });
+      if (variant === "duplicate-row") fixture.snapshot.unknownProcesses.push({ ...fixture.row });
+      if (variant === "project") fixture.row.scopeReason = "PROJECT_OR_RUN_PROFILE_MATCH";
+      if (variant === "listener") fixture.row.scopeReason = "RUN_PORT_LISTENER";
+      if (variant === "lineage") fixture.row.scopeReason = "CURRENT_CAPTURED_ANCESTRY_MATCH";
+      if (variant === "named-process") { fixture.row.name = "chrome.exe"; fixture.candidate.name = fixture.row.name; }
+      const { result } = captureCollectorFixture(fixture, parents);
+      expect(result.unknownProcesses).toEqual(fixture.snapshot.unknownProcesses);
+      expect(result.rawUnknownProcesses).toEqual(fixture.snapshot.unknownProcesses);
+      expect(result.ownedProcesses).toEqual([]);
+      expect(result.excludedHistoricalParentCandidates).toEqual([]);
       expect(result.excludedHistoricalCollectorParentCandidates).toEqual([]);
     });
 

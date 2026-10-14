@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
-import { afterEach, describe, expect, it } from "vitest";
+import { performance } from "node:perf_hooks";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   collectGitRevisionSourceFingerprint,
@@ -48,21 +49,19 @@ function fixture(version = "1.1.0") {
   return { projectRoot, directory, version, installerName, blockmapName };
 }
 
-function initializeGit(value: ReturnType<typeof fixture>) {
+function initializeGit(value: ReturnType<typeof fixture>, onOperation?: (operation: { action: string; elapsedMs: number }) => void) {
+  const git = (args: string[], options: { encoding?: "utf8" } = {}) => {
+    const started = performance.now();
+    try { return execFileSync("git", args, { cwd: value.projectRoot, windowsHide: true, ...options }); }
+    finally { onOperation?.({ action: args[0], elapsedMs: performance.now() - started }); }
+  };
   fs.writeFileSync(path.join(value.projectRoot, "source.txt"), "source-v1");
-  execFileSync("git", ["init"], { cwd: value.projectRoot });
-  execFileSync("git", ["config", "user.email", "release-test@example.invalid"], {
-    cwd: value.projectRoot,
-  });
-  execFileSync("git", ["config", "user.name", "VERIDIA Release Test"], {
-    cwd: value.projectRoot,
-  });
-  execFileSync("git", ["add", "package.json", "source.txt"], { cwd: value.projectRoot });
-  execFileSync("git", ["commit", "-m", "fixture"], { cwd: value.projectRoot });
-  return execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: value.projectRoot,
-    encoding: "utf8",
-  }).trim();
+  git(["init"]);
+  git(["config", "user.email", "release-test@example.invalid"]);
+  git(["config", "user.name", "VERIDIA Release Test"]);
+  git(["add", "package.json", "source.txt"]);
+  git(["commit", "-m", "fixture"]);
+  return String(git(["rev-parse", "HEAD"], { encoding: "utf8" })).trim();
 }
 
 afterEach(() => {
@@ -153,26 +152,41 @@ describe("软件发布三件套", () => {
     });
   }, 15_000);
 
-  it("REMOTE_DOWNLOAD ignores copied mtimes when Manifest content identity matches", () => {
-    const value = fixture();
-    const tagCommit = initializeGit(value);
-    const manifest = writeReleaseArtifactManifest({ ...value, tagCommit });
-    const copied = path.join(value.projectRoot, "downloaded");
-    fs.cpSync(value.directory, copied, { recursive: true });
-    const newest = new Date();
-    const oldest = new Date(Date.now() - 30_000);
-    fs.utimesSync(path.join(copied, value.installerName), newest, newest);
-    fs.utimesSync(path.join(copied, value.blockmapName), newest, newest);
-    fs.utimesSync(path.join(copied, "latest.yml"), oldest, oldest);
-
-    expect(validateSoftwareReleaseArtifacts({
-      projectRoot: value.projectRoot,
-      version: value.version,
-      directory: copied,
-      mode: SOFTWARE_RELEASE_VALIDATION_MODES.REMOTE_DOWNLOAD,
-      manifest,
-      expectedTagCommit: tagCommit,
-    })).toMatchObject({ mode: "REMOTE_DOWNLOAD", manifestValid: true });
+  describe("REMOTE_DOWNLOAD copied mtime isolated fixture", () => {
+    let prepared: { value: ReturnType<typeof fixture>; tagCommit: string; manifest: ReturnType<typeof writeReleaseArtifactManifest>; copied: string };
+    beforeEach(() => {
+      const started = performance.now(), operations: Array<{ action: string; elapsedMs: number }> = [];
+      const value = fixture();
+      const tagCommit = initializeGit(value, operation => operations.push(operation));
+      const manifestStarted = performance.now();
+      const manifest = writeReleaseArtifactManifest({ ...value, tagCommit });
+      const manifestElapsedMs = performance.now() - manifestStarted;
+      const copied = path.join(value.projectRoot, "downloaded");
+      fs.cpSync(value.directory, copied, { recursive: true });
+      const newest = new Date(), oldest = new Date(Date.now() - 30_000);
+      fs.utimesSync(path.join(copied, value.installerName), newest, newest);
+      fs.utimesSync(path.join(copied, value.blockmapName), newest, newest);
+      fs.utimesSync(path.join(copied, "latest.yml"), oldest, oldest);
+      prepared = { value, tagCommit, manifest, copied };
+      console.info("REMOTE_MTIME_FIXTURE_TIMING=" + JSON.stringify({ operations, manifestElapsedMs, fixtureElapsedMs: performance.now() - started }));
+    });
+    // Real Git/Manifest preparation uses the default hook, not a fake identity
+    // or an increased timeout. The default 5000ms case still performs the real
+    // remote contract and Tag tree fingerprint lookup.
+    it("REMOTE_DOWNLOAD ignores copied mtimes when Manifest content identity matches", () => {
+      const { value, tagCommit, manifest, copied } = prepared;
+      const started = performance.now();
+      try {
+        expect(validateSoftwareReleaseArtifacts({
+          projectRoot: value.projectRoot,
+          version: value.version,
+          directory: copied,
+          mode: SOFTWARE_RELEASE_VALIDATION_MODES.REMOTE_DOWNLOAD,
+          manifest,
+          expectedTagCommit: tagCommit,
+        })).toMatchObject({ mode: "REMOTE_DOWNLOAD", manifestValid: true });
+      } finally { console.info("REMOTE_MTIME_VALIDATION_TIMING=" + JSON.stringify({ elapsedMs: performance.now() - started })); }
+    });
   });
 
   it("REMOTE_DOWNLOAD blocks a wrong latest.yml SHA-512 and Installer size", () => {

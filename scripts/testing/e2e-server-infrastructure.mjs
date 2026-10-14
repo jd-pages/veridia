@@ -828,7 +828,8 @@ try {
       continue;
     }
     // An older nonnamed child cannot belong to any captured later PPID
-    // incarnation. An unproved current-collector child cannot use that shortcut.
+    // incarnation. A collector PID collision needs separately bound observations;
+    // it never turns an opaque child into an owned or terminable process.
     const parents = identities.filter(parent => parent.pid === row.parentPid);
     const namedScope = typeof row.name !== "string" || /^(?:node|chrome|chromium|headless_shell|chrome-headless-shell|electron|VERIDIA)\.exe$/iu.test(row.name);
     if (!namedScope && row.parentPid === collector.pid && row.scopeReason === "DIAGNOSTIC_COLLECTOR_DIRECT_CHILD_CANDIDATE" &&
@@ -842,10 +843,22 @@ try {
         ownershipGranted: false, terminationAuthorized: false });
       continue;
     }
-    if (row.parentPid !== collector.pid && row.scopeReason === "UNVERIFIED_HISTORICAL_PARENT_CANDIDATE" && !namedScope && canonicalBirth(row) && parents.length > 0 &&
+    const capturedParentNativeBirths = parents.map(parent => fileTime(parent.nativeBirthStamp));
+    const collectorCollisionObserved = row.parentPid === collector.pid && canonicalBirth(row) &&
+      candidate?.parentPid === row.parentPid && candidate.name === row.name && candidate.sameSnapshotUniqueRow === true &&
+      snapshot.unknownProcesses.filter(other => ["pid", "parentPid", "name", "createdAt"].every(key => other[key] === row[key])).length === 1 &&
+      parents.length > 0 && capturedParentNativeBirths.every((birth, index) => birth !== null && canonicalBirth(parents[index]) &&
+        birth / 10n === cimFileTime(parents[index]) / 10n && birth <= collectorNative) && cimFileTime(row) < collectorNative;
+    if ((row.parentPid !== collector.pid || collectorCollisionObserved) && row.scopeReason === "UNVERIFIED_HISTORICAL_PARENT_CANDIDATE" && !namedScope && canonicalBirth(row) && parents.length > 0 &&
       parents.every(parent => canonicalBirth(parent) && row.createdAt < parent.createdAt)) {
       excluded.push({ ...row, exclusion: "CHILD_BIRTH_PRECEDES_ALL_CAPTURED_PARENT_INCARNATIONS",
         capturedParentIdentities: parents.map(({ pid, parentPid, createdAt }) => ({ pid, parentPid, createdAt })),
+        ...(collectorCollisionObserved ? { collectorCollisionObservation: {
+          collectorIdentity: collector, capturedParentNativeBirths: parents.map(ownershipIdentityProjection),
+          childBirthBasis: "SAME_COMPLETE_CIM_SNAPSHOT_NOT_HELD_NATIVE_CHILD_PROOF",
+          sameSnapshotUniqueRow: true, timeOrderingAssumption: "UTC_PROCESS_CREATION_ORDER_SAME_AS_EXISTING_CHILD_BEFORE_PARENT_GUARD",
+          ownershipGranted: false, terminationAuthorized: false,
+        } } : {}),
         ownershipGranted: false, terminationAuthorized: false });
     } else {
       const proofs = Array.isArray(snapshot.historicalParentReuseCandidates) && snapshot.historicalParentReuseCandidates.length <= 16 ?

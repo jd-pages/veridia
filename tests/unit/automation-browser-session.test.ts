@@ -261,6 +261,21 @@ async function verifyPageArbiterFixtures() {
 }
 
 describe("小红书持久会话与访问节奏", () => {
+  it("records the isolated asynchronous invariant failure before closing its current generation", () => {
+    const browser = source("lib/automation/browser.ts");
+    const start = browser.indexOf("onAsyncInvariantFailure: async (error) => {");
+    const end = browser.indexOf("state.pageArbiter = arbiter", start);
+    const callback = browser.slice(start, end);
+    const guard = callback.indexOf("state.context !== context || state.lifecycleGeneration !== generation");
+    const record = callback.indexOf('recordE2eBrowserFailure("ASYNC_PAGE_INVARIANT_FAILED", error)');
+    const close = callback.indexOf("await closeXhsBrowserContext()");
+    expect(start).toBeGreaterThan(0);
+    expect(guard).toBeGreaterThanOrEqual(0);
+    expect(record).toBeGreaterThan(guard);
+    expect(close).toBeGreaterThan(record);
+    expect(callback).toContain('state.controlState = "RESTART_REQUIRED"');
+    expect(browser).toContain('if (process.env.VERIDIA_E2E !== "true") return;');
+  });
   it("恢复页面 close 无响应时有界失败，不重试、不伪报已关闭或关闭自有页面", async () => {
     const context = new FakeArbiterContext();
     const owned: FakeOwnedPages = { audit: context.open("https://xhs.test/audit") };
