@@ -77,24 +77,40 @@ describe.sequential("Reward package feature-driven compatibility", () => {
     }
   });
 
-  it("LEGACY显式override与阶梯模式导出min41完整配置，不放宽应用版本guard", async () => {
+  it("LEGACY显式override导出min41完整配置，不放宽应用版本guard", async () => {
     const selected = await source.campaign.findFirstOrThrow({ where: { deletedAt: null } });
-    await source.campaign.update({ where: { id: selected.id }, data: { basicRewardRequired: !selected.basicRewardRequired } });
-    const override = await exportCurrentRulePayload({ minimumAppVersion: "1.1.17" }, source);
-    expect(override.minimumAppVersion).toBe("1.1.41");
-    expect(override.campaigns.find((campaign) => campaign.name === selected.name && campaign.month === selected.month))
-      .toMatchObject({ rewardMode: "LEGACY", basicRewardRequired: !selected.basicRewardRequired, baseRewardAmount: 0, interactionRewardTiers: [] });
-    await source.campaign.update({ where: { id: selected.id }, data: { rewardMode: "CONTENT_BASE_PLUS_INTERACTION_TIERS",
-      baseRewardAmount: 50, interactionRewardTiers: { create: [{ threshold: 10, amount: 20 }, { threshold: 40, amount: 50 }] } } });
-    const tiered = await exportCurrentRulePayload({ minimumAppVersion: "1.1.17" }, source);
-    expect(tiered.minimumAppVersion).toBe("1.1.41");
-    expect(tiered.campaigns.find((campaign) => campaign.name === selected.name && campaign.month === selected.month))
-      .toMatchObject({ rewardMode: "CONTENT_BASE_PLUS_INTERACTION_TIERS", baseRewardAmount: 50,
-        interactionRewardTiers: [{ threshold: 10, amount: 20 }, { threshold: 40, amount: 50 }] });
-    expect(() => assertRulePackageCompatibleWithApp("1.1.40", tiered.minimumAppVersion)).toThrow("最低兼容版本");
-    expect(() => assertRulePackageCompatibleWithApp("1.1.41", tiered.minimumAppVersion)).not.toThrow();
-    await source.campaignInteractionRewardTier.deleteMany({ where: { campaignId: selected.id } });
-    await source.campaign.update({ where: { id: selected.id }, data: { rewardMode: "LEGACY", baseRewardAmount: 0, basicRewardRequired: selected.basicRewardRequired } });
+    try {
+      await source.campaign.update({ where: { id: selected.id }, data: { basicRewardRequired: !selected.basicRewardRequired } });
+      const override = await exportCurrentRulePayload({ minimumAppVersion: "1.1.17" }, source);
+      expect(override.minimumAppVersion).toBe("1.1.41");
+      expect(override.campaigns.find((campaign) => campaign.name === selected.name && campaign.month === selected.month))
+        .toMatchObject({ rewardMode: "LEGACY", basicRewardRequired: !selected.basicRewardRequired, baseRewardAmount: 0, interactionRewardTiers: [] });
+      expect(() => assertRulePackageCompatibleWithApp("1.1.40", override.minimumAppVersion)).toThrow("最低兼容版本");
+      expect(() => assertRulePackageCompatibleWithApp("1.1.41", override.minimumAppVersion)).not.toThrow();
+    } finally {
+      await source.campaign.update({ where: { id: selected.id }, data: { basicRewardRequired: selected.basicRewardRequired } });
+    }
+  });
+
+  // Override and tiered rewards are independent complete compatibility
+  // contracts; neither borrows the other contract's default 5000ms budget.
+  it("阶梯模式导出min41完整配置，不放宽应用版本guard", async () => {
+    const selected = await source.campaign.findFirstOrThrow({ where: { deletedAt: null } });
+    try {
+      await source.campaign.update({ where: { id: selected.id }, data: { rewardMode: "CONTENT_BASE_PLUS_INTERACTION_TIERS",
+        baseRewardAmount: 50, interactionRewardTiers: { create: [{ threshold: 10, amount: 20 }, { threshold: 40, amount: 50 }] } } });
+      const tiered = await exportCurrentRulePayload({ minimumAppVersion: "1.1.17" }, source);
+      expect(tiered.minimumAppVersion).toBe("1.1.41");
+      expect(tiered.campaigns.find((campaign) => campaign.name === selected.name && campaign.month === selected.month))
+        .toMatchObject({ rewardMode: "CONTENT_BASE_PLUS_INTERACTION_TIERS", baseRewardAmount: 50,
+          interactionRewardTiers: [{ threshold: 10, amount: 20 }, { threshold: 40, amount: 50 }] });
+      expect(() => assertRulePackageCompatibleWithApp("1.1.40", tiered.minimumAppVersion)).toThrow("最低兼容版本");
+      expect(() => assertRulePackageCompatibleWithApp("1.1.41", tiered.minimumAppVersion)).not.toThrow();
+    } finally {
+      await source.campaignInteractionRewardTier.deleteMany({ where: { campaignId: selected.id } });
+      await source.campaign.update({ where: { id: selected.id }, data: { rewardMode: selected.rewardMode,
+        baseRewardAmount: selected.baseRewardAmount, basicRewardRequired: selected.basicRewardRequired } });
+    }
   });
 
   it("旧包应用已有阶梯活动时保留rewardMode/base/tiers与历史snapshot", async () => {

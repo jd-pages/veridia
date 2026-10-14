@@ -184,7 +184,7 @@ export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, 
       cwd: root, env: formalNextEnvironment(environment), execArgv: [],
       stdio: ["ignore", stdio, stdio, "ipc"], windowsHide: true,
     });
-    const latestCreationMs = Date.now();
+    const forkReturnedMs = Date.now();
     rootExit = exitOf(child);
     rootExit.then(exit => { receipt.exitCode = exit.code; receipt.exitSignal = exit.signal;
       receipt.rootExitedAt = new Date().toISOString(); }, () => {});
@@ -198,9 +198,18 @@ export async function runOwnedNodeTypegenCommand({ root = process.cwd(), entry, 
       child.once("exit", () => reject(new Error("TYPEGEN_BOOTSTRAP_EXITED_BEFORE_READY")));
     });
     const bootstrap = await waitUntil(bootstrapReady, deadline, "TYPEGEN_BOOTSTRAP_READY_DEADLINE");
-    if (bootstrap?.kind !== "READY" || bootstrap.pid !== child.pid || bootstrap.parentPid !== process.pid) {
+    if (bootstrap?.kind !== "READY" || bootstrap.pid !== child.pid || bootstrap.parentPid !== process.pid ||
+      !child.connected || child.exitCode !== null || child.signalCode !== null) {
       throw new Error("TYPEGEN_BOOTSTRAP_CREATOR_MISMATCH");
     }
+    // fork() returning is an API observation, not the child's post-birth
+    // acknowledgement. Bind the upper bound to the existing creator-owned IPC
+    // READY barrier, while the bootstrap is still live and has not run the CLI.
+    // No grace milliseconds, retry or deadline extension: the native monitor
+    // still rejects every birth outside these actually observed boundaries.
+    const latestCreationMs = Date.now();
+    receipt.creationWindow = { earliestCreationMs, forkReturnedMs, latestCreationMs,
+      upperBound: "VALIDATED_LIVE_CREATOR_IPC_READY", creatorIpcIdentityVerified: true };
     onPhase({ kind: "BOOTSTRAP_READY", pid: child.pid, at: new Date().toISOString() });
     if (process.platform !== "win32") {
       // No Windows native birth proof is fabricated on another platform.

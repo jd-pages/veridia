@@ -201,7 +201,26 @@ describe("actual self-owned Windows native launcher (never real Next)", () => {
     expect(receipt.nativeRoot?.pid).toBe(actual.pid);
     expect(Date.parse(receipt.nativeRoot!.capturedAt)).toBeLessThanOrEqual(Date.parse(actual.ranAt));
     expect(actual.overridesPresent).toEqual([]);
+    expect(receipt.creationWindow).toMatchObject({ upperBound: "VALIDATED_LIVE_CREATOR_IPC_READY", creatorIpcIdentityVerified: true });
+    const window = receipt.creationWindow as { earliestCreationMs: number; forkReturnedMs: number; latestCreationMs: number };
+    expect(window.earliestCreationMs).toBeLessThanOrEqual(window.forkReturnedMs);
+    expect(window.forkReturnedMs).toBeLessThanOrEqual(window.latestCreationMs);
+    expect(Date.parse(receipt.nativeRoot!.createdAt)).toBeGreaterThanOrEqual(window.earliestCreationMs);
+    expect(Date.parse(receipt.nativeRoot!.createdAt)).toBeLessThanOrEqual(window.latestCreationMs);
   }, 15000);
+
+  it("bounds native birth with the existing live creator IPC barrier, never an arbitrary time allowance", () => {
+    const launcher = fs.readFileSync(path.resolve("scripts/testing/next-typegen-lifecycle.mjs"), "utf8");
+    const fork = launcher.indexOf("child = fork("), returned = launcher.indexOf("const forkReturnedMs = Date.now();");
+    const ready = launcher.indexOf("const bootstrap = await waitUntil("), upper = launcher.indexOf("const latestCreationMs = Date.now();");
+    expect(launcher.indexOf("const earliestCreationMs = Date.now();")).toBeLessThan(fork);
+    expect(fork).toBeLessThan(returned);
+    expect(returned).toBeLessThan(ready);
+    expect(ready).toBeLessThan(upper);
+    expect(launcher.slice(ready, upper)).toContain("bootstrap.pid !== child.pid || bootstrap.parentPid !== process.pid");
+    expect(launcher.slice(ready, upper)).toContain("!child.connected || child.exitCode !== null || child.signalCode !== null");
+    expect(launcher).not.toMatch(/(?:earliestCreationMs|latestCreationMs)\s*=\s*Date\.now\(\)\s*[+-]/u);
+  });
 
   it("a native-quiescent failed CLI retains exit 7 and still fails", async () => {
     if (process.platform !== "win32") { await assertNonWindowsFailClosed(); return; }
