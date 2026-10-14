@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({ spawn: vi.fn(), clock: null as number | null }));
@@ -6,6 +7,10 @@ vi.mock("node:child_process", () => ({ spawn: fixture.spawn }));
 vi.mock("node:perf_hooks", () => ({ performance: { now: () => fixture.clock ?? Date.now() } }));
 import { captureWindowsBrowserProfileOwners } from "@/lib/automation/windows-browser-process-owner";
 import { getRecoveryDiagnostics } from "@/lib/automation/recovery-diagnostics";
+import {
+  WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64, WINDOWS_BROWSER_ARGV_ASSEMBLY_SHA256,
+  WINDOWS_BROWSER_ARGV_SOURCE, WINDOWS_BROWSER_ARGV_SOURCE_SHA256,
+} from "@/lib/automation/windows-browser-argv-asset";
 
 beforeEach(() => { vi.useFakeTimers(); fixture.spawn.mockReset(); fixture.clock = null; });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
@@ -180,19 +185,24 @@ it("direct WMI census retains exact fields, disposable query resources and all-b
   await expect(pending).resolves.toEqual([]);
 });
 
-it("loads the exact built-in Utility manifest before native parser compilation without prewarming", async () => {
+it("loads pinned bytes for the unchanged OS argv parser without any runtime compilation or prewarming", async () => {
   const child = childFixture();
   const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
   const script = Buffer.from(fixture.spawn.mock.calls[0][1].at(-1), "base64").toString("utf16le");
   const load = script.indexOf("Import-Module ([IO.Path]::Combine($PSHOME,'Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop");
-  const compile = script.indexOf("Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition", load);
+  const assembly = script.indexOf("[Reflection.Assembly]::Load($parserBytes)", load);
+  const digest = script.indexOf("$parserHash.ComputeHash($parserBytes)", load);
   expect(load).toBeGreaterThan(0);
-  expect(compile).toBeGreaterThan(load);
+  expect(digest).toBeGreaterThan(load);
+  expect(assembly).toBeGreaterThan(digest);
+  expect(script).toContain(`$parserDigest -cne '${WINDOWS_BROWSER_ARGV_ASSEMBLY_SHA256}'`);
+  expect(script).toContain("throw 'NATIVE_ARGV_ASSET_INVALID'");
+  expect(script).not.toContain("Add-Type");
   const submit = script.indexOf("$collection = $searcher.Get()");
   const enumerate = script.indexOf("$enumerator = $collection.GetEnumerator()");
   expect(submit).toBeGreaterThan(load);
-  expect(compile).toBeGreaterThan(submit);
-  expect(enumerate).toBeGreaterThan(compile);
+  expect(assembly).toBeGreaterThan(submit);
+  expect(enumerate).toBeGreaterThan(assembly);
   expect(script).toContain("if (!$script:parserReady)");
   expect(script).toContain("$script:parserReady = $true");
   expect(script).toContain("$options.ReturnImmediately = $true; $options.Rewindable = $false");
@@ -201,6 +211,29 @@ it("loads the exact built-in Utility manifest before native parser compilation w
   expect(script).not.toContain("Start-Sleep");
   child.stdout.emit("data", Buffer.from("[]")); child.emit("close", 0);
   await expect(pending).resolves.toEqual([]);
+});
+
+it("immutable bundled argv bytes and source retain the exact native CommandLineToArgvW and LocalFree wrapper", () => {
+  const bytes = Buffer.from(WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64, "base64");
+  expect(bytes.length).toBe(3584);
+  expect(bytes.subarray(0, 2).toString("ascii")).toBe("MZ");
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(WINDOWS_BROWSER_ARGV_ASSEMBLY_SHA256);
+  expect(createHash("sha256").update(WINDOWS_BROWSER_ARGV_SOURCE).digest("hex")).toBe(WINDOWS_BROWSER_ARGV_SOURCE_SHA256);
+  expect(WINDOWS_BROWSER_ARGV_SOURCE_SHA256).toBe("e82a52ce6274e6ccd3fe9f4f0080c842a63c0d2b79224c43a29af236547bbce5");
+  expect(WINDOWS_BROWSER_ARGV_SOURCE).toContain('[DllImport("shell32.dll", SetLastError=true)]');
+  expect(WINDOWS_BROWSER_ARGV_SOURCE).toContain("IntPtr argv = CommandLineToArgvW(command, out count)");
+  expect(WINDOWS_BROWSER_ARGV_SOURCE).toContain("finally { LocalFree(argv); }");
+});
+
+it("invalid native argv asset fails closed even with empty owner JSON and retained load-stage diagnostics", async () => {
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: {
+    reason: "NATIVE_PROBE_EXIT", nativeStage: "PARSER_ASSEMBLY_LOAD", nativeFailureCode: "NATIVE_ARGV_ASSET_INVALID",
+  } });
+  child.stderr.emit("data", Buffer.from("VERIDIA_PROFILE_PROBE_STAGE=PARSER_ASSEMBLY_LOAD:100\nVERIDIA_PROFILE_PROBE_FAILURE=PARSER_ASSEMBLY_LOAD:NATIVE_ARGV_ASSET_INVALID\n"));
+  child.stdout.emit("data", Buffer.from("[]")); child.emit("close", 1);
+  await assertion;
 });
 
 it("module/parser boundary notices cannot extend the deadline or authorize profile ownership", async () => {
@@ -233,7 +266,7 @@ it("keeps command text fixed and transfers the full large Unicode identity set t
   expect(args.join(" ").length).toBeLessThan(30_000);
   expect(options.stdio).toEqual(["pipe", "pipe", "pipe"]);
   expect(large.stdin.end).toHaveBeenCalledExactlyOnceWith(JSON.stringify({
-    executablePath: executable, profilePath: profile, terminate: owners,
+    executablePath: executable, profilePath: profile, terminate: owners, argvAssembly: WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64,
   }), "utf8");
   const script = Buffer.from(args.at(-1), "base64").toString("utf16le");
   expect(script).toContain("[Console]::In.ReadToEnd() | ConvertFrom-Json");

@@ -4,6 +4,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { StringDecoder } from "node:string_decoder";
 import { recordNativeProfileProbe } from "./recovery-diagnostics";
+import {
+  WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64,
+  WINDOWS_BROWSER_ARGV_ASSEMBLY_SHA256,
+} from "./windows-browser-argv-asset";
 
 export type WindowsBrowserProcessIdentity = {
   pid: number;
@@ -37,7 +41,7 @@ export class WindowsBrowserProfileOwnershipError extends Error {
 // native probe. Diagnostics never grant ownership or change its deadline.
 export function parseWindowsProfileProbeDiagnostic(text: string) {
   const result: { nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number } = {};
-  const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|WMI_GET_ENTER|WMI_GET_RETURN|WMI_ENUM_ENTER|WMI_ENUM_RETURN|WMI_MOVE_ENTER|WMI_MOVE_RETURN|WMI_ROW_READ|WMI_ROW_RETURN|WMI_BIRTH_PARSE|WMI_BIRTH_RETURN|WMI_ROW_DISPOSE|WMI_ROW_DISPOSED|WMI_DISPOSE|WMI_DISPOSED|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT|RESULT_SERIALIZED|RESULT_WRITTEN):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
+  const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|PARSER_ASSEMBLY_LOAD|PARSER_ASSEMBLY_LOADED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|WMI_GET_ENTER|WMI_GET_RETURN|WMI_ENUM_ENTER|WMI_ENUM_RETURN|WMI_MOVE_ENTER|WMI_MOVE_RETURN|WMI_ROW_READ|WMI_ROW_RETURN|WMI_BIRTH_PARSE|WMI_BIRTH_RETURN|WMI_ROW_DISPOSE|WMI_ROW_DISPOSED|WMI_DISPOSE|WMI_DISPOSED|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT|RESULT_SERIALIZED|RESULT_WRITTEN):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
   for (const match of text.matchAll(stage)) {
     const elapsed = Number(match[2]);
     if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 60_000) {
@@ -45,7 +49,7 @@ export function parseWindowsProfileProbeDiagnostic(text: string) {
       result.nativeStageElapsedMs = elapsed;
     }
   }
-  const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|WMI_GET_ENTER|WMI_GET_RETURN|WMI_ENUM_ENTER|WMI_ENUM_RETURN|WMI_MOVE_ENTER|WMI_MOVE_RETURN|WMI_ROW_READ|WMI_ROW_RETURN|WMI_BIRTH_PARSE|WMI_BIRTH_RETURN|WMI_ROW_DISPOSE|WMI_ROW_DISPOSED|WMI_DISPOSE|WMI_DISPOSED|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT|RESULT_SERIALIZED|RESULT_WRITTEN):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER)\r?\n/u);
+  const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|PARSER_ASSEMBLY_LOAD|PARSER_ASSEMBLY_LOADED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|WMI_GET_ENTER|WMI_GET_RETURN|WMI_ENUM_ENTER|WMI_ENUM_RETURN|WMI_MOVE_ENTER|WMI_MOVE_RETURN|WMI_ROW_READ|WMI_ROW_RETURN|WMI_BIRTH_PARSE|WMI_BIRTH_RETURN|WMI_ROW_DISPOSE|WMI_ROW_DISPOSED|WMI_DISPOSE|WMI_DISPOSED|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT|RESULT_SERIALIZED|RESULT_WRITTEN):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER|NATIVE_ARGV_ASSET_INVALID)\r?\n/u);
   if (failure) { result.nativeStage = failure[1]; result.nativeFailureCode = failure[2]; }
   return result;
 }
@@ -152,20 +156,6 @@ export function authorizeInitialWindowsBrowserOwners(
   return authorizeWindowsBrowserDescendants(current, roots);
 }
 
-const nativeArgumentParser = `
-using System;
-using System.Runtime.InteropServices;
-public static class VeridiaBrowserArgv {
-  [DllImport("shell32.dll", SetLastError=true)] static extern IntPtr CommandLineToArgvW([MarshalAs(UnmanagedType.LPWStr)] string command, out int count);
-  [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr value);
-  public static string[] Parse(string command) {
-    int count; IntPtr argv = CommandLineToArgvW(command, out count);
-    if (argv == IntPtr.Zero) throw new InvalidOperationException("ARGV_FAILED");
-    try { var values = new string[count]; for (int i=0; i<count; i++) values[i] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv, i * IntPtr.Size)); return values; }
-    finally { LocalFree(argv); }
-  }
-}`;
-
 function guardScript() {
   // Only exact executable/profile matches leave this process. Raw command
   // lines, environment, browser URLs and credentials are never emitted.
@@ -179,8 +169,8 @@ function Set-ProbeStage([string]$value) {
   # Do not add a second synchronous Flush for every per-row stage marker.
 }
 $phase='UTILITY_MODULE_IMPORT'; $owned=@(); $handles=@(); $boundBirths=@{}; try {
-# Resolve only the required Windows built-in module. Do not hide cold command
-# discovery inside Add-Type. Import and compile remain in the same 2000ms gate.
+# Resolve only the required Windows built-in module. The immutable OS argv
+# wrapper is loaded, not compiled, inside the same complete 2000ms budget.
 Set-ProbeStage 'UTILITY_MODULE_IMPORT';
 Import-Module ([IO.Path]::Combine($PSHOME,'Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop;
 Set-ProbeStage 'UTILITY_MODULE_IMPORTED';
@@ -210,15 +200,21 @@ $owned = @(); $handles = @(); $script:parserReady = $false;
       Set-ProbeStage 'WMI_GET_ENTER';
       $collection = $searcher.Get();
       Set-ProbeStage 'WMI_GET_RETURN';
-      # ReturnImmediately submits this query semisynchronously. Compile the
-      # required parser while that same query retrieves its first result,
-      # not before submission. No extra query, prewarm or deadline extension.
+      # Same OS parser and query; no runtime compiler, cache or prewarm.
+      # Load the exact bundled bytes, not a mutable path, and fail closed on
+      # any digest/type mismatch. No probe can supply another native helper.
       if (!$script:parserReady) {
-        Set-ProbeStage 'PARSER_COMPILE'; Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition @'
-${nativeArgumentParser}
-'@;
+        Set-ProbeStage 'PARSER_ASSEMBLY_LOAD';
+        $parserBytes = [Convert]::FromBase64String($request.argvAssembly);
+        $parserHash = [Security.Cryptography.SHA256]::Create();
+        try { $parserDigest = [BitConverter]::ToString($parserHash.ComputeHash($parserBytes)).Replace('-','').ToLowerInvariant() }
+        finally { $parserHash.Dispose() }
+        if ($parserDigest -cne '${WINDOWS_BROWSER_ARGV_ASSEMBLY_SHA256}') { throw 'NATIVE_ARGV_ASSET_INVALID' }
+        $parserAssembly = [Reflection.Assembly]::Load($parserBytes);
+        $parserType = $parserAssembly.GetType('VeridiaBrowserArgv');
+        if (!$parserType -or $parserType.Assembly -ne $parserAssembly -or $parserAssembly.GetExportedTypes().Length -ne 1) { throw 'NATIVE_ARGV_ASSET_INVALID' }
         $script:parserReady = $true;
-        Set-ProbeStage 'PARSER_COMPILED';
+        Set-ProbeStage 'PARSER_ASSEMBLY_LOADED';
       }
       Set-ProbeStage 'WMI_ENUM_ENTER';
       $enumerator = $collection.GetEnumerator();
@@ -340,7 +336,7 @@ ${nativeArgumentParser}
   Set-ProbeStage 'RESULT_WRITTEN';
 } catch {
   $code='NATIVE_PROBE_SCRIPT_EXCEPTION';
-  foreach ($allowed in @('PROFILE_OWNERSHIP_UNAVAILABLE','LIVE_PROCESS_HANDLE_UNAVAILABLE','LIVE_PROCESS_BIRTH_MISMATCH','UNVERIFIED_PROFILE_OWNER')) {
+  foreach ($allowed in @('PROFILE_OWNERSHIP_UNAVAILABLE','LIVE_PROCESS_HANDLE_UNAVAILABLE','LIVE_PROCESS_BIRTH_MISMATCH','UNVERIFIED_PROFILE_OWNER','NATIVE_ARGV_ASSET_INVALID')) {
     if ($_.Exception.Message -eq $allowed) { $code=$allowed }
   }
   # Only this fixed vocabulary crosses stderr, never raw native exceptions.
@@ -363,7 +359,8 @@ export async function captureWindowsBrowserProfileOwners(
   const executable = path.win32.resolve(executablePath);
   const profile = path.win32.resolve(profilePath);
   const script = guardScript();
-  const request = JSON.stringify({ executablePath: executable, profilePath: profile, terminate });
+  const request = JSON.stringify({ executablePath: executable, profilePath: profile, terminate,
+    argvAssembly: WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64 });
   const e2e = process.env.VERIDIA_E2E === "true";
   const probeId = e2e ? randomUUID() : undefined;
   const probeStartedAt = e2e ? new Date().toISOString() : undefined;

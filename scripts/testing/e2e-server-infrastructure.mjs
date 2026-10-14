@@ -538,7 +538,7 @@ export function captureWindowsScopedResiduals({ projectRoot, profilePaths, ident
 $scope=[Console]::In.ReadToEnd() | ConvertFrom-Json;
 $marker=([string]$scope.projectRoot).Replace('/','\\').ToLowerInvariant();
 $expected=@{}; $historicalParentPids=@{}; foreach($identity in $scope.identities){$expected["$($identity.pid):$($identity.createdAt)"]=$true;$historicalParentPids[[string]$identity.pid]=$true};
-$owned=@(); $unknown=@(); $opaque=@(); $historicalReferences=@(); $collectorCandidates=@(); $heldChildren=@(); $collectorHandle=$null; $wrapperHandle=$null;
+$owned=@(); $unknown=@(); $opaque=@(); $historicalReferences=@(); $collectorCandidates=@(); $heldChildren=@(); $heldCollectorReferences=@(); $collectorHandle=$null; $wrapperHandle=$null;
 function RowBirth($item){if($item.CreationDate){$item.CreationDate.ToUniversalTime().ToString('o')}else{$null}};
 function BirthFileTime($birth){[DateTimeOffset]::ParseExact($birth,'yyyy-MM-ddTHH:mm:ss.fffffffZ',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal).UtcDateTime.ToFileTimeUtc()};
 function ProjectProfileAffinity($item){
@@ -622,7 +622,7 @@ try {
     };
     $row.scopeReason=$(if($related){'PROJECT_OR_RUN_PROFILE_MATCH'}elseif($portAffinity){'RUN_PORT_LISTENER'}elseif($lineageAffinity){'CURRENT_CAPTURED_ANCESTRY_MATCH'}elseif($opaqueNamed){'UNSCOPED_OPAQUE_NAMED_CANDIDATE'}elseif($historicalParent){'UNVERIFIED_HISTORICAL_PARENT_CANDIDATE'}else{'DIAGNOSTIC_COLLECTOR_DIRECT_CHILD_CANDIDATE'});
     $unknown+=$row;if($opaqueNamed){$opaque+=$row};
-    if($directCollectorChild -and $conhost) {
+    if($directCollectorChild) {
       $nativeBirth=$null;$nativeVerified=$false;
       if($birth -and $scopeKnown -and !$related) {
         try {
@@ -631,9 +631,19 @@ try {
           $nativeVerified=[decimal]::Floor([decimal]$nativeBirth/10) -eq [decimal]::Floor([decimal](BirthFileTime $birth)/10);
         } catch {$nativeVerified=$false};
       }
-      $collectorCandidates+=@{pid=$row.pid;parentPid=$row.parentPid;name=$row.name;createdAt=$birth;
+      $candidate=@{pid=$row.pid;parentPid=$row.parentPid;name=$row.name;createdAt=$birth;
         nativeCreationFileTime=$(if($null -ne $nativeBirth){[string]$nativeBirth}else{$null});
-        nativeBirthVerified=$nativeVerified;scopeKnownNonProjectProfile=($scopeKnown -and !$related)};
+        nativeBirthVerified=$nativeVerified;scopeKnownNonProjectProfile=($scopeKnown -and !$related);
+        sameSnapshotUniqueRow=(@($processRowsByPid[[string]$item.ProcessId]).Count -eq 1);
+        sameHandleLiveAtBothBoundaries=$false;nativeIdentityMatchesAtBothBoundaries=$false};
+      $collectorCandidates+=$candidate;
+      # A numeric PPID can name this fresh collector after PID reuse. Keep
+      # UNKNOWN unless the same retained child handle proves an older birth,
+      # matching name/birth and both live boundaries. Never grant Kill rights.
+      if($nativeVerified -and $nativeBirth -lt $collectorNative -and !$childHandle.HasExited -and
+        ($childHandle.ProcessName+'.exe') -ieq [string]$item.Name) {
+        $heldCollectorReferences+=@{candidate=$candidate;handle=$childHandle;birth=$nativeBirth;name=[string]$item.Name};
+      }
     }
   }
   # Evidence only, from this same complete CIM array. Never query/open a parent
@@ -747,6 +757,13 @@ try {
     $forensics=@{scope='READ_ONLY_SAME_CIM_SNAPSHOT_NOT_OWNERSHIP_AUTHORITY';candidateCount=$historicalCandidates.Count;
       records=@($records);recordsTruncated=($historicalCandidates.Count -gt 16);ownershipGranted=$false;terminationAuthorized=$false};
   };
+  foreach($reference in $heldCollectorReferences){
+    try {
+      $reference.candidate.sameHandleLiveAtBothBoundaries=(!$reference.handle.HasExited);
+      $reference.candidate.nativeIdentityMatchesAtBothBoundaries=($reference.handle.StartTime.ToUniversalTime().ToFileTimeUtc() -eq $reference.birth -and
+        ($reference.handle.ProcessName+'.exe') -ieq $reference.name);
+    } catch {$reference.candidate.sameHandleLiveAtBothBoundaries=$false;$reference.candidate.nativeIdentityMatchesAtBothBoundaries=$false};
+  }
   $queryEnded=[DateTime]::UtcNow;
   $collector=@{pid=[int]$self.ProcessId;parentPid=[int]$self.ParentProcessId;name=$self.Name;createdAt=$collectorBirth;
     nativeCreationFileTime=[string]$collectorNative;callerIdentity=@{pid=[int]$wrapper.ProcessId;parentPid=[int]$wrapper.ParentProcessId;name=$wrapper.Name;createdAt=$wrapperBirth};callerNativeCreationFileTime=[string]$wrapperNative;
@@ -795,7 +812,7 @@ try {
   }
   // Exclusions never extend captured identities or termination authority.
   // Preserve the complete pre-exclusion list and every identity proof.
-  const excluded = [], excludedCollector = [], unknown = [], excludedReusedParent = [];
+  const excluded = [], excludedCollector = [], unknown = [], excludedReusedParent = [], excludedHistoricalCollector = [];
   for (const row of snapshot.unknownProcesses) {
     const candidates = snapshot.diagnosticCollectorCandidates.filter(candidate => candidate.pid === row.pid && candidate.createdAt === row.createdAt);
     const candidate = candidates.length === 1 ? candidates[0] : undefined;
@@ -814,6 +831,17 @@ try {
     // incarnation. An unproved current-collector child cannot use that shortcut.
     const parents = identities.filter(parent => parent.pid === row.parentPid);
     const namedScope = typeof row.name !== "string" || /^(?:node|chrome|chromium|headless_shell|chrome-headless-shell|electron|VERIDIA)\.exe$/iu.test(row.name);
+    if (!namedScope && row.parentPid === collector.pid && row.scopeReason === "DIAGNOSTIC_COLLECTOR_DIRECT_CHILD_CANDIDATE" &&
+      canonicalBirth(row) && candidate?.parentPid === row.parentPid && candidate.name === row.name &&
+      candidate.scopeKnownNonProjectProfile === true && candidate.nativeBirthVerified === true && candidate.sameSnapshotUniqueRow === true &&
+      candidate.sameHandleLiveAtBothBoundaries === true && candidate.nativeIdentityMatchesAtBothBoundaries === true &&
+      childNative !== null && childNative / 10n === cimFileTime(row) / 10n && childNative < collectorNative) {
+      excludedHistoricalCollector.push({ ...row, exclusion: "CHILD_NATIVE_BIRTH_PRECEDES_CURRENT_COLLECTOR_INCARNATION",
+        collectorIdentity: collector, nativeCreationFileTime: candidate.nativeCreationFileTime,
+        timeOrderingAssumption: "UTC_PROCESS_CREATION_ORDER_SAME_AS_EXISTING_CHILD_BEFORE_PARENT_GUARD",
+        ownershipGranted: false, terminationAuthorized: false });
+      continue;
+    }
     if (row.parentPid !== collector.pid && row.scopeReason === "UNVERIFIED_HISTORICAL_PARENT_CANDIDATE" && !namedScope && canonicalBirth(row) && parents.length > 0 &&
       parents.every(parent => canonicalBirth(parent) && row.createdAt < parent.createdAt)) {
       excluded.push({ ...row, exclusion: "CHILD_BIRTH_PRECEDES_ALL_CAPTURED_PARENT_INCARNATIONS",
@@ -955,6 +983,7 @@ try {
   return { ...snapshotWithoutRawParentEvidence, rawUnknownProcesses: [...snapshot.unknownProcesses], unknownProcesses: unknown,
     historicalParentFailureDiagnostics,
     excludedHistoricalParentCandidates: excluded, excludedDiagnosticCollectorCandidates: excludedCollector,
+    excludedHistoricalCollectorParentCandidates: excludedHistoricalCollector,
     excludedReusedHistoricalParentCandidates: excludedReusedParent,
     diagnosticCollectorObservation: excludedCollector.length > 0 ? "OBSERVED" : "NOT_OBSERVED" };
 }

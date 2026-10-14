@@ -724,6 +724,55 @@ describe("E2E server infrastructure", () => {
     expect(script).not.toMatch(/\.Kill\(|taskkill|EnvironmentVariables/);
   });
 
+  it("a held older foreign birth cannot be a child of the fresh reused collector PID; raw history and no authority remain", () => {
+    const fixture = scopedCollectorFixture();
+    Object.assign(fixture.row, { name: "external-helper.exe", createdAt: "2026-09-29T07:02:08.6380030Z" });
+    Object.assign(fixture.candidate, { name: fixture.row.name, createdAt: fixture.row.createdAt,
+      nativeCreationFileTime: fixtureFileTime(fixture.row.createdAt), sameSnapshotUniqueRow: true,
+      sameHandleLiveAtBothBoundaries: true, nativeIdentityMatchesAtBothBoundaries: true });
+    const { result, execute } = captureCollectorFixture(fixture);
+    expect(result.unknownProcesses).toEqual([]);
+    expect(result.ownedProcesses).toEqual([]);
+    expect(result.rawUnknownProcesses).toEqual([fixture.row]);
+    expect(result.excludedHistoricalCollectorParentCandidates).toEqual([expect.objectContaining({ ...fixture.row,
+      exclusion: "CHILD_NATIVE_BIRTH_PRECEDES_CURRENT_COLLECTOR_INCARNATION", nativeCreationFileTime: fixture.candidate.nativeCreationFileTime,
+      collectorIdentity: fixture.snapshot.diagnosticCollector, ownershipGranted: false, terminationAuthorized: false })]);
+    expect(execute.mock.calls[0][1][3]).not.toMatch(/\.Kill\(|taskkill/u);
+  });
+
+  it.each(["missing-native", "native-mismatch", "missing-scope", "same-birth", "newer-birth", "not-live", "identity-changed",
+    "name-mismatch", "parent-mismatch", "ambiguous-row", "duplicate-proof", "project", "listener", "lineage", "named-process"])
+    ("keeps collector historical reference UNKNOWN when %s cannot establish the exact narrow non-project birth proof", variant => {
+      const fixture = scopedCollectorFixture();
+      Object.assign(fixture.row, { name: "external-helper.exe", createdAt: "2026-09-29T07:02:08.6380030Z" });
+      Object.assign(fixture.candidate, { name: fixture.row.name, createdAt: fixture.row.createdAt,
+        nativeCreationFileTime: fixtureFileTime(fixture.row.createdAt), sameSnapshotUniqueRow: true,
+        sameHandleLiveAtBothBoundaries: true, nativeIdentityMatchesAtBothBoundaries: true });
+      if (variant === "missing-native") fixture.candidate.nativeCreationFileTime = null;
+      if (variant === "native-mismatch") fixture.candidate.nativeCreationFileTime = fixtureFileTime("2026-09-29T07:02:08.6380040Z");
+      if (variant === "missing-scope") fixture.candidate.scopeKnownNonProjectProfile = false;
+      if (variant === "same-birth" || variant === "newer-birth") {
+        const birth = variant === "same-birth" ? fixture.snapshot.diagnosticCollector.createdAt : "2026-10-01T00:00:02.0000000Z";
+        Object.assign(fixture.row, { createdAt: birth });
+        Object.assign(fixture.candidate, { createdAt: birth, nativeCreationFileTime: fixtureFileTime(birth) });
+      }
+      if (variant === "not-live") Object.assign(fixture.candidate, { sameHandleLiveAtBothBoundaries: false });
+      if (variant === "identity-changed") Object.assign(fixture.candidate, { nativeIdentityMatchesAtBothBoundaries: false });
+      if (variant === "name-mismatch") fixture.candidate.name = "another-helper.exe";
+      if (variant === "parent-mismatch") fixture.candidate.parentPid += 1;
+      if (variant === "ambiguous-row") Object.assign(fixture.candidate, { sameSnapshotUniqueRow: false });
+      if (variant === "duplicate-proof") fixture.snapshot.diagnosticCollectorCandidates.push({ ...fixture.candidate });
+      if (variant === "project") fixture.row.scopeReason = "PROJECT_OR_RUN_PROFILE_MATCH";
+      if (variant === "listener") fixture.row.scopeReason = "RUN_PORT_LISTENER";
+      if (variant === "lineage") fixture.row.scopeReason = "CURRENT_CAPTURED_ANCESTRY_MATCH";
+      if (variant === "named-process") { fixture.row.name = "node.exe"; fixture.candidate.name = fixture.row.name; }
+      const { result } = captureCollectorFixture(fixture);
+      expect(result.unknownProcesses).toEqual([fixture.row]);
+      expect(result.rawUnknownProcesses).toEqual([fixture.row]);
+      expect(result.ownedProcesses).toEqual([]);
+      expect(result.excludedHistoricalCollectorParentCandidates).toEqual([]);
+    });
+
   it.each(["present", "missing", "malformed", "truncated"])("records %s historical-parent evidence without reclassifying a newer unknown child", kind => {
     const fixture = historicalParentEvidenceFixture(kind === "truncated" ? 17 : 1, kind === "missing" ? [] : undefined);
     if (kind === "malformed") fixture.snapshot.historicalParentObservations.records[0].candidate.parentPid = 999;

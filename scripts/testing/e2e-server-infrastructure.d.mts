@@ -68,6 +68,7 @@ export function validRuntimeObservationQueryDeadline(sentMs: number, deadlineMs:
 export interface DiagnosticCollectorCandidate extends Omit<RuntimeProcess, "createdAt"> {
   createdAt: string | null;
   nativeCreationFileTime: string | null; nativeBirthVerified: boolean; scopeKnownNonProjectProfile: boolean;
+  sameSnapshotUniqueRow?: boolean; sameHandleLiveAtBothBoundaries?: boolean; nativeIdentityMatchesAtBothBoundaries?: boolean;
 }
 export interface HistoricalParentDiagnosticIdentity {
   pid: number; parentPid: number; name: string; createdAt: string | null; nativeBirthStamp: string | null;
@@ -108,6 +109,10 @@ export function captureWindowsScopedResiduals(input: { projectRoot: string; prof
     ownershipGranted: false; terminationAuthorized: false })[];
   excludedDiagnosticCollectorCandidates: (UnknownRuntimeProcess & { exclusion: "DIAGNOSTIC_COLLECTOR_DIRECT_CHILD_OBSERVATION_ONLY";
     collectorIdentity: DiagnosticCollectorIdentity; nativeCreationFileTime: string; ownershipGranted: false; terminationAuthorized: false })[];
+  excludedHistoricalCollectorParentCandidates: (UnknownRuntimeProcess & { exclusion: "CHILD_NATIVE_BIRTH_PRECEDES_CURRENT_COLLECTOR_INCARNATION";
+    collectorIdentity: DiagnosticCollectorIdentity; nativeCreationFileTime: string;
+    timeOrderingAssumption: "UTC_PROCESS_CREATION_ORDER_SAME_AS_EXISTING_CHILD_BEFORE_PARENT_GUARD";
+    ownershipGranted: false; terminationAuthorized: false })[];
   excludedHistoricalParentCandidates: (UnknownRuntimeProcess & { exclusion: "CHILD_BIRTH_PRECEDES_ALL_CAPTURED_PARENT_INCARNATIONS";
     capturedParentIdentities: Pick<RuntimeProcess, "pid" | "parentPid" | "createdAt">[]; ownershipGranted: false; terminationAuthorized: false })[];
   opaqueUnscopedCandidateCount: number; wrapperIdentityVerified: true; scope: string; scopeLimitations: string[];
