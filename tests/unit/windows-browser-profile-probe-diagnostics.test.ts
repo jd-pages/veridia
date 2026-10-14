@@ -136,6 +136,25 @@ it("consumes complete stages before bounding a large delayed stderr chunk", asyn
   child.emit("close", 1);
 });
 
+it("native stage markers keep immediate newline delivery without a redundant per-row flush", async () => {
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const script = Buffer.from(fixture.spawn.mock.calls[0][1].at(-1), "base64").toString("utf16le").replace(/\r\n/gu, "\n");
+  const stage = script.match(/function Set-ProbeStage\(\[string\]\$value\) \{([\s\S]*?)\n\}/u)?.[1];
+  expect(stage).toBeDefined();
+  expect(stage).toContain("$script:phase=$value");
+  expect(stage).toContain("[Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_STAGE='");
+  expect(stage).toContain("$probeClock.ElapsedMilliseconds");
+  expect(stage).not.toContain("[Console]::Error.Flush()");
+  for (const phase of ["WMI_GET_ENTER", "WMI_MOVE_ENTER", "NATIVE_BIRTH_VALIDATE", "VALIDATED_TERMINATION", "RESULT_WRITTEN"]) {
+    expect(script).toContain(`Set-ProbeStage '${phase}'`);
+  }
+  expect(script).toContain("$options.Timeout = [TimeSpan]::FromMilliseconds(2000)");
+  child.stdout.emit("data", Buffer.from("[]"));
+  child.emit("close", 0);
+  await expect(pending).resolves.toEqual([]);
+});
+
 it("direct WMI census retains exact fields, disposable query resources and all-before-kill admission", async () => {
   const child = childFixture();
   const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");

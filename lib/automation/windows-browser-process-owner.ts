@@ -175,7 +175,8 @@ ${process.env.VERIDIA_E2E === "true" ? "[Console]::Error.WriteLine('VERIDIA_PROF
 function Set-ProbeStage([string]$value) {
   $script:phase=$value;
   [Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_STAGE='+$value+':'+$probeClock.ElapsedMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture));
-  [Console]::Error.Flush()
+  # Console.Error WriteLine delivers this newline before a blocked native call.
+  # Do not add a second synchronous Flush for every per-row stage marker.
 }
 $phase='UTILITY_MODULE_IMPORT'; $owned=@(); $handles=@(); $boundBirths=@{}; try {
 # Resolve only the required Windows built-in module. Do not hide cold command
