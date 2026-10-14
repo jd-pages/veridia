@@ -458,29 +458,60 @@ export function exportCiMachineEvidence({ root = process.cwd(), mode, context: i
     index.issues.push("FORMAL_BUILD_LOCK_DIAGNOSTICS_NOT_EXECUTED_OR_UNMEASURED");
   }
   if (verification.gates.productionBuild === "PASSED") {
+    const bindingDiagnostic = { stage: "INVOCATION", mismatchedFields: [], receiptModifiedMs: null,
+      declaredFinishedMs: null, verificationModifiedMs: number(upperBound),
+      rawReceiptSha256Available: hash(original?.value?.formalNextPreparation?.receiptSha256, 64) !== null,
+      rawReceiptSha256MatchesObserved: null,
+      observedReceiptSha256: null, measuredReceiptSha256: null };
     try {
       const raw = original?.value?.formalNextPreparation;
       if (!windowAvailable || typeof raw?.invocationId !== "string" || !/^[A-Za-z0-9_-]+$/u.test(raw.invocationId)) {
         throw new Error("EXACT_PREPARE_INVOCATION_UNAVAILABLE");
       }
       const relative = `.playwright/typegen-lifecycle/${raw.invocationId}/receipt.json`;
+      bindingDiagnostic.stage = "OWNED_RECEIPT_READ";
       const receipt = readOwnedJson(root, relative);
+      bindingDiagnostic.receiptModifiedMs = number(receipt.source.modifiedMs);
+      bindingDiagnostic.observedReceiptSha256 = receipt.source.sha256;
+      bindingDiagnostic.rawReceiptSha256MatchesObserved = raw.receiptSha256 === receipt.source.sha256;
       const marker = `VERIDIA_FORMAL_NEXT_PREPARE=${JSON.stringify({ invocationId: raw.invocationId,
         receiptPath: path.resolve(root, relative), status: raw.status, execution: raw.execution })}`;
+      bindingDiagnostic.stage = "FORMAL_READER_VALIDATION";
       const measured = readFormalNextPrepareEvidence(marker, { root, head: context.sha,
         sourceFingerprint: verification.sourceFingerprint, startedAt: index.verificationWindow.startedAt,
         now: original.source.modifiedAt });
+      bindingDiagnostic.declaredFinishedMs = number(Date.parse(measured.finishedAt));
+      bindingDiagnostic.measuredReceiptSha256 = measured.receiptSha256;
       const boundFields = ["status", "invocationId", "head", "sourceFingerprint", "execution", "receiptSha256",
         "patchedReporterSha256", "nativeMeasurement", "nativeScope", "capturedIdentityCount", "remainingCapturedIdentityCount"];
-      if (boundFields.some(key => !Object.hasOwn(raw, key) || raw[key] !== measured[key]) ||
-        measured.receiptSha256 !== receipt.source.sha256 ||
-        !inside(receipt.source.modifiedMs, Date.parse(measured.finishedAt), upperBound)) {
-        throw new Error("PREPARE_RECEIPT_BYTES_OR_RAW_MEASUREMENT_UNBOUND");
-      }
+      bindingDiagnostic.stage = "RAW_FIELD_BINDING";
+      bindingDiagnostic.mismatchedFields = boundFields.filter(key => !Object.hasOwn(raw, key) || raw[key] !== measured[key]);
+      if (bindingDiagnostic.mismatchedFields.length) throw new Error("PREPARE_RAW_FIELDS_UNBOUND");
+      bindingDiagnostic.stage = "RECEIPT_BYTES_BINDING";
+      if (measured.receiptSha256 !== receipt.source.sha256) throw new Error("PREPARE_RECEIPT_BYTES_UNBOUND");
+      bindingDiagnostic.stage = "RECEIPT_MTIME_WINDOW";
+      if (!inside(receipt.source.modifiedMs, Date.parse(measured.finishedAt), upperBound)) throw new Error("PREPARE_RECEIPT_MTIME_UNBOUND");
       // Retain only the validated whitelist, never arbitrary receipt fields.
       save("formal-next-prepare.json", projectVerificationEvidence({ formalNextPreparation: measured }, secrets).formalNextPreparation, receipt.source);
-    } catch {
+    } catch (error) {
       index.issues.push("FORMAL_PREPARE_UNIQUE_RECEIPT_UNAVAILABLE_OR_UNBOUND");
+      // Diagnosis only: preserve the original fail-closed issue and emit no
+      // native stderr, path, raw receipt, exception message or stack. Each
+      // comparison is unchanged; these bounded fields do not grant admission.
+      const knownCodes = ["EXACT_PREPARE_INVOCATION_UNAVAILABLE", "REPORT_LINK_NOT_ALLOWED", "REPORT_NOT_SINGLE_OWNED_REGULAR_FILE",
+        "FORMAL_NEXT_PREPARE_EXACT_INVOCATION_UNAVAILABLE", "FORMAL_NEXT_PREPARE_MARKER_INVALID", "FORMAL_NEXT_PREPARE_RECEIPT_PATH_MISMATCH",
+        "FORMAL_NEXT_PREPARE_RECEIPT_LINK_NOT_ALLOWED", "FORMAL_NEXT_PREPARE_RECEIPT_NOT_SINGLE_REGULAR_FILE",
+        "FORMAL_NEXT_PREPARE_MARKER_RECEIPT_MISMATCH", "FORMAL_NEXT_PREPARE_CLI_CHANGED_AFTER_EXECUTION",
+        "FORMAL_NEXT_PREPARE_RECEIPT_IDENTITY_OR_WINDOW_MISMATCH", "FORMAL_NEXT_PREPARE_TYPEGEN_RECEIPT_UNAVAILABLE",
+        "FORMAL_NEXT_PREPARE_SKIP_MUST_NOT_FABRICATE_NATIVE_ZERO", "FORMAL_NEXT_PREPARE_EXECUTED_NATIVE_FENCE_INVALID",
+        "FORMAL_NEXT_PREPARE_EXECUTION_UNMEASURED", "PREPARE_RAW_FIELDS_UNBOUND", "PREPARE_RECEIPT_BYTES_UNBOUND", "PREPARE_RECEIPT_MTIME_UNBOUND"];
+      try {
+        save("formal-next-prepare-binding-failure.json", { purpose: "FORMAL_PREPARE_BINDING_FAILURE_DIAGNOSTIC",
+          acceptanceCredential: false, ...bindingDiagnostic,
+          failureCode: knownCodes.includes(error?.message) ? error.message : "UNRECOGNIZED_FAILURE",
+          ioCode: ["ENOENT", "EACCES", "EPERM", "ELOOP", "EINVAL", "EIO"].includes(error?.code) ? error.code : null,
+          exceptionKind: ["Error", "SyntaxError", "TypeError", "RangeError"].includes(error?.name) ? error.name : "OTHER" }, null);
+      } catch { index.issues.push("FORMAL_PREPARE_FAILURE_DIAGNOSTIC_WRITE_FAILED"); }
     }
   }
   if (verification.gates.productionBuild === "PASSED" && (preparation.status !== "PASSED" || preparation.head !== context?.sha ||

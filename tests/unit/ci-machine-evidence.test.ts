@@ -460,7 +460,48 @@ describe("CI machine evidence retention", () => {
       const result = exportEvidence(root);
       expect(result.status).toBe("NOT_RUN");
       expect(result.index.issues).toContain("FORMAL_PREPARE_UNIQUE_RECEIPT_UNAVAILABLE_OR_UNBOUND");
+      const diagnostic = JSON.parse(fs.readFileSync(path.join(result.outputDirectory, "formal-next-prepare-binding-failure.json"), "utf8")).evidence;
+      expect(diagnostic.acceptanceCredential).toBe(false);
+      expect(diagnostic.stage).toBe(change === "missing" || change === "hardlink" ? "OWNED_RECEIPT_READ" : "RAW_FIELD_BINDING");
     }
+  });
+  it("retains the actual mtime comparison while rejecting a receipt one millisecond before declared finish", () => {
+    const root = sourceRoot(); completeSources(root);
+    const receiptPath = path.join(root, ".playwright/typegen-lifecycle/fixture-owned-prepare/receipt.json");
+    const modified = new Date("2026-09-30T10:00:08.199Z"); fs.utimesSync(receiptPath, modified, modified);
+    const actualModifiedMs = fs.statSync(receiptPath).mtimeMs;
+    const result = exportEvidence(root);
+    expect(result.status).toBe("NOT_RUN");
+    expect(result.index.issues).toContain("FORMAL_PREPARE_UNIQUE_RECEIPT_UNAVAILABLE_OR_UNBOUND");
+    const diagnostic = JSON.parse(fs.readFileSync(path.join(result.outputDirectory, "formal-next-prepare-binding-failure.json"), "utf8")).evidence;
+    expect(diagnostic).toMatchObject({ acceptanceCredential: false, stage: "RECEIPT_MTIME_WINDOW", failureCode: "PREPARE_RECEIPT_MTIME_UNBOUND",
+      mismatchedFields: [], receiptModifiedMs: actualModifiedMs, declaredFinishedMs: Date.parse("2026-09-30T10:00:08.200Z") });
+    expect(diagnostic.receiptModifiedMs).toBeLessThan(diagnostic.declaredFinishedMs);
+    expect(result.index.files.some(file => file.path === "formal-next-prepare.json")).toBe(false);
+  });
+  it("never retains raw malformed receipt text, exception message or path in binding diagnostics", () => {
+    const root = sourceRoot(); completeSources(root);
+    const receiptPath = path.join(root, ".playwright/typegen-lifecycle/fixture-owned-prepare/receipt.json");
+    fs.writeFileSync(receiptPath, "unquoted-private-receipt-token");
+    const result = exportEvidence(root);
+    expect(result.status).toBe("NOT_RUN");
+    const bytes = fs.readFileSync(path.join(result.outputDirectory, "formal-next-prepare-binding-failure.json"), "utf8");
+    expect(JSON.parse(bytes).evidence).toMatchObject({ stage: "OWNED_RECEIPT_READ", exceptionKind: "SyntaxError", failureCode: "UNRECOGNIZED_FAILURE", acceptanceCredential: false });
+    expect(bytes).not.toContain("unquoted-private-receipt-token");
+    expect(bytes).not.toContain(root);
+    expect(bytes).not.toContain("stack");
+    // Even a syntactically valid hex token in an untrusted claimed hash is
+    // not a safe hash receipt. Diagnostics retain its comparison, not its value.
+    const hashRoot = sourceRoot(); completeSources(hashRoot);
+    const privateHex = "5e".repeat(32), verification = verificationFixture(hashRoot);
+    verification.formalNextPreparation.receiptSha256 = privateHex;
+    writeJson(hashRoot, ".playwright/verification-full.json", verification);
+    const hashFailure = exportEvidence(hashRoot);
+    const hashBytes = fs.readFileSync(path.join(hashFailure.outputDirectory, "formal-next-prepare-binding-failure.json"), "utf8");
+    expect(hashFailure.status).toBe("NOT_RUN");
+    expect(hashBytes).not.toContain(privateHex);
+    expect(JSON.parse(hashBytes).evidence).toMatchObject({ stage: "RAW_FIELD_BINDING", rawReceiptSha256Available: true,
+      rawReceiptSha256MatchesObserved: false, mismatchedFields: ["receiptSha256"] });
   });
   it("reports missing and ambiguous/stale completed-run bindings NOT_RUN rather than green", () => {
     const missing = sourceRoot(); expect(exportEvidence(missing).status).toBe("NOT_RUN");
