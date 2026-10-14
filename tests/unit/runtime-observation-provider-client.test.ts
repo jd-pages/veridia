@@ -99,6 +99,38 @@ test("valid READY/query/EOF/native close; compact receipts retain no inventory",
   assert.equal(JSON.stringify(final).includes('"processes"'), false);
 });
 
+for (const ending of ["end", "close"] as const) test(`terminal stderr without LF is flushed once at ${ending}, retaining no private text`, async () => {
+  const f = fixture(); await enter(f);
+  const bytes = Buffer.from("private 私密内容\nVERIDIA_OBSERVER_STARTUP_STAGE=NATIVE_COMPILE_RETURN:25");
+  f.child.stderr.emit("data", bytes.subarray(0, 10));
+  f.child.stderr.emit("data", bytes.subarray(10, 13));
+  f.child.stderr.emit("data", bytes.subarray(13));
+  if (ending === "end") { f.child.stderr.emit("end"); f.child.stderr.emit("end"); }
+  const final = await joined(f);
+  assert.deepEqual(final.receipts.filter(row => row.event === "NATIVE_STARTUP_STAGE").map(row => row.stage), ["NATIVE_COMPILE_RETURN"]);
+  assert.equal(final.stderrBytes, bytes.length);
+  assert.equal(final.providerPid, 200); assert.equal(final.providerNativeBirthStamp, stamp(providerCreatedAt));
+  assert.equal(JSON.stringify(final).includes("private"), false);
+  assert.equal(JSON.stringify(final).includes("私密"), false);
+  assert.equal(f.timers.size, 0); assert.equal(final.status, "PASSED");
+});
+test("unrecognized terminal stderr cannot become an exception frame or change first failure", async () => {
+  const f = fixture(); await enter(f);
+  const query = f.client.query({ deadlineMs: 1000 });
+  f.result({ runtime: null, error: "NATIVE_CENSUS_FAILED_NO_FALLBACK", nativeErrorCategory: "UNKNOWN_NATIVE_OR_PROTOCOL_FAILURE",
+    nativeExceptionDiagnostic: { exceptionType: "System.ComponentModel.Win32Exception", hresult: -2147467259, nativeErrorCode: 5 } });
+  await rejectCode(query, "NATIVE_CENSUS_FAILED_NO_FALLBACK");
+  f.child.stderr.emit("data", Buffer.from("UNKNOWN_PRIVATE_ERROR_WITH_SECRET")); f.child.stderr.emit("end");
+  const stop = f.client.stop(1000); f.finish({ ack: false, code: 1 });
+  await rejectCode(stop, "NATIVE_CENSUS_FAILED_NO_FALLBACK");
+  const final = f.client.snapshot();
+  assert.equal(final.firstFailure, "NATIVE_CENSUS_FAILED_NO_FALLBACK");
+  assert.equal(final.exitCode, 1); assert.equal(final.closeCode, 1);
+  assert.equal(JSON.stringify(final).includes("UNKNOWN_PRIVATE"), false);
+  assert.deepEqual(final.receipts.find(row => row.event === "NATIVE_FAILURE_CATEGORY")?.nativeExceptionDiagnostic,
+    { exceptionType: "System.ComponentModel.Win32Exception", hresult: -2147467259, nativeErrorCode: 5 });
+  assert.equal(f.timers.size, 0);
+});
 test("fixed startup stages survive pipe fragmentation but cannot authorize READY or leak stderr", async () => {
   const f = fixture();
   f.child.stderr.emit("data", Buffer.from("private token\nVERIDIA_OBSERVER_STARTUP_STAGE=SCRIPT_ENTERED:0\nVERIDIA_OBSERVER_STARTUP_STAGE=NATIVE_COMPILE_EN"));
@@ -292,6 +324,34 @@ test("safe SPI primary and handle-release secondary retained without replacing f
   const final = f.client.snapshot(); assert.equal(final.firstFailure, "NATIVE_CENSUS_FAILED_NO_FALLBACK");
   assert.equal(final.receipts.find(row => row.event === "NATIVE_FAILURE_CATEGORY")?.category, "SPI_SELECTED_SNAPSHOT_MISMATCH");
   assert.equal(final.receipts.find(row => row.event === "NATIVE_SECONDARY_FAILURE_CATEGORY")?.category, "NATIVE_PROCESS_HANDLE_CLOSE_FAILED");
+});
+test("fixed exception/numeric provenance remains failed and cannot authorize census or native join", async () => {
+  const f = fixture(); await enter(f); const query = f.client.query({ deadlineMs: 1000 });
+  const diagnostic = { exceptionType: "System.OutOfMemoryException", hresult: -2147024882, nativeErrorCode: null };
+  f.result({ runtime: null, error: "NATIVE_CENSUS_FAILED_NO_FALLBACK", nativeErrorCategory: "UNKNOWN_NATIVE_OR_PROTOCOL_FAILURE",
+    nativeExceptionDiagnostic: diagnostic });
+  await rejectCode(query, "NATIVE_CENSUS_FAILED_NO_FALLBACK");
+  assert.deepEqual(f.client.snapshot().receipts.find(row => row.event === "NATIVE_FAILURE_CATEGORY")?.nativeExceptionDiagnostic, diagnostic);
+  const receipt = f.client.snapshot().receipts.find(row => row.event === "NATIVE_FAILURE_CATEGORY");
+  assert.equal(receipt?.providerPid, 200);
+  assert.equal(receipt?.providerNativeBirthStamp, stamp(providerCreatedAt));
+  assert.equal(receipt?.wrapperPid, 100);
+  assert.equal(receipt?.wrapperNativeBirthStamp, stamp(wrapperIdentity.createdAt));
+  assert.equal(f.client.snapshot().status, "FAILED");
+  const stop = f.client.stop(1000); f.finish(); await rejectCode(stop, "NATIVE_CENSUS_FAILED_NO_FALLBACK");
+});
+test("arbitrary exception fields and nonnumeric provenance never enter native receipts", async () => {
+  for (const diagnostic of [
+    { exceptionType: "DO_NOT_RETAIN_PRIVATE_TYPE", hresult: 0, nativeErrorCode: null },
+    { exceptionType: "UNKNOWN", hresult: "DO_NOT_RETAIN_PRIVATE_CODE", nativeErrorCode: null },
+    { exceptionType: "UNKNOWN", hresult: 0, nativeErrorCode: null, path: "DO_NOT_RETAIN_PRIVATE_PATH" },
+  ]) {
+    const f = fixture(); await enter(f); const query = f.client.query({ deadlineMs: 1000 });
+    f.result({ runtime: null, error: "NATIVE_CENSUS_FAILED_NO_FALLBACK", nativeErrorCategory: "UNKNOWN_NATIVE_OR_PROTOCOL_FAILURE",
+      nativeExceptionDiagnostic: diagnostic });
+    await rejectCode(query, "PROVIDER_NATIVE_EXCEPTION_DIAGNOSTIC_INVALID");
+    assert.equal(JSON.stringify(f.client.snapshot()).includes("DO_NOT_RETAIN_PRIVATE"), false);
+  }
 });
 test("arbitrary secondary failure text is rejected and never enters receipts", async () => {
   const f = fixture(); await enter(f); const query = f.client.query({ deadlineMs: 1000 });

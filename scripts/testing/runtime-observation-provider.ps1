@@ -74,6 +74,20 @@ function SafeSecondaryHandleReleaseFailure($record) {
   }
   return $null
 }
+function SafeNativeExceptionDiagnostic($record) {
+  # Fixed exception types and signed numeric provenance only. This is not
+  # a retry/ownership classification and cannot make a failed query succeed.
+  $known=@('System.OutOfMemoryException','System.OverflowException','System.InvalidOperationException',
+    'System.ArgumentException','System.ArgumentOutOfRangeException','System.NullReferenceException',
+    'System.IO.IOException','System.UnauthorizedAccessException','System.ComponentModel.Win32Exception',
+    'System.Management.Automation.MethodInvocationException','System.Reflection.TargetInvocationException')
+  $exception=$record.Exception
+  for($depth=0;$depth -lt 4 -and $null -ne $exception.InnerException;$depth++) { $exception=$exception.InnerException }
+  $type=$exception.GetType().FullName
+  if($known -cnotcontains $type){$type='UNKNOWN'}
+  $native=$null;if($exception -is [ComponentModel.Win32Exception]){$native=[int]$exception.NativeErrorCode}
+  return @{exceptionType=$type;hresult=[int]$exception.HResult;nativeErrorCode=$native}
+}
 function SafeBirthGuardFailure($record) {
   # Exact numeric/string provenance only; no arbitrary exception Data, names,
   # paths, commands or machine inventory. Invalid evidence is not trusted.
@@ -134,6 +148,7 @@ try {
     try { $frame.runtime=[VeridiaWmiFreeRuntime]::Capture($Port,$command.remainingMs);$frame.providerElapsedMs=$queryClock.Elapsed.TotalMilliseconds }
     catch {
       $frame.nativeErrorCategory=SafeFailureCategory $_;$frame.nativeSecondaryErrorCategory=SafeSecondaryHandleReleaseFailure $_
+      $frame.nativeExceptionDiagnostic=SafeNativeExceptionDiagnostic $_
       if($frame.nativeErrorCategory -ceq 'SPI_BIRTH_OUTSIDE_CAPTURE_UTC_BOUND') { $frame.birthGuardFailure=SafeBirthGuardFailure $_ }
       $frame.error='NATIVE_CENSUS_FAILED_NO_FALLBACK';$frame.providerElapsedMs=$queryClock.Elapsed.TotalMilliseconds;Emit $frame;exit 1
     }
@@ -144,6 +159,6 @@ try {
   $eof=Identity 'EOF_ACK';$eof.sequence=$sequence;$eof.eofObserved=$true;$eof.providerElapsedMs=$providerClock.Elapsed.TotalMilliseconds;Emit $eof
   exit 0
 } catch {
-  $failure=Identity 'FAILED';$failure.sequence=$sequence;$failure.error='PROVIDER_SETUP_OR_PROTOCOL_FAILED';$failure.nativeErrorCategory=SafeFailureCategory $_;$failure.nativeSecondaryErrorCategory=SafeSecondaryHandleReleaseFailure $_;Emit $failure
+  $failure=Identity 'FAILED';$failure.sequence=$sequence;$failure.error='PROVIDER_SETUP_OR_PROTOCOL_FAILED';$failure.nativeErrorCategory=SafeFailureCategory $_;$failure.nativeSecondaryErrorCategory=SafeSecondaryHandleReleaseFailure $_;$failure.nativeExceptionDiagnostic=SafeNativeExceptionDiagnostic $_;Emit $failure
   exit 1
 }

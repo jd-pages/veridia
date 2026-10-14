@@ -31,10 +31,12 @@ import { readPlaywrightCaseEvidence, summarizePlaywrightCaseEvidence } from "../
 import { enforcePostE2eProcessQuiescence } from "../../scripts/testing/post-e2e-process-quiescence.mjs";
 import { captureInitialOwnedRoot, E2eInitialIdentityError } from "../../scripts/testing/e2e-startup-identity.mjs";
 import { installApiConnectionClose } from "../../scripts/testing/e2e-api-connection-close.cjs";
+import { captureCollectorPrimitive } from "../../scripts/testing/collector-primitive-fixture.mjs";
 
 const processRow = (pid: number, parentPid: number, createdAt = "2026-09-30T12:00:00.1234560Z") => ({
   pid, parentPid, createdAt, name: "node.exe",
 });
+
 
 describe("isolated API-only connection policy", () => {
   it("closes exact owned API requests, not browser assets, unrelated ports or external hosts", () => {
@@ -1310,11 +1312,13 @@ describe("E2E server infrastructure", () => {
     expect(JSON.stringify(observed)).not.toMatch(/fixture-forward|fixture-backward|CommandLine|unit-profile/);
   });
 
-  it("records actual collector birth/direct caller proof and reports a real conhost observation or NOT_OBSERVED without inferring history", async () => {
-    if (process.platform !== "win32") { await assertUnsupportedNativeMeasurement(); return; }
-    const wrapper = captureWindowsRuntime(3100).processes.find(item => item.pid === process.pid);
+  it("validates collector birth/direct caller proof with deterministic transport without inferring native history", () => {
+    const fixture = scopedCollectorFixture(processRow(process.pid, process.ppid));
+    const execute = vi.fn()
+      .mockReturnValueOnce({ status: 0, pid: 800, stdout: JSON.stringify(fixture.wrapper) })
+      .mockReturnValueOnce({ status: 0, pid: fixture.snapshot.diagnosticCollector.pid, stdout: JSON.stringify(fixture.snapshot) });
+    const { wrapper, observed, timings } = captureCollectorPrimitive({ execute, now: () => 0 });
     expect(wrapper).toBeDefined();
-    const observed = captureWindowsScopedResiduals({ projectRoot: path.resolve("."), profilePaths: [], identities: [], wrapperIdentity: wrapper! });
     expect(observed.diagnosticCollector).toMatchObject({ parentPid: process.pid, identityVerified: true, directCallerVerified: true,
       callerIdentity: { pid: process.pid, createdAt: wrapper!.createdAt }, ownershipGranted: false, terminationAuthorized: false });
     expect(observed.diagnosticCollector.pid).not.toBe(process.pid);
@@ -1325,8 +1329,31 @@ describe("E2E server infrastructure", () => {
       expect(observed.rawUnknownProcesses).toContainEqual(expect.objectContaining({ pid: row.pid, createdAt: row.createdAt }));
       expect(observed.ownedProcesses.some(owned => owned.pid === row.pid)).toBe(false);
     }
-    process.stdout.write(`COLLECTOR_PRIMITIVE=${JSON.stringify({ status: observed.diagnosticCollectorObservation,
-      collector: observed.diagnosticCollector, excluded: observed.excludedDiagnosticCollectorCandidates })}\n`);
+    expect(timings.map(row => row.stage)).toEqual(["CALLER_IDENTITY", "SCOPED_RESIDUALS"]);
+    expect(execute).toHaveBeenCalledTimes(2);
+    for (const [, , options] of execute.mock.calls) expect(options.timeout).toBe(5000);
+  });
+
+  it("collector fixture shares remaining5000ms and records every native-call duration", () => {
+    const fixture = scopedCollectorFixture(processRow(process.pid, process.ppid)); let clock = 0;
+    const records: unknown[] = [];
+    const execute = vi.fn().mockImplementationOnce(() => { clock += 1200; return { status: 0, pid: 800, stdout: JSON.stringify(fixture.wrapper) }; })
+      .mockImplementationOnce(() => { clock += 800; return { status: 0, pid: 888, stdout: JSON.stringify(fixture.snapshot) }; });
+    const result = captureCollectorPrimitive({ execute, now: () => clock, onTiming: row => records.push(row) });
+    expect(execute.mock.calls.map(([, , options]) => options.timeout)).toEqual([5000, 3800]);
+    expect(result.timings.map(row => row.elapsedMs)).toEqual([1200, 800]);
+    expect(records).toEqual(result.timings); expect(result.elapsedMs).toBe(2000);
+  });
+  it("collector fixture rejects over-budget and invalid caller without a second native call", () => {
+    for (const invalid of ["deadline", "caller"]) {
+      let clock = 0; const records: unknown[] = [];
+      const execute = vi.fn(() => { if (invalid === "deadline") clock = 5000;
+        return { status: 0, pid: 800, stdout: JSON.stringify({ ...processRow(process.pid, process.ppid), ...(invalid === "caller" ? { pid: process.pid + 1 } : {}) }) }; });
+      expect(() => captureCollectorPrimitive({ execute, now: () => clock, onTiming: row => records.push(row) }))
+        .toThrow(invalid === "deadline" ? "COLLECTOR_FIXTURE_DEADLINE" : "COLLECTOR_FIXTURE_CALLER_IDENTITY_INVALID");
+      expect(execute).toHaveBeenCalledTimes(1); expect(records).toHaveLength(1);
+    }
+    expect(() => captureCollectorPrimitive({ budgetMs: 5001 })).toThrow("COLLECTOR_FIXTURE_BUDGET_INVALID");
   });
 
   it("actual generated PowerShell rejects a TCP provider permission failure; unsupported platforms cannot claim port0", async () => {

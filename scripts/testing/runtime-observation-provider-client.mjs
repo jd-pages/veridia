@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { TextDecoder } from "node:util";
@@ -39,6 +40,20 @@ const NATIVE_FAILURE_CATEGORIES = new Set([
   "SPI_PRECISE_UTC_EXPORT_UNAVAILABLE", "SPI_PRECISE_UTC_BOUND_INVALID",
 ]);
 export const safeNativeFailureCategory = value => NATIVE_FAILURE_CATEGORIES.has(value) ? value : "UNKNOWN_NATIVE_OR_PROTOCOL_FAILURE";
+const NATIVE_EXCEPTION_TYPES = new Set(["UNKNOWN", "System.OutOfMemoryException", "System.OverflowException",
+  "System.InvalidOperationException", "System.ArgumentException", "System.ArgumentOutOfRangeException",
+  "System.NullReferenceException", "System.IO.IOException", "System.UnauthorizedAccessException",
+  "System.ComponentModel.Win32Exception", "System.Management.Automation.MethodInvocationException",
+  "System.Reflection.TargetInvocationException"]);
+function validateNativeExceptionDiagnostic(value) {
+  if (value === undefined || value === null) return null;
+  const keys = typeof value === "object" && !Array.isArray(value) ? Object.keys(value).sort() : [];
+  const int32 = number => Number.isSafeInteger(number) && number >= -0x80000000 && number <= 0x7fffffff;
+  if (JSON.stringify(keys) !== '["exceptionType","hresult","nativeErrorCode"]' ||
+      !NATIVE_EXCEPTION_TYPES.has(value.exceptionType) || !int32(value.hresult) ||
+      value.nativeErrorCode !== null && !int32(value.nativeErrorCode)) throw new Error("PROVIDER_NATIVE_EXCEPTION_DIAGNOSTIC_INVALID");
+  return { exceptionType: value.exceptionType, hresult: value.hresult, nativeErrorCode: value.nativeErrorCode };
+}
 // Failure provenance only: no process ownership or inferred exit authority.
 function validateBirthGuardFailure(value) {
   const keys = value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value).sort() : [];
@@ -103,6 +118,8 @@ export function createPersistentRuntimeProvider({ runId, observerId, wrapperIden
   let eofSent = false, eofAcknowledged = false, stdoutEnded = false, closeObserved = false;
   let exitObserved = false, exitCode = null, closeCode = null, joined = false;
   let buffer = "", stderrBytes = 0, stderrCarry = "", startupStageCount = 0;
+  const stderrDecoder = new StringDecoder("utf8");
+  let stderrFlushed = false;
   // Fatal byte validation; retain BOM so framing does not silently broaden.
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   let resolveReady, rejectReady, resolveClosed;
@@ -112,10 +129,15 @@ export function createPersistentRuntimeProvider({ runId, observerId, wrapperIden
   const receipt = (event, fields = {}) => receipts.push({ event, atMs: now(), ...fields });
   const nativeFailureReceipt = (message, fields = {}) => {
     const category = safeNativeFailureCategory(message.nativeErrorCategory);
+    const nativeExceptionDiagnostic = validateNativeExceptionDiagnostic(message.nativeExceptionDiagnostic);
     let birthGuardFailure;
     if (category === "SPI_BIRTH_OUTSIDE_CAPTURE_UTC_BOUND") birthGuardFailure = validateBirthGuardFailure(message.birthGuardFailure);
     else if (message.birthGuardFailure !== undefined && message.birthGuardFailure !== null) throw new Error("PROVIDER_BIRTH_GUARD_CATEGORY_INVALID");
-    receipt("NATIVE_FAILURE_CATEGORY", { ...fields, category, ...(birthGuardFailure ? { birthGuardFailure } : {}) });
+    receipt("NATIVE_FAILURE_CATEGORY", { ...fields, category,
+      providerPid: child?.pid ?? null, providerNativeBirthStamp: providerIdentity?.providerNativeBirthStamp ?? null,
+      wrapperPid: wrapperIdentity.pid, wrapperNativeBirthStamp: providerIdentity?.wrapperNativeBirthStamp ?? null,
+      ...(birthGuardFailure ? { birthGuardFailure } : {}),
+      ...(nativeExceptionDiagnostic ? { nativeExceptionDiagnostic } : {}) });
     if (message.nativeSecondaryErrorCategory !== undefined && message.nativeSecondaryErrorCategory !== null) {
       if (message.nativeSecondaryErrorCategory !== "NATIVE_PROCESS_HANDLE_CLOSE_FAILED") throw new Error("PROVIDER_NATIVE_SECONDARY_CATEGORY_INVALID");
       receipt("NATIVE_SECONDARY_FAILURE_CATEGORY", { ...fields, category: message.nativeSecondaryErrorCategory });
@@ -272,11 +294,10 @@ export function createPersistentRuntimeProvider({ runId, observerId, wrapperIden
       } catch { fail("PROVIDER_STDOUT_UTF8_INVALID"); }
       receipt("PROVIDER_STDOUT_END");
     });
-    child.stderr.on("data", chunk => {
-      stderrBytes += chunk.length;
-      if (stderrBytes > 100000) { fail("PROVIDER_STDERR_SIZE_EXCEEDED"); return; }
-      const lines = `${stderrCarry}${String(chunk)}`.split(/\r?\n/u);
+    const consumeStderr = (text, final = false) => {
+      const lines = `${stderrCarry}${text}`.split(/\r?\n/u);
       stderrCarry = (lines.pop() || "").slice(-512);
+      if (final && stderrCarry) { lines.push(stderrCarry); stderrCarry = ""; }
       for (const line of lines) {
         const stage = line.match(/^VERIDIA_OBSERVER_STARTUP_STAGE=(SCRIPT_ENTERED|ARGS_VALIDATED|SOURCE_READ_START|SOURCE_READ_END|UTILITY_MODULE_IMPORT_ENTER|UTILITY_MODULE_IMPORT_RETURN|NATIVE_COMPILE_ENTER|NATIVE_COMPILE_RETURN|PROVIDER_IDENTITY_ENTER|PROVIDER_IDENTITY_RETURN|READY_EMIT_ENTER|READY_EMIT_RETURN):([0-9]+(?:\.[0-9]+)?)$/u);
         const scriptElapsedMs = stage ? Number(stage[2]) : NaN;
@@ -284,7 +305,18 @@ export function createPersistentRuntimeProvider({ runId, observerId, wrapperIden
           startupStageCount++; receipt("NATIVE_STARTUP_STAGE", { stage: stage[1], scriptElapsedMs });
         }
       }
+    };
+    const flushStderr = () => {
+      if (stderrFlushed) return;
+      stderrFlushed = true;
+      consumeStderr(stderrDecoder.end(), true);
+    };
+    child.stderr.on("data", chunk => {
+      stderrBytes += chunk.length;
+      if (stderrBytes > 100000) { fail("PROVIDER_STDERR_SIZE_EXCEEDED"); return; }
+      consumeStderr(stderrDecoder.write(chunk));
     });
+    child.stderr.once("end", flushStderr);
     child.once("exit", (code, signal) => {
       exitObserved = true; exitCode = code;
       // Exit may precede pipe drainage. EOF_ACK is mandatory at close/join,
@@ -293,6 +325,7 @@ export function createPersistentRuntimeProvider({ runId, observerId, wrapperIden
       receipt("PROVIDER_NATIVE_EXIT", { code, signal: signal === null ? null : "NON_NULL" });
     });
     child.once("close", (code, signal) => {
+      flushStderr();
       closeObserved = true; closeCode = code; joined = true;
       if (!exitObserved || exitCode !== code || code !== 0 || signal !== null || !stdoutEnded || !eofAcknowledged || !eofSent || state !== "STOPPING") {
         fail("PROVIDER_NATIVE_JOIN_INVALID");
