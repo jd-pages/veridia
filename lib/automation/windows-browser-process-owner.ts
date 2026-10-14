@@ -1,5 +1,4 @@
-import { spawn, type ChildProcessByStdio } from "node:child_process";
-import type { Readable } from "node:stream";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { recordNativeProfileProbe } from "./recovery-diagnostics";
@@ -158,12 +157,7 @@ public static class VeridiaBrowserArgv {
   }
 }`;
 
-function guardScript(input: {
-  executablePath: string;
-  profilePath: string;
-  terminate?: WindowsBrowserProcessIdentity[];
-}) {
-  const encoded = Buffer.from(JSON.stringify(input), "utf8").toString("base64");
+function guardScript() {
   // Only exact executable/profile matches leave this process. Raw command
   // lines, environment, browser URLs and credentials are never emitted.
   return `[Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_STAGE=SCRIPT_ENTERED:0'); [Console]::Error.Flush();
@@ -185,7 +179,10 @@ ${nativeArgumentParser}
 '@;
 Set-ProbeStage 'PARSER_COMPILED';
 Set-ProbeStage 'REQUEST_PARSE';
-$request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json;
+# Request identities are data, not command text. Their count must not grow the
+# CreateProcess command line or bypass the unchanged native admission checks.
+[Console]::InputEncoding = [Text.UTF8Encoding]::new($false);
+$request = [Console]::In.ReadToEnd() | ConvertFrom-Json;
 $expectedExecutable = [IO.Path]::GetFullPath($request.executablePath);
 $expectedProfile = [IO.Path]::GetFullPath($request.profilePath).TrimEnd('\\');
 $owned = @(); $handles = @();
@@ -283,7 +280,8 @@ export async function captureWindowsBrowserProfileOwners(
 ) {
   const executable = path.win32.resolve(executablePath);
   const profile = path.win32.resolve(profilePath);
-  const script = guardScript({ executablePath: executable, profilePath: profile, terminate });
+  const script = guardScript();
+  const request = JSON.stringify({ executablePath: executable, profilePath: profile, terminate });
   const e2e = process.env.VERIDIA_E2E === "true";
   const probeId = e2e ? randomUUID() : undefined;
   const probeStartedAt = e2e ? new Date().toISOString() : undefined;
@@ -297,8 +295,8 @@ export async function captureWindowsBrowserProfileOwners(
   const output = await new Promise<string>((resolve, reject) => {
     const startedAt = Date.now();
     const args = ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
-    let child: ChildProcessByStdio<null, Readable, Readable>;
-    try { child = spawn("powershell.exe", args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }); }
+    let child: ChildProcessWithoutNullStreams;
+    try { child = spawn("powershell.exe", args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }); }
     catch (error) {
       // This authorization is diagnostic only. Production keeps the original
       // rejection; isolated E2E retains the actual syscall classification.
@@ -353,6 +351,11 @@ export async function captureWindowsBrowserProfileOwners(
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); if (stdout.length > 100_000) { child.kill(); finish(undefined, "NATIVE_PROBE_OUTPUT_LIMIT"); } });
     child.once("error", () => finish(undefined, "NATIVE_PROBE_SPAWN_FAILED"));
     child.once("close", code => finish(code === 0 ? stdout : undefined, "NATIVE_PROBE_EXIT", code));
+    child.stdin.once("error", () => { child.kill(); finish(undefined, "NATIVE_PROBE_INPUT_FAILED"); });
+    // EOF is required by ReadToEnd. Input delivery is covered by the same
+    // timer as process startup, census, validation and result parsing.
+    try { child.stdin.end(request, "utf8"); }
+    catch { child.kill(); finish(undefined, "NATIVE_PROBE_INPUT_FAILED"); }
   });
   let identities: WindowsBrowserProcessIdentity[];
   try { identities = JSON.parse(output.trim()) as WindowsBrowserProcessIdentity[]; }

@@ -11,6 +11,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 function childFixture() {
   const child = Object.assign(new EventEmitter(), {
+    stdin: Object.assign(new EventEmitter(), { end: vi.fn() }),
     stderr: new EventEmitter(), stdout: new EventEmitter(), kill: vi.fn(() => true),
   });
   fixture.spawn.mockReturnValue(child);
@@ -168,4 +169,46 @@ it("module/parser boundary notices cannot extend the deadline or authorize profi
   child.stderr.emit("data", Buffer.from("VERIDIA_PROFILE_PROBE_STAGE=UTILITY_MODULE_IMPORT:10\nVERIDIA_PROFILE_PROBE_STAGE=UTILITY_MODULE_IMPORTED:35\nVERIDIA_PROFILE_PROBE_STAGE=PROFILE_ARGUMENT_PARSED:1105\n"));
   await vi.advanceTimersByTimeAsync(5); await assertion;
   expect(child.kill).toHaveBeenCalledTimes(1); expect(fixture.spawn).toHaveBeenCalledTimes(1); child.emit("close", 1);
+});
+
+it("keeps command text fixed and transfers the full large Unicode identity set through UTF-8 stdin", async () => {
+  const executable = "E:\\测试工具\\chrome.exe";
+  const profile = "E:\\隔离 profile\\小红书";
+  const owners = Array.from({ length: 100 }, (_, index) => ({
+    pid: index + 100, birthStamp: String(134000000000000000n + BigInt(index)),
+    executablePath: executable, profilePath: profile, parentPid: 10, browserProcess: false,
+  }));
+  const small = childFixture();
+  const first = captureWindowsBrowserProfileOwners(executable, profile);
+  const smallArgs = fixture.spawn.mock.calls.at(-1)![1];
+  small.stdout.emit("data", Buffer.from("[]")); small.emit("close", 0);
+  await expect(first).resolves.toEqual([]);
+  const large = childFixture();
+  const second = captureWindowsBrowserProfileOwners(executable, profile, owners);
+  const [, args, options] = fixture.spawn.mock.calls.at(-1)!;
+  expect(args).toEqual(smallArgs);
+  expect(args.join(" ").length).toBeLessThan(30_000);
+  expect(options.stdio).toEqual(["pipe", "pipe", "pipe"]);
+  expect(large.stdin.end).toHaveBeenCalledExactlyOnceWith(JSON.stringify({
+    executablePath: executable, profilePath: profile, terminate: owners,
+  }), "utf8");
+  const script = Buffer.from(args.at(-1), "base64").toString("utf16le");
+  expect(script).toContain("[Console]::In.ReadToEnd() | ConvertFrom-Json");
+  expect(script).toContain("[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)");
+  expect(script).not.toContain(executable);
+  expect(script).not.toContain(profile);
+  expect(script.indexOf("UNVERIFIED_PROFILE_OWNER")).toBeLessThan(script.indexOf("$process.Kill()"));
+  large.stdout.emit("data", Buffer.from("[]")); large.emit("close", 0);
+  await expect(second).resolves.toEqual([]);
+});
+
+it("stdin errors fail closed once without retrying or admitting any owner", async () => {
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: { reason: "NATIVE_PROBE_INPUT_FAILED" } });
+  child.stdin.emit("error", Error("private pipe failure"));
+  await assertion;
+  expect(child.kill).toHaveBeenCalledTimes(1);
+  expect(fixture.spawn).toHaveBeenCalledTimes(1);
+  child.stdout.emit("data", Buffer.from("[]")); child.emit("close", 0);
 });
