@@ -1,11 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { Worker } from "node:worker_threads";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import fs from "node:fs";
 import path from "node:path";
 import observer from "./e2e-server-observer.cjs";
 import { validateNativeRuntimeSnapshot, validateNativeProviderReceipt, validateNativeIdentityFailure } from "./runtime-observation-provider-client.mjs";
+import { collectorJobScopeAssembly, collectorJobScopeSha256 } from "./collector-job-scope-asset.mjs";
+import { validateCollectorJobProof, collectorJobDisprovesParentEdge } from "./collector-job-proof.mjs";
 
 export const { redactE2eDiagnosticText } = observer;
 
@@ -534,11 +536,12 @@ export function captureWindowsScopedResiduals({ projectRoot, profilePaths, ident
     !validBirth(wrapperIdentity) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 15_000) throw new Error("E2E residual scope/物理身份不完整");
   if (typeof identityForensics !== "boolean" || !Array.isArray(ports) || ports.some(port => !Number.isSafeInteger(port) || port < 1 || port > 65535)) throw new Error("E2E forensic scope invalid");
   if (!Array.isArray(portListeners) || portListeners.some(item => !Number.isSafeInteger(item.pid) || item.pid < 1 || !Number.isSafeInteger(item.port) || item.port < 1 || item.port > 65535)) throw new Error("E2E port affinity measurement invalid");
+  if (createHash("sha256").update(Buffer.from(collectorJobScopeAssembly, "base64")).digest("hex") !== collectorJobScopeSha256) throw new Error("E2E collector Job asset hash mismatch");
   const script = `$ErrorActionPreference='Stop';
 $scope=[Console]::In.ReadToEnd() | ConvertFrom-Json;
 $marker=([string]$scope.projectRoot).Replace('/','\\').ToLowerInvariant();
 $expected=@{}; $historicalParentPids=@{}; foreach($identity in $scope.identities){$expected["$($identity.pid):$($identity.createdAt)"]=$true;$historicalParentPids[[string]$identity.pid]=$true};
-$owned=@(); $unknown=@(); $opaque=@(); $historicalReferences=@(); $collectorCandidates=@(); $heldChildren=@(); $heldCollectorReferences=@(); $collectorHandle=$null; $wrapperHandle=$null;
+$owned=@(); $unknown=@(); $opaque=@(); $historicalReferences=@(); $collectorCandidates=@(); $heldChildren=@(); $heldCollectorReferences=@(); $collectorHandle=$null; $wrapperHandle=$null;$collectorJob=$null;
 function RowBirth($item){if($item.CreationDate){$item.CreationDate.ToUniversalTime().ToString('o')}else{$null}};
 function BirthFileTime($birth){[DateTimeOffset]::ParseExact($birth,'yyyy-MM-ddTHH:mm:ss.fffffffZ',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal).UtcDateTime.ToFileTimeUtc()};
 function ProjectProfileAffinity($item){
@@ -570,7 +573,13 @@ try {
   $collectorHandle=[Diagnostics.Process]::GetCurrentProcess();$null=$collectorHandle.Handle;
   $collectorNative=$collectorHandle.StartTime.ToUniversalTime().ToFileTimeUtc();
   $queryStarted=[DateTime]::UtcNow;
+  # Bind the current collector to a private kernel Job before its scope census.
+  # Pre-binding startup children cannot use the older-than-collector exclusion.
+  $null=[Reflection.Assembly]::Load([Convert]::FromBase64String([string]$scope.collectorJobAssembly));
+  $collectorJob=[VeridiaCollectorJobScope]::new();$jobBefore=$collectorJob.Capture();
   $items=@(Get-CimInstance Win32_Process);
+  $nativeInventory=[VeridiaWmiFreeRuntime]::CaptureCollectorBirthObservation([int]$scope.timeoutMs);
+  $nativeRowsByPid=@{};foreach($nr in $nativeInventory.processes){$key=[string]$nr.pid;$nativeRowsByPid[$key]=@($nativeRowsByPid[$key] | Where-Object {$null -ne $_})+@($nr)};
   $processRowsByPid=@{};foreach($processRow in $items){$key=[string]$processRow.ProcessId;$processRowsByPid[$key]=@($processRowsByPid[$key] | Where-Object {$null -ne $_})+@($processRow)};
   $selfRows=@($items | Where-Object {[int]$_.ProcessId -eq $PID});
   $wrapperRows=@($items | Where-Object {[int]$_.ProcessId -eq [int]$scope.wrapperIdentity.pid});
@@ -636,6 +645,8 @@ try {
         nativeBirthVerified=$nativeVerified;scopeKnownNonProjectProfile=($scopeKnown -and !$related);
         sameSnapshotUniqueRow=(@($processRowsByPid[[string]$item.ProcessId]).Count -eq 1);
         sameHandleLiveAtBothBoundaries=$false;nativeIdentityMatchesAtBothBoundaries=$false};
+      $nativeRows=@($nativeRowsByPid[[string]$item.ProcessId]);
+      if($nativeRows.Count -eq 1 -and $nativeRows[0]){$candidate.nativeSnapshotObservation=$nativeRows[0]};
       $collectorCandidates+=$candidate;
       # A numeric PPID can name this fresh collector after PID reuse. Keep
       # UNKNOWN unless the same retained child handle proves an older birth,
@@ -774,6 +785,10 @@ try {
         ($reference.handle.ProcessName+'.exe') -ieq $reference.name);
     } catch {$reference.candidate.sameHandleLiveAtBothBoundaries=$false;$reference.candidate.nativeIdentityMatchesAtBothBoundaries=$false};
   }
+  $jobAfter=$collectorJob.Capture();$collectorJob.Dispose();
+  $nativeCollector=@($nativeRowsByPid[[string]$PID]);if($nativeCollector.Count -ne 1){throw 'COLLECTOR_NATIVE_SNAPSHOT_AMBIGUOUS'};
+  $jobProof=@{schemaVersion=1;before=$jobBefore;after=$jobAfter;jobHandleClosed=$collectorJob.HandleClosed;
+    spiCoverage=$nativeInventory.spiCoverage;nativeCollectorObservation=$nativeCollector[0]};
   $queryEnded=[DateTime]::UtcNow;
   $collector=@{pid=[int]$self.ProcessId;parentPid=[int]$self.ParentProcessId;name=$self.Name;createdAt=$collectorBirth;
     nativeCreationFileTime=[string]$collectorNative;callerIdentity=@{pid=[int]$wrapper.ProcessId;parentPid=[int]$wrapper.ParentProcessId;name=$wrapper.Name;createdAt=$wrapperBirth};callerNativeCreationFileTime=[string]$wrapperNative;
@@ -781,18 +796,19 @@ try {
     queryStartedFileTime=[string]$queryStarted.ToFileTimeUtc();queryEndedFileTime=[string]$queryEnded.ToFileTimeUtc();
     birthPrecision='CIM_MICROSECOND_MATCH_NATIVE_FILETIME_FLOOR10';ownershipGranted=$false;terminationAuthorized=$false};
   @{ownedProcesses=@($owned);unknownProcesses=@($unknown);opaqueUnscopedCandidates=@($opaque);opaqueUnscopedCandidateCount=@($opaque).Count;
-    wrapperIdentityVerified=$true;diagnosticCollector=$collector;diagnosticCollectorCandidates=@($collectorCandidates);historicalParentReuseCandidates=@($historicalReuseProofs);identityForensics=$forensics;historicalParentReferences=@($historicalReferences);
+    wrapperIdentityVerified=$true;diagnosticCollector=$collector;diagnosticCollectorJob=$jobProof;diagnosticCollectorCandidates=@($collectorCandidates);historicalParentReuseCandidates=@($historicalReuseProofs);identityForensics=$forensics;historicalParentReferences=@($historicalReferences);
     historicalParentObservations=@{schemaVersion=2;scope='SAME_CIM_SNAPSHOT_HISTORICAL_PARENT_OBSERVATION_ONLY';candidateLimit=16;
       candidateTotal=$historicalCandidates.Count;candidateTruncated=($historicalCandidates.Count -gt 16);records=@($historicalObservations);
       queryStartedAt=$collector.queryStartedAt;queryEndedAt=$collector.queryEndedAt;ownershipGranted=$false;terminationAuthorized=$false};
     scope='NAMED_PROJECT_OR_RUN_PROFILE_OR_EXACT_CAPTURED_BIRTH_OR_UNVERIFIED_HISTORICAL_PARENT';
     scopeLimitations=@('SAMPLED_NOT_EXHAUSTIVE','OPAQUE_NAMED_CANDIDATES_ARE_DIAGNOSTIC_ONLY_WITHOUT_PROJECT_AFFINITY','HISTORICAL_PARENT_PID_IS_NOT_TERMINATION_AUTHORITY','COLLECTOR_DIRECT_CHILD_EXCLUSION_IS_OBSERVATION_ONLY')} | ConvertTo-Json -Depth 12 -Compress
 } finally {
+  if($collectorJob){$collectorJob.Dispose()};
   foreach($heldChild in $heldChildren){$heldChild.Dispose()};
   if($wrapperHandle){$wrapperHandle.Dispose()};if($collectorHandle){$collectorHandle.Dispose()};
 }`;
   const result = execute("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-    encoding: "utf8", input: JSON.stringify({ projectRoot, profilePaths, identities, wrapperIdentity, identityForensics, ports, portListeners }), windowsHide: true, timeout: timeoutMs,
+    encoding: "utf8", input: JSON.stringify({ projectRoot, profilePaths, identities, wrapperIdentity, identityForensics, ports, portListeners, timeoutMs, collectorJobAssembly: collectorJobScopeAssembly }), windowsHide: true, timeout: timeoutMs,
   });
   if (result.error || result.status !== 0) throw new Error("E2E scoped residual 测量失败；禁止猜测0或终止未知进程");
   const snapshot = JSON.parse(result.stdout.trim());
@@ -822,11 +838,19 @@ try {
   }
   // Exclusions never extend captured identities or termination authority.
   // Preserve the complete pre-exclusion list and every identity proof.
+  const collectorJob = validateCollectorJobProof(snapshot.diagnosticCollectorJob, collector);
+  const excludedKernelJob = [];
   const excluded = [], excludedCollector = [], unknown = [], excludedReusedParent = [], excludedHistoricalCollector = [];
   for (const row of snapshot.unknownProcesses) {
     const candidates = snapshot.diagnosticCollectorCandidates.filter(candidate => candidate.pid === row.pid && candidate.createdAt === row.createdAt);
     const candidate = candidates.length === 1 ? candidates[0] : undefined;
     const childNative = fileTime(candidate?.nativeCreationFileTime);
+    if (candidates.length === 1 && collectorJobDisprovesParentEdge(collectorJob, row, candidate, snapshot.unknownProcesses)) {
+      excludedKernelJob.push({ ...row, exclusion: "KERNEL_JOB_NONMEMBER_NATIVE_BIRTH_PRECEDES_COLLECTOR",
+        nativeSnapshotObservation: candidate.nativeSnapshotObservation, scopeId: collectorJob.before.scopeId,
+        ownershipGranted: false, terminationAuthorized: false });
+      continue;
+    }
     if (typeof row.name === "string" && row.name.toLowerCase() === "conhost.exe" && row.parentPid === collector.pid &&
       ["DIAGNOSTIC_COLLECTOR_DIRECT_CHILD_CANDIDATE", "UNVERIFIED_HISTORICAL_PARENT_CANDIDATE"].includes(row.scopeReason) &&
       canonicalBirth(row) && candidate?.parentPid === row.parentPid && candidate.name === row.name &&
@@ -1019,6 +1043,7 @@ try {
   delete snapshotWithoutRawParentEvidence.historicalParentObservations;
   delete snapshotWithoutRawParentEvidence.historicalParentReuseCandidates;
   return { ...snapshotWithoutRawParentEvidence, rawUnknownProcesses: [...snapshot.unknownProcesses], unknownProcesses: unknown,
+    diagnosticCollectorJob: collectorJob ?? undefined, excludedKernelJobParentCandidates: excludedKernelJob,
     historicalParentFailureDiagnostics,
     excludedHistoricalParentCandidates: excluded, excludedDiagnosticCollectorCandidates: excludedCollector,
     excludedHistoricalCollectorParentCandidates: excludedHistoricalCollector,

@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -31,10 +32,117 @@ import { readPlaywrightCaseEvidence, summarizePlaywrightCaseEvidence } from "../
 import { enforcePostE2eProcessQuiescence } from "../../scripts/testing/post-e2e-process-quiescence.mjs";
 import { captureInitialOwnedRoot, E2eInitialIdentityError } from "../../scripts/testing/e2e-startup-identity.mjs";
 import { installApiConnectionClose } from "../../scripts/testing/e2e-api-connection-close.cjs";
-import { captureCollectorPrimitive } from "../../scripts/testing/collector-primitive-fixture.mjs";
+import { captureCollectorCallerIdentity, captureCollectorPrimitive } from "../../scripts/testing/collector-primitive-fixture.mjs";
 
 const processRow = (pid: number, parentPid: number, createdAt = "2026-09-30T12:00:00.1234560Z") => ({
   pid, parentPid, createdAt, name: "node.exe",
+});
+
+describe("private kernel Job collector scope", () => {
+  function kernelFixture() {
+    const fixture = scopedCollectorFixture();
+    Object.assign(fixture.row, { name: "opaque-fixture.exe", createdAt: "2026-09-29T07:02:08.6380030Z" });
+    Object.assign(fixture.candidate, { name: fixture.row.name, createdAt: fixture.row.createdAt,
+      nativeCreationFileTime: null, nativeBirthVerified: false, scopeKnownNonProjectProfile: false, sameSnapshotUniqueRow: true,
+      sameHandleLiveAtBothBoundaries: false, nativeIdentityMatchesAtBothBoundaries: false });
+    const observation = (row: typeof fixture.row | typeof fixture.snapshot.diagnosticCollector) => ({
+      pid: row.pid, parentPid: row.parentPid, name: row.name, createdAt: row.createdAt,
+      nativeBirthStamp: fixtureFileTime(row.createdAt), workingSetBytes: 0,
+      nativeIdentityStatus: "SNAPSHOT_ONLY_BIRTH_PARENT_NAME_OBSERVATION",
+      parentIdentityProof: "SPI_SNAPSHOT_BIRTH_PARENT_NAME_OBSERVATION_ONLY", liveAtCaptureEnd: null, ownershipAuthority: false,
+    });
+    const native = observation(fixture.row);
+    Object.assign(fixture.candidate, { nativeSnapshotObservation: native });
+    const frame = (start: string, end: string) => ({ schemaVersion: 1, scopeId: "11111111-2222-4333-8444-555555555555",
+      proof: "PRIVATE_KERNEL_JOB_SELF_BOUND_NO_BREAKAWAY", pid: fixture.snapshot.diagnosticCollector.pid,
+      nativeBirthStamp: fixture.snapshot.diagnosticCollector.nativeCreationFileTime,
+      assignedAtFileTime: fixture.snapshot.diagnosticCollector.queryStartedFileTime,
+      queryStartedFileTime: fixtureFileTime(start), queryEndedFileTime: fixtureFileTime(end),
+      priorOuterJobPresent: true, limitFlags: 0, inventoryComplete: true, selfHeldLive: true,
+      selfKernelMembershipVerified: true, memberPids: [fixture.snapshot.diagnosticCollector.pid], ownershipGranted: false, terminationAuthorized: false });
+    const proof = { schemaVersion: 1, jobHandleClosed: true,
+      before: frame("2026-10-01T00:00:01.1000000Z", "2026-10-01T00:00:01.2000000Z"),
+      after: frame("2026-10-01T00:00:02.1000000Z", "2026-10-01T00:00:02.2000000Z"),
+      spiCoverage: { osBuild: 26200, architecture: "AMD64", layoutProfile: "SPI_X64_PREFIX256_THREAD80_CREATE32_IMAGE56_PID80_PARENT88",
+        queryStatus: 0, returnLength: 4096, bufferCapacity: 8388608, inventoryComplete: true,
+        snapshotCompletedUtcFileTime: fixtureFileTime("2026-10-01T00:00:01.5000000Z"), clockSource: "GET_SYSTEM_TIME_PRECISE_AS_FILE_TIME" },
+      nativeCollectorObservation: observation(fixture.snapshot.diagnosticCollector) };
+    Object.assign(fixture.snapshot, { diagnosticCollectorJob: proof });
+    return { fixture, proof, native };
+  }
+  it("disproves only a fully observed stale collector edge by private Job nonmembership, not an opaque-name allowlist or exit proof", () => {
+    const { fixture } = kernelFixture();
+    const { result } = captureCollectorFixture(fixture);
+    expect(result.unknownProcesses).toEqual([]);
+    expect(result.rawUnknownProcesses).toEqual([fixture.row]);
+    expect(result.ownedProcesses).toEqual([]);
+    expect(result.excludedKernelJobParentCandidates).toEqual([expect.objectContaining({ ...fixture.row,
+      exclusion: "KERNEL_JOB_NONMEMBER_NATIVE_BIRTH_PRECEDES_COLLECTOR", ownershipGranted: false, terminationAuthorized: false })]);
+    expect(result.diagnosticCollectorJob).toMatchObject({ status: "PASSED", ownershipGranted: false, terminationAuthorized: false });
+    expect(fixture.candidate.nativeBirthVerified).toBe(false); // Never promoted to held-target proof.
+  });
+  it.each(["missing-native", "native-birth", "native-parent", "native-name", "native-authority", "native-liveness",
+    "missing-birth", "same-birth", "newer-birth", "duplicate-candidate", "duplicate-row", "ambiguous-row", "project", "profile-port", "lineage", "named", "historical-parent"])
+    ("keeps %s candidate UNKNOWN despite a private Job proof", kind => {
+      const { fixture, native } = kernelFixture();
+      if (kind === "missing-native") Object.assign(fixture.candidate, { nativeSnapshotObservation: undefined });
+      if (kind === "native-birth") native.nativeBirthStamp = (BigInt(native.nativeBirthStamp) + 10n).toString();
+      if (kind === "native-parent") native.parentPid++;
+      if (kind === "native-name") native.name = "other.exe";
+      if (kind === "native-authority") native.ownershipAuthority = true;
+      if (kind === "native-liveness") Object.assign(native, { liveAtCaptureEnd: true });
+      if (kind === "missing-birth") Object.assign(fixture.row, { createdAt: null });
+      if (kind === "same-birth" || kind === "newer-birth") {
+        const date = kind === "same-birth" ? fixture.snapshot.diagnosticCollector.createdAt : "2026-10-01T00:00:02.0000000Z";
+        fixture.row.createdAt = fixture.candidate.createdAt = native.createdAt = date;
+        native.nativeBirthStamp = fixtureFileTime(date);
+      }
+      if (kind === "duplicate-candidate") fixture.snapshot.diagnosticCollectorCandidates.push({ ...fixture.candidate });
+      if (kind === "duplicate-row") fixture.snapshot.unknownProcesses.push({ ...fixture.row });
+      if (kind === "ambiguous-row") Object.assign(fixture.candidate, { sameSnapshotUniqueRow: false });
+      if (kind === "project") fixture.row.scopeReason = "PROJECT_OR_RUN_PROFILE_MATCH";
+      if (kind === "profile-port") fixture.row.scopeReason = "RUN_PORT_LISTENER";
+      if (kind === "lineage") fixture.row.scopeReason = "CURRENT_CAPTURED_ANCESTRY_MATCH";
+      if (kind === "historical-parent") fixture.row.scopeReason = "UNVERIFIED_HISTORICAL_PARENT_CANDIDATE";
+      if (kind === "named") fixture.row.name = fixture.candidate.name = native.name = "node.exe";
+      const { result } = captureCollectorFixture(fixture);
+      expect(result.unknownProcesses).toEqual(fixture.snapshot.unknownProcesses);
+      expect(result.excludedKernelJobParentCandidates).toEqual([]);
+      expect(result.ownedProcesses).toEqual([]);
+    });
+  it.each(["job-member", "wrong-job", "wrong-root", "wrong-root-birth", "breakaway", "unheld", "unbound", "unclosed",
+    "partial", "duplicate-pid", "outside-window", "spi-truncated", "spi-clock", "spi-root", "extra-secret"])
+    ("rejects %s kernel proof instead of ignoring an unidentified member", kind => {
+      const { fixture, proof } = kernelFixture();
+      if (kind === "job-member") { proof.before.memberPids.push(fixture.row.pid); proof.after.memberPids.push(fixture.row.pid); }
+      if (kind === "wrong-job") proof.after.scopeId = "22222222-2222-4333-8444-555555555555";
+      if (kind === "wrong-root") proof.before.pid++;
+      if (kind === "wrong-root-birth") proof.after.nativeBirthStamp = (BigInt(proof.after.nativeBirthStamp) + 1n).toString();
+      if (kind === "breakaway") proof.before.limitFlags = 0x800;
+      if (kind === "unheld") proof.after.selfHeldLive = false;
+      if (kind === "unbound") proof.before.selfKernelMembershipVerified = false;
+      if (kind === "unclosed") proof.jobHandleClosed = false;
+      if (kind === "partial") proof.before.inventoryComplete = false;
+      if (kind === "duplicate-pid") proof.before.memberPids.push(proof.before.pid);
+      if (kind === "outside-window") proof.after.queryEndedFileTime = fixtureFileTime("2026-10-01T00:00:04.0000000Z");
+      if (kind === "spi-truncated") proof.spiCoverage.inventoryComplete = false;
+      if (kind === "spi-clock") proof.spiCoverage.snapshotCompletedUtcFileTime = proof.after.queryEndedFileTime;
+      if (kind === "spi-root") proof.nativeCollectorObservation.parentPid++;
+      if (kind === "extra-secret") Object.assign(proof, { secret: "not-permitted" });
+      expect(() => captureCollectorFixture(fixture)).toThrow("E2E_COLLECTOR_KERNEL_JOB_PROOF_INVALID");
+    });
+  it("retains legacy UNKNOWN without inventing kernel proof, and pins the audited sources and immutable assembly", () => {
+    const { fixture } = kernelFixture();
+    delete (fixture.snapshot as unknown as Record<string, unknown>).diagnosticCollectorJob;
+    expect(captureCollectorFixture(fixture).result.unknownProcesses).toEqual([fixture.row]);
+    const asset = fs.readFileSync("scripts/testing/collector-job-scope-asset.mjs", "utf8");
+    const sources = JSON.parse(asset.match(/collectorJobScopeSources = ([\s\S]+?);/u)![1]) as { file: string; sha256: string }[];
+    for (const source of sources) expect(createHash("sha256").update(fs.readFileSync(source.file, "utf8").replaceAll("\r\n", "\n")).digest("hex")).toBe(source.sha256);
+    const assembly = asset.match(/collectorJobScopeAssembly = "([A-Za-z0-9+/=]+)"/u)![1];
+    expect(createHash("sha256").update(Buffer.from(assembly, "base64")).digest("hex")).toBe(asset.match(/collectorJobScopeSha256 = "([a-f0-9]+)"/u)![1]);
+    const native = fs.readFileSync("scripts/testing/collector-job-scope.cs", "utf8");
+    expect(native).not.toMatch(/TerminateProcess|TerminateJobObject|SetInformationJobObject|OpenProcess|AdjustTokenPrivileges|SetSecurityInfo/u);
+  });
 });
 
 
@@ -245,7 +353,7 @@ function wrapperFunctionSource(name: string) {
   return declaration.getText(parsed);
 }
 
-function cleanupFunctionLab(failure?: "profile" | "types" | "restore" | "unknown" | "source" | "observation" | "observer-stop" | "observer-unjoined" | "observer-missing-proof" | "observer-late-success" | "retained-close", stoppedObservation = false, logicalFailure = false) {
+function cleanupFunctionLab(failure?: "profile" | "types" | "restore" | "unknown" | "source" | "observation" | "observer-stop" | "observer-unjoined" | "observer-missing-proof" | "observer-late-success" | "retained-close" | "kernel-job", stoppedObservation = false, logicalFailure = false) {
   const events: string[] = [];
   const output: string[] = [];
   const metadata: Record<string, unknown>[] = [];
@@ -277,7 +385,8 @@ function cleanupFunctionLab(failure?: "profile" | "types" | "restore" | "unknown
     serverProcess: { pid: 20 }, testProcess: { pid: 21 }, warmupProcess: undefined,
     captureOwnedRuntime: () => ({ processes: [], ports: [] }),
     captureWindowsRuntime: () => { events.push("native-fence"); return { processes: [], ports: [] }; },
-    captureWindowsScopedResiduals: () => { events.push("residual-fence"); return { ownedProcesses: [], unknownProcesses: failure === "unknown" ? [processRow(901, 2)] : [] }; },
+    captureWindowsScopedResiduals: () => { events.push("residual-fence"); return { ownedProcesses: [], unknownProcesses: failure === "unknown" ? [processRow(901, 2)] : [],
+      diagnosticCollectorJob: failure === "kernel-job" ? undefined : { status: "PASSED" } }; },
     allCapturedIdentities: () => [identity], waitForOwnedProcessQuiescence, matchingOwnedProcesses,
     closeWarmupBrowser: async () => { events.push("warmup-close"); }, stopOwnedProcess: async (child: { pid: number } | undefined) => { if (child) events.push(`owned-stop:${child.pid}`); },
     cleanupTestNextGeneratedTypes: () => { events.push("types-restore"); if (failure === "types") throw new Error("types cleanup failed"); return []; },
@@ -1141,7 +1250,7 @@ describe("E2E server infrastructure", () => {
   });
 
   it("actual cleanup cannot publish PASS for locked profiles, failed shared restoration, unknown residuals, changed source or missing observations", async () => {
-    for (const failure of ["profile", "types", "restore", "unknown", "source", "observation"] as const) {
+    for (const failure of ["profile", "types", "restore", "unknown", "source", "observation", "kernel-job"] as const) {
       const lab = cleanupFunctionLab(failure);
       await expect(lab.run()).rejects.toThrow();
       expect(lab.output).toEqual([]);
@@ -1374,7 +1483,31 @@ describe("E2E server infrastructure", () => {
 
   it("actual PowerShell classifies scoped candidates; unsupported platforms explicitly return unmeasured instead of native PASS", async () => {
     if (process.platform !== "win32") { await assertUnsupportedNativeMeasurement(); return; }
-    const wrapper = captureWindowsRuntime(3100).processes.find(item => item.pid === process.pid);
+    const started = process.hrtime.bigint();
+    // Reserve time for fixture/JSON/assertions inside Vitest's unchanged 5s.
+    // Both native calls share this stricter cutoff, not 15s each.
+    const nativeBudgetMs = 4000;
+    const elapsed = () => Number(process.hrtime.bigint() - started) / 1e6;
+    const directory = path.resolve(".playwright/scoped-classifier-unit", randomUUID());
+    fs.mkdirSync(directory, { recursive: true }); let sequence = 0;
+    const measuredNative = (stage: string, command: string, args: string[], options: object) => {
+      const enteredMs = elapsed(), timeout = Math.floor(nativeBudgetMs - enteredMs);
+      if (timeout < 1) throw new Error("CLASSIFIER_FIXTURE_NATIVE_DEADLINE");
+      let result: { pid?: number; status?: number | null; error?: Error } | undefined;
+      try {
+        const native = spawnSync(command, args, { ...options, encoding: "utf8", windowsHide: true, timeout }); result = native;
+        if (elapsed() >= nativeBudgetMs) throw new Error("CLASSIFIER_FIXTURE_NATIVE_DEADLINE");
+        return native;
+      } finally {
+        fs.writeFileSync(path.join(directory, `${++sequence}-${stage}.json`), JSON.stringify({ stage, observedAt: new Date().toISOString(),
+          enteredMs, elapsedMs: elapsed() - enteredMs, totalElapsedMs: elapsed(), timeoutMs: timeout,
+          callerPid: process.pid, spawnedPid: result?.pid ?? null, exitCode: result?.status ?? null,
+          errorType: result?.error?.name ?? null, nativeBirth: "NOT_CAPTURED", ownershipAuthority: false,
+          scope: "UNIT_FIXTURE_ONLY_NO_DB_NO_TERMINATION", nativeBudgetMs, vitestBudgetMs: 5000 }, null, 2), { flag: "wx" });
+      }
+    };
+    const wrapper = captureCollectorCallerIdentity((command, args, options) =>
+      measuredNative("CALLER_IDENTITY", command as string, args as string[], options as object));
     expect(wrapper).toBeDefined();
     const project = path.resolve(".");
     const fixture = (pid: number, command: string | null, executable: string | null = process.execPath, name = "node.exe") => ({
@@ -1433,7 +1566,7 @@ describe("E2E server infrastructure", () => {
       expect(actualScript).not.toContain(".Replace('/','\\\\')");
       const fixtureProvider = `\n$actualSelf=@(Get-CimInstance Win32_Process -Filter "ProcessId=$PID"); $fixtureRows=@($scope.fixtureRows | ForEach-Object { [pscustomobject]@{ProcessId=$_.ProcessId;ParentProcessId=$(if($_.ParentProcessId -eq -1){$PID}else{$_.ParentProcessId});Name=$_.Name;CreationDate=$(if($_.birth){[DateTimeOffset]::Parse($_.birth).UtcDateTime}else{$null});CommandLine=$_.CommandLine;ExecutablePath=$_.ExecutablePath} })+$actualSelf; function Get-CimInstance { $fixtureRows };\n`;
       const script = actualScript.replace("$scope=[Console]::In.ReadToEnd() | ConvertFrom-Json;", "$scope=[Console]::In.ReadToEnd() | ConvertFrom-Json;" + fixtureProvider);
-      return spawnSync(command as string, [...nativeArgs.slice(0, 3), script], { ...nativeOptions, encoding: "utf8", windowsHide: true,
+      return measuredNative("SCOPED_CLASSIFICATION", command as string, [...nativeArgs.slice(0, 3), script], { ...nativeOptions,
         input: JSON.stringify({ ...JSON.parse(nativeOptions.input), fixtureRows: rows }) });
     });
     expect(observed).toMatchObject({ wrapperIdentityVerified: true, ownedProcesses: [knownOpaque, knownExternal], opaqueUnscopedCandidateCount: 3 });
@@ -1457,6 +1590,7 @@ describe("E2E server infrastructure", () => {
     ]);
     expect(observed.excludedDiagnosticCollectorCandidates).toEqual([]);
     expect(JSON.stringify(observed)).not.toMatch(/fixture-forward|fixture-backward|CommandLine|unit-profile/);
+    expect(elapsed()).toBeLessThan(nativeBudgetMs);
   });
 
   it("validates collector birth/direct caller proof with deterministic transport without inferring native history", () => {

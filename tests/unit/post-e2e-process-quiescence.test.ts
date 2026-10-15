@@ -89,7 +89,7 @@ describe("POST_E2E_PROCESS_QUIESCENCE fresh native fence", () => {
   const wrapper = { pid: process.pid, parentPid: 99, name: "node.exe", createdAt: "2026-10-01T00:00:00.0000000Z" };
   function adapters() {
     return { platform: "win32", capture: () => ({ processes: [wrapper], ports: [] }),
-      scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [], unknownProcesses: [] }), exists: () => false,
+      scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [], unknownProcesses: [], diagnosticCollectorJob: { status: "PASSED" } }), exists: () => false,
       readIdentity: () => ({ head: "a".repeat(40), sourceFingerprint: "b".repeat(64) }) };
   }
   it("reobserves actual ports, identities and profiles instead of accepting a receipt alone", async () => {
@@ -103,6 +103,10 @@ describe("POST_E2E_PROCESS_QUIESCENCE fresh native fence", () => {
   it("fails unknown residuals without terminating or adopting them", async () => {
     const hooks = { ...adapters(), scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [], unknownProcesses: [wrapper] }) };
     await expect(enforcePostE2eProcessQuiescence(fixture(), hooks)).rejects.toThrow("UNKNOWN_PROJECT_OR_PROFILE_RESIDUAL");
+  });
+  it("cannot pass the Build handoff when the collector kernel Job proof is missing", async () => {
+    const hooks = { ...adapters(), scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [], unknownProcesses: [] }) };
+    await expect(enforcePostE2eProcessQuiescence(fixture(), hooks)).rejects.toThrow("COLLECTOR_KERNEL_JOB_UNPROVEN");
   });
   it("retains the actual blocking snapshot on its exact error without granting authority", async () => {
     const unknown = { ...wrapper, pid: 9000, scopeReason: "RUN_PORT_LISTENER", commandLine: "secret-command", env: "secret-env" };
@@ -126,7 +130,7 @@ describe("POST_E2E_PROCESS_QUIESCENCE fresh native fence", () => {
     expect(projectPostE2eResidualEvidence({})).toBeNull();
   });
   it("does not treat a classifier's historical reference without affinity as a project residual", async () => {
-    const hooks = { ...adapters(), scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [], unknownProcesses: [],
+    const hooks = { ...adapters(), scoped: () => ({ wrapperIdentityVerified: true, ownedProcesses: [], unknownProcesses: [], diagnosticCollectorJob: { status: "PASSED" },
       historicalParentReferences: [{ pid: 9000, parentPid: 100, name: "ExternalSecurityAgent.exe",
         createdAt: "2026-10-01T00:00:01.5000000Z", classification: "HISTORICAL_PARENT_REFERENCE_WITHOUT_PROJECT_AFFINITY",
         ownershipGranted: false, terminationAuthorized: false }] }) };

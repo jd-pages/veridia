@@ -24,8 +24,16 @@ export function captureCollectorPrimitive({ execute = spawnSync, now = () => per
     }
     check(); return result;
   };
-  // Preserve the exact caller query + native-held birth proof from the
-  // existing correction. No full process/TCP census just to find this caller.
+  const wrapper = captureCollectorCallerIdentity(measured("CALLER_IDENTITY"));
+  check();
+  const observed = captureWindowsScopedResiduals({ projectRoot: path.resolve("."), profilePaths: [], identities: [], wrapperIdentity: wrapper }, measured("SCOPED_RESIDUALS"));
+  check(); return { wrapper, observed, timings, elapsedMs: now() - started };
+}
+
+// Shared by native classification fixtures. This is the same exact caller
+// query and native-held birth proof, not a global process/TCP measurement.
+/** @param {typeof spawnSync} [execute] */
+export function captureCollectorCallerIdentity(execute = spawnSync) {
   const script = "$ErrorActionPreference='Stop';\n" +
     "Import-Module ([IO.Path]::Combine($PSHOME,'Modules\\CimCmdlets\\CimCmdlets.psd1')) -ErrorAction Stop;\n" +
     "Import-Module ([IO.Path]::Combine($PSHOME,'Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop;\n" +
@@ -37,11 +45,9 @@ export function captureCollectorPrimitive({ execute = spawnSync, now = () => per
     " if([decimal]::Floor([decimal]$nativeBirth/10) -ne [decimal]::Floor([decimal]$birth.ToFileTimeUtc()/10)){throw 'CALLER_BIRTH_MISMATCH'};\n" +
     " @{pid=[int]$rows[0].ProcessId;parentPid=[int]$rows[0].ParentProcessId;name=[string]$rows[0].Name;createdAt=$birth.ToString('o')}|ConvertTo-Json -Compress\n" +
     "}finally{$caller.Dispose()}";
-  const result = measured("CALLER_IDENTITY")("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true });
+  const result = execute("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true });
   if (result.error || result.status !== 0) throw new Error("COLLECTOR_FIXTURE_CALLER_FAILED");
   const wrapper = JSON.parse(result.stdout.trim());
   if (wrapper?.pid !== process.pid || wrapper?.parentPid !== process.ppid || wrapper?.name !== "node.exe") throw new Error("COLLECTOR_FIXTURE_CALLER_IDENTITY_INVALID");
-  check();
-  const observed = captureWindowsScopedResiduals({ projectRoot: path.resolve("."), profilePaths: [], identities: [], wrapperIdentity: wrapper }, measured("SCOPED_RESIDUALS"));
-  check(); return { wrapper, observed, timings, elapsedMs: now() - started };
+  return wrapper;
 }

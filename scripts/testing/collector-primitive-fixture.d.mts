@@ -6,6 +6,7 @@ export interface CollectorCallTiming {
   elapsedMs: number; timeoutMs: number; callerPid: number;
   spawnedPid: number | null; exitCode: number | null; failed: boolean;
 }
+export function captureCollectorCallerIdentity(execute?: (...args: unknown[]) => unknown): RuntimeProcess;
 export function captureCollectorPrimitive(options?: {
   execute?: (...args: unknown[]) => unknown;
   now?: () => number;

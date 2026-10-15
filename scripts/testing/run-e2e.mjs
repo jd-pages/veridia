@@ -306,6 +306,7 @@ async function captureFinalPhysicalFence(remainingBudget, label) {
     identities, wrapperIdentity, timeoutMs: Math.min(15_000, remainingBudget()),
     identityForensics: label === "after-process-cleanup" && process.env?.VERIDIA_E2E_IDENTITY_FORENSICS === "1",
     ports: [runPort], portListeners: fence.runtime.ports });
+  if (residuals.diagnosticCollectorJob?.status !== "PASSED") throw new Error("E2E cleanup collector kernel Job scope 未证明，禁止最终 fence PASS");
   runtimeAfterCleanup = { label, capturedAt: new Date().toISOString(),
     processes: matchingOwnedProcesses(fence.runtime.processes, identities), ports: fence.runtime.ports, residuals,
     allCapturedIdentityCount: identities.length, physicalFence: { observations: fence.observations, elapsedMs: fence.elapsedMs } };
@@ -467,6 +468,7 @@ async function performCleanup(reason) {
     retiredProcessTrees, allCapturedIdentities: allCapturedIdentities(), finalOwnedProcessCount: runtimeAfterCleanup?.processes?.length ?? null,
     portCount: runtimeAfterCleanup?.ports?.length ?? null, unknownResidualCount: runtimeAfterCleanup?.residuals?.unknownProcesses?.length ?? null,
     wrapperIdentity, profilesRemoved: true, nextEnvRestored: Boolean(nextEnvSnapshot), typeCleanupPass: true,
+    collectorKernelJobProof: { collector: runtimeAfterCleanup?.residuals?.diagnosticCollector, proof: runtimeAfterCleanup?.residuals?.diagnosticCollectorJob },
     elapsedMs: Date.now() - startedAt, deadlineMs: physicalCleanupDeadlineMs };
   remainingBudget();
   if (quiescence.status === "PASSED" && (processObservation.status !== "PASSED" || !quiescence.nextEnvRestored ||

@@ -225,14 +225,51 @@ it("loads pinned bytes for the unchanged OS argv parser without any runtime comp
 
 it("immutable bundled argv bytes and source retain the exact native CommandLineToArgvW and LocalFree wrapper", () => {
   const bytes = Buffer.from(WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64, "base64");
-  expect(bytes.length).toBe(3584);
+  expect(bytes.length).toBe(4096);
   expect(bytes.subarray(0, 2).toString("ascii")).toBe("MZ");
   expect(createHash("sha256").update(bytes).digest("hex")).toBe(WINDOWS_BROWSER_ARGV_ASSEMBLY_SHA256);
   expect(createHash("sha256").update(WINDOWS_BROWSER_ARGV_SOURCE).digest("hex")).toBe(WINDOWS_BROWSER_ARGV_SOURCE_SHA256);
-  expect(WINDOWS_BROWSER_ARGV_SOURCE_SHA256).toBe("e82a52ce6274e6ccd3fe9f4f0080c842a63c0d2b79224c43a29af236547bbce5");
+  expect(WINDOWS_BROWSER_ARGV_SOURCE_SHA256).toBe("4cbe9d9e7a5594621ecfb3781723c0f67b8c640cef9beaca1d897c49198b9a34");
   expect(WINDOWS_BROWSER_ARGV_SOURCE).toContain('[DllImport("shell32.dll", SetLastError=true)]');
   expect(WINDOWS_BROWSER_ARGV_SOURCE).toContain("IntPtr argv = CommandLineToArgvW(command, out count)");
   expect(WINDOWS_BROWSER_ARGV_SOURCE).toContain("finally { LocalFree(argv); }");
+});
+
+it("actual pinned argv classifier preserves exact profile, duplicate, empty, channel-process and quoted-path boundaries", () => {
+  if (process.platform !== "win32") return;
+  vi.useRealTimers();
+  const profile = "E:\\fixture\\profile";
+  const cases = [
+    { command: 'chrome.exe --user-data-dir="E:\\fixture\\profile"', profile, expected: [true, true] },
+    { command: 'chrome.exe --user-data-dir="E:\\fixture\\profile" --type=renderer', profile, expected: [true, false] },
+    { command: 'chrome.exe --user-data-dir="E:\\fixture\\profile" --type=', profile, expected: [true, false] },
+    { command: 'chrome.exe --user-data-dir=""', profile, expected: [false, true] },
+    { command: 'chrome.exe --user-data-dir=E:\\fixture\\profile --user-data-dir=E:\\fixture\\profile', profile, expected: [false, true] },
+    { command: 'chrome.exe --user-data-dir=E:\\fixture\\profile --USER-DATA-DIR=', profile, expected: [false, true] },
+    { command: 'chrome.exe --user-data-dir=E:\\fixture\\profile-other', profile, expected: [false, true] },
+    { command: 'chrome.exe --flag="--user-data-dir=E:\\fixture\\profile"', profile, expected: [false, true] },
+    { command: 'chrome.exe --user-data-dir E:\\fixture\\profile', profile, expected: [false, true] },
+    { command: 'chrome.exe --USER-DATA-DIR=E:\\FIXTURE\\PROFILE\\', profile, expected: [true, true] },
+    { command: 'chrome.exe --user-data-dir=E:/fixture/profile/', profile, expected: [true, true] },
+    { command: 'chrome.exe --user-data-dir="E:\\fixture\\测试 profile"', profile: "E:\\fixture\\测试 profile", expected: [true, true] },
+    { command: 'chrome.exe --user-data-dir="\\\\server\\share\\profile"', profile: "\\\\server\\share\\profile", expected: [true, true] },
+    { command: 'chrome.exe --no-first-run --type=utility', profile, expected: [false, false] },
+    { command: 'chrome.exe --user-data-dir="E:\\fixture\\profile" ' + Array.from({ length: 128 }, (_, i) => `--fixture-${i}=value`).join(" "), profile, expected: [true, true] },
+  ];
+  const script = String.raw`$ErrorActionPreference='Stop';[Console]::InputEncoding=[Text.UTF8Encoding]::new($false);[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$data=[Console]::In.ReadToEnd()|ConvertFrom-Json;
+$assembly=[Reflection.Assembly]::Load([Convert]::FromBase64String($data.assembly));if($assembly.GetExportedTypes().Length -ne 1){throw 'EXPORT_SHAPE'};
+$matches=@();foreach($item in $data.cases){$matches+=,@([VeridiaBrowserArgv]::MatchProfile($item.command,$item.profile))};
+[Console]::Out.WriteLine((ConvertTo-Json -InputObject @($matches) -Depth 5 -Compress));exit 0`;
+  const started = process.hrtime.bigint(), startedAt = new Date().toISOString();
+  const native = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    input: JSON.stringify({ assembly: WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64, cases }), encoding: "utf8", windowsHide: true, timeout: 2000,
+  });
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  const directory = path.resolve(".playwright/native-argv-match-unit"); mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(directory, `${randomUUID()}.json`), JSON.stringify({ startedAt, elapsedMs, pid: native.pid, exit: native.status,
+    error: native.error?.name ?? null, cases: cases.length, scope: "SYNTHETIC_ARGV_ONLY_NO_PROCESS_OWNERSHIP_NO_DB", assemblySha256: WINDOWS_BROWSER_ARGV_ASSEMBLY_SHA256 }, null, 2), { flag: "wx" });
+  expect(native.error).toBeUndefined(); expect(native.status, native.stderr).toBe(0);
+  expect(JSON.parse(native.stdout)).toEqual(cases.map(item => item.expected));
 });
 
 it("invalid native argv asset fails closed even with empty owner JSON and retained load-stage diagnostics", async () => {
@@ -575,9 +612,12 @@ it("direct native traversal keeps duplicate-profile and exactly-one termination 
   const script = Buffer.from(fixture.spawn.mock.calls[0][1].at(-1), "base64").toString("utf16le");
   expect(script).not.toContain("Where-Object");
   expect(script).not.toContain("ForEach-Object");
-  expect(script).toContain("foreach ($argument in $argv)");
-  expect(script).toContain("$profiles.Count -ne 1 -or !$profiles[0]");
-  expect(script).toContain("$argument.StartsWith('--type=', [StringComparison]::OrdinalIgnoreCase)");
+  expect(script).toContain("[VeridiaBrowserArgv]::MatchProfile($candidate.CommandLine, $expectedProfile)");
+  expect(script).toContain("if (!$profileMatch[0]) { continue }");
+  expect(script).toContain("$isBrowser = $profileMatch[1]");
+  expect(WINDOWS_BROWSER_ARGV_SOURCE).toContain("count!=1 || String.IsNullOrEmpty(profile)");
+  expect(WINDOWS_BROWSER_ARGV_SOURCE).toContain('argument.StartsWith("--type=",StringComparison.OrdinalIgnoreCase)');
+  expect(WINDOWS_BROWSER_ARGV_SOURCE).toContain("Path.GetFullPath(profile).TrimEnd('\\\\')");
   expect(script).toContain("foreach ($expected in $request.terminate)");
   expect(script).toContain("$matchCount -ne 1");
   expect(script.indexOf("$matchCount -ne 1")).toBeLessThan(script.indexOf("$process.Kill()"));

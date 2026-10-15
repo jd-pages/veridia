@@ -139,6 +139,7 @@ export async function enforcePostE2eProcessQuiescence(input, adapters = {}) {
   };
   assertIdentity("BEFORE");
   const ports = [...new Set([3100, ...validated.ports])];
+  const collectorKernelJobObservations = [];
   const profilePaths = validated.runDirectories.flatMap(directory => ["xhs-profile", "douyin-profile"].map(name => path.join(directory, name)));
   const fence = await wait({ identities: validated.identities, requirePortClosed: true, deadlineMs: remaining(),
     capture: () => {
@@ -162,6 +163,8 @@ export async function enforcePostE2eProcessQuiescence(input, adapters = {}) {
         residualFailureEvidence.set(error, projectPostE2eResidualEvidence(residuals));
         throw error;
       }
+      if (residuals.diagnosticCollectorJob?.status !== "PASSED") throw new Error("E2E_QUIESCENCE_COLLECTOR_KERNEL_JOB_UNPROVEN");
+      collectorKernelJobObservations.push({ collector: residuals.diagnosticCollector, proof: residuals.diagnosticCollectorJob });
       if (profilePaths.some(profile => exists(profile))) throw new Error("E2E_QUIESCENCE_PROFILE_REAPPEARED_AFTER_CLEANUP");
       remaining();
       return { processes: [...processes, ...residuals.ownedProcesses], ports: listeners };
@@ -172,5 +175,5 @@ export async function enforcePostE2eProcessQuiescence(input, adapters = {}) {
     head: validated.head, sourceFingerprint: validated.sourceFingerprint, groups: validated.groups,
     observedAt: new Date(now()).toISOString(), capturedIdentityCount: validated.identities.length,
     portsChecked: ports, profileCount: profilePaths.length, ownedProcessCount: 0, portCount: 0, unknownProcessCount: 0,
-    observations: fence.observations, elapsedMs: now() - started, deadlineMs };
+    observations: fence.observations, collectorKernelJobObservations, elapsedMs: now() - started, deadlineMs };
 }

@@ -386,6 +386,17 @@ public static class VeridiaWmiFreeRuntime {
       Remaining(watch, budgetMs);
     } finally { Marshal.FreeHGlobal(buffer); }
   }
+  // Read-only collector birth observations. No target handles or ownership
+  // authority: the private Job's independently held self binding is validated
+  // by the caller before/after this complete SPI census.
+  public static Dictionary<string,object> CaptureCollectorBirthObservation(int budgetMs) {
+    if(budgetMs<1 || budgetMs>15000) throw new InvalidOperationException("NATIVE_QUERY_INPUT_INVALID");
+    Stopwatch watch=Stopwatch.StartNew(); Dictionary<string,object> coverage;
+    List<Dictionary<string,object>> processes=Processes(watch,budgetMs,out coverage);
+    Remaining(watch,budgetMs);
+    return new Dictionary<string,object> { {"processes",processes},{"spiCoverage",coverage},
+      {"ownershipGranted",false},{"terminationAuthorized",false} };
+  }
   public static Dictionary<string,object> Capture(int port, int budgetMs) {
     if (port < 1 || port > 65535 || budgetMs < 1 || budgetMs > 15000) throw new InvalidOperationException("NATIVE_QUERY_INPUT_INVALID");
     Stopwatch watch = Stopwatch.StartNew();

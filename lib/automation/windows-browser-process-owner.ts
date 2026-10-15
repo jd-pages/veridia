@@ -339,17 +339,10 @@ $owned = @(); $handles = @(); $script:parserReady = $false;
     if (![string]::Equals($candidate.ExecutablePath, $expectedExecutable, [StringComparison]::OrdinalIgnoreCase)) { continue }
     if (!$candidate.CommandLine -or !$candidate.CreationDate) { throw 'PROFILE_OWNERSHIP_UNAVAILABLE' }
     Set-ProbeStage 'PROFILE_ARGUMENT_READ';
-    $argv = [VeridiaBrowserArgv]::Parse($candidate.CommandLine);
+    $profileMatch = [VeridiaBrowserArgv]::MatchProfile($candidate.CommandLine, $expectedProfile);
     Set-ProbeStage 'PROFILE_ARGUMENT_PARSED';
-    $profiles = @(); $isBrowser = $true;
-    # Direct traversal preserves duplicate/empty argument rejection without
-    # activating two pipeline command bindings for every census candidate.
-    foreach ($argument in $argv) {
-      if ($argument.StartsWith('--user-data-dir=', [StringComparison]::OrdinalIgnoreCase)) { $profiles += $argument.Substring(16) }
-      if ($argument.StartsWith('--type=', [StringComparison]::OrdinalIgnoreCase)) { $isBrowser = $false }
-    }
-    if ($profiles.Count -ne 1 -or !$profiles[0]) { continue }
-    if (![string]::Equals([IO.Path]::GetFullPath($profiles[0]).TrimEnd('\\'), $expectedProfile, [StringComparison]::OrdinalIgnoreCase)) { continue }
+    if (!$profileMatch[0]) { continue }
+    $isBrowser = $profileMatch[1];
     Set-ProbeStage 'NATIVE_HANDLE_BIND';
     try {
       Set-ProbeStage 'NATIVE_PROCESS_OPEN';

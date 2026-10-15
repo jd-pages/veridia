@@ -69,6 +69,7 @@ export interface DiagnosticCollectorCandidate extends Omit<RuntimeProcess, "crea
   createdAt: string | null;
   nativeCreationFileTime: string | null; nativeBirthVerified: boolean; scopeKnownNonProjectProfile: boolean;
   sameSnapshotUniqueRow?: boolean; sameHandleLiveAtBothBoundaries?: boolean; nativeIdentityMatchesAtBothBoundaries?: boolean;
+  nativeSnapshotObservation?: unknown;
 }
 export interface HistoricalParentDiagnosticIdentity {
   pid: number; parentPid: number; name: string; createdAt: string | null; nativeBirthStamp: string | null;
@@ -102,6 +103,9 @@ export function captureWindowsScopedResiduals(input: { projectRoot: string; prof
   historicalParentReferences: (RuntimeProcess & { classification: "HISTORICAL_PARENT_REFERENCE_WITHOUT_PROJECT_AFFINITY"; ownershipGranted: false; terminationAuthorized: false })[];
   diagnosticCollector: DiagnosticCollectorIdentity; diagnosticCollectorCandidates: DiagnosticCollectorCandidate[];
   diagnosticCollectorObservation: "OBSERVED" | "NOT_OBSERVED";
+  diagnosticCollectorJob?: { status: "PASSED"; before: { scopeId: string }; ownershipGranted: false; terminationAuthorized: false };
+  excludedKernelJobParentCandidates: (UnknownRuntimeProcess & { exclusion: "KERNEL_JOB_NONMEMBER_NATIVE_BIRTH_PRECEDES_COLLECTOR";
+    nativeSnapshotObservation: unknown; scopeId: string; ownershipGranted: false; terminationAuthorized: false })[];
   historicalParentFailureDiagnostics: HistoricalParentFailureDiagnostics;
   excludedReusedHistoricalParentCandidates: (UnknownRuntimeProcess & { exclusion: "CURRENT_NATIVE_PARENT_INCARNATION_PRECEDES_CHILD_BIRTH";
     evidence: unknown; capturedParentIdentities: unknown[];
