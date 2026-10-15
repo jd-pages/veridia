@@ -8,6 +8,10 @@ import {
   WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64,
   WINDOWS_BROWSER_ARGV_ASSEMBLY_SHA256,
 } from "./windows-browser-argv-asset";
+import {
+  WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_BASE64,
+  WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_SHA256,
+} from "./windows-browser-profile-census-asset";
 
 export type WindowsBrowserProcessIdentity = {
   pid: number;
@@ -29,6 +33,7 @@ export class WindowsBrowserProfileOwnershipError extends Error {
     nativeScriptObservedAt?: string; stdoutBytes?: number; stdoutEnded?: boolean; nativeExitObserved?: boolean;
     stderrBytes?: number; nativeStartupFailure?: "OUT_OF_MEMORY" | "CLR_INITIALIZATION_FAILURE" | "POWERSHELL_PARSE_ERROR";
     terminationFailure?: { pid: number; birthStamp: string; nativeErrorCode: number; hresult: number; exitedAfterError: "TRUE" | "FALSE" | "UNKNOWN" };
+    censusOpenFailure?: { pid: number; snapshotBirthStamp: string; nativeErrorCode: number; absentInCompleteSnapshot: boolean };
     stageTimeline?: Array<{ stage: string; scriptElapsedMs: number; observedElapsedMs: number }>;
     operationFailureElapsedMs?: number;
     terminationRequest?: { elapsedMs: number; returned?: boolean; errorCode?: "KILL_THROWN" };
@@ -40,8 +45,9 @@ export class WindowsBrowserProfileOwnershipError extends Error {
 // Only a fixed stage vocabulary and a bounded clock value may leave the
 // native probe. Diagnostics never grant ownership or change its deadline.
 export function parseWindowsProfileProbeDiagnostic(text: string) {
-  const result: { nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number } = {};
-  const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|PARSER_ASSEMBLY_LOAD|PARSER_ASSEMBLY_LOADED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|WMI_GET_ENTER|WMI_GET_RETURN|WMI_ENUM_ENTER|WMI_ENUM_RETURN|WMI_MOVE_ENTER|WMI_MOVE_RETURN|WMI_ROW_READ|WMI_ROW_RETURN|WMI_BIRTH_PARSE|WMI_BIRTH_RETURN|WMI_ROW_DISPOSE|WMI_ROW_DISPOSED|WMI_DISPOSE|WMI_DISPOSED|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT|RESULT_SERIALIZED|RESULT_WRITTEN):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
+  const result: { nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number;
+    censusOpenFailure?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusOpenFailure"] } = {};
+  const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|PARSER_ASSEMBLY_LOAD|PARSER_ASSEMBLY_LOADED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|WMI_GET_ENTER|WMI_GET_RETURN|WMI_ENUM_ENTER|WMI_ENUM_RETURN|WMI_MOVE_ENTER|WMI_MOVE_RETURN|WMI_ROW_READ|WMI_ROW_RETURN|WMI_BIRTH_PARSE|WMI_BIRTH_RETURN|WMI_ROW_DISPOSE|WMI_ROW_DISPOSED|WMI_DISPOSE|WMI_DISPOSED|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT|RESULT_SERIALIZED|RESULT_WRITTEN|CENSUS_ASSEMBLY_LOAD|CENSUS_ASSEMBLY_LOADED|SPI_CAPTURE_ENTER|SPI_CAPTURE_RETURN|SPI_HELD_PROCESS_OPEN|SPI_IMAGE_READ|SPI_IMAGE_RETURN|SPI_COMMAND_LINE_READ|SPI_COMMAND_LINE_RETURN|SPI_HELD_PROCESS_DISPOSE|SPI_VERIFIED_EXIT_SKIP|SPI_VERIFIED_ABSENCE_SKIP):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
   for (const match of text.matchAll(stage)) {
     const elapsed = Number(match[2]);
     if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 60_000) {
@@ -49,8 +55,13 @@ export function parseWindowsProfileProbeDiagnostic(text: string) {
       result.nativeStageElapsedMs = elapsed;
     }
   }
-  const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|PARSER_ASSEMBLY_LOAD|PARSER_ASSEMBLY_LOADED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|WMI_GET_ENTER|WMI_GET_RETURN|WMI_ENUM_ENTER|WMI_ENUM_RETURN|WMI_MOVE_ENTER|WMI_MOVE_RETURN|WMI_ROW_READ|WMI_ROW_RETURN|WMI_BIRTH_PARSE|WMI_BIRTH_RETURN|WMI_ROW_DISPOSE|WMI_ROW_DISPOSED|WMI_DISPOSE|WMI_DISPOSED|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT|RESULT_SERIALIZED|RESULT_WRITTEN):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER|NATIVE_ARGV_ASSET_INVALID)\r?\n/u);
+  const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|PARSER_ASSEMBLY_LOAD|PARSER_ASSEMBLY_LOADED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|WMI_GET_ENTER|WMI_GET_RETURN|WMI_ENUM_ENTER|WMI_ENUM_RETURN|WMI_MOVE_ENTER|WMI_MOVE_RETURN|WMI_ROW_READ|WMI_ROW_RETURN|WMI_BIRTH_PARSE|WMI_BIRTH_RETURN|WMI_ROW_DISPOSE|WMI_ROW_DISPOSED|WMI_DISPOSE|WMI_DISPOSED|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT|RESULT_SERIALIZED|RESULT_WRITTEN|CENSUS_ASSEMBLY_LOAD|CENSUS_ASSEMBLY_LOADED|SPI_CAPTURE_ENTER|SPI_CAPTURE_RETURN|SPI_HELD_PROCESS_OPEN|SPI_IMAGE_READ|SPI_IMAGE_RETURN|SPI_COMMAND_LINE_READ|SPI_COMMAND_LINE_RETURN|SPI_HELD_PROCESS_DISPOSE|SPI_VERIFIED_EXIT_SKIP|SPI_VERIFIED_ABSENCE_SKIP):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER|NATIVE_ARGV_ASSET_INVALID)\r?\n/u);
   if (failure) { result.nativeStage = failure[1]; result.nativeFailureCode = failure[2]; }
+  const open = text.match(/^VERIDIA_PROFILE_PROBE_CENSUS_OPEN=([0-9]+):([0-9]+):([0-9]+):(TRUE|FALSE)\r?\n$/u);
+  if (open && Number.isSafeInteger(Number(open[1])) && Number(open[1]) > 0 &&
+      Number.isSafeInteger(Number(open[3])) && open[2].length <= 20) {
+    result.censusOpenFailure = { pid: Number(open[1]), snapshotBirthStamp: open[2], nativeErrorCode: Number(open[3]), absentInCompleteSnapshot: open[4] === "TRUE" };
+  }
   return result;
 }
 
@@ -185,8 +196,8 @@ $expectedProfile = [IO.Path]::GetFullPath($request.profilePath).TrimEnd('\\');
 $owned = @(); $handles = @(); $script:parserReady = $false;
   # Keep the same Win32_Process fields and native handle/birth admission, but
   # do not activate CimCmdlets/module discovery for every short-lived probe.
-  $null = [Reflection.Assembly]::Load('System.Management, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a');
   function Get-OwnerProcessRows([string]$filter) {
+    $null = [Reflection.Assembly]::Load('System.Management, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a');
     $options = [System.Management.EnumerationOptions]::new();
     $options.Timeout = [TimeSpan]::FromMilliseconds(${OWNER_PROBE_TIMEOUT_MS});
     $options.ReturnImmediately = $true; $options.Rewindable = $false;
@@ -256,7 +267,37 @@ $owned = @(); $handles = @(); $script:parserReady = $false;
   $name = [IO.Path]::GetFileName($expectedExecutable).Replace('\\','\\\\').Replace("'","\\'");
   $queryExecutable = $expectedExecutable.Replace('\\','\\\\').Replace("'","\\'");
   Set-ProbeStage 'PROCESS_CENSUS_QUERY_ENTER';
-  $candidates = @(Get-OwnerProcessRows "Name='$name' AND ExecutablePath='$queryExecutable'");
+  Set-ProbeStage 'CENSUS_ASSEMBLY_LOAD';
+  $censusBytes = [Convert]::FromBase64String($request.censusAssembly);
+  $censusHash = [Security.Cryptography.SHA256]::Create();
+  try { $censusDigest = [BitConverter]::ToString($censusHash.ComputeHash($censusBytes)).Replace('-','').ToLowerInvariant() }
+  finally { $censusHash.Dispose() }
+  if ($censusDigest -cne '${WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_SHA256}') { throw 'NATIVE_ARGV_ASSET_INVALID' }
+  $censusAssembly = [Reflection.Assembly]::Load($censusBytes);
+  $censusType = $censusAssembly.GetType('VeridiaBrowserProfileCensus');
+  if (!$censusType -or $censusType.Assembly -ne $censusAssembly -or $censusAssembly.GetExportedTypes().Length -ne 1) { throw 'NATIVE_ARGV_ASSET_INVALID' }
+  Set-ProbeStage 'CENSUS_ASSEMBLY_LOADED';
+  # Only the previously verified SPI layouts use the new read-only census.
+  # Other OS profiles keep the original strict WMI path. A native query,
+  # identity or permission failure never falls back or grants authority.
+  $nativeCensus = [VeridiaBrowserProfileCensus]::IsApprovedAbi();
+  if ($nativeCensus) {
+    Set-ProbeStage 'PARSER_ASSEMBLY_LOAD';
+    $parserBytes = [Convert]::FromBase64String($request.argvAssembly);
+    $parserHash = [Security.Cryptography.SHA256]::Create();
+    try { $parserDigest = [BitConverter]::ToString($parserHash.ComputeHash($parserBytes)).Replace('-','').ToLowerInvariant() }
+    finally { $parserHash.Dispose() }
+    if ($parserDigest -cne '${WINDOWS_BROWSER_ARGV_ASSEMBLY_SHA256}') { throw 'NATIVE_ARGV_ASSET_INVALID' }
+    $parserAssembly = [Reflection.Assembly]::Load($parserBytes);
+    $parserType = $parserAssembly.GetType('VeridiaBrowserArgv');
+    if (!$parserType -or $parserType.Assembly -ne $parserAssembly -or $parserAssembly.GetExportedTypes().Length -ne 1) { throw 'NATIVE_ARGV_ASSET_INVALID' }
+    $script:parserReady = $true;
+    Set-ProbeStage 'PARSER_ASSEMBLY_LOADED';
+    try { $candidates = @([VeridiaBrowserProfileCensus]::ReadProfileRows($expectedExecutable, $probeClock)) }
+    catch { if ([VeridiaBrowserProfileCensus]::LastStage) { $phase = [VeridiaBrowserProfileCensus]::LastStage }; throw }
+  } else {
+    $candidates = @(Get-OwnerProcessRows "Name='$name' AND ExecutablePath='$queryExecutable'");
+  }
   Set-ProbeStage 'PROCESS_CENSUS_QUERY_RETURN';
   foreach ($candidate in $candidates) {
     Set-ProbeStage 'PROCESS_CENSUS_ENUMERATE';
@@ -281,16 +322,21 @@ $owned = @(); $handles = @(); $script:parserReady = $false;
       Set-ProbeStage 'NATIVE_HANDLE_OPEN';
       $null = $process.Handle
     } catch {
-      if (@(Get-OwnerProcessRows "ProcessId=$($candidate.ProcessId)").Count -gt 0) { throw 'LIVE_PROCESS_HANDLE_UNAVAILABLE' }
+      $stillExists = if ($nativeCensus) { [VeridiaBrowserProfileCensus]::ProcessStillExists([int]$candidate.ProcessId, $probeClock) } else { @(Get-OwnerProcessRows "ProcessId=$($candidate.ProcessId)").Count -gt 0 };
+      if ($stillExists) { throw 'LIVE_PROCESS_HANDLE_UNAVAILABLE' }
       continue
     }
     Set-ProbeStage 'NATIVE_BIRTH_READ';
     $birthStamp = $process.StartTime.ToUniversalTime().ToFileTimeUtc().ToString();
     Set-ProbeStage 'NATIVE_BIRTH_VALIDATE';
     $cimStamp = $candidate.CreationDate.ToUniversalTime().ToFileTimeUtc();
-    if ([decimal]::Floor([decimal]$birthStamp / 10) -ne [decimal]::Floor([decimal]$cimStamp / 10)) {
+    $birthMatches = if ($nativeCensus) { $birthStamp -ceq [string]$candidate.NativeSnapshotBirthStamp } else {
+      [decimal]::Floor([decimal]$birthStamp / 10) -eq [decimal]::Floor([decimal]$cimStamp / 10)
+    };
+    if (!$birthMatches) {
       $process.Dispose();
-      if (@(Get-OwnerProcessRows "ProcessId=$($candidate.ProcessId)").Count -gt 0) { throw 'LIVE_PROCESS_BIRTH_MISMATCH' }
+      $stillExists = if ($nativeCensus) { [VeridiaBrowserProfileCensus]::ProcessStillExists([int]$candidate.ProcessId, $probeClock) } else { @(Get-OwnerProcessRows "ProcessId=$($candidate.ProcessId)").Count -gt 0 };
+      if ($stillExists) { throw 'LIVE_PROCESS_BIRTH_MISMATCH' }
       continue
     }
     $identity = @{pid=[int]$candidate.ProcessId; parentPid=[int]$candidate.ParentProcessId; browserProcess=$isBrowser; birthStamp=$birthStamp; executablePath=$expectedExecutable; profilePath=$expectedProfile};
@@ -336,13 +382,21 @@ $owned = @(); $handles = @(); $script:parserReady = $false;
   Set-ProbeStage 'RESULT_WRITTEN';
 } catch {
   $code='NATIVE_PROBE_SCRIPT_EXCEPTION';
+  # Reflection/static managed calls wrap the already fixed native code.
+  # Unwrap only a bounded exception chain; never emit its raw message.
+  $probeFailure=$_.Exception;
+  for($depth=0; $depth -lt 4 -and $probeFailure.InnerException; $depth+=1) { $probeFailure=$probeFailure.InnerException }
   foreach ($allowed in @('PROFILE_OWNERSHIP_UNAVAILABLE','LIVE_PROCESS_HANDLE_UNAVAILABLE','LIVE_PROCESS_BIRTH_MISMATCH','UNVERIFIED_PROFILE_OWNER','NATIVE_ARGV_ASSET_INVALID')) {
-    if ($_.Exception.Message -eq $allowed) { $code=$allowed }
+    if ($probeFailure.Message -eq $allowed) { $code=$allowed }
   }
   # Only this fixed vocabulary crosses stderr, never raw native exceptions.
   [Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_FAILURE='+$phase+':'+$code);
   exit 1
-} finally { foreach ($process in $handles) { $process.Dispose() } }`;
+} finally { foreach ($process in $handles) { $process.Dispose() } }`
+    // No here-strings or request data occur in this fixed native program.
+    // Remove lexical comments/indentation, not code, to retain the existing
+    // command-size ceiling while both immutable assets travel through stdin.
+    .replace(/^[\t ]*#.*(?:\r?\n|$)/gmu, "").replace(/^[\t ]+/gmu, "");
 }
 
 export async function captureWindowsBrowserProfileOwners(
@@ -360,7 +414,7 @@ export async function captureWindowsBrowserProfileOwners(
   const profile = path.win32.resolve(profilePath);
   const script = guardScript();
   const request = JSON.stringify({ executablePath: executable, profilePath: profile, terminate,
-    argvAssembly: WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64 });
+    argvAssembly: WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64, censusAssembly: WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_BASE64 });
   const e2e = process.env.VERIDIA_E2E === "true";
   const probeId = e2e ? randomUUID() : undefined;
   const probeStartedAt = e2e ? new Date().toISOString() : undefined;

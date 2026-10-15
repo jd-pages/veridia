@@ -686,8 +686,18 @@ try {
   foreach($candidate in @($historicalCandidates | Select-Object -First 16)) {
     $parents=@($items | Where-Object {[int]$_.ProcessId -eq [int]$candidate.parentPid} | Sort-Object ProcessId,ParentProcessId);
     $parentRows=@($parents | Select-Object -First 4 | ForEach-Object { @{pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId;name=$_.Name;createdAt=(RowBirth $_)} });
+    $observedChildren=@($items | Where-Object {[int]$_.ProcessId -eq [int]$candidate.pid});
+    $observedChild=$(if($observedChildren.Count -eq 1){$observedChildren[0]}else{$null});
+    # Same-snapshot booleans only. Never persist commands, paths or infer a
+    # permission cause; these measurements cannot grant exclusion authority.
+    $scopeFields=@{childUniqueRow=($observedChildren.Count -eq 1);
+      childCommandLinePresent=![string]::IsNullOrWhiteSpace([string]$observedChild.CommandLine);
+      childExecutablePathPresent=![string]::IsNullOrWhiteSpace([string]$observedChild.ExecutablePath);
+      currentParents=@($parents | Select-Object -First 4 | ForEach-Object { @{commandLinePresent=![string]::IsNullOrWhiteSpace([string]$_.CommandLine);
+        executablePathPresent=![string]::IsNullOrWhiteSpace([string]$_.ExecutablePath)} })};
     $historicalObservations+=@{candidate=@{pid=$candidate.pid;parentPid=$candidate.parentPid;name=$candidate.name;createdAt=$candidate.createdAt};
       currentParentRowCount=$parents.Count;currentParentRows=$parentRows;currentParentRowsTruncated=($parents.Count -gt 4);
+      scopeFields=$scopeFields;
       parentObservation=$(if($parents.Count -eq 0){'ABSENT_IN_THIS_SNAPSHOT'}elseif($parents.Count -eq 1){'ONE_ROW_IN_THIS_SNAPSHOT'}else{'MULTIPLE_ROWS_IN_THIS_SNAPSHOT'})};
     # Observation only: never adopt a candidate or grant termination authority.
     # A current parent incarnation born before the child and held alive occupies
@@ -772,7 +782,7 @@ try {
     birthPrecision='CIM_MICROSECOND_MATCH_NATIVE_FILETIME_FLOOR10';ownershipGranted=$false;terminationAuthorized=$false};
   @{ownedProcesses=@($owned);unknownProcesses=@($unknown);opaqueUnscopedCandidates=@($opaque);opaqueUnscopedCandidateCount=@($opaque).Count;
     wrapperIdentityVerified=$true;diagnosticCollector=$collector;diagnosticCollectorCandidates=@($collectorCandidates);historicalParentReuseCandidates=@($historicalReuseProofs);identityForensics=$forensics;historicalParentReferences=@($historicalReferences);
-    historicalParentObservations=@{schemaVersion=1;scope='SAME_CIM_SNAPSHOT_HISTORICAL_PARENT_OBSERVATION_ONLY';candidateLimit=16;
+    historicalParentObservations=@{schemaVersion=2;scope='SAME_CIM_SNAPSHOT_HISTORICAL_PARENT_OBSERVATION_ONLY';candidateLimit=16;
       candidateTotal=$historicalCandidates.Count;candidateTruncated=($historicalCandidates.Count -gt 16);records=@($historicalObservations);
       queryStartedAt=$collector.queryStartedAt;queryEndedAt=$collector.queryEndedAt;ownershipGranted=$false;terminationAuthorized=$false};
     scope='NAMED_PROJECT_OR_RUN_PROFILE_OR_EXACT_CAPTURED_BIRTH_OR_UNVERIFIED_HISTORICAL_PARENT';
@@ -938,7 +948,7 @@ try {
         (row.createdAt === null || canonicalBirth(row));
       const equalRow = (a, b) => ["pid", "parentPid", "name", "createdAt"].every(key => a[key] === b[key]);
       if (!sameKeys(rawEvidence, ["schemaVersion", "scope", "candidateLimit", "candidateTotal", "candidateTruncated", "records",
-        "queryStartedAt", "queryEndedAt", "ownershipGranted", "terminationAuthorized"]) || rawEvidence.schemaVersion !== 1 ||
+        "queryStartedAt", "queryEndedAt", "ownershipGranted", "terminationAuthorized"]) || ![1, 2].includes(rawEvidence.schemaVersion) ||
         rawEvidence.scope !== "SAME_CIM_SNAPSHOT_HISTORICAL_PARENT_OBSERVATION_ONLY" || rawEvidence.candidateLimit !== 16 ||
         rawEvidence.candidateTotal !== rawCandidates.length || rawEvidence.candidateTruncated !== (rawCandidates.length > 16) ||
         rawEvidence.queryStartedAt !== collector.queryStartedAt || rawEvidence.queryEndedAt !== collector.queryEndedAt ||
@@ -948,7 +958,8 @@ try {
       for (const [index, item] of rawEvidence.records.entries()) {
         rejectionRecordIndex = index;
         rejectionCode = "RECORD_KEYS_CANDIDATE_IDENTITY_OR_BINDING";
-        if (!sameKeys(item, ["candidate", "currentParentRowCount", "currentParentRows", "currentParentRowsTruncated", "parentObservation"]) ||
+        if (!sameKeys(item, ["candidate", "currentParentRowCount", "currentParentRows", "currentParentRowsTruncated", "parentObservation",
+          ...(rawEvidence.schemaVersion === 2 ? ["scopeFields"] : [])]) ||
           !safeRow(item.candidate) || !equalRow(item.candidate, rawCandidates[index])) throw new Error("INVALID_DIAGNOSTIC");
         rejectionCode = "PARENT_ARRAY_COUNT_OR_OBSERVATION";
         if (!Number.isSafeInteger(item.currentParentRowCount) || item.currentParentRowCount < 0 ||
@@ -958,6 +969,19 @@ try {
         rejectionCode = "PARENT_IDENTITY_BINDING_OR_ORDER";
         if (item.currentParentRows.some(row => !safeRow(row) || row.pid !== item.candidate.parentPid) ||
           item.currentParentRows.some((row, i, rows) => i > 0 && rows[i - 1].parentPid > row.parentPid)) throw new Error("INVALID_DIAGNOSTIC");
+        let scopeFields = null;
+        if (rawEvidence.schemaVersion === 2) {
+          rejectionCode = "SCOPE_FIELDS_SHAPE_OR_BINDING";
+          const fields = item.scopeFields;
+          if (!sameKeys(fields, ["childUniqueRow", "childCommandLinePresent", "childExecutablePathPresent", "currentParents"]) ||
+              ["childUniqueRow", "childCommandLinePresent", "childExecutablePathPresent"].some(key => typeof fields[key] !== "boolean") ||
+              !Array.isArray(fields.currentParents) || fields.currentParents.length !== item.currentParentRows.length ||
+              fields.currentParents.some(parent => !sameKeys(parent, ["commandLinePresent", "executablePathPresent"]) ||
+                typeof parent.commandLinePresent !== "boolean" || typeof parent.executablePathPresent !== "boolean")) throw new Error("INVALID_DIAGNOSTIC");
+          scopeFields = { childUniqueRow: fields.childUniqueRow, childCommandLinePresent: fields.childCommandLinePresent,
+            childExecutablePathPresent: fields.childExecutablePathPresent,
+            currentParents: fields.currentParents.map(parent => ({ commandLinePresent: parent.commandLinePresent, executablePathPresent: parent.executablePathPresent })) };
+        }
         if (!remainingCandidates.some(candidate => equalRow(candidate, item.candidate))) continue;
         const capturedParents = identities.filter(parent => parent.pid === item.candidate.parentPid)
           .sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? ""), "en") || a.parentPid - b.parentPid);
@@ -975,6 +999,7 @@ try {
           currentParentRowCount: item.currentParentRowCount, currentParentRowsTruncated: item.currentParentRowsTruncated,
           currentParentRows: item.currentParentRows.map(project), capturedParentIdentityCount: capturedParents.length,
           capturedParentIdentitiesTruncated: capturedParents.length > 4, capturedParentIdentities: capturedParents.slice(0, 4).map(project),
+          scopeFieldsStatus: scopeFields ? "AVAILABLE" : "NOT_MEASURED_LEGACY_SCHEMA", scopeFields,
           ownershipGranted: false, terminationAuthorized: false, originalUnknownClassificationChanged: false });
       }
       historicalParentFailureDiagnostics = { ...emptyEvidence("VALIDATED_SAME_SNAPSHOT_OBSERVATION_ONLY"), status: "RECORDED",

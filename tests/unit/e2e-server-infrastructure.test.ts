@@ -837,6 +837,40 @@ describe("E2E server infrastructure", () => {
       expect(result.excludedHistoricalCollectorParentCandidates).toEqual([]);
     });
 
+  it.each([false, true])("scope readability=%s is diagnostic only and cannot clear an unknown historical-parent candidate", available => {
+    const fixture = historicalParentEvidenceFixture();
+    fixture.snapshot.historicalParentObservations.schemaVersion = 2;
+    Object.assign(fixture.snapshot.historicalParentObservations.records[0], { scopeFields: {
+      childUniqueRow: true, childCommandLinePresent: available, childExecutablePathPresent: available,
+      currentParents: [{ commandLinePresent: available, executablePathPresent: available }],
+    } });
+    const { result } = fixture.capture();
+    expect(result.unknownProcesses).toEqual(fixture.unknown);
+    expect(result.ownedProcesses).toEqual([]);
+    expect(result.excludedReusedHistoricalParentCandidates).toEqual([]);
+    expect(result.historicalParentFailureDiagnostics.records[0]).toMatchObject({ scopeFieldsStatus: "AVAILABLE",
+      scopeFields: { childUniqueRow: true, childCommandLinePresent: available, childExecutablePathPresent: available,
+        currentParents: [{ commandLinePresent: available, executablePathPresent: available }] }, ownershipGranted: false, terminationAuthorized: false });
+  });
+
+  it.each(["extra-key", "missing", "string-boolean", "parent-count", "parent-secret"])("invalid %s scope readability cannot leak or relax UNKNOWN", variant => {
+    const fixture = historicalParentEvidenceFixture();
+    fixture.snapshot.historicalParentObservations.schemaVersion = 2;
+    const fields: Record<string, unknown> = { childUniqueRow: true, childCommandLinePresent: false, childExecutablePathPresent: false,
+      currentParents: [{ commandLinePresent: true, executablePathPresent: true }] };
+    if (variant === "extra-key") fields.secret = "private command line";
+    if (variant === "missing") delete fields.childUniqueRow;
+    if (variant === "string-boolean") fields.childCommandLinePresent = "false";
+    if (variant === "parent-count") fields.currentParents = [];
+    if (variant === "parent-secret") fields.currentParents = [{ commandLinePresent: true, executablePathPresent: true, secret: "private command line" }];
+    Object.assign(fixture.snapshot.historicalParentObservations.records[0], { scopeFields: fields });
+    const { result } = fixture.capture();
+    expect(result.unknownProcesses).toEqual(fixture.unknown);
+    expect(result.historicalParentFailureDiagnostics.reason).toBe("MALFORMED_OR_UNBOUND_DIAGNOSTIC_NOT_TRUSTED");
+    expect(JSON.stringify(result)).not.toContain("private command line");
+    expect(result.ownedProcesses).toEqual([]);
+  });
+
   it.each(["present", "missing", "malformed", "truncated"])("records %s historical-parent evidence without reclassifying a newer unknown child", kind => {
     const fixture = historicalParentEvidenceFixture(kind === "truncated" ? 17 : 1, kind === "missing" ? [] : undefined);
     if (kind === "malformed") fixture.snapshot.historicalParentObservations.records[0].candidate.parentPid = 999;

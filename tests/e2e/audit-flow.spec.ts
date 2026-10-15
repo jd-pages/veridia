@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { createMockNote } from "../../lib/mock-data";
 import { E2E_ORIGIN } from "./e2e-origin";
 import { cleanupNonTerminalAutomaticBatches } from "./automation-cleanup";
+import { synchronizeQueuedBatch as synchronizeQueuedBatchRequest } from "./synchronize-queued-batch";
 
 const duplicateReauditCleanupBatchIds: string[] = [];
 
@@ -63,14 +64,7 @@ async function waitForBatch(
 }
 
 async function synchronizeQueuedBatch(page: Page, batchId: string) {
-  const response = await page.request.post(
-    `/api/automation/batches/${batchId}/control`,
-    { data: { action: "CONTINUE" } },
-  );
-  expect(
-    response.ok(),
-    `queue sync failed: ${response.status()} ${await response.text()}`,
-  ).toBeTruthy();
+  await synchronizeQueuedBatchRequest(page.request, batchId);
 }
 
 async function openExcelImport(page: Page) {

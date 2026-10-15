@@ -1,16 +1,24 @@
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({ spawn: vi.fn(), clock: null as number | null }));
-vi.mock("node:child_process", () => ({ spawn: fixture.spawn }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { spawn: fixture.spawn, spawnSync: actual.spawnSync };
+});
 vi.mock("node:perf_hooks", () => ({ performance: { now: () => fixture.clock ?? Date.now() } }));
-import { captureWindowsBrowserProfileOwners } from "@/lib/automation/windows-browser-process-owner";
+import { captureWindowsBrowserProfileOwners, parseWindowsProfileProbeDiagnostic } from "@/lib/automation/windows-browser-process-owner";
 import { getRecoveryDiagnostics } from "@/lib/automation/recovery-diagnostics";
 import {
   WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64, WINDOWS_BROWSER_ARGV_ASSEMBLY_SHA256,
   WINDOWS_BROWSER_ARGV_SOURCE, WINDOWS_BROWSER_ARGV_SOURCE_SHA256,
 } from "@/lib/automation/windows-browser-argv-asset";
+import {
+  WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_BASE64, WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_SHA256,
+  WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE, WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE_SHA256,
+} from "@/lib/automation/windows-browser-profile-census-asset";
 
 beforeEach(() => { vi.useFakeTimers(); fixture.spawn.mockReset(); fixture.clock = null; });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
@@ -267,6 +275,7 @@ it("keeps command text fixed and transfers the full large Unicode identity set t
   expect(options.stdio).toEqual(["pipe", "pipe", "pipe"]);
   expect(large.stdin.end).toHaveBeenCalledExactlyOnceWith(JSON.stringify({
     executablePath: executable, profilePath: profile, terminate: owners, argvAssembly: WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64,
+    censusAssembly: WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_BASE64,
   }), "utf8");
   const script = Buffer.from(args.at(-1), "base64").toString("utf16le");
   expect(script).toContain("[Console]::In.ReadToEnd() | ConvertFrom-Json");
@@ -277,6 +286,157 @@ it("keeps command text fixed and transfers the full large Unicode identity set t
   expect(script.indexOf("UNVERIFIED_PROFILE_OWNER")).toBeLessThan(script.indexOf("$process.Kill()"));
   large.stdout.emit("data", Buffer.from("[]")); large.emit("close", 0);
   await expect(second).resolves.toEqual([]);
+});
+
+it("pinned read-only profile census reuses complete bounded SPI parsing and never grants kill authority", () => {
+  const bytes = Buffer.from(WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_BASE64, "base64");
+  expect(bytes.subarray(0, 2).toString("ascii")).toBe("MZ");
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_SHA256);
+  expect(createHash("sha256").update(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).digest("hex")).toBe(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE_SHA256);
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("querySystem(5,buffer,SpiCapacity,out returned)");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("status!=0");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("SPI_RETURN_LENGTH_INVALID");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("SPI_THREAD_OR_NEXT_BOUNDS_INVALID");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("SPI_UNICODE_BOUNDS_INVALID");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("NATIVE_PROCESS_HANDLE_CLOSE_FAILED");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("GetProcessId(handle)!=(uint)(int)row[\"pid\"]");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("basic.parentPid.ToUInt64()!=(uint)(int)row[\"parentPid\"]");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("WaitForSingleObject(handle,0)!=258");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain('if(openError==87)absent=!ProcessStillExists((int)row["pid"],watch)');
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain('if(absent){Stage("SPI_VERIFIED_ABSENCE_SKIP",watch);continue;}');
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).not.toMatch(/TerminateProcess|\.Kill\(|ReadProcessMemory/u);
+});
+
+it("bounded managed exception unwrapping preserves only the existing fixed failure vocabulary", async () => {
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const script = Buffer.from(fixture.spawn.mock.calls[0][1].at(-1), "base64").toString("utf16le");
+  expect(script).toContain("$depth -lt 4 -and $probeFailure.InnerException");
+  expect(script).toContain("if ($probeFailure.Message -eq $allowed) { $code=$allowed }");
+  expect(script).not.toContain("[Console]::Error.WriteLine($probeFailure.Message)");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: {
+    reason: "NATIVE_PROBE_EXIT", nativeFailureCode: "LIVE_PROCESS_BIRTH_MISMATCH", closureProof: "CLOSED",
+  } });
+  child.stderr.emit("data", Buffer.from("VERIDIA_PROFILE_PROBE_FAILURE=SPI_HELD_PROCESS_DISPOSE:LIVE_PROCESS_BIRTH_MISMATCH\n"));
+  child.emit("close", 1);
+  await assertion;
+});
+
+it("uses full independent native snapshot birth on approved ABI and never falls back after native query rejection", async () => {
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const script = Buffer.from(fixture.spawn.mock.calls[0][1].at(-1), "base64").toString("utf16le");
+  expect(script).toContain(`$censusDigest -cne '${WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_SHA256}'`);
+  expect(script).toContain("$censusAssembly.GetExportedTypes().Length -ne 1");
+  expect(script).toContain("$nativeCensus = [VeridiaBrowserProfileCensus]::IsApprovedAbi()");
+  const nativePath = script.slice(script.indexOf("if ($nativeCensus)"), script.indexOf("Set-ProbeStage 'PROCESS_CENSUS_QUERY_RETURN'"));
+  expect(nativePath).toContain("ReadProfileRows($expectedExecutable, $probeClock)");
+  expect(nativePath).toContain("catch { if ([VeridiaBrowserProfileCensus]::LastStage)");
+  expect(nativePath).toContain("; throw }");
+  expect(nativePath).not.toMatch(/catch[^\n]*Get-OwnerProcessRows/u);
+  expect(script).toContain("$birthStamp -ceq [string]$candidate.NativeSnapshotBirthStamp");
+  expect(script).toContain("ProcessStillExists([int]$candidate.ProcessId, $probeClock)");
+  expect(script).not.toMatch(/@['"]|['"]@/u);
+  child.stdout.emit("data", Buffer.from("[]")); child.emit("close", 0);
+  await expect(pending).resolves.toEqual([]);
+});
+
+it("the actual pinned native SPI parser rejects malformed bounds and preserves observation-only rows", () => {
+  if (process.platform !== "win32") return;
+  const script = String.raw`
+$ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$bytes=[Convert]::FromBase64String([Console]::In.ReadToEnd());
+$assembly=[Reflection.Assembly]::Load($bytes);$type=$assembly.GetType('VeridiaBrowserProfileCensus');
+if($assembly.GetExportedTypes().Length -ne 1){throw 'EXPORT_SHAPE'};
+$method=$type.GetMethod('ParseSpi',[Reflection.BindingFlags]'NonPublic,Static');
+$pointer=[Runtime.InteropServices.Marshal]::AllocHGlobal(2048);$rows=@();
+try {
+ foreach($kind in @('valid','length','next','threads','unicode','odd','pid','birth','working','duplicate')) {
+  [Runtime.InteropServices.Marshal]::Copy([byte[]]::new(2048),0,$pointer,2048);
+  $birth=[DateTime]::UtcNow.AddSeconds(-1).ToFileTimeUtc();$bound=[DateTime]::UtcNow.ToFileTimeUtc();
+  [Runtime.InteropServices.Marshal]::WriteInt64($pointer,32,$birth);
+  [Runtime.InteropServices.Marshal]::WriteInt16($pointer,56,2);[Runtime.InteropServices.Marshal]::WriteInt16($pointer,58,2);
+  [Runtime.InteropServices.Marshal]::WriteIntPtr($pointer,64,[IntPtr]::Add($pointer,256));
+  [Runtime.InteropServices.Marshal]::WriteIntPtr($pointer,80,[IntPtr]100);[Runtime.InteropServices.Marshal]::WriteInt16($pointer,256,120);
+  [uint32]$returned=512;
+  if($kind -eq 'length'){$returned=0};if($kind -eq 'next'){[Runtime.InteropServices.Marshal]::WriteInt32($pointer,0,4)};
+  if($kind -eq 'threads'){[Runtime.InteropServices.Marshal]::WriteInt32($pointer,4,65536)};
+  if($kind -eq 'unicode'){[Runtime.InteropServices.Marshal]::WriteIntPtr($pointer,64,[IntPtr]::Subtract($pointer,2))};
+  if($kind -eq 'odd'){[Runtime.InteropServices.Marshal]::WriteInt16($pointer,56,1)};
+  if($kind -eq 'pid'){[Runtime.InteropServices.Marshal]::WriteIntPtr($pointer,80,[IntPtr](-1))};
+  if($kind -eq 'birth'){[Runtime.InteropServices.Marshal]::WriteInt64($pointer,32,0)};
+  if($kind -eq 'working'){[Runtime.InteropServices.Marshal]::WriteInt64($pointer,144,[long]::MaxValue)};
+  if($kind -eq 'duplicate'){
+   [Runtime.InteropServices.Marshal]::WriteInt32($pointer,0,512);$returned=1024;$second=[IntPtr]::Add($pointer,512);
+   [Runtime.InteropServices.Marshal]::WriteInt64($second,32,$birth);[Runtime.InteropServices.Marshal]::WriteInt16($second,56,2);
+   [Runtime.InteropServices.Marshal]::WriteInt16($second,58,2);[Runtime.InteropServices.Marshal]::WriteIntPtr($second,64,[IntPtr]::Add($second,256));
+   [Runtime.InteropServices.Marshal]::WriteIntPtr($second,80,[IntPtr]100);[Runtime.InteropServices.Marshal]::WriteInt16($second,256,120);
+  };
+  try {
+   $parsed=$method.Invoke($null,[object[]]@($pointer,$returned,[uint64]$bound,[Diagnostics.Stopwatch]::StartNew(),[int]2000));
+   $rows+=@{kind=$kind;status='ACCEPTED';count=$parsed.Count;ownershipAuthority=$parsed[0]['ownershipAuthority'];birth=$parsed[0]['nativeBirthStamp']};
+  } catch {$rows+=@{kind=$kind;status='REJECTED';code=$_.Exception.GetBaseException().Message}};
+ }
+ $rows | ConvertTo-Json -Depth 4 -Compress;
+} finally {[Runtime.InteropServices.Marshal]::FreeHGlobal($pointer)}
+`;
+  const started = performance.now();
+  const child = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
+    { encoding: "utf8", windowsHide: true, timeout: 2000, input: WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_BASE64 });
+  console.info("NATIVE_CENSUS_CONTRACT_TIMING=" + JSON.stringify({ elapsedMs: performance.now() - started, exit: child.status }));
+  expect(child.error).toBeUndefined();
+  expect(child.status, child.stderr).toBe(0);
+  const rows = JSON.parse(child.stdout.trim()) as Array<{ kind: string; status: string; code?: string; ownershipAuthority?: boolean; count?: number }>;
+  console.info("NATIVE_CENSUS_SYNTHETIC_BOUNDARIES=" + JSON.stringify(rows));
+  expect(rows[0]).toMatchObject({ kind: "valid", status: "ACCEPTED", count: 1, ownershipAuthority: false });
+  const expected = { length: "SPI_RETURN_LENGTH_INVALID", next: "SPI_THREAD_OR_NEXT_BOUNDS_INVALID", threads: "SPI_THREAD_OR_NEXT_BOUNDS_INVALID",
+    unicode: "SPI_UNICODE_BOUNDS_INVALID", odd: "SPI_UNICODE_BOUNDS_INVALID", pid: "SPI_PID_INVALID_OR_DUPLICATE",
+    birth: "SPI_BIRTH_OUTSIDE_CAPTURE_UTC_BOUND", working: "SPI_WORKING_SET_UNREPRESENTABLE", duplicate: "SPI_PID_INVALID_OR_DUPLICATE" };
+  expect(rows.slice(1).map(row => [row.kind, row.status, row.code]), JSON.stringify(rows)).toEqual(Object.entries(expected).map(([kind, code]) => [kind, "REJECTED", code]));
+});
+
+it("only a signaled held handle with exact PID and full birth can exclude an exited census entry", () => {
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("SameHeldIdentityExited(handle,(int)row[\"pid\"],(string)row[\"nativeBirthStamp\"])");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain('failure.Message!="PROFILE_OWNERSHIP_UNAVAILABLE" && failure.Message!="LIVE_PROCESS_BIRTH_MISMATCH"');
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("Remaining(watch,2000);");
+  if (process.platform !== "win32") return;
+  const script = String.raw`
+$ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);
+$request=[Console]::In.ReadToEnd()|ConvertFrom-Json;$assembly=[Reflection.Assembly]::Load([Convert]::FromBase64String($request.assembly));
+$method=$assembly.GetType('VeridiaBrowserProfileCensus').GetMethod('SameHeldIdentityExited',[Reflection.BindingFlags]'NonPublic,Static');
+$info=[Diagnostics.ProcessStartInfo]::new();$info.FileName=$request.node;$info.Arguments='-e "process.stdin.resume()"';
+$info.UseShellExecute=$false;$info.RedirectStandardInput=$true;$info.CreateNoWindow=$true;
+$worker=[Diagnostics.Process]::Start($info);$handle=$worker.Handle;$workerPid=$worker.Id;
+try {
+ $birth=$worker.StartTime.ToUniversalTime().ToFileTimeUtc().ToString();
+ $live=$method.Invoke($null,[object[]]@($handle,[int]$workerPid,[string]$birth));
+ $worker.StandardInput.Close();if(!$worker.WaitForExit(1000)){throw 'FIXTURE_EXIT_UNPROVEN'};
+ $closed=$method.Invoke($null,[object[]]@($handle,[int]$workerPid,[string]$birth));
+ $wrongPid=$method.Invoke($null,[object[]]@($handle,[int]($workerPid+1),[string]$birth));
+ $wrongBirth=$method.Invoke($null,[object[]]@($handle,[int]$workerPid,[string]([decimal]$birth+1)));
+ $invalid=$method.Invoke($null,[object[]]@([IntPtr]::Zero,[int]$workerPid,[string]$birth));
+ @{live=$live;closed=$closed;wrongPid=$wrongPid;wrongBirth=$wrongBirth;invalid=$invalid;creatorCloseProven=$worker.HasExited}|ConvertTo-Json -Compress;
+} finally {if(!$worker.HasExited){$worker.Kill();if(!$worker.WaitForExit(1000)){throw 'FIXTURE_CLEANUP_UNPROVEN'}};$worker.Dispose()}
+`;
+  const started = performance.now();
+  const native = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    encoding: "utf8", windowsHide: true, timeout: 2000,
+    input: JSON.stringify({ assembly: WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_BASE64, node: process.execPath }),
+  });
+  console.info("NATIVE_HELD_EXIT_CONTRACT_TIMING=" + JSON.stringify({ elapsedMs: performance.now() - started, exit: native.status }));
+  expect(native.error).toBeUndefined(); expect(native.status, native.stderr).toBe(0);
+  expect(JSON.parse(native.stdout.trim())).toEqual({ live: false, closed: true, wrongPid: false, wrongBirth: false, invalid: false, creatorCloseProven: true });
+});
+
+it("census open diagnostics retain only numeric snapshot identity and never grant ownership", () => {
+  expect(parseWindowsProfileProbeDiagnostic("VERIDIA_PROFILE_PROBE_CENSUS_OPEN=321:134000000000000001:87:TRUE\n")).toEqual({
+    censusOpenFailure: { pid: 321, snapshotBirthStamp: "134000000000000001", nativeErrorCode: 87, absentInCompleteSnapshot: true },
+  });
+  expect(parseWindowsProfileProbeDiagnostic("VERIDIA_PROFILE_PROBE_CENSUS_OPEN=321:134000000000000001:5:FALSE\n")).toEqual({
+    censusOpenFailure: { pid: 321, snapshotBirthStamp: "134000000000000001", nativeErrorCode: 5, absentInCompleteSnapshot: false },
+  });
+  for (const invalid of ["0:1:87:TRUE", "321:secret:87:TRUE", "321:134000000000000001:-1:TRUE", "321:134000000000000001:87:UNKNOWN", "321:134000000000000001:87:TRUE private token"]) {
+    expect(parseWindowsProfileProbeDiagnostic(`VERIDIA_PROFILE_PROBE_CENSUS_OPEN=${invalid}\n`)).toEqual({});
+  }
 });
 
 it("stdin errors fail closed once without retrying or admitting any owner", async () => {
