@@ -4,6 +4,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { StringDecoder } from "node:string_decoder";
 import { recordNativeProfileProbe } from "./recovery-diagnostics";
+import { isNativeWindowsProfileProbeSupported, prepareNativeWindowsProfileProbe } from "./windows-browser-native-probe";
+import { NATIVE_PROFILE_PROBE_BINARY_SHA256 } from "./windows-browser-native-probe-asset";
 import {
   WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64,
   WINDOWS_BROWSER_ARGV_ASSEMBLY_SHA256,
@@ -44,6 +46,8 @@ export class WindowsBrowserProfileOwnershipError extends Error {
     terminationRequest?: { elapsedMs: number; returned?: boolean; errorCode?: "KILL_THROWN" };
     nativeCloseObserved?: boolean; nativeCloseCode?: number | null;
     closureProof?: "CLOSED" | "NOT_PROVEN"; ioReleased?: boolean;
+    nativeTransport?: "PINNED_NATIVE_CONSOLE_HOST" | "POWERSHELL_WMI_COMPAT";
+    nativeAssetSha256?: string;
   }) { super(message); this.name = "WindowsBrowserProfileOwnershipError"; }
 }
 
@@ -448,9 +452,11 @@ export async function captureWindowsBrowserProfileOwners(
   const remaining = () => deadlineMs - performance.now();
   const executable = path.win32.resolve(executablePath);
   const profile = path.win32.resolve(profilePath);
-  const script = guardScript();
+  const nativeHost = isNativeWindowsProfileProbeSupported();
+  const nativeTransport = nativeHost ? "PINNED_NATIVE_CONSOLE_HOST" as const : "POWERSHELL_WMI_COMPAT" as const;
+  const script = nativeHost ? null : guardScript();
   const request = JSON.stringify({ executablePath: executable, profilePath: profile, terminate,
-    argvAssembly: WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64, censusAssembly: WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_BASE64 });
+    ...(nativeHost ? {} : { argvAssembly: WINDOWS_BROWSER_ARGV_ASSEMBLY_BASE64, censusAssembly: WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_BASE64 }) });
   const e2e = process.env.VERIDIA_E2E === "true";
   const probeId = e2e ? randomUUID() : undefined;
   const probeStartedAt = e2e ? new Date().toISOString() : undefined;
@@ -460,18 +466,31 @@ export async function captureWindowsBrowserProfileOwners(
   const record = (details: Record<string, unknown>) => {
     if (!e2e) return;
     recordNativeProfileProbe({ probeId, probeStartedAt,
-      callerProcessId: process.pid, callerFrames, profileIdentity: createHash("sha256").update(canonicalWindowsPath(profile)).digest("hex"), ...details });
+      callerProcessId: process.pid, callerFrames, profileIdentity: createHash("sha256").update(canonicalWindowsPath(profile)).digest("hex"), ...details,
+      nativeTransport, nativeAssetSha256: nativeHost ? NATIVE_PROFILE_PROBE_BINARY_SHA256 : undefined });
   };
   return new Promise<WindowsBrowserProcessIdentity[]>((resolve, reject) => {
-    const args = ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
+    const args = nativeHost ? [] : ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script || "", "utf16le").toString("base64")];
     let child: ChildProcessWithoutNullStreams;
-    try { child = spawn("powershell.exe", args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }); }
+    let preparingAsset = nativeHost;
+    try {
+      const command = nativeHost ? prepareNativeWindowsProfileProbe() : "powershell.exe";
+      preparingAsset = false;
+      if (remaining() <= 0) {
+        record({ status: "FAILED", reason: "NATIVE_PROBE_DEADLINE", elapsedMs: elapsed(), probeProcessCreated: false });
+        reject(new WindowsBrowserProfileOwnershipError("Chromium 物理 Profile 所有权检查失败，禁止复用未验证的 Profile", {
+          phase: "PROFILE_OWNER_PROBE", reason: "NATIVE_PROBE_DEADLINE", elapsedMs: elapsed(), nativeTransport,
+        })); return;
+      }
+      child = spawn(command, args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    }
     catch (error) {
-      if (!e2e) { reject(error); return; }
+      if (!e2e && !preparingAsset) { reject(error); return; }
       const nativeSpawnCode = (error as NodeJS.ErrnoException | null | undefined)?.code;
-      record({ status: "FAILED", reason: "NATIVE_PROBE_SYNC_SPAWN_FAILED", nativeSpawnCode, elapsedMs: elapsed() });
+      const reason = preparingAsset ? "NATIVE_PROBE_ASSET_INVALID" : "NATIVE_PROBE_SYNC_SPAWN_FAILED";
+      record({ status: "FAILED", reason, nativeSpawnCode, elapsedMs: elapsed() });
       reject(new WindowsBrowserProfileOwnershipError("Chromium 物理 Profile 所有权检查失败，禁止复用未验证的 Profile", {
-        phase: "PROFILE_OWNER_PROBE", reason: "NATIVE_PROBE_SYNC_SPAWN_FAILED", elapsedMs: elapsed(), nativeSpawnCode, probeId, probeStartedAt,
+        phase: "PROFILE_OWNER_PROBE", reason, elapsedMs: elapsed(), nativeSpawnCode, probeId, probeStartedAt, nativeTransport,
       }));
       return;
     }
@@ -493,6 +512,7 @@ export async function captureWindowsBrowserProfileOwners(
       nativeCloseObserved, nativeCloseCode: closeCode,
       closureProof: nativeCloseObserved && nativeExitObserved ? "CLOSED" as const : "NOT_PROVEN" as const,
       operationFailureElapsedMs: operationFailure?.elapsedMs, terminationRequest,
+      nativeTransport, nativeAssetSha256: nativeHost ? NATIVE_PROFILE_PROBE_BINARY_SHA256 : undefined,
       stageTimeline: [...stageTimeline], ...diagnostic,
     });
     const consumeStderr = (text: string, final = false) => {

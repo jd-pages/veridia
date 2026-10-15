@@ -5,12 +5,16 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const fixture = vi.hoisted(() => ({ spawn: vi.fn(), clock: null as number | null }));
+const fixture = vi.hoisted(() => ({ spawn: vi.fn(), clock: null as number | null, nativeHost: false, prepare: vi.fn() }));
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return { spawn: fixture.spawn, spawnSync: actual.spawnSync };
 });
 vi.mock("node:perf_hooks", () => ({ performance: { now: () => fixture.clock ?? Date.now() } }));
+vi.mock("@/lib/automation/windows-browser-native-probe", () => ({
+  isNativeWindowsProfileProbeSupported: () => fixture.nativeHost,
+  prepareNativeWindowsProfileProbe: () => fixture.prepare(),
+}));
 import { captureWindowsBrowserProfileOwners, parseWindowsProfileProbeDiagnostic } from "@/lib/automation/windows-browser-process-owner";
 import { getRecoveryDiagnostics } from "@/lib/automation/recovery-diagnostics";
 import {
@@ -22,7 +26,7 @@ import {
   WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE, WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE_SHA256,
 } from "@/lib/automation/windows-browser-profile-census-asset";
 
-beforeEach(() => { vi.useFakeTimers(); fixture.spawn.mockReset(); fixture.clock = null; });
+beforeEach(() => { vi.useFakeTimers(); fixture.spawn.mockReset(); fixture.clock = null; fixture.nativeHost = false; fixture.prepare.mockReset().mockReturnValue("E:\\fixture\\veridia-profile-probe.exe"); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 function childFixture() {
@@ -41,6 +45,73 @@ function childFixture() {
   fixture.spawn.mockReturnValue(child);
   return child;
 }
+
+it("approved native console transport uses only fixed executable and UTF8 data without a shell or fallback", async () => {
+  fixture.nativeHost = true; const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  expect(fixture.prepare).toHaveBeenCalledTimes(1);
+  expect(fixture.spawn.mock.calls[0].slice(0, 2)).toEqual(["E:\\fixture\\veridia-profile-probe.exe", []]);
+  expect(JSON.parse(child.stdin.end.mock.calls[0][0])).toEqual({ executablePath: "E:\\fixture\\chrome.exe", profilePath: "E:\\fixture\\isolated-profile" });
+  child.stdout.emit("data", Buffer.from("[]")); child.emit("close", 0);
+  await expect(pending).resolves.toEqual([]); expect(fixture.spawn).toHaveBeenCalledTimes(1);
+});
+
+it("native console JSON and exit-ready cannot replace real close inside2000ms", async () => {
+  fixture.nativeHost = true; fixture.clock = 0; const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: { reason: "NATIVE_PROBE_DEADLINE", nativeTransport: "PINNED_NATIVE_CONSOLE_HOST", nativeCloseObserved: false } });
+  child.stdout.emit("data", Buffer.from("[]\r\n")); child.stdout.emit("end");
+  child.stderr.emit("data", Buffer.from("VERIDIA_PROFILE_PROBE_EXIT_READY=931\n")); child.emit("exit", 0);
+  fixture.clock = 2000; await vi.advanceTimersByTimeAsync(2000); await assertion;
+  expect(fixture.spawn).toHaveBeenCalledTimes(1); child.emit("close", 0);
+});
+
+it("native console invalid identity still fails closed without compatibility retry", async () => {
+  fixture.nativeHost = true; const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: { reason: "NATIVE_PROBE_RESPONSE_INVALID" } });
+  child.stdout.emit("data", Buffer.from(JSON.stringify([{ pid: 42, birthStamp: "123", executablePath: "E:\\other.exe", profilePath: "E:\\other" }]))); child.emit("close", 0);
+  await assertion; expect(fixture.spawn).toHaveBeenCalledTimes(1);
+});
+
+it("native code asset preparation belongs to the original budget and cannot spawn after exhaustion", async () => {
+  fixture.nativeHost = true; fixture.clock = 0; fixture.prepare.mockImplementation(() => { fixture.clock = 2000; return "E:\\fixture\\probe.exe"; });
+  await expect(captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile")).rejects.toMatchObject({ diagnostic: { reason: "NATIVE_PROBE_DEADLINE" } });
+  expect(fixture.spawn).not.toHaveBeenCalled();
+});
+
+it("unproved or unavailable native code asset is rejected rather than silently using PowerShell", async () => {
+  fixture.nativeHost = true; fixture.prepare.mockImplementation(() => { throw Object.assign(Error("PRIVATE_PATH_NOT_PERSISTED"), { code: "EPERM" }); });
+  const result = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  await expect(result).rejects.toMatchObject({ diagnostic: { reason: "NATIVE_PROBE_ASSET_INVALID", nativeSpawnCode: "EPERM" } });
+  expect(fixture.spawn).not.toHaveBeenCalled();
+});
+
+it("native console replays the original complete-result-without-close receipt as NOT_PROVEN", async () => {
+  // CI 38725971995/1: [] written at1982.878ms, exit-ready931 at1984.182ms,
+  // neither exit nor close by2000.657ms; kill returned false. Data only: no
+  // historical PID is queried or terminated, and a false kill is never closure.
+  fixture.nativeHost = true; fixture.clock = 0; const child = childFixture(); child.kill.mockReturnValue(false);
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: {
+    reason: "NATIVE_PROBE_DEADLINE", stdoutBytes: 4, stdoutEnded: true, nativeExitObserved: false,
+    nativeCloseObserved: false, closureProof: "NOT_PROVEN", terminationRequest: { returned: false },
+  } });
+  fixture.clock = 1982.8778; child.stdout.emit("data", Buffer.from("[]\r\n")); child.stdout.emit("end");
+  fixture.clock = 1984.1821; child.stderr.emit("data", Buffer.from("VERIDIA_PROFILE_PROBE_EXIT_READY=931\n"));
+  fixture.clock = 2000.657; await vi.advanceTimersByTimeAsync(2000); await assertion;
+  expect(fixture.spawn).toHaveBeenCalledTimes(1); expect(child.kill).toHaveBeenCalledTimes(1);
+  child.emit("close", 0); // A late event cannot retroactively admit this result.
+});
+
+it("native production synchronous spawn keeps its original failure identity without retry or admission", async () => {
+  fixture.nativeHost = true; vi.stubEnv("VERIDIA_E2E", "false");
+  const original = Object.assign(new Error("spawn EPERM"), { code: "EPERM", syscall: "spawn" });
+  fixture.spawn.mockImplementation(() => { throw original; });
+  await expect(captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile")).rejects.toBe(original);
+  expect(fixture.prepare).toHaveBeenCalledTimes(1); expect(fixture.spawn).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
 
 it("the unchanged 2000ms deadline retains the last observed fixed native phase without retry", async () => {
   const child = childFixture();
