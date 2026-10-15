@@ -38,6 +38,7 @@ export class WindowsBrowserProfileOwnershipError extends Error {
       returnedLength: number; sameHeldIdentity: boolean; waitResult: number };
     censusImageExitEvidence?: { pid: number; snapshotBirthStamp: string; basicExitStatus: number;
       exitFileTime: string; sameHeldIdentity: boolean };
+    censusExitJoin?: { pid: number; snapshotBirthStamp: string; waitMs: number; waitResult?: number };
     stageTimeline?: Array<{ stage: string; scriptElapsedMs: number; observedElapsedMs: number }>;
     operationFailureElapsedMs?: number;
     terminationRequest?: { elapsedMs: number; returned?: boolean; errorCode?: "KILL_THROWN" };
@@ -52,7 +53,8 @@ export function parseWindowsProfileProbeDiagnostic(text: string) {
   const result: { nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number;
     censusOpenFailure?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusOpenFailure"];
     censusImageFailure?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusImageFailure"];
-    censusImageExitEvidence?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusImageExitEvidence"] } = {};
+    censusImageExitEvidence?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusImageExitEvidence"];
+    censusExitJoin?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusExitJoin"] } = {};
   const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|PARSER_ASSEMBLY_LOAD|PARSER_ASSEMBLY_LOADED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|WMI_GET_ENTER|WMI_GET_RETURN|WMI_ENUM_ENTER|WMI_ENUM_RETURN|WMI_MOVE_ENTER|WMI_MOVE_RETURN|WMI_ROW_READ|WMI_ROW_RETURN|WMI_BIRTH_PARSE|WMI_BIRTH_RETURN|WMI_ROW_DISPOSE|WMI_ROW_DISPOSED|WMI_DISPOSE|WMI_DISPOSED|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT|RESULT_SERIALIZED|RESULT_WRITTEN|CENSUS_ASSEMBLY_LOAD|CENSUS_ASSEMBLY_LOADED|SPI_CAPTURE_ENTER|SPI_CAPTURE_RETURN|SPI_HELD_PROCESS_OPEN|SPI_IMAGE_READ|SPI_IMAGE_RETURN|SPI_COMMAND_LINE_READ|SPI_COMMAND_LINE_RETURN|SPI_HELD_PROCESS_DISPOSE|SPI_VERIFIED_EXIT_SKIP|SPI_VERIFIED_ABSENCE_SKIP):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
   for (const match of text.matchAll(stage)) {
     const elapsed = Number(match[2]);
@@ -80,6 +82,20 @@ export function parseWindowsProfileProbeDiagnostic(text: string) {
       imageState[4].length <= 20 && BigInt(imageState[4]) <= 0xffff_ffff_ffff_ffffn) {
     result.censusImageExitEvidence = { pid: Number(imageState[1]), snapshotBirthStamp: imageState[2], basicExitStatus: Number(imageState[3]),
       exitFileTime: imageState[4], sameHeldIdentity: imageState[5] === "TRUE" };
+  }
+  const exitReady = text.match(/^VERIDIA_PROFILE_PROBE_EXIT_READY=([0-9]+(?:\.[0-9]+)?)\r?\n$/u);
+  if (exitReady && Number.isFinite(Number(exitReady[1])) && Number(exitReady[1]) <= 60_000) {
+    result.nativeStage = "SUCCESS_EXIT_READY";
+    result.nativeStageElapsedMs = Number(exitReady[1]);
+  }
+  const join = text.match(/^VERIDIA_PROFILE_PROBE_EXIT_JOIN=([0-9]+):([0-9]+):([0-9]+):(START|[0-9]+):([0-9]+)\r?\n$/u);
+  if (join && Number.isSafeInteger(Number(join[1])) && Number(join[1]) > 0 && join[2].length <= 20 &&
+      Number(join[3]) > 0 && Number(join[3]) <= 2000 && Number(join[5]) <= 60_000 &&
+      (join[4] === "START" || Number(join[4]) <= 0xffff_ffff)) {
+    result.censusExitJoin = { pid: Number(join[1]), snapshotBirthStamp: join[2], waitMs: Number(join[3]),
+      ...(join[4] === "START" ? {} : { waitResult: Number(join[4]) }) };
+    result.nativeStage = join[4] === "START" ? "HELD_EXIT_JOIN_START" : "HELD_EXIT_JOIN_RETURN";
+    result.nativeStageElapsedMs = Number(join[5]);
   }
   return result;
 }
@@ -198,7 +214,7 @@ function Set-ProbeStage([string]$value) {
   # Console.Error WriteLine delivers this newline before a blocked native call.
   # Do not add a second synchronous Flush for every per-row stage marker.
 }
-$phase='UTILITY_MODULE_IMPORT'; $owned=@(); $handles=@(); $boundBirths=@{}; try {
+$phase='UTILITY_MODULE_IMPORT'; $owned=@(); $handles=@(); $boundBirths=@{}; $written=$false; $disposed=$false; try {
 # Resolve only the required Windows built-in module. The immutable OS argv
 # wrapper is loaded, not compiled, inside the same complete 2000ms budget.
 Set-ProbeStage 'UTILITY_MODULE_IMPORT';
@@ -399,6 +415,7 @@ $owned = @(); $handles = @(); $script:parserReady = $false;
   Set-ProbeStage 'RESULT_SERIALIZED';
   [Console]::Out.WriteLine($resultJson); [Console]::Out.Flush();
   Set-ProbeStage 'RESULT_WRITTEN';
+  $written=$true;
 } catch {
   $code='NATIVE_PROBE_SCRIPT_EXCEPTION';
   # Reflection/static managed calls wrap the already fixed native code.
@@ -411,7 +428,14 @@ $owned = @(); $handles = @(); $script:parserReady = $false;
   # Only this fixed vocabulary crosses stderr, never raw native exceptions.
   [Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_FAILURE='+$phase+':'+$code);
   exit 1
-} finally { foreach ($process in $handles) { $process.Dispose() } }`
+} finally { foreach ($process in $handles) { $process.Dispose() }; $disposed=$true }
+# The dedicated probe has no work after result emission and handle disposal.
+# Do not leave success dependent on implicit PowerShell runspace teardown.
+# The parent still requires the real exit/close and JSON/identity validation
+# within the same original absolute deadline; this marker grants no authority.
+if (!$written -or !$disposed) { exit 1 }
+[Console]::Error.WriteLine('VERIDIA_PROFILE_PROBE_EXIT_READY='+$probeClock.ElapsedMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture));
+[Console]::Error.Flush(); exit 0`
     // No here-strings or request data occur in this fixed native program.
     // Remove lexical comments/indentation, not code, to retain the existing
     // command-size ceiling while both immutable assets travel through stdin.

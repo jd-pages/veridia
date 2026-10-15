@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -343,6 +345,7 @@ it("uses full independent native snapshot birth on approved ABI and never falls 
 
 it("the actual pinned native SPI parser rejects malformed bounds and preserves observation-only rows", () => {
   if (process.platform !== "win32") return;
+  vi.useRealTimers();
   const script = String.raw`
 $ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$bytes=[Convert]::FromBase64String([Console]::In.ReadToEnd());
 $assembly=[Reflection.Assembly]::Load($bytes);$type=$assembly.GetType('VeridiaBrowserProfileCensus');
@@ -379,10 +382,10 @@ try {
  $rows | ConvertTo-Json -Depth 4 -Compress;
 } finally {[Runtime.InteropServices.Marshal]::FreeHGlobal($pointer)}
 `;
-  const started = performance.now();
+  const started = process.hrtime.bigint();
   const child = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
     { encoding: "utf8", windowsHide: true, timeout: 2000, input: WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_BASE64 });
-  console.info("NATIVE_CENSUS_CONTRACT_TIMING=" + JSON.stringify({ elapsedMs: performance.now() - started, exit: child.status }));
+  console.info("NATIVE_CENSUS_CONTRACT_TIMING=" + JSON.stringify({ elapsedMs: Number(process.hrtime.bigint() - started) / 1e6, exit: child.status }));
   expect(child.error).toBeUndefined();
   expect(child.status, child.stderr).toBe(0);
   const rows = JSON.parse(child.stdout.trim()) as Array<{ kind: string; status: string; code?: string; ownershipAuthority?: boolean; count?: number }>;
@@ -395,36 +398,46 @@ try {
 });
 
 it("only a signaled held handle with exact PID and full birth can exclude an exited census entry", () => {
-  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("SameHeldIdentityExited(handle,(int)row[\"pid\"],(string)row[\"nativeBirthStamp\"])");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("bool closed=SameHeldIdentityExited(handle,pid,birth);Remaining(watch,budgetMs);return closed;");
   expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain('failure.Message!="PROFILE_OWNERSHIP_UNAVAILABLE" && failure.Message!="LIVE_PROCESS_BIRTH_MISMATCH"');
   expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("Remaining(watch,2000);");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain('WaitForSameHeldExitWithinBudget(handle,(int)row["pid"],(string)row["nativeBirthStamp"],watch,2000)');
   if (process.platform !== "win32") return;
+  vi.useRealTimers();
   const script = String.raw`
 $ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);
 $request=[Console]::In.ReadToEnd()|ConvertFrom-Json;$assembly=[Reflection.Assembly]::Load([Convert]::FromBase64String($request.assembly));
 $method=$assembly.GetType('VeridiaBrowserProfileCensus').GetMethod('SameHeldIdentityExited',[Reflection.BindingFlags]'NonPublic,Static');
+$bounded=$assembly.GetType('VeridiaBrowserProfileCensus').GetMethod('WaitForSameHeldExitWithinBudget',[Reflection.BindingFlags]'NonPublic,Static');
+$gate=$assembly.GetType('VeridiaBrowserProfileCensus').GetMethod('MayAwaitReportedExit',[Reflection.BindingFlags]'NonPublic,Static');
 $info=[Diagnostics.ProcessStartInfo]::new();$info.FileName=$request.node;$info.Arguments='-e "process.stdin.resume()"';
 $info.UseShellExecute=$false;$info.RedirectStandardInput=$true;$info.CreateNoWindow=$true;
 $worker=[Diagnostics.Process]::Start($info);$handle=$worker.Handle;$workerPid=$worker.Id;
 try {
  $birth=$worker.StartTime.ToUniversalTime().ToFileTimeUtc().ToString();
  $live=$method.Invoke($null,[object[]]@($handle,[int]$workerPid,[string]$birth));
+ $boundedLive=$bounded.Invoke($null,[object[]]@($handle,[int]$workerPid,[string]$birth,[Diagnostics.Stopwatch]::StartNew(),[int]2000));
  $worker.StandardInput.Close();if(!$worker.WaitForExit(1000)){throw 'FIXTURE_EXIT_UNPROVEN'};
  $closed=$method.Invoke($null,[object[]]@($handle,[int]$workerPid,[string]$birth));
+ $boundedClosed=$bounded.Invoke($null,[object[]]@($handle,[int]$workerPid,[string]$birth,[Diagnostics.Stopwatch]::StartNew(),[int]2000));
+ $boundedWrongBirth=$bounded.Invoke($null,[object[]]@($handle,[int]$workerPid,[string]([decimal]$birth+1),[Diagnostics.Stopwatch]::StartNew(),[int]2000));
+ $expired='NOT_REJECTED';try{$null=$bounded.Invoke($null,[object[]]@($handle,[int]$workerPid,[string]$birth,[Diagnostics.Stopwatch]::StartNew(),[int]0))}catch{$expired=$_.Exception.GetBaseException().Message};
+ $gates=@($gate.Invoke($null,[object[]]@($true,[uint64]1,[int]0)),$gate.Invoke($null,[object[]]@($true,[uint64]0,[int]0)),$gate.Invoke($null,[object[]]@($true,[uint64]1,[int]259)),$gate.Invoke($null,[object[]]@($false,[uint64]1,[int]0)));
  $wrongPid=$method.Invoke($null,[object[]]@($handle,[int]($workerPid+1),[string]$birth));
  $wrongBirth=$method.Invoke($null,[object[]]@($handle,[int]$workerPid,[string]([decimal]$birth+1)));
  $invalid=$method.Invoke($null,[object[]]@([IntPtr]::Zero,[int]$workerPid,[string]$birth));
- @{live=$live;closed=$closed;wrongPid=$wrongPid;wrongBirth=$wrongBirth;invalid=$invalid;creatorCloseProven=$worker.HasExited}|ConvertTo-Json -Compress;
+ @{live=$live;closed=$closed;wrongPid=$wrongPid;wrongBirth=$wrongBirth;invalid=$invalid;creatorCloseProven=$worker.HasExited;boundedLive=$boundedLive;boundedClosed=$boundedClosed;boundedWrongBirth=$boundedWrongBirth;expired=$expired;gates=$gates}|ConvertTo-Json -Compress;
 } finally {if(!$worker.HasExited){$worker.Kill();if(!$worker.WaitForExit(1000)){throw 'FIXTURE_CLEANUP_UNPROVEN'}};$worker.Dispose()}
 `;
-  const started = performance.now();
+  const started = process.hrtime.bigint();
   const native = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
     encoding: "utf8", windowsHide: true, timeout: 2000,
     input: JSON.stringify({ assembly: WINDOWS_BROWSER_PROFILE_CENSUS_ASSEMBLY_BASE64, node: process.execPath }),
   });
-  console.info("NATIVE_HELD_EXIT_CONTRACT_TIMING=" + JSON.stringify({ elapsedMs: performance.now() - started, exit: native.status }));
+  console.info("NATIVE_HELD_EXIT_CONTRACT_TIMING=" + JSON.stringify({ elapsedMs: Number(process.hrtime.bigint() - started) / 1e6, exit: native.status }));
   expect(native.error).toBeUndefined(); expect(native.status, native.stderr).toBe(0);
-  expect(JSON.parse(native.stdout.trim())).toEqual({ live: false, closed: true, wrongPid: false, wrongBirth: false, invalid: false, creatorCloseProven: true });
+  expect(JSON.parse(native.stdout.trim())).toEqual({ live: false, closed: true, wrongPid: false, wrongBirth: false, invalid: false, creatorCloseProven: true,
+    boundedLive: false, boundedClosed: true, boundedWrongBirth: false, expired: "NATIVE_QUERY_DEADLINE", gates: [true, false, false, false] });
 });
 
 it("census open diagnostics retain only numeric snapshot identity and never grant ownership", () => {
@@ -471,7 +484,7 @@ it("image exit-state receipts are bounded numeric observations and never replace
     expect(parseWindowsProfileProbeDiagnostic(invalid)).toEqual({});
   }
   expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("unchecked((uint)basic.exitStatus),diagnosticExit.Value");
-  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("SameHeldIdentityExited(handle,(int)row[\"pid\"],(string)row[\"nativeBirthStamp\"])");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("bool closed=SameHeldIdentityExited(handle,pid,birth);Remaining(watch,budgetMs);return closed;");
   const child = childFixture();
   const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
   const assertion = expect(pending).rejects.toMatchObject({ diagnostic: {
@@ -481,6 +494,66 @@ it("image exit-state receipts are bounded numeric observations and never replace
   child.stdout.emit("data", Buffer.from("[]")); child.emit("close", 1);
   await assertion;
   expect(fixture.spawn).toHaveBeenCalledTimes(1);
+});
+
+it("bounded exit-join receipts cannot admit unknown/live processes or replace owner JSON validation", async () => {
+  const start = "VERIDIA_PROFILE_PROBE_EXIT_JOIN=321:134000000000000001:1700:START:200\n";
+  const end = "VERIDIA_PROFILE_PROBE_EXIT_JOIN=321:134000000000000001:1700:0:220\n";
+  expect(parseWindowsProfileProbeDiagnostic(start)).toEqual({ nativeStage: "HELD_EXIT_JOIN_START", nativeStageElapsedMs: 200,
+    censusExitJoin: { pid: 321, snapshotBirthStamp: "134000000000000001", waitMs: 1700 } });
+  expect(parseWindowsProfileProbeDiagnostic(end)).toEqual({ nativeStage: "HELD_EXIT_JOIN_RETURN", nativeStageElapsedMs: 220,
+    censusExitJoin: { pid: 321, snapshotBirthStamp: "134000000000000001", waitMs: 1700, waitResult: 0 } });
+  for (const invalid of [end.replace("321:", "0:"), end.replace(":1700:", ":2001:"), end.replace(":0:220", ":4294967296:220"), end.trimEnd() + " private path\n"]) {
+    expect(parseWindowsProfileProbeDiagnostic(invalid)).toEqual({});
+  }
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: { reason: "NATIVE_PROBE_RESPONSE_INVALID", censusExitJoin: { waitResult: 0 } } });
+  child.stderr.emit("data", Buffer.from(start + end)); child.stdout.emit("data", Buffer.from("{invalid-owner-json")); child.emit("close", 0);
+  await assertion;
+});
+
+it.each(["success", "operation-failure", "cleanup-failure"])("real native probe finalization tail exits only after successful operation and cleanup: %s", async (scenario) => {
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\no-such-veridia-profile-probe.exe", "E:\\fixture\\isolated-profile");
+  let script = Buffer.from(fixture.spawn.mock.calls[0][1].at(-1), "base64").toString("utf16le");
+  child.stdout.emit("data", Buffer.from("[]")); child.emit("close", 0); await expect(pending).resolves.toEqual([]);
+  expect(script.lastIndexOf("exit 0")).toBeGreaterThan(script.indexOf("$disposed=$true"));
+  expect(script).not.toContain("[Environment]::Exit");
+  expect(script).toContain("if (!$written -or !$disposed) { exit 1 }");
+  expect(parseWindowsProfileProbeDiagnostic("VERIDIA_PROFILE_PROBE_EXIT_READY=215\n")).toEqual({ nativeStage: "SUCCESS_EXIT_READY", nativeStageElapsedMs: 215 });
+  for (const invalid of ["-1", "60001", "215 private text"]) expect(parseWindowsProfileProbeDiagnostic(`VERIDIA_PROFILE_PROBE_EXIT_READY=${invalid}\n`)).toEqual({});
+  if (process.platform !== "win32") return;
+  // The mocked parent promise is already closed. Native child timing must not
+  // inherit Vitest's fake Date/performance/hrtime clocks.
+  vi.useRealTimers();
+  // Test this actual finalization tail, not a second complete process census.
+  // Full ownership/census behavior remains covered by the existing native tests and E2E.
+  const tryStart = script.indexOf("try {", script.indexOf("$phase='UTILITY_MODULE_IMPORT'")) + "try {".length;
+  const tailStart = script.indexOf("Set-ProbeStage 'RESULT_EMIT';");
+  expect(tryStart).toBeGreaterThan(0); expect(tailStart).toBeGreaterThan(tryStart);
+  script = script.slice(0, tryStart) + (scenario === "operation-failure" ? "throw 'SYNTHETIC_OPERATION_FAILURE';" : "") + script.slice(tailStart);
+  if (scenario === "cleanup-failure") script = script.replace("} finally { foreach ($process in $handles)", "} finally { throw 'SYNTHETIC_CLEANUP_FAILURE'; foreach ($process in $handles)");
+  const startedAt = new Date(vi.getRealSystemTime()).toISOString();
+  const started = process.hrtime.bigint();
+  const native = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    input: "", encoding: "utf8", windowsHide: true, timeout: 2000,
+  });
+  const observation = { scenario, startedAt, capturedAt: new Date(vi.getRealSystemTime()).toISOString(), creatorPid: process.pid, pid: native.pid,
+    nativeBirth: "NOT_CAPTURED", ownershipAuthority: false, elapsedMs: Number(process.hrtime.bigint() - started) / 1e6,
+    exit: native.status, signal: native.signal, errorCode: native.error && (native.error as NodeJS.ErrnoException).code,
+    stdoutBytes: Buffer.byteLength(native.stdout || ""),
+    stages: (native.stderr || "").split(/\r?\n/u).map(line => parseWindowsProfileProbeDiagnostic(line + "\n")).filter(value => value.nativeStage),
+  };
+  const receiptDirectory = path.resolve(".playwright/native-finalization-unit"); mkdirSync(receiptDirectory, { recursive: true });
+  const receipt = path.join(receiptDirectory, `${randomUUID()}.json`); writeFileSync(receipt, JSON.stringify(observation, null, 2), { flag: "wx" });
+  console.info("NATIVE_EXPLICIT_EXIT_CONTRACT_TIMING=" + JSON.stringify({ receipt, ...observation }));
+  expect(native.error).toBeUndefined();
+  expect(native.status, native.stderr).toBe(scenario === "success" ? 0 : 1);
+  if (scenario === "success") {
+    expect(JSON.parse(native.stdout.trim())).toEqual([]);
+    expect(native.stderr).toMatch(/VERIDIA_PROFILE_PROBE_EXIT_READY=[0-9]+/u);
+  } else expect(native.stderr).not.toContain("VERIDIA_PROFILE_PROBE_EXIT_READY=");
 });
 
 it("stdin errors fail closed once without retrying or admitting any owner", async () => {

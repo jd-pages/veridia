@@ -251,6 +251,21 @@ describe("审核提交边界：真实 Prisma 与 API", () => {
     await expect(runAuditTask(task.id, auditIngestExtraction(task, { extractedAt: new Date(Math.max(Date.now(), task.createdAt.getTime()) + 1).toISOString() }), { source: "MANUAL" })).resolves.toMatchObject({ autoStatus: "PASSED" });
   });
 
+  it("topic boundary E2E keeps the shared task-bound clock instead of overriding it with a stale worker clock", async () => {
+    const task = await fixture.task();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(task.createdAt.getTime() - 1);
+    let base: ReturnType<typeof auditIngestExtraction>;
+    try { base = auditIngestExtraction(task); } finally { clock.mockRestore(); }
+    const previous = await counts();
+    await expect(runAuditTask(task.id, { ...base, extractedAt: new Date(task.createdAt.getTime() - 1).toISOString() }, { source: "MANUAL" })).rejects.toMatchObject({ code: "STALE_EXTRACTION" });
+    await unchanged(task, previous);
+    expect(Date.parse(base.extractedAt)).toBeGreaterThan(task.createdAt.getTime());
+    expect((await runAuditTask(task.id, base, { source: "MANUAL" })).autoStatus).toBe("PASSED");
+    const source = fs.readFileSync(path.resolve("tests/e2e/audit-topic-boundaries.spec.ts"), "utf8");
+    expect(source).toContain("extractedAt: base.extractedAt");
+    expect(source).not.toContain("extractedAt: new Date().toISOString()");
+  });
+
   it("startedAt 之后才允许提交 extraction", async () => {
     const task = await fixture.task();
     const startedAt = new Date(task.createdAt.getTime() + 60_000);

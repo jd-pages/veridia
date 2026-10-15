@@ -36,12 +36,15 @@ async function submit(request: APIRequestContext, fixture: Fixture, channel: Top
   const url = `https://www.douyin.com/note/${contentId}`;
   const task = await fixture.task(channel === "DOUYIN" ? { url, normalizedUrl: url, channel } : {});
   const note = boundaryNote(channel, patch);
-  const extraction = auditIngestExtraction(task, {
+  const base = auditIngestExtraction(task);
+  const extraction = {
+    ...base,
     ...note, url: task.url, finalUrl: task.url,
     noteId: channel === "DOUYIN" ? contentId : new URL(task.url).pathname.split("/").at(-1),
     ...(channel === "DOUYIN" ? { contentId, verifiedPlatformTopics: [] } : { verifiedDouyinTopics: [] }),
-    extractedAt: new Date().toISOString(),
-  });
+    // Keep the shared fixture's task-bound clock, not the caller/worker clock.
+    extractedAt: base.extractedAt,
+  };
   const response = await request.post(`/api/tasks/${task.id}/audit`, { data: { extraction } });
   expect(response.status(), await response.text()).toBe(200);
   const result = (await response.json()).data;
