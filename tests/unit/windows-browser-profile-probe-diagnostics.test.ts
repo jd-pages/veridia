@@ -144,6 +144,25 @@ it("a native birth rejection remains failed and exports only fixed diagnostic fi
   expect(child.kill).not.toHaveBeenCalled();
 });
 
+it("owner handle denied evidence retains exact birth, numeric rights and error without granting admission", async () => {
+  fixture.nativeHost = true; const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: { reason: "NATIVE_PROBE_EXIT",
+    ownerOpenFailure: { pid: 7812, snapshotBirthStamp: "134365530920094057", requestedAccess: 1052672, nativeErrorCode: 5, absentInCompleteSnapshot: false } } });
+  child.stderr.emit("data", Buffer.from("VERIDIA_PROFILE_PROBE_OWNER_OPEN=7812:134365530920094057:1052672:5:FALSE\n"));
+  child.emit("close", 1); await assertion;
+  expect(fixture.spawn).toHaveBeenCalledTimes(1); expect(child.kill).not.toHaveBeenCalled();
+});
+
+it("owner diagnostic admits only bounded numeric identities and the two approved rights masks", () => {
+  expect(parseWindowsProfileProbeDiagnostic("VERIDIA_PROFILE_PROBE_OWNER_OPEN=7812:134365530920094057:1052673:87:TRUE\n")).toMatchObject({
+    ownerOpenFailure: { pid: 7812, snapshotBirthStamp: "134365530920094057", requestedAccess: 1052673, nativeErrorCode: 87, absentInCompleteSnapshot: true },
+  });
+  for (const frame of ["7812:134365530920094057:2035711:5:FALSE", "0:134365530920094057:1052672:5:FALSE", "7812:18446744073709551616:1052672:5:FALSE", "7812:134365530920094057:1052672:4294967296:FALSE", "7812:134365530920094057:1052672:PRIVATE_TOKEN:FALSE"]) {
+    expect(parseWindowsProfileProbeDiagnostic(`VERIDIA_PROFILE_PROBE_OWNER_OPEN=${frame}\n`)).not.toHaveProperty("ownerOpenFailure");
+  }
+});
+
 it("retains the precise native sub-operation and both clocks without extending the total budget", async () => {
   const child = childFixture();
   const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");

@@ -23,6 +23,11 @@ it("native console code pins the exact audited census, OS argv parser and guarde
   expect(source).toContain("VeridiaBrowserProfileCensus.ReadProfileRows(executable,Clock)");
   expect(source).toContain("VeridiaBrowserArgv.MatchProfile(command,profile)");
   expect(source.indexOf("if(matches!=1)throw")).toBeLessThan(source.indexOf("process.Kill()"));
+  expect(source).toContain("const uint QueryAndWait=0x101000, TerminateRight=0x1;");
+  expect(source).toContain("OpenProcess(access,false,(uint)pid)");
+  expect(source).toContain("access=QueryAndWait|(terminating?TerminateRight:0)");
+  expect(source).toContain("string birth=process.Birth()");
+  expect(source).not.toContain("Process.GetProcessById(pid)");
   expect(source).toContain("if(!written||!disposed||result!=0)return 1;");
   expect(source.indexOf("finally{disposed=true;")).toBeLessThan(source.lastIndexOf("return 0;"));
   expect(source).not.toMatch(/\b(?:Environment\.Exit|ExitProcess)\s*\(/u);

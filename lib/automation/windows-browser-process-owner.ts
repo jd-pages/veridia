@@ -36,6 +36,7 @@ export class WindowsBrowserProfileOwnershipError extends Error {
     stderrBytes?: number; nativeStartupFailure?: "OUT_OF_MEMORY" | "CLR_INITIALIZATION_FAILURE" | "POWERSHELL_PARSE_ERROR";
     terminationFailure?: { pid: number; birthStamp: string; nativeErrorCode: number; hresult: number; exitedAfterError: "TRUE" | "FALSE" | "UNKNOWN" };
     censusOpenFailure?: { pid: number; snapshotBirthStamp: string; nativeErrorCode: number; absentInCompleteSnapshot: boolean };
+    ownerOpenFailure?: { pid: number; snapshotBirthStamp: string; requestedAccess: number; nativeErrorCode: number; absentInCompleteSnapshot: boolean };
     censusImageFailure?: { pid: number; snapshotBirthStamp: string; nativeErrorCode: number; imageRead: boolean;
       returnedLength: number; sameHeldIdentity: boolean; waitResult: number };
     censusImageExitEvidence?: { pid: number; snapshotBirthStamp: string; basicExitStatus: number;
@@ -56,6 +57,7 @@ export class WindowsBrowserProfileOwnershipError extends Error {
 export function parseWindowsProfileProbeDiagnostic(text: string) {
   const result: { nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number;
     censusOpenFailure?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusOpenFailure"];
+    ownerOpenFailure?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["ownerOpenFailure"];
     censusImageFailure?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusImageFailure"];
     censusImageExitEvidence?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusImageExitEvidence"];
     censusExitJoin?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusExitJoin"] } = {};
@@ -69,6 +71,13 @@ export function parseWindowsProfileProbeDiagnostic(text: string) {
   }
   const failure = text.match(/VERIDIA_PROFILE_PROBE_FAILURE=(UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|PARSER_ASSEMBLY_LOAD|PARSER_ASSEMBLY_LOADED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|WMI_GET_ENTER|WMI_GET_RETURN|WMI_ENUM_ENTER|WMI_ENUM_RETURN|WMI_MOVE_ENTER|WMI_MOVE_RETURN|WMI_ROW_READ|WMI_ROW_RETURN|WMI_BIRTH_PARSE|WMI_BIRTH_RETURN|WMI_ROW_DISPOSE|WMI_ROW_DISPOSED|WMI_DISPOSE|WMI_DISPOSED|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT|RESULT_SERIALIZED|RESULT_WRITTEN|CENSUS_ASSEMBLY_LOAD|CENSUS_ASSEMBLY_LOADED|SPI_CAPTURE_ENTER|SPI_CAPTURE_RETURN|SPI_HELD_PROCESS_OPEN|SPI_IMAGE_READ|SPI_IMAGE_RETURN|SPI_COMMAND_LINE_READ|SPI_COMMAND_LINE_RETURN|SPI_HELD_PROCESS_DISPOSE|SPI_VERIFIED_EXIT_SKIP|SPI_VERIFIED_ABSENCE_SKIP):(NATIVE_PROBE_SCRIPT_EXCEPTION|PROFILE_OWNERSHIP_UNAVAILABLE|LIVE_PROCESS_HANDLE_UNAVAILABLE|LIVE_PROCESS_BIRTH_MISMATCH|UNVERIFIED_PROFILE_OWNER|NATIVE_ARGV_ASSET_INVALID)\r?\n/u);
   if (failure) { result.nativeStage = failure[1]; result.nativeFailureCode = failure[2]; }
+  const ownerOpen = text.match(/^VERIDIA_PROFILE_PROBE_OWNER_OPEN=([0-9]+):([0-9]+):(1052672|1052673):([0-9]+):(TRUE|FALSE)\r?\n$/u);
+  if (ownerOpen && Number(ownerOpen[1]) > 0 && Number(ownerOpen[1]) <= 0xffff_ffff &&
+      ownerOpen[2].length <= 20 && BigInt(ownerOpen[2]) > 0n && BigInt(ownerOpen[2]) <= 0xffff_ffff_ffff_ffffn &&
+      Number(ownerOpen[4]) <= 0xffff_ffff) {
+    result.ownerOpenFailure = { pid: Number(ownerOpen[1]), snapshotBirthStamp: ownerOpen[2], requestedAccess: Number(ownerOpen[3]),
+      nativeErrorCode: Number(ownerOpen[4]), absentInCompleteSnapshot: ownerOpen[5] === "TRUE" };
+  }
   const open = text.match(/^VERIDIA_PROFILE_PROBE_CENSUS_OPEN=([0-9]+):([0-9]+):([0-9]+):(TRUE|FALSE)\r?\n$/u);
   if (open && Number.isSafeInteger(Number(open[1])) && Number(open[1]) > 0 &&
       Number.isSafeInteger(Number(open[3])) && open[2].length <= 20) {

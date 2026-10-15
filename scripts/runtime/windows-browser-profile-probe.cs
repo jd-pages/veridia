@@ -6,6 +6,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using System.Web.Script.Serialization;
 
 // A one-request console host for the unchanged, approved native census/argv
@@ -14,6 +16,23 @@ using System.Web.Script.Serialization;
 internal static class VeridiaProfileProbeHost {
  const int BudgetMs=2000, InputLimit=4194304;
  static readonly Stopwatch Clock=Stopwatch.StartNew();
+ // Do not use Process.Handle: .NET Framework opens m_processAccess=0x1f0fff.
+ // A read-only probe needs query + wait; terminate is requested only in that
+ // mode, and never exercised until the entire captured identity set validates.
+ const uint QueryAndWait=0x101000, TerminateRight=0x1;
+ [DllImport("kernel32.dll",SetLastError=true)] static extern SafeProcessHandle OpenProcess(uint access,bool inherit,uint pid);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern uint GetProcessId(SafeProcessHandle handle);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetProcessTimes(SafeProcessHandle handle,out long creation,out long exit,out long kernel,out long user);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern uint WaitForSingleObject(SafeProcessHandle handle,uint milliseconds);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateProcess(SafeProcessHandle handle,uint exitCode);
+ sealed class HeldProcess:IDisposable {
+  public readonly int Id;public readonly SafeProcessHandle Handle;
+  public HeldProcess(int pid,SafeProcessHandle handle){Id=pid;Handle=handle;}
+  public string Birth(){long creation,exit,kernel,user;if(GetProcessId(Handle)!=(uint)Id||!GetProcessTimes(Handle,out creation,out exit,out kernel,out user))throw new InvalidOperationException("LIVE_PROCESS_BIRTH_MISMATCH");return unchecked((ulong)creation).ToString(CultureInfo.InvariantCulture);}
+  public bool HasExited{get{uint state=WaitForSingleObject(Handle,0);if(state==0)return true;if(state==258)return false;throw new Win32Exception(Marshal.GetLastWin32Error());}}
+  public void Kill(){if(!TerminateProcess(Handle,1))throw new Win32Exception(Marshal.GetLastWin32Error());}
+  public void Dispose(){Handle.Dispose();}
+ }
  static string Phase="SCRIPT_ENTERED";
  static void Stage(string value){Phase=value;Console.Error.WriteLine("VERIDIA_PROFILE_PROBE_STAGE={0}:{1}",value,Clock.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture));}
  static void Budget(){if(Clock.Elapsed.TotalMilliseconds>=BudgetMs)throw new InvalidOperationException("NATIVE_QUERY_DEADLINE");}
@@ -42,7 +61,7 @@ internal static class VeridiaProfileProbeHost {
  }
  public static int Main(){
   bool written=false,disposed=false;int result=1;
-  var handles=new List<Process>();var births=new Dictionary<int,string>();var owned=new List<Dictionary<string,object>>();
+  var handles=new List<HeldProcess>();var births=new Dictionary<int,string>();var owned=new List<Dictionary<string,object>>();
   try{
    Console.InputEncoding=new UTF8Encoding(false);Console.OutputEncoding=new UTF8Encoding(false);Stage("SCRIPT_ENTERED");
    if(Environment.GetEnvironmentVariable("VERIDIA_E2E")=="true")using(var self=Process.GetCurrentProcess()){
@@ -68,13 +87,18 @@ internal static class VeridiaProfileProbeHost {
     string command=row["CommandLine"] as string,snapshotBirth=row["NativeSnapshotBirthStamp"] as string;
     if(String.IsNullOrEmpty(command)||String.IsNullOrEmpty(snapshotBirth)||!(row["CreationDate"] is DateTime))throw new InvalidOperationException("PROFILE_OWNERSHIP_UNAVAILABLE");
     Stage("PROFILE_ARGUMENT_READ");bool[] profileMatch=VeridiaBrowserArgv.MatchProfile(command,profile);Stage("PROFILE_ARGUMENT_PARSED");if(!profileMatch[0])continue;
-    int pid=(int)row["ProcessId"];Process process=null;Stage("NATIVE_HANDLE_BIND");
-    try{Stage("NATIVE_PROCESS_OPEN");process=Process.GetProcessById(pid);Stage("NATIVE_HANDLE_OPEN");IntPtr held=process.Handle;if(held==IntPtr.Zero)throw new InvalidOperationException("LIVE_PROCESS_HANDLE_UNAVAILABLE");}
-    catch{if(process!=null)process.Dispose();if(VeridiaBrowserProfileCensus.ProcessStillExists(pid,Clock))throw new InvalidOperationException("LIVE_PROCESS_HANDLE_UNAVAILABLE");continue;}
+    int pid=(int)row["ProcessId"];HeldProcess process=null;Stage("NATIVE_HANDLE_BIND");
+    uint access=QueryAndWait|(terminating?TerminateRight:0);Stage("NATIVE_PROCESS_OPEN");Stage("NATIVE_HANDLE_OPEN");
+    SafeProcessHandle held=OpenProcess(access,false,(uint)pid);int openError=held.IsInvalid?Marshal.GetLastWin32Error():0;
+    if(held.IsInvalid){held.Dispose();bool absent=openError==87&&!VeridiaBrowserProfileCensus.ProcessStillExists(pid,Clock);
+     Console.Error.WriteLine("VERIDIA_PROFILE_PROBE_OWNER_OPEN={0}:{1}:{2}:{3}:{4}",pid,snapshotBirth,access,openError,absent?"TRUE":"FALSE");Console.Error.Flush();Budget();
+     if(!absent)throw new InvalidOperationException("LIVE_PROCESS_HANDLE_UNAVAILABLE");continue;}
+    process=new HeldProcess(pid,held);
     bool retained=false;
     try{
-     Stage("NATIVE_BIRTH_READ");string birth=process.StartTime.ToUniversalTime().ToFileTimeUtc().ToString(CultureInfo.InvariantCulture);Stage("NATIVE_BIRTH_VALIDATE");
+     Budget();Stage("NATIVE_BIRTH_READ");string birth=process.Birth();Stage("NATIVE_BIRTH_VALIDATE");
      if(birth!=snapshotBirth){if(VeridiaBrowserProfileCensus.ProcessStillExists(pid,Clock))throw new InvalidOperationException("LIVE_PROCESS_BIRTH_MISMATCH");continue;}
+     if(process.HasExited)continue;Budget();
      var identity=new Dictionary<string,object>{{"pid",pid},{"parentPid",(int)row["ParentProcessId"]},{"browserProcess",profileMatch[1]},{"birthStamp",birth},{"executablePath",executable},{"profilePath",profile}};
      Stage("NATIVE_IDENTITY_APPEND");owned.Add(identity);
      if(terminating){int matches=0;foreach(object entry in terminate)if(Match((Dictionary<string,object>)entry,pid,birth,executable,profile))matches++;
@@ -82,7 +106,7 @@ internal static class VeridiaProfileProbeHost {
     }finally{if(!retained){Stage("NATIVE_HANDLE_DISPOSE");process.Dispose();}}
    }
    // Entire current identity set is admitted before any termination. Every Kill
-   // is on the Process.Handle opened before StartTime, never a guessed PID.
+   // is on the exact query/terminate handle bound to native birth, never a PID.
    Budget();Stage("VALIDATED_TERMINATION");
    foreach(var process in handles){Budget();if(!process.HasExited)try{process.Kill();}
     catch(Exception error){Exception detail=error;for(int depth=0;depth<4&&detail.InnerException!=null;depth++)detail=detail.InnerException;
