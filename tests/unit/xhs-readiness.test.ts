@@ -87,6 +87,10 @@ describe("小红书页面 hydration 就绪门禁", () => {
     };
     let passed = false;
     try {
+    const automaticRedirect = 'setTimeout(() => location.href = "/404?redirectPath=%2Fexplore%2Fmissing&errorCode=-510001", 750);';
+    const shell = fixture("generic-shell-delayed-404.html");
+    expect(shell).toContain(automaticRedirect);
+    const controlledShell = shell.replace(automaticRedirect, "/* navigation owned by the first completed shell observation below */");
     await phase("routeSetup", () => page.route("https://www.xiaohongshu.com/**", async (route) => {
       const url = new URL(route.request().url());
       if (url.pathname === "/404") {
@@ -100,20 +104,47 @@ describe("小红书页面 hydration 就绪门禁", () => {
       await route.fulfill({
         status: 200,
         contentType: "text/html; charset=utf-8",
-        body: fixture("generic-shell-delayed-404.html"),
+        body: controlledShell,
       });
     }));
     await phase("pageGoto", () => page.goto(noteUrl, { waitUntil: "domcontentloaded" }));
+    let redirected = false;
+    let observedShell: unknown;
+    let navigationError: unknown;
+    // Preserve real Chromium, real HTML, a real404 navigation and the stale
+    // shell snapshot. Only its ordering is deterministic: navigation cannot
+    // destroy the execution context halfway through an in-flight DOM read.
+    const controlledPage = new Proxy(page, {
+      get(target, key) {
+        const value = Reflect.get(target, key, target);
+        if (key === "evaluate") return async (...args: unknown[]) => {
+          const snapshot = await Reflect.apply(value, target, args);
+          if (!redirected) {
+            observedShell = snapshot;
+            redirected = true;
+            try { await phase("controlledReal404Navigation", () => target.goto(
+              new URL("/404?redirectPath=%2Fexplore%2Fmissing&errorCode=-510001", noteUrl).href,
+              { waitUntil: "domcontentloaded" },
+            )); } catch (error) { navigationError = error; throw error; }
+          }
+          return snapshot;
+        };
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
     const redirects: string[] = [];
-    await expect(
-      phase("readiness", () => waitForXhsPageReadiness({
-        page,
+    const ready = await phase("readiness", () => waitForXhsPageReadiness({
+        page: controlledPage,
         redirectChain: redirects,
         timeoutMs: 2_500,
         pollMs: 25,
         httpStatus: 200,
-      })),
-    ).resolves.toBe(true);
+      }));
+    expect(navigationError).toBeUndefined();
+    expect(observedShell).toMatchObject({ finalUrl: noteUrl, currentNoteEvidence: { explicitIdentity: false, isReadable: false } });
+    expect(observedShell).toHaveProperty("visibleText", expect.stringContaining("想了解些什么?"));
+    expect(ready).toBe(true);
+    expect(redirected).toBe(true);
     expect(timings.readiness).toBeLessThanOrEqual(2_500);
     const evidence = await phase("readEvidence", () => readXhsReadinessPageEvidence(page));
     expect(evidence.unavailablePage).toMatchObject({

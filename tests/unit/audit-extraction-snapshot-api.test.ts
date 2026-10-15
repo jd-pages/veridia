@@ -20,6 +20,7 @@ import { auditConclusionCardLabel } from "@/lib/result-detail-presentation";
 let temporaryRoot: string;
 let db: PrismaClient;
 let fixture: Awaited<ReturnType<typeof createAuditIngestFixture>>;
+let legacyUnbound: { taskId: string; resultId: string };
 let immutableHistory: {
   firstResultId: string;
   finalResultId: string;
@@ -70,6 +71,16 @@ beforeAll(async () => {
     noteId: first.noteId,
     firstExtractionRecordId: first.extractionRecordId,
   };
+  // Arrange the legacy sample with the other real-DB fixtures. The5000ms
+  // test body below measures the detail API contract, not audit preparation.
+  const preparationStarted = performance.now();
+  const legacyTask = await fixture.task();
+  const legacyResult = await runAuditTask(legacyTask.id, auditIngestExtraction(legacyTask), { source: "MANUAL" });
+  await db.auditResult.update({ where: { id: legacyResult.id }, data: { extractionRecordId: null } });
+  legacyUnbound = { taskId: legacyTask.id, resultId: legacyResult.id };
+  if (process.env.VERIDIA_UNIT_HARNESS_TIMINGS === "true") {
+    console.info("[LEGACY_SNAPSHOT_FIXTURE_PHASE]", JSON.stringify({ preparationMs: performance.now() - preparationStarted, phase: "BEFORE_ALL_REAL_DB_ARRANGE" }));
+  }
 }, 120_000);
 
 afterAll(async () => {
@@ -132,15 +143,12 @@ describe("HISTORICAL_EXTRACTION_IMMUTABLE API / Prisma", () => {
   });
 
   it("旧结果保持空绑定并明确告知证据未知，不猜测最新 extraction", async () => {
-    const task = await fixture.task();
-    const result = await runAuditTask(task.id, auditIngestExtraction(task), { source: "MANUAL" });
-    await db.auditResult.update({ where: { id: result.id }, data: { extractionRecordId: null } });
-    const legacy = await detail(result.id);
+    const legacy = await detail(legacyUnbound.resultId);
     expect(legacy).toMatchObject({ extractionRecordId: null, evidenceStatus: "LEGACY_UNAVAILABLE" });
     expect(legacy.note).toMatchObject({ body: null, title: null, publishedAt: null, topics: [], extractions: [] });
     expect(legacy.note.originalPublishedAt).toBeNull();
     expect(legacy.evidenceMessage).toContain("未绑定可确认");
-    expect(await db.extractionRecord.count({ where: { auditTaskId: task.id } })).toBe(1);
+    expect(await db.extractionRecord.count({ where: { auditTaskId: legacyUnbound.taskId } })).toBe(1);
   });
 
   it("处理失败保存当次未知证据，重复报告不修改已有结果", async () => {

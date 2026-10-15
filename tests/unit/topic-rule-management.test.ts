@@ -29,7 +29,7 @@ function databaseUrl(databasePath: string) {
 }
 
 async function createCampaign(
-  client: PrismaClient,
+  client: Pick<PrismaClient, "campaign">,
   input: {
     id: string;
     name: string;
@@ -73,37 +73,52 @@ async function createRule(
 }
 
 async function createOwnershipFixture(suffix: string) {
+  const started = performance.now();
+  const phases: Record<string, number> = {};
+  const phase = async <T>(name: string, operation: () => Promise<T>) => {
+    const at = performance.now();
+    try { return await operation(); }
+    finally { phases[name] = performance.now() - at; }
+  };
+  // Five dependent fixture writes belong to one atomic arrangement, not five
+  // independent durable commits inside the test's unchanged5000ms budget.
+  try { return await source.$transaction(async (tx) => {
   const brandName = `三级模型品牌-${suffix}`;
   const otherBrandName = `其他品牌-${suffix}`;
-  const product = await source.product.create({
+  const product = await phase("productA", () => tx.product.create({
     data: { code: `MODEL-A-${suffix}`, name: `模型产品A-${suffix}`, brandName },
-  });
-  const secondProduct = await source.product.create({
+  }));
+  const secondProduct = await phase("productB", () => tx.product.create({
     data: { code: `MODEL-B-${suffix}`, name: `模型产品B-${suffix}`, brandName },
-  });
-  const otherProduct = await source.product.create({
+  }));
+  const otherProduct = await phase("otherProduct", () => tx.product.create({
     data: { code: `MODEL-X-${suffix}`, name: `其他产品-${suffix}`, brandName: otherBrandName },
-  });
-  const campaign = await createCampaign(source, {
+  }));
+  const campaign = await phase("campaignA", () => createCampaign(tx, {
     id: `model-campaign-${suffix}`,
     name: `模型活动-${suffix}`,
     month: "2026-09",
     contentChannel: "XIAOHONGSHU",
     productId: product.id,
     ruleVersion: 5,
-  });
-  const secondCampaign = await createCampaign(source, {
+  }));
+  const secondCampaign = await phase("campaignB", () => createCampaign(tx, {
     id: `model-campaign-2-${suffix}`,
     name: `模型活动二-${suffix}`,
     month: "2026-09",
     contentChannel: "XIAOHONGSHU",
     productId: secondProduct.id,
     ruleVersion: 8,
-  });
+  }));
   const userId = (
-    await source.user.findFirstOrThrow({ where: { role: "ADMIN" } })
+    await phase("admin", () => tx.user.findFirstOrThrow({ where: { role: "ADMIN" } }))
   ).id;
   return { brandName, product, secondProduct, otherProduct, campaign, secondCampaign, userId };
+  }); } finally {
+    if (process.env.VERIDIA_UNIT_HARNESS_TIMINGS === "true") {
+      console.info("[TOPIC_OWNERSHIP_FIXTURE_PHASES]", JSON.stringify({ phases, totalMs: performance.now() - started, scope: "ONE_ATOMIC_REAL_DB_ARRANGEMENT" }));
+    }
+  }
 }
 
 beforeAll(async () => {
