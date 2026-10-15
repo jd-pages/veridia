@@ -296,11 +296,6 @@ $owned = @(); $handles = @(); $script:parserReady = $false;
     }
   }
   Set-ProbeStage 'PROCESS_CENSUS';
-  # Push the already mandatory exact executable predicate into WMI. Rows
-  # rejected by the same executable check below cannot authorize a profile.
-  # WQL escapes both backslashes and literal quote characters, never LIKE.
-  $name = [IO.Path]::GetFileName($expectedExecutable).Replace('\\','\\\\').Replace("'","\\'");
-  $queryExecutable = $expectedExecutable.Replace('\\','\\\\').Replace("'","\\'");
   Set-ProbeStage 'PROCESS_CENSUS_QUERY_ENTER';
   Set-ProbeStage 'CENSUS_ASSEMBLY_LOAD';
   $censusBytes = [Convert]::FromBase64String($request.censusAssembly);
@@ -331,6 +326,11 @@ $owned = @(); $handles = @(); $script:parserReady = $false;
     try { $candidates = @([VeridiaBrowserProfileCensus]::ReadProfileRows($expectedExecutable, $probeClock)) }
     catch { if ([VeridiaBrowserProfileCensus]::LastStage) { $phase = [VeridiaBrowserProfileCensus]::LastStage }; throw }
   } else {
+    # WQL preparation belongs only to the WMI ABI fallback. Do not spend the
+    # fixed native deadline on unused PowerShell method binding/escaping.
+    # Exact executable/name predicates and escaping are otherwise unchanged.
+    $name = [IO.Path]::GetFileName($expectedExecutable).Replace('\\','\\\\').Replace("'","\\'");
+    $queryExecutable = $expectedExecutable.Replace('\\','\\\\').Replace("'","\\'");
     $candidates = @(Get-OwnerProcessRows "Name='$name' AND ExecutablePath='$queryExecutable'");
   }
   Set-ProbeStage 'PROCESS_CENSUS_QUERY_RETURN';

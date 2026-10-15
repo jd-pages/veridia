@@ -195,6 +195,30 @@ it("direct WMI census retains exact fields, disposable query resources and all-b
   await expect(pending).resolves.toEqual([]);
 });
 
+it("native SPI census never prepares unused WMI predicates before the fixed budget admission", async () => {
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const script = Buffer.from(fixture.spawn.mock.calls[0][1].at(-1), "base64").toString("utf16le").replace(/\r\n/gu, "\n");
+  const census = script.slice(script.indexOf("Set-ProbeStage 'PROCESS_CENSUS';"));
+  const nativeBranch = census.indexOf("if ($nativeCensus) {");
+  const fallback = census.indexOf("} else {", nativeBranch);
+  const name = census.indexOf("$name = [IO.Path]::GetFileName($expectedExecutable)");
+  const query = census.indexOf("$queryExecutable = $expectedExecutable.Replace");
+  const submit = census.indexOf("$candidates = @(Get-OwnerProcessRows");
+  expect(nativeBranch).toBeGreaterThan(0);
+  expect(fallback).toBeGreaterThan(nativeBranch);
+  expect(census.slice(0, fallback)).not.toContain("$name =");
+  expect(census.slice(0, fallback)).not.toContain("$queryExecutable =");
+  expect(name).toBeGreaterThan(fallback);
+  expect(query).toBeGreaterThan(name);
+  expect(submit).toBeGreaterThan(query);
+  expect(census.slice(nativeBranch, fallback)).toContain("ReadProfileRows($expectedExecutable, $probeClock)");
+  expect(census.slice(fallback, submit)).toContain(".Replace('\\','\\\\').Replace(\"'\",\"\\'\")");
+  expect(census.slice(submit)).toContain("Name='$name' AND ExecutablePath='$queryExecutable'");
+  child.stdout.emit("data", Buffer.from("[]")); child.emit("close", 0);
+  await expect(pending).resolves.toEqual([]);
+});
+
 it("loads pinned bytes for the unchanged OS argv parser without any runtime compilation or prewarming", async () => {
   const child = childFixture();
   const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
