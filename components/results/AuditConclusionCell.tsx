@@ -37,12 +37,12 @@ function AuditConclusionCell(props: {
   ].includes(row.task.status);
   const mainMeta = {
     className: dotClass(row.presentation.conclusion.tone),
-    label: row.presentation.conclusion.label,
+    label: row.presentation.kabrita?.complianceResult || row.presentation.conclusion.label,
   };
 
   return (
     <div className={styles.stack}>
-      <InteractionReward snapshot={row} reward={row.presentation.reward} />
+      <InteractionReward snapshot={row} reward={row.presentation.reward} kabrita={row.presentation.kabrita} />
       {duplicateReaudit ? (
         <div>
           <Tag color="orange">

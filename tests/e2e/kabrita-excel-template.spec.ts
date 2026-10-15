@@ -41,7 +41,7 @@ const auditResultExportHeaders = [
   "是否符合",
   "客服备注",
   "互动量",
-  "额外奖励金额",
+  "打款金额",
   "下次审核时间",
 ];
 const legacyImportHeaders = importHeaders.filter(
@@ -495,8 +495,8 @@ test("佳贝艾特旧活动内容与基础奖励结论兼容且按17列导出", 
       combinedFailed.id,
       "N-缺少话题；缺少必带话题：#佳贝艾特荷兰版；N-互动量＜10",
     ],
-    [unreadable.id, "N-互动量＜10"],
-    [unavailable.id, ""],
+    [unreadable.id, "待复核：互动数据未完整获取"],
+    [unavailable.id, "N-笔记不存在"],
   ] as const;
   for (const [id, expected] of expectedExports) {
     const exportResponse = await page.request.get(`/api/results/export?ids=${id}`);

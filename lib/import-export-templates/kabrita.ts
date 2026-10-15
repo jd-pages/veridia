@@ -37,7 +37,7 @@ export const KABRITA_EXPORT_FIELDS = [
   "complianceResult",
   "customerServiceComment",
   "interactionTotal",
-  "extraRewardAmount",
+  "payoutAmount",
   "nextReviewAt",
 ] as const satisfies readonly StandardField[];
 
@@ -148,15 +148,15 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
     type: "integer",
     description: "结果绑定的点赞、评论和收藏合计，技术不可读时留空",
   },
-  extraRewardAmount: {
-    displayName: "额外奖励金额",
+  payoutAmount: {
+    displayName: "打款金额",
     type: "integer",
-    description: "按当次规则快照计算的最高互动奖励档位金额，不含基础奖励",
+    description: "当次有效活动规则快照的基础奖励+最高互动档奖励总额；应付测算，非已付款。30天留存未确认时标注待复核，互动数据缺失时待确认",
   },
   nextReviewAt: {
     displayName: "下次审核时间",
     type: "datetime",
-    description: "结果绑定的可靠发帖时间加30个北京时间自然日，仅作业务导出日期",
+    description: "结果绑定的可信笔记发布日期加30个北京时间自然日；无可信日期显示发布时间待确认，笔记不存在显示不适用，未审核显示未审核",
   },
 };
 

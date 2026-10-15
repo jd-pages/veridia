@@ -17,6 +17,7 @@ import {
 import { retentionDaysFromRuleSnapshot } from "@/lib/retention-status";
 import { brandUsesStoreTopicAudit } from "@/lib/store-topic-config";
 import { rewardFromResultSnapshot, rewardModeFromRuleSnapshot, type ResultSnapshotReward } from "@/lib/interaction-reward";
+import { kabritaResultOutput, type KabritaResultOutput } from "@/lib/kabrita-result-output";
 
 export type AuditResultPresentationTone =
   | "success"
@@ -107,6 +108,7 @@ export interface AuditResultPresentation {
     threshold: number | null;
   };
   reward: ResultSnapshotReward;
+  kabrita?: KabritaResultOutput;
   storeTopic: {
     applicable: boolean;
     status: string;
@@ -162,6 +164,7 @@ interface PresentationInput {
     contentChannel?: unknown;
     platformNoteId?: unknown;
     publishedAt?: unknown;
+    publishedAtRaw?: unknown;
     publishedAtSource?: unknown;
     url?: string | null;
     title?: string | null;
@@ -176,7 +179,7 @@ interface PresentationInput {
     pageType?: string | null;
     product?: { brandName?: string | null };
   };
-  manualReviews?: Array<{ result: string }>;
+  manualReviews?: Array<{ result: string; comment?: string | null }>;
 }
 
 interface ParsedRuleEvidence {
@@ -778,7 +781,7 @@ export function buildAuditResultPresentation(
           label: unavailable ? "未审核" : imageLabel(presentationInput),
         };
 
-  return {
+  const presentation: AuditResultPresentation = {
     source: "PERSISTED_AUDIT_RESULT",
     consistency: {
       status: consistencyStatus,
@@ -837,6 +840,19 @@ export function buildAuditResultPresentation(
       failureCode: presentationInput.task.failureCode,
     }),
   };
+  if (input.task.product?.brandName?.trim() === "佳贝艾特") {
+    presentation.kabrita = kabritaResultOutput({
+      ...presentationInput,
+      presentation,
+      manualReviews: input.manualReviews || [],
+      imageExtractionStatus: input.imageExtractionStatus || "NOT_CHECKED",
+      note: { ...input.note, title: input.note.title ?? null, body: input.note.body ?? null,
+        topics: input.note.topics?.map((topic) => ({ displayText: topic.displayText || "" })) },
+      task: { notes: input.task.notes ?? null, failureCode: input.task.failureCode ?? null,
+        failureMessage: input.task.failureMessage ?? null, pageTitle: input.task.pageTitle ?? null, pageType: input.task.pageType ?? null },
+    });
+  }
+  return presentation;
 }
 
 export function withAuditResultPresentation<T extends PresentationInput>(input: T) {

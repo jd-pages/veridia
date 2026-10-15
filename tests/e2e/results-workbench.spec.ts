@@ -56,7 +56,7 @@ const kabritaResultExportHeaders = [
   "是否符合",
   "客服备注",
   "互动量",
-  "额外奖励金额",
+  "打款金额",
   "下次审核时间",
 ];
 

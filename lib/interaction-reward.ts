@@ -107,19 +107,24 @@ export function rewardFromResultSnapshot(input: RewardResultSnapshotInput): Resu
     !["PASSED", "FAILED", "NEEDS_REVIEW", "PENDING_RETENTION"].includes(input.autoStatus || input.finalContentStatus)) {
     return blank;
   }
-  // This normalization is a business projection only; raw persisted counts stay null.
+  // Missing evidence is not zero. All three saved counts must be known.
   const normalized = calculateInteractionTotal({
-    likeCount: input.likeCount ?? 0,
-    commentCount: input.commentCount ?? 0,
-    favoriteCount: input.favoriteCount ?? 0,
+    likeCount: input.likeCount,
+    commentCount: input.commentCount,
+    favoriteCount: input.favoriteCount,
     interactionExtractionStatus: "SUCCESS",
   });
   const countFieldsAbsent = [input.likeCount, input.commentCount, input.favoriteCount]
     .every((value) => value === undefined);
   const storedTotal = input.interactionTotal;
-  const total = countFieldsAbsent && typeof storedTotal === "number" &&
-    Number.isSafeInteger(storedTotal) && storedTotal >= 0
-    ? storedTotal : normalized.interactionTotal;
+  const storedTotalValid = typeof storedTotal === "number" && Number.isSafeInteger(storedTotal) && storedTotal >= 0;
+  // An explicitly unknown formal aggregate cannot be promoted into confirmed
+  // interaction evidence merely because unconfirmed raw counters are present.
+  const total = storedTotal === null ? null
+    : countFieldsAbsent && storedTotalValid ? storedTotal
+    : normalized.interactionTotal !== null && Number.isSafeInteger(normalized.interactionTotal) &&
+      (storedTotal === undefined || (storedTotalValid && storedTotal === normalized.interactionTotal))
+      ? normalized.interactionTotal : null;
   if (mode === "LEGACY") return { ...blank, total };
   let config: { baseRewardAmount?: unknown; interactionRewardTiers?: unknown };
   try {
@@ -137,7 +142,9 @@ export function rewardFromResultSnapshot(input: RewardResultSnapshotInput): Resu
   const tiers = (rawTiers as InteractionRewardTier[])
     .map(({ threshold, amount }) => ({ threshold, amount }))
     .sort((left, right) => left.threshold - right.threshold);
-  if (new Set(tiers.map((tier) => tier.threshold)).size !== tiers.length) return { ...blank, total };
+  const baseRewardAmount = config.baseRewardAmount;
+  if (new Set(tiers.map((tier) => tier.threshold)).size !== tiers.length ||
+    tiers.some((tier) => !Number.isSafeInteger(baseRewardAmount + tier.amount))) return { ...blank, total };
   if (input.finalContentStatus === "FAILED") {
     return { ...blank, total, baseRewardAmount: 0, extraRewardAmount: 0 };
   }

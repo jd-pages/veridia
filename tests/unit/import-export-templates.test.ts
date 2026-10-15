@@ -75,7 +75,7 @@ const kabritaImportHeaders = [
 ];
 
 const kabritaExportHeaders = [
-  ...kabritaImportHeaders.slice(0, 12), "是否符合", "客服备注", "互动量", "额外奖励金额", "下次审核时间",
+  ...kabritaImportHeaders.slice(0, 12), "是否符合", "客服备注", "互动量", "打款金额", "下次审核时间",
 ];
 
 describe("远程表格模板配置", () => {
@@ -286,7 +286,7 @@ describe("佳贝艾特专属导入导出模板", () => {
       "标题 https://www.xiaohongshu.com/explore/kabrita-export",
     );
     expect(record.complianceResult).toBe(
-      "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张；N-互动量＜10",
+      "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张",
     );
 
     expect(
@@ -333,7 +333,7 @@ describe("佳贝艾特专属导入导出模板", () => {
         failureReasons: '["基础奖励互动数据无法确认，需人工复核"]',
         interactionTotal: null,
       }).complianceResult,
-    ).toBe("N-互动量＜10");
+    ).toBe("待复核：互动数据未完整获取");
     expect(
       auditResultToKabritaExportRecord({
         ...row,
@@ -341,7 +341,7 @@ describe("佳贝艾特专属导入导出模板", () => {
         pageStatus: "NO_PERMISSION",
         failureReasons: '["当前账号无权访问笔记"]',
       }).complianceResult,
-    ).toBe("");
+    ).toBe("N-页面不可访问：当前账号无权访问笔记");
 
     const exportBytes = await buildConfiguredWorkbook({
       templates,
@@ -358,7 +358,7 @@ describe("佳贝艾特专属导入导出模板", () => {
       expect.arrayContaining(["阶段", "IFFO", "GUM", "产品阶段话题"]),
     );
     expect(sheet.getCell("M2").text).toBe(
-      "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张；N-互动量＜10",
+      "N-图片不足；图片数量不足：当前 2 张，要求 ≥3 张",
     );
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
     expect(sheet.autoFilter).toBeTruthy();

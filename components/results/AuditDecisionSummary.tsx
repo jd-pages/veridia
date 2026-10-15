@@ -72,7 +72,7 @@ export default function AuditDecisionSummary({
   // Detail is projected from this result's extraction; list note data is only a cache.
   const row = detail ?? listRow;
   const unavailable = isUnavailableNoteResult(row);
-  const conclusion = row.presentation.conclusion.label;
+  const conclusion = row.presentation.kabrita?.complianceResult || row.presentation.conclusion.label;
   const conclusionTone = row.presentation.conclusion.tone;
   const failureReasons = row.presentation.failureReasons;
   const reviewReasons = row.presentation.reviewReasons;
@@ -141,7 +141,7 @@ export default function AuditDecisionSummary({
           description={row.presentation.consistency.message}
         />
       ) : null}
-      <InteractionReward snapshot={row} reward={row.presentation.reward} detail />
+      <InteractionReward snapshot={row} reward={row.presentation.reward} kabrita={row.presentation.kabrita} detail />
       <section
         className={`${styles.decisionHero} ${styles[`decisionHero_${conclusionTone}`]}`}
         aria-label="顶部结论"

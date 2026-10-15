@@ -1,11 +1,13 @@
 import ExcelJS from "exceljs";
+import { kabritaResultOutput } from "@/lib/kabrita-result-output";
+export { kabritaComplianceResult } from "@/lib/kabrita-result-output";
+import { compactSelfReview, detailedSelfReview } from "@/lib/result-self-review";
+export { detailedSelfReview } from "@/lib/result-self-review";
 import {
   interactionRewardPresentation,
-  rewardFromResultSnapshot,
   type InteractionRewardSnapshot,
 } from "@/lib/interaction-reward";
 import type { AuditResultPresentation } from "@/lib/audit-result-presentation";
-import { resultBoundNextReviewDate } from "@/lib/result-next-review-date";
 import {
   businessFailureReasonLabel,
   businessSourceLabel,
@@ -72,7 +74,10 @@ import {
   WYETH_BRAND_NAME,
 } from "./wyeth-nestle";
 
-export type ExportValueRecord = Partial<Record<StandardField, unknown>>;
+export type ExportValueRecord = Partial<Record<StandardField, unknown>> & {
+  payoutState?: string;
+  nextReviewReason?: string;
+};
 
 export const UNIFIED_AUDIT_RESULT_SHEET_NAMES = [
   "达能审核结果",
@@ -114,6 +119,7 @@ export interface CompactAuditResultExportSourceRow extends InteractionRewardSnap
   topicsCompliant: boolean;
   failureReasons: string;
   ruleSnapshot?: string;
+  retentionStatus?: string;
   evidenceStatus?: "RESULT_BOUND" | "LEGACY_UNAVAILABLE";
   effectiveBodyLength?: number;
   imageCount?: number;
@@ -481,121 +487,6 @@ function list(value: string, separator: string) {
   }
 }
 
-function compactSelfReview(row: CompactAuditResultExportSourceRow) {
-  if (
-    row.presentation?.consistency.status ===
-    "RESULT_CONSISTENCY_VIOLATION"
-  ) {
-    return "N-结果一致性异常";
-  }
-  const manual = row.manualReviews[0];
-  if (manual?.result === "PASSED") return "Y";
-  if (manual?.result === "FAILED") {
-    const reason = manual.comment?.trim();
-    return reason ? `N-人工不通过；${reason}` : "N-人工不通过";
-  }
-  const finalStatus = row.presentation?.conclusion.status || row.autoStatus;
-  if (finalStatus === "PASSED") return "Y";
-
-  const unavailable = isUnavailableNoteResult({
-    pageStatus: row.pageStatus,
-    failureReasons: row.failureReasons,
-    pageTitle: row.task.pageTitle,
-    note: { title: row.note.title, body: row.note.body },
-    task: {
-      failureCode: row.task.failureCode,
-      failureMessage: row.task.failureMessage,
-      pageTitle: row.task.pageTitle,
-      pageType: row.task.pageType,
-    },
-  });
-  const importedMetadata = importedTaskMetadataFromNotes(row.task.notes);
-  const failureReasonList = row.presentation?.failureReasons.join(" ") ||
-    list(row.failureReasons, " ");
-  const evidence = [
-    row.pageStatus,
-    row.bodyStatus,
-    row.imageExtractionStatus,
-    row.imageStatus,
-    row.task.failureCode,
-    row.task.failureMessage,
-    row.failureReasons,
-    failureReasonList,
-    importedMetadata.contentChannel,
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  if (
-    unavailable ||
-    row.pageStatus === "NO_PERMISSION" ||
-    /PAGE_NOT_FOUND|PAGE_UNAVAILABLE|NOT_ACCESSIBLE|HTTP[_ -]?404|\b404\b|页面(?:无法访问|不见了|不存在)|笔记不存在|无法浏览|链接失效|该内容无法查看/iu.test(
-      evidence,
-    )
-  ) {
-    return "N-帖子无法查看";
-  }
-  if (
-    /CONTENT_CHANNEL_UNSUPPORTED|UNSUPPORTED_CONTENT_CHANNEL|内容渠道.{0,8}(?:不支持|暂不支持)|(?:不支持|暂不支持).{0,8}内容渠道|快手/iu.test(
-      evidence,
-    )
-  ) {
-    return "N-内容渠道不支持";
-  }
-  if (finalStatus !== "FAILED") return "待人工复核";
-  if (
-    row.topicsCompliant === false ||
-    /TOPIC(?:S)?_(?:MISSING|NOT_MATCHED|NON_COMPLIANT)|缺少.{0,8}话题|话题.{0,8}(?:未命中|不合规|缺失)|阶段话题.{0,8}缺失|未识别到话题|缺少精确话题/iu.test(
-      evidence,
-    )
-  ) {
-    return "N-缺少话题";
-  }
-  if (
-    row.bodyStatus === "EMPTY" ||
-    /BODY_(?:EMPTY|MISSING|TOO_SHORT)|正文.{0,8}(?:不存在|为空|过短)|有效正文字数不足|字数.{0,8}(?:不足|不达标|不够)/iu.test(
-      evidence,
-    )
-  ) {
-    return "N-字数不够";
-  }
-  if (
-    row.imageStatus === "NON_COMPLIANT" ||
-    /IMAGE_COUNT_(?:INSUFFICIENT|INVALID)|图片(?:数量)?.{0,8}(?:不足|不达标|不合规)|图片不足/iu.test(
-      evidence,
-    )
-  ) {
-    return "N-图片不足";
-  }
-  if (
-    /BODY_STAGE_(?:MISMATCH|INVALID)|阶段.{0,8}(?:不匹配|不符)|段位.{0,8}(?:不属于|不匹配|不符)|IFFO.{0,12}GUM.{0,8}(?:不符|不匹配)|正文段位不属于|正文未出现对应段位/iu.test(
-      evidence,
-    )
-  ) {
-    return "N-阶段不符";
-  }
-  return "N-其他不合规";
-}
-
-export function detailedSelfReview(row: CompactAuditResultExportSourceRow) {
-  const summary = compactSelfReview(row);
-  if (!summary || summary === "Y") return summary;
-  let details = (row.presentation?.failureReasons ||
-    auditConclusionFailureReasons(row)).filter(
-    (reason) =>
-      !/^(?:话题缺少|缺少话题|缺少指定话题|话题未命中|字数不足|图片不足|阶段不符|不合规|审核失败)$/u.test(
-        reason,
-      ),
-  );
-  if (summary === "N-帖子无法查看") {
-    details = details.map((reason) =>
-      reason.startsWith("页面无法访问：")
-        ? reason
-        : `页面无法访问：${reason}`,
-    );
-  }
-  return details.length ? `${summary}；${details.join("；")}` : summary;
-}
 
 function wyethNestleSelfReview(row: CompactAuditResultExportSourceRow) {
   const presentation = row.presentation;
@@ -748,7 +639,7 @@ export function auditResultToKabritaExportRecord(
   const templateMetadata = importedTemplateMetadataFromNotes(row.task.notes);
   const raw = templateMetadata?.rawValues || {};
   const imported = importedTaskMetadataFromNotes(row.task.notes);
-  const reward = kabritaResultReward(row);
+  const output = kabritaResultOutput(row);
   return {
     registrationTime: preservedRawValue(raw, "registrationTime", ""),
     channel: preservedRawValue(raw, "channel", ""),
@@ -774,20 +665,16 @@ export function auditResultToKabritaExportRecord(
     activityMonth: hasRawValue(raw, "activityMonth")
       ? raw.activityMonth ?? ""
       : resolvedActivityMonthValue(undefined, row.task.campaign?.month),
-    complianceResult: kabritaComplianceResult(row),
+    complianceResult: output.complianceResult,
     ...rewardExport(row),
     ...completeAuditExport(row),
     customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
-    interactionTotal: reward.total,
-    extraRewardAmount: reward.extraRewardAmount,
-    nextReviewAt: isKabritaAuditedReadable(row)
-      ? resultBoundNextReviewDate({
-          evidenceStatus: row.evidenceStatus,
-          publishedAt: row.note.publishedAt,
-          publishedAtRaw: row.note.publishedAtRaw,
-          publishedAtSource: row.note.publishedAtSource,
-        })
-      : null,
+    interactionTotal: output.interactionTotal,
+    payoutAmount: output.payoutAmount ?? output.payoutState,
+    payoutState: output.payoutState,
+    nextReviewAt: /^\d{4}-\d{2}-\d{2}$/u.test(output.nextReviewAt)
+      ? new Date(`${output.nextReviewAt}T00:00:00Z`) : output.nextReviewAt,
+    nextReviewReason: output.nextReviewReason,
   };
 }
 
@@ -818,108 +705,18 @@ export function auditTaskToUnreviewedKabritaExportRecord(
       "purchaseProductLine",
       task.product.seriesName || task.product.name,
     ),
-    complianceResult: "",
+    complianceResult: "未审核",
     activityMonth: hasRawValue(raw, "activityMonth")
       ? raw.activityMonth ?? ""
       : resolvedActivityMonthValue(undefined, task.campaign?.month),
     ...unreviewedAuditExport(),
     customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
-    extraRewardAmount: null,
-    nextReviewAt: null,
+    payoutAmount: "未审核",
+    payoutState: "未审核",
+    nextReviewAt: "未审核",
   };
 }
 
-function kabritaFinalContentStatus(row: CompactAuditResultExportSourceRow) {
-  return row.manualReviews[0]?.result || row.presentation?.conclusion.status || row.autoStatus;
-}
-
-const KABRITA_TECHNICAL_EXPORT_STATUSES = new Set([
-  "READ_FAILED", "NOTE_NOT_FOUND", "LOGIN_EXPIRED", "SECURITY_VERIFICATION",
-  "PAGE_READ_FAILED", "NETWORK_ERROR", "STRUCTURE_MISMATCH",
-]);
-
-function isKabritaAuditedReadable(row: CompactAuditResultExportSourceRow) {
-  return row.pageStatus === "NORMAL" &&
-    !KABRITA_TECHNICAL_EXPORT_STATUSES.has(row.autoStatus) &&
-    !KABRITA_TECHNICAL_EXPORT_STATUSES.has(row.task.failureCode || "") &&
-    ["PASSED", "FAILED", "NEEDS_REVIEW", "PENDING_RETENTION"].includes(row.autoStatus);
-}
-
-function kabritaResultReward(row: CompactAuditResultExportSourceRow) {
-  return rewardFromResultSnapshot({
-    ruleSnapshot: row.ruleSnapshot,
-    finalContentStatus: kabritaFinalContentStatus(row),
-    autoStatus: row.autoStatus,
-    pageStatus: row.pageStatus,
-    failureCode: row.task.failureCode,
-    likeCount: row.likeCount,
-    commentCount: row.commentCount,
-    favoriteCount: row.favoriteCount,
-    interactionTotal: row.interactionTotal,
-  });
-}
-
-export function kabritaComplianceResult(
-  row: CompactAuditResultExportSourceRow,
-) {
-  if (!isKabritaAuditedReadable(row)) return "";
-  const reward = kabritaResultReward(row);
-  if (reward.mode === "CONTENT_BASE_PLUS_INTERACTION_TIERS") {
-    const finalStatus = kabritaFinalContentStatus(row);
-    return finalStatus === "PASSED" ? "Y" : finalStatus === "FAILED" ? "N" : "";
-  }
-  let base = detailedSelfReview(row);
-  if (!row.manualReviews.length) {
-    let reasons: string[] = [];
-    try {
-      const parsed = JSON.parse(row.failureReasons) as unknown;
-      reasons = Array.isArray(parsed) ? parsed.map(String) : [String(parsed || "")];
-    } catch {
-      reasons = row.failureReasons ? [row.failureReasons] : [];
-    }
-    const interactionReasons = reasons.filter((reason) =>
-      /基础奖励(?:未达成|互动数据无法确认)|互动合计/iu.test(reason),
-    );
-    const otherReasons = reasons.filter((reason) =>
-      !/基础奖励(?:未达成|互动数据无法确认)|互动合计/iu.test(reason),
-    );
-    if (interactionReasons.length) {
-      const contentStatus = otherReasons.length ? row.autoStatus : "PASSED";
-      const contentPresentation = row.presentation &&
-        row.presentation.consistency.status === "CONSISTENT"
-        ? {
-            ...row.presentation,
-            automaticConclusion: {
-              ...row.presentation.automaticConclusion,
-              status: contentStatus,
-              label: contentStatus === "PASSED" ? "审核通过" : row.presentation.automaticConclusion.label,
-              tone: contentStatus === "PASSED" ? "success" as const : row.presentation.automaticConclusion.tone,
-            },
-            conclusion: {
-              ...row.presentation.conclusion,
-              status: contentStatus,
-              label: contentStatus === "PASSED" ? "审核通过" : row.presentation.conclusion.label,
-              tone: contentStatus === "PASSED" ? "success" as const : row.presentation.conclusion.tone,
-            },
-            failureReasons: row.presentation.failureReasons.filter((reason) =>
-              !/基础奖励(?:未达成|互动数据无法确认)|互动合计/iu.test(reason),
-            ),
-          }
-        : row.presentation;
-      base = detailedSelfReview({
-        ...row,
-        autoStatus: contentStatus,
-        failureReasons: JSON.stringify(otherReasons),
-        presentation: contentPresentation,
-      });
-    }
-  }
-  const interaction = businessInteractionExport(row).interactionAtLeastTen;
-  if (!interaction) return base;
-  if (base === "Y") return interaction === "Y" ? "Y" : "N-互动量＜10";
-  if (interaction === "Y" || base.includes("互动量＜10")) return base;
-  return [base, "N-互动量＜10"].filter(Boolean).join("；");
-}
 
 export function auditResultToWyethNestleExportRecord(
   row: CompactAuditResultExportSourceRow,
@@ -1278,7 +1075,7 @@ export async function buildConfiguredWorkbook(input: {
     purchaseProductLine: 22,
     complianceResult: 28,
     customerServiceComment: 32,
-    extraRewardAmount: 18,
+    payoutAmount: 32,
     nextReviewAt: 20,
   };
   if (
@@ -1294,7 +1091,7 @@ export async function buildConfiguredWorkbook(input: {
     width: widths[field] || Math.min(60, Math.max(14, displayName.length * 3)),
   }));
   for (const record of records) {
-    sheet.addRow(
+    const added = sheet.addRow(
       Object.fromEntries(
         selected.map(({ field }) => {
           const value = record[field];
@@ -1307,6 +1104,14 @@ export async function buildConfiguredWorkbook(input: {
         }),
       ),
     );
+    if (selected.some((column) => column.field === "payoutAmount")) {
+      const payout = added.getCell("payoutAmount");
+      if (typeof record.payoutAmount === "number") {
+        payout.numFmt = record.payoutState?.startsWith("待复核") ? '0"（待复核）"' : "0";
+      }
+      if (record.payoutState) payout.note = record.payoutState;
+      if (record.nextReviewReason) added.getCell("nextReviewAt").note = record.nextReviewReason;
+    }
   }
   const header = sheet.getRow(1);
   header.font = { bold: true, color: { argb: "FF000000" } };
@@ -1390,6 +1195,9 @@ export function buildConfiguredCsv(input: {
     input.records.map((record) =>
       selected.map(({ field }) => {
         const value = record[field];
+        if (field === "payoutAmount" && typeof value === "number" && record.payoutState) {
+          return `${value}（${record.payoutState}）`;
+        }
         return value instanceof Date
           ? field === "nextReviewAt"
             ? value.toISOString().slice(0, 10)

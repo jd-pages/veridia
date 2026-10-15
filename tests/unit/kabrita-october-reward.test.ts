@@ -5,6 +5,7 @@ import { assertAuditEvaluationConsistency } from "@/lib/audit-evaluation-consist
 import { buildAuditResultPresentation } from "@/lib/audit-result-presentation";
 import { createMockNote } from "@/lib/mock-data";
 import { rewardFromResultSnapshot } from "@/lib/interaction-reward";
+import { kabritaResultOutput } from "@/lib/kabrita-result-output";
 import {
   auditResultToKabritaExportRecord,
   auditTaskToUnreviewedKabritaExportRecord,
@@ -29,7 +30,7 @@ const snapshot = JSON.stringify(context);
 const headers = [
   "登记时间", "渠道", "店铺名称", "客户备注", "买家购买ID", "购买订单号", "购买时间",
   "购买罐数", "参与次数", "发布小红书账号", "小红书发布链接", "购买产品线", "是否符合",
-  "客服备注", "互动量", "额外奖励金额", "下次审核时间",
+  "客服备注", "互动量", "打款金额", "下次审核时间",
 ];
 
 function reward(total: number, finalContentStatus = "PASSED") {
@@ -97,10 +98,15 @@ describe("Kabrita October reward contract", () => {
     }
   });
 
-  it("技术失败与未审核奖励留空，可读null/3/null只在投影层按3计算", () => {
+  it("技术失败与未审核无金额，可读null/3/null仍为未知而非零", () => {
     const raw = { likeCount: null, commentCount: 3, favoriteCount: null, interactionTotal: null };
     const input = { ruleSnapshot: snapshot, finalContentStatus: "PASSED", autoStatus: "PASSED", pageStatus: "NORMAL", ...raw };
-    expect(rewardFromResultSnapshot(input)).toMatchObject({ total: 3, baseRewardAmount: 50, extraRewardAmount: 0 });
+    expect(rewardFromResultSnapshot(input)).toMatchObject({ total: null, baseRewardAmount: null, extraRewardAmount: null });
+    for (const interactionTotal of [null, 9, -1, Number.NaN]) {
+      expect(rewardFromResultSnapshot({ ...input, likeCount: 3, commentCount: 3, favoriteCount: 4,
+        interactionTotal, interactionRewardStatus: "PENDING" }))
+        .toMatchObject({ total: null, baseRewardAmount: null, extraRewardAmount: null });
+    }
     for (const status of ["READ_FAILED", "LOGIN_EXPIRED", "SECURITY_VERIFICATION", "PAGE_READ_FAILED", "NETWORK_ERROR", "STRUCTURE_MISMATCH", "NOTE_NOT_FOUND"]) {
       expect(rewardFromResultSnapshot({ ...input, pageStatus: status })).toMatchObject({ total: null, extraRewardAmount: null });
       expect(rewardFromResultSnapshot({ ...input, failureCode: status })).toMatchObject({ total: null, extraRewardAmount: null });
@@ -116,11 +122,11 @@ describe("Kabrita October reward contract", () => {
     const historicalReward = auditResultToKabritaExportRecord(withCurrentCampaign);
     Object.assign(currentCampaign, { baseRewardAmount: 999, interactionRewardTiers: [{ threshold: 20, amount: 30 }] });
     expect(auditResultToKabritaExportRecord(withCurrentCampaign)).toEqual(historicalReward);
-    expect(auditResultToKabritaExportRecord(saved)).toMatchObject({ complianceResult: "Y", interactionTotal: 15, extraRewardAmount: 20 });
+    expect(auditResultToKabritaExportRecord(saved)).toMatchObject({ complianceResult: "Y", interactionTotal: 15, payoutAmount: 70 });
     expect(auditResultToKabritaExportRecord({ ...saved, manualReviews: [{ result: "FAILED", comment: "人工不通过" }] }))
-      .toMatchObject({ complianceResult: "N", interactionTotal: 15, extraRewardAmount: 0 });
+      .toMatchObject({ complianceResult: expect.stringMatching(/^N-人工不通过/u), interactionTotal: 15, payoutAmount: "不适用：内容审核不合格" });
     expect(auditResultToKabritaExportRecord({ ...saved, autoStatus: "FAILED", manualReviews: [{ result: "PASSED", comment: "人工通过" }] }))
-      .toMatchObject({ complianceResult: "Y", interactionTotal: 15, extraRewardAmount: 20 });
+      .toMatchObject({ complianceResult: "Y", interactionTotal: 15, payoutAmount: 70 });
     const presentation = buildAuditResultPresentation({ ...saved, ruleSnapshot: snapshot, bodyCompliant: true, imageCompliant: true,
       clickableCompliant: true, publicStatus: "PUBLIC", retentionStatus: "PENDING", missingTopics: "[]", forbiddenTopics: "[]",
       interactionRewardStatus: "PENDING", ruleResults: [], evidenceStatus: "RESULT_BOUND" });
@@ -134,7 +140,7 @@ describe("Kabrita October reward contract", () => {
     const record = auditResultToKabritaExportRecord(input);
     expect(record).toMatchObject({ customerRemark: "客户原备注", customerServiceComment: "客服原备注 =SUM(1,2)",
       buyerPurchaseId: "000001", purchaseOrderNumber: "000002", purchaseCanCount: "02", activityMonth: "10月",
-      interactionTotal: 15, extraRewardAmount: 20, nextReviewAt: new Date("2026-10-31T00:00:00Z") });
+      interactionTotal: 15, payoutAmount: 70, nextReviewAt: new Date("2026-10-31T00:00:00Z") });
     const bytes = await buildConfiguredWorkbook({ templates: BUILTIN_IMPORT_EXPORT_TEMPLATES, kind: "auditResults",
       records: [record], sections: [{ sheetName: "佳贝艾特审核结果", templateBrand: "佳贝艾特", records: [record], fields: ["failedReasons", "activityMonth"] }] });
     const workbook = new ExcelJS.Workbook();
@@ -143,7 +149,8 @@ describe("Kabrita October reward contract", () => {
     expect((sheet.getRow(1).values as unknown[]).slice(1)).toEqual(headers);
     expect(sheet.columnCount).toBe(17);
     expect(sheet.getCell("O2")).toMatchObject({ type: ExcelJS.ValueType.Number, value: 15 });
-    expect(sheet.getCell("P2")).toMatchObject({ type: ExcelJS.ValueType.Number, value: 20 });
+    expect(sheet.getCell("P2")).toMatchObject({ type: ExcelJS.ValueType.Number, value: 70, numFmt: '0"（待复核）"' });
+    expect(sheet.getCell("P2").note).toContain("30天留存尚未确认");
     expect(sheet.getCell("Q2")).toMatchObject({ type: ExcelJS.ValueType.Date, value: new Date("2026-10-31T00:00:00Z"), numFmt: "yyyy-mm-dd" });
     expect(sheet.getCell("D2").text).toBe("客户原备注");
     expect(sheet.getCell("N2").text).toBe("客服原备注 =SUM(1,2)");
@@ -161,14 +168,44 @@ describe("Kabrita October reward contract", () => {
     expect((unified.getWorksheet("佳贝艾特审核结果")!.getRow(1).values as unknown[]).slice(1)).toEqual(headers);
   });
 
-  it("未审核与技术失败17列保持空白，客服备注不填入失败或人工原因", async () => {
+  it("未审核与技术失败17列显示准确状态，客服备注不填入失败或人工原因", async () => {
     const source = row();
     const unreviewed = auditTaskToUnreviewedKabritaExportRecord({ ...source.task, originalInput: source.task.url });
     const failed = auditResultToKabritaExportRecord({ ...source, pageStatus: "READ_FAILED", autoStatus: "READ_FAILED" });
-    for (const record of [unreviewed, failed]) {
-      expect(record).toMatchObject({ complianceResult: "", interactionTotal: null, extraRewardAmount: null, nextReviewAt: null });
-    }
+    expect(unreviewed).toMatchObject({ complianceResult: "未审核", interactionTotal: null, payoutAmount: "未审核", nextReviewAt: "未审核" });
+    expect(failed).toMatchObject({ complianceResult: expect.stringMatching(/^待复核/u), interactionTotal: null, payoutAmount: "待确认：内容审核待复核" });
     expect(auditResultToKabritaExportRecord({ ...source, task: { ...source.task, notes: null },
       manualReviews: [{ result: "FAILED", comment: "人工原因" }] }).customerServiceComment).toBe("");
+  });
+
+  it("应付总额0/9/10/39/40为50/50/70/70/100且留存不改变内容结论", () => {
+    for (const [total, amount] of [[0, 50], [9, 50], [10, 70], [39, 70], [40, 100]]) {
+      const input = row({ likeCount: total, commentCount: 0, favoriteCount: 0, interactionTotal: total, retentionStatus: "PENDING" });
+      expect(kabritaResultOutput(input)).toMatchObject({ complianceResult: "Y", payoutAmount: amount, payoutState: expect.stringContaining("待复核") });
+      expect(kabritaResultOutput({ ...input, retentionStatus: "SATISFIED" })).toMatchObject({ complianceResult: "Y", payoutAmount: amount, payoutState: expect.stringContaining("非已付款") });
+    }
+    for (const ruleSnapshot of ["{}", "null", "invalid", JSON.stringify({ ...context, baseRewardAmount: null }), JSON.stringify({ ...context, interactionRewardTiers: [{ threshold: 10, amount: 20 }, { threshold: 10, amount: 50 }] })]) {
+      expect(kabritaResultOutput(row({ ruleSnapshot })).payoutAmount).toBeNull();
+    }
+    expect(kabritaResultOutput(row({ ruleSnapshot: JSON.stringify({ ...context, baseRewardAmount: Number.MAX_SAFE_INTEGER }) })).payoutAmount).toBeNull();
+  });
+
+  it("NOTE_NOT_FOUND、访问拒绝与技术未知严格区分，日期状态不虚构", () => {
+    const notFound = row({ autoStatus: "NOTE_NOT_FOUND", pageStatus: "NOTE_NOT_FOUND" });
+    expect(kabritaResultOutput(notFound)).toMatchObject({ complianceResult: "N-笔记不存在", payoutAmount: null, nextReviewAt: "不适用" });
+    expect(kabritaResultOutput(row({ pageStatus: "NO_PERMISSION" })).complianceResult).toContain("页面不可访问");
+    for (const pageStatus of ["NO_PERMISSION", "PAGE_UNAVAILABLE", "NOT_ACCESSIBLE"]) {
+      expect(kabritaResultOutput(row({ pageStatus, note: { ...row().note, publishedAt: null } })).nextReviewAt)
+        .toBe("发布时间待确认");
+    }
+    for (const state of ["READ_FAILED", "NETWORK_ERROR", "STRUCTURE_MISMATCH", "ERROR_PAGE"]) {
+      expect(kabritaResultOutput(row({ pageStatus: state, note: { ...row().note, publishedAt: null } })))
+        .toMatchObject({ complianceResult: expect.stringMatching(/^待复核/u), payoutAmount: null, nextReviewAt: "发布时间待确认" });
+    }
+    expect(kabritaResultOutput(row({ note: { ...row().note, publishedAt: null } }))).toMatchObject({ nextReviewAt: "发布时间待确认", nextReviewReason: expect.stringContaining("不使用当前笔记") });
+    expect(kabritaResultOutput(row({ evidenceStatus: "LEGACY_UNAVAILABLE" })).nextReviewAt).toBe("发布时间待确认");
+    expect(kabritaResultOutput(row({ autoStatus: "PROCESSING" })).nextReviewAt).toBe("未审核");
+    expect(kabritaResultOutput(row({ likeCount: null, commentCount: 3, favoriteCount: null, interactionTotal: null })))
+      .toMatchObject({ complianceResult: "Y", payoutAmount: null, payoutState: "待确认：互动数据未完整获取" });
   });
 });

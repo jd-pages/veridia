@@ -13,7 +13,7 @@ import type { ExtractedNote } from "../../lib/types";
 const exportHeaders = [
   "登记时间", "渠道", "店铺名称", "客户备注", "买家购买ID", "购买订单号", "购买时间",
   "购买罐数", "参与次数", "发布小红书账号", "小红书发布链接", "购买产品线", "是否符合",
-  "客服备注", "互动量", "额外奖励金额", "下次审核时间",
+  "客服备注", "互动量", "打款金额", "下次审核时间",
 ];
 const importHeaders = [...exportHeaders.slice(0, 12), "活动月份（必填）", "是否符合", "客服备注"];
 
@@ -47,14 +47,18 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
   const globalRules = await db.topicRule.findMany({ where: { scope: "GLOBAL", brandName: "佳贝艾特", status: "ACTIVE", contentChannel: { in: ["XIAOHONGSHU", "ALL"] } } });
   const allowedTopics = [...globalRules.filter((rule) => rule.ruleType !== "FORBIDDEN").map((rule) => rule.topic), requiredTopic, storeTopic];
   const cases = [
-    { key: "pass5", total: 5, content: "PASSED", extra: 0, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
-    { key: "pass15", total: 15, content: "PASSED", extra: 20, publishedAt: "2026-10-15T15:30:00Z", next: "2026-11-14" },
-    { key: "pass45", total: 45, content: "PASSED", extra: 50, publishedAt: "2026-10-01T15:30:00Z", next: "2026-10-31" },
-    { key: "fail45", total: 45, content: "FAILED", extra: 0, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
-    { key: "missing", total: 3, content: "PASSED", extra: 0, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
-    { key: "manualFail", total: 45, content: "PASSED", extra: 0, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
-    { key: "manualPass", total: 45, content: "FAILED", extra: 50, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
-    { key: "notFound", total: null, content: "NOTE_NOT_FOUND", extra: null, publishedAt: null, next: null },
+    { key: "pass0", total: 0, content: "PASSED", payout: 50, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
+    { key: "pass9", total: 9, content: "PASSED", payout: 50, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
+    { key: "pass10", total: 10, content: "PASSED", payout: 70, publishedAt: "2026-10-15T15:30:00Z", next: "2026-11-14" },
+    { key: "pass39", total: 39, content: "PASSED", payout: 70, publishedAt: "2026-09-30T16:30:00Z", next: "2026-10-31" },
+    { key: "pass40", total: 40, content: "PASSED", payout: 100, publishedAt: "2026-10-01T15:30:00Z", next: "2026-10-31" },
+    { key: "fail45", total: 45, content: "FAILED", payout: null, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
+    { key: "missing", total: null, content: "PASSED", payout: null, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
+    { key: "unconfirmed", total: null, content: "PASSED", payout: null, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
+    { key: "noDate", total: 10, content: "PASSED", payout: 70, publishedAt: null, next: null },
+    { key: "manualFail", total: 45, content: "PASSED", payout: null, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
+    { key: "manualPass", total: 45, content: "FAILED", payout: 100, publishedAt: "2026-10-01T02:00:00Z", next: "2026-10-31" },
+    { key: "notFound", total: null, content: "NOTE_NOT_FOUND", payout: null, publishedAt: null, next: null },
   ] as const;
   const fixtures = new Map<string, ExtractedNote>();
   let server: Server | undefined;
@@ -88,8 +92,10 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
       const topics = (sample.content === "FAILED" ? allowedTopics.filter((topic) => topic !== requiredTopic) : allowedTopics)
         .map((displayText) => ({ ...note.topics[0], displayText, href: `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(displayText)}` }));
       fixtures.set(sample.key, { ...note, url, finalUrl: url, noteId: `october-${suffix}-${sample.key}`, body: "佳贝艾特内容审核真实完整链验证正文".repeat(8), topics,
-        imageCount: 3, likeCount: sample.key === "missing" ? null : sample.total, commentCount: sample.key === "missing" ? 3 : 0,
-        favoriteCount: sample.key === "missing" ? null : 0, interactionExtractionStatus: sample.key === "missing" || sample.key === "notFound" ? "UNAVAILABLE" : "SUCCESS",
+        imageCount: 3, likeCount: sample.key === "unconfirmed" ? 3 : sample.key === "missing" ? null : sample.total,
+        commentCount: ["missing", "unconfirmed"].includes(sample.key) ? 3 : 0,
+        favoriteCount: sample.key === "unconfirmed" ? 4 : sample.key === "missing" ? null : 0,
+        interactionExtractionStatus: ["missing", "unconfirmed", "notFound"].includes(sample.key) ? "UNAVAILABLE" : "SUCCESS",
         publishedAt: sample.publishedAt, publishedAtRaw: sample.publishedAt, publishedAtSource: "NETWORK_JSON:fixture.note.publish_time",
         pageStatus: sample.content === "NOTE_NOT_FOUND" ? "NOTE_NOT_FOUND" : "NORMAL", isPublic: true });
       sourceSheet.addRow(["2026-10-16 10:00:00", "京东", storeName, `客户备注${sample.key}`,
@@ -141,6 +147,9 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
     const rawMissing = resultByKey.get("missing")!;
     expect(rawMissing).toMatchObject({ likeCount: null, commentCount: 3, favoriteCount: null, interactionTotal: null });
     expect(JSON.parse(rawMissing.extractionRecord!.rawData)).toMatchObject({ likeCount: null, commentCount: 3, favoriteCount: null });
+    const unconfirmed = resultByKey.get("unconfirmed")!;
+    expect(unconfirmed).toMatchObject({ likeCount: 3, commentCount: 3, favoriteCount: 4, interactionTotal: null, interactionRewardStatus: "PENDING" });
+    expect(JSON.parse(unconfirmed.extractionRecord!.rawData)).toMatchObject({ interactionExtractionStatus: "UNAVAILABLE" });
     for (const [key, finalResult] of [["manualFail", "FAILED"], ["manualPass", "PASSED"]] as const) {
       expect((await page.request.post(`/api/results/${resultByKey.get(key)!.id}/review`, { data: { result: finalResult, comment: "独立人工结论验收" } })).status()).toBe(201);
     }
@@ -157,6 +166,7 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
     expect((sheet.getRow(1).values as unknown[]).slice(1)).toEqual(exportHeaders);
     expect(sheet.columnCount).toBe(17);
     expect(sheet.rowCount).toBe(cases.length + 1);
+    const reconciliation: unknown[] = [];
     for (const sample of cases) {
       const exported = Array.from({ length: cases.length }, (_, index) => sheet.getRow(index + 2))
         .find((row) => row.getCell(6).text === `OCT-${suffix}-${sample.key}`)!;
@@ -164,24 +174,52 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
       expect(exported.getCell(4).text).toBe(`客户备注${sample.key}`);
       expect(exported.getCell(14).text).toBe(`客服备注${sample.key}`);
       expect(exported.getCell(8).text).toBe("02");
-      const conclusion = sample.key === "notFound" ? "" : sample.key === "manualFail" || sample.key === "fail45" ? "N" : "Y";
-      expect(exported.getCell(13).text, sample.key).toBe(conclusion);
+      const negative = sample.key === "manualFail" || sample.key === "fail45";
+      const conclusion = sample.key === "notFound" ? "N-笔记不存在" : negative ? expect.stringMatching(/^N-/u) : "Y";
+      expect(exported.getCell(13).text, sample.key).toEqual(conclusion);
+      if (sample.key === "fail45") expect(exported.getCell(13).text).toContain(requiredTopic);
       expect(exported.getCell(15).value, sample.key).toBe(sample.total);
-      expect(exported.getCell(16).value, sample.key).toBe(sample.extra);
-      if (sample.total !== null) {
-        expect(exported.getCell(15).type).toBe(ExcelJS.ValueType.Number);
+      const payout = sample.payout ?? (["missing", "unconfirmed"].includes(sample.key) ? "待确认：互动数据未完整获取" : "不适用：内容审核不合格");
+      expect(exported.getCell(16).value, sample.key).toBe(payout);
+      if (sample.payout !== null) {
         expect(exported.getCell(16).type).toBe(ExcelJS.ValueType.Number);
-        expect(exported.getCell(17)).toMatchObject({ type: ExcelJS.ValueType.Date, value: new Date(`${sample.next}T00:00:00Z`) });
-        const result = resultByKey.get(sample.key)!;
-        const auditPlusThirty = new Date(result.createdAt);
-        auditPlusThirty.setUTCDate(auditPlusThirty.getUTCDate() + 30);
-        expect(exported.getCell(17).value).not.toEqual(new Date(`${auditPlusThirty.toISOString().slice(0, 10)}T00:00:00Z`));
-      } else {
-        expect(exported.getCell(15).type).toBe(ExcelJS.ValueType.Null);
-        expect(exported.getCell(16).type).toBe(ExcelJS.ValueType.Null);
-        expect(exported.getCell(17).value).toBeNull();
+        expect(exported.getCell(16).numFmt).toContain("待复核");
+        expect(exported.getCell(16).note).toContain("30天留存尚未确认");
       }
+      const next = sample.next ?? (sample.key === "notFound" ? "不适用" : "发布时间待确认");
+      if (sample.next) {
+        expect(exported.getCell(17)).toMatchObject({ type: ExcelJS.ValueType.Date, value: new Date(`${sample.next}T00:00:00Z`), numFmt: "yyyy-mm-dd" });
+        expect(exported.getCell(17).value).not.toEqual(new Date("2026-11-15T00:00:00Z"));
+      } else expect(exported.getCell(17).value).toBe(next);
+      const result = resultByKey.get(sample.key)!;
+      const detailResponse = await page.request.get(`/api/results/${result.id}`);
+      expect(detailResponse.ok()).toBeTruthy();
+      const detail = (await detailResponse.json()).data;
+      expect(detail.presentation.kabrita).toMatchObject({
+        complianceResult: exported.getCell(13).text, interactionTotal: sample.total,
+        payoutAmount: sample.payout, nextReviewAt: next,
+      });
+      await page.goto(`/results/${result.id}`);
+      const view = page.getByLabel("佳贝艾特审核与打款", { exact: true });
+      await expect(view).toContainText(`是否符合：${exported.getCell(13).text}`);
+      await expect(view).toContainText(`打款金额：${sample.payout === null ? detail.presentation.kabrita.payoutState : `${payout} 元`}`);
+      await expect(view).toContainText(`下次审核时间：${next}`);
+      if (["pass10", "missing", "notFound", "noDate"].includes(sample.key)) {
+        await page.screenshot({ path: testInfo.outputPath(`kabrita-${sample.key}-actual-ui.png`), fullPage: true });
+      }
+      reconciliation.push({ key: sample.key, resultId: result.id, excelRow: exported.number,
+        compliance: exported.getCell(13).text, interaction: exported.getCell(15).value,
+        payout: exported.getCell(16).value, payoutState: detail.presentation.kabrita.payoutState,
+        nextReviewAt: next, uiMatchesDownloadedWorkbook: true });
     }
+    const csvResponse = await page.request.get(`/api/results/export?format=csv&importRecordId=${importRecordId}`);
+    expect(csvResponse.ok()).toBeTruthy();
+    const csvBytes = await csvResponse.body();
+    await writeFile(testInfo.outputPath("Kabrita-actual-export.csv"), csvBytes);
+    const csv = csvBytes.toString("utf8");
+    expect(csv.split("\r\n")[0].replace(/^\uFEFF/u, "").split(",")).toEqual(exportHeaders);
+    for (const text of ["N-笔记不存在", "发布时间待确认", "50（待复核", "70（待复核", "100（待复核"]) expect(csv).toContain(text);
+    await writeFile(testInfo.outputPath("row-reconciliation.json"), JSON.stringify(reconciliation, null, 2));
     const before = results.map(({ id, ruleSnapshot, likeCount, commentCount, favoriteCount, interactionTotal, extractionRecord }) =>
       ({ id, ruleSnapshot, likeCount, commentCount, favoriteCount, interactionTotal, rawData: extractionRecord!.rawData }));
     await db.campaign.update({ where: { id: campaign.id }, data: { baseRewardAmount: 999,

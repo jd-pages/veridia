@@ -316,8 +316,8 @@ describe("分层测试门禁", () => {
       behaviorCount: 48,
       groupCount: 17,
       triggerFiles: {
-        totalEntryCount: 183,
-        exactFileEntryCount: 159,
+        totalEntryCount: 185,
+        exactFileEntryCount: 161,
         directoryEntryCount: 24,
         patternEntryCount: 0,
         duplicateEntryCount: 0,

@@ -1030,7 +1030,7 @@ test("统一 Workbook 八行审核加一行未审核后按 ImportRecord 导出�
     expect(kabritaHeaders).toEqual([
       "登记时间", "渠道", "店铺名称", "客户备注", "买家购买ID", "购买订单号", "购买时间",
       "购买罐数", "参与次数", "发布小红书账号", "小红书发布链接", "购买产品线", "是否符合",
-      "客服备注", "互动量", "额外奖励金额", "下次审核时间",
+      "客服备注", "互动量", "打款金额", "下次审核时间",
     ]);
     const kabritaRawMetadata = await prisma.auditTask.findMany({
       where: { importRecordId, productId: kabritaProductId }, select: { notes: true }, orderBy: { queueOrder: "asc" },
