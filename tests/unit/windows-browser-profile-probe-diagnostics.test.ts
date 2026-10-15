@@ -458,6 +458,31 @@ it("image query refusal retains only numeric held identity evidence and cannot c
   child.stdout.emit("data", Buffer.from("[]"));child.emit("close", 1);await assertion;
 });
 
+it("image exit-state receipts are bounded numeric observations and never replace the exit fence", async () => {
+  const frame = "VERIDIA_PROFILE_PROBE_CENSUS_IMAGE_STATE=321:134000000000000001:259:0:TRUE\n";
+  expect(parseWindowsProfileProbeDiagnostic(frame)).toEqual({ censusImageExitEvidence: {
+    pid: 321, snapshotBirthStamp: "134000000000000001", basicExitStatus: 259, exitFileTime: "0", sameHeldIdentity: true,
+  } });
+  expect(parseWindowsProfileProbeDiagnostic(frame.replace(":259:0:", ":3221225786:134000000000000002:"))).toEqual({ censusImageExitEvidence: {
+    pid: 321, snapshotBirthStamp: "134000000000000001", basicExitStatus: 3221225786, exitFileTime: "134000000000000002", sameHeldIdentity: true,
+  } });
+  for (const invalid of [frame.replace("321:", "0:"), frame.replace(":259:", ":4294967296:"), frame.replace(":0:TRUE", ":18446744073709551616:TRUE"),
+    frame.replace(":TRUE", ":UNKNOWN"), frame.trimEnd() + " private command line\n"]) {
+    expect(parseWindowsProfileProbeDiagnostic(invalid)).toEqual({});
+  }
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("unchecked((uint)basic.exitStatus),diagnosticExit.Value");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("SameHeldIdentityExited(handle,(int)row[\"pid\"],(string)row[\"nativeBirthStamp\"])");
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: {
+    nativeFailureCode: "PROFILE_OWNERSHIP_UNAVAILABLE", censusImageExitEvidence: { basicExitStatus: 259, exitFileTime: "0" },
+  } });
+  child.stderr.emit("data", Buffer.from(frame + "VERIDIA_PROFILE_PROBE_FAILURE=SPI_IMAGE_READ:PROFILE_OWNERSHIP_UNAVAILABLE\n"));
+  child.stdout.emit("data", Buffer.from("[]")); child.emit("close", 1);
+  await assertion;
+  expect(fixture.spawn).toHaveBeenCalledTimes(1);
+});
+
 it("stdin errors fail closed once without retrying or admitting any owner", async () => {
   const child = childFixture();
   const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");

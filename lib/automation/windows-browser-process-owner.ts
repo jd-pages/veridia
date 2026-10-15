@@ -36,6 +36,8 @@ export class WindowsBrowserProfileOwnershipError extends Error {
     censusOpenFailure?: { pid: number; snapshotBirthStamp: string; nativeErrorCode: number; absentInCompleteSnapshot: boolean };
     censusImageFailure?: { pid: number; snapshotBirthStamp: string; nativeErrorCode: number; imageRead: boolean;
       returnedLength: number; sameHeldIdentity: boolean; waitResult: number };
+    censusImageExitEvidence?: { pid: number; snapshotBirthStamp: string; basicExitStatus: number;
+      exitFileTime: string; sameHeldIdentity: boolean };
     stageTimeline?: Array<{ stage: string; scriptElapsedMs: number; observedElapsedMs: number }>;
     operationFailureElapsedMs?: number;
     terminationRequest?: { elapsedMs: number; returned?: boolean; errorCode?: "KILL_THROWN" };
@@ -49,7 +51,8 @@ export class WindowsBrowserProfileOwnershipError extends Error {
 export function parseWindowsProfileProbeDiagnostic(text: string) {
   const result: { nativeStage?: string; nativeFailureCode?: string; nativeStageElapsedMs?: number;
     censusOpenFailure?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusOpenFailure"];
-    censusImageFailure?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusImageFailure"] } = {};
+    censusImageFailure?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusImageFailure"];
+    censusImageExitEvidence?: NonNullable<WindowsBrowserProfileOwnershipError["diagnostic"]>["censusImageExitEvidence"] } = {};
   const stage = /VERIDIA_PROFILE_PROBE_STAGE=(SCRIPT_ENTERED|UTILITY_MODULE_IMPORT|UTILITY_MODULE_IMPORTED|PARSER_COMPILE|PARSER_COMPILED|PARSER_ASSEMBLY_LOAD|PARSER_ASSEMBLY_LOADED|REQUEST_PARSE|PROCESS_CENSUS|PROCESS_CENSUS_QUERY_ENTER|PROCESS_CENSUS_QUERY_RETURN|PROCESS_CENSUS_ENUMERATE|WMI_GET_ENTER|WMI_GET_RETURN|WMI_ENUM_ENTER|WMI_ENUM_RETURN|WMI_MOVE_ENTER|WMI_MOVE_RETURN|WMI_ROW_READ|WMI_ROW_RETURN|WMI_BIRTH_PARSE|WMI_BIRTH_RETURN|WMI_ROW_DISPOSE|WMI_ROW_DISPOSED|WMI_DISPOSE|WMI_DISPOSED|PROFILE_ARGUMENT_READ|PROFILE_ARGUMENT_PARSED|NATIVE_HANDLE_BIND|NATIVE_PROCESS_OPEN|NATIVE_HANDLE_OPEN|NATIVE_BIRTH_READ|NATIVE_BIRTH_VALIDATE|NATIVE_IDENTITY_APPEND|NATIVE_HANDLE_DISPOSE|VALIDATED_TERMINATION|RESULT_EMIT|RESULT_SERIALIZED|RESULT_WRITTEN|CENSUS_ASSEMBLY_LOAD|CENSUS_ASSEMBLY_LOADED|SPI_CAPTURE_ENTER|SPI_CAPTURE_RETURN|SPI_HELD_PROCESS_OPEN|SPI_IMAGE_READ|SPI_IMAGE_RETURN|SPI_COMMAND_LINE_READ|SPI_COMMAND_LINE_RETURN|SPI_HELD_PROCESS_DISPOSE|SPI_VERIFIED_EXIT_SKIP|SPI_VERIFIED_ABSENCE_SKIP):([0-9]+(?:\.[0-9]+)?)\r?\n/gu;
   for (const match of text.matchAll(stage)) {
     const elapsed = Number(match[2]);
@@ -70,6 +73,13 @@ export function parseWindowsProfileProbeDiagnostic(text: string) {
       [image[3], image[5], image[7]].every(value => Number.isSafeInteger(Number(value)) && Number(value) <= 0xffff_ffff)) {
     result.censusImageFailure = { pid: Number(image[1]), snapshotBirthStamp: image[2], nativeErrorCode: Number(image[3]),
       imageRead: image[4] === "TRUE", returnedLength: Number(image[5]), sameHeldIdentity: image[6] === "TRUE", waitResult: Number(image[7]) };
+  }
+  const imageState = text.match(/^VERIDIA_PROFILE_PROBE_CENSUS_IMAGE_STATE=([0-9]+):([0-9]+):([0-9]+):([0-9]+):(TRUE|FALSE)\r?\n$/u);
+  if (imageState && Number.isSafeInteger(Number(imageState[1])) && Number(imageState[1]) > 0 && imageState[2].length <= 20 &&
+      Number.isSafeInteger(Number(imageState[3])) && Number(imageState[3]) <= 0xffff_ffff &&
+      imageState[4].length <= 20 && BigInt(imageState[4]) <= 0xffff_ffff_ffff_ffffn) {
+    result.censusImageExitEvidence = { pid: Number(imageState[1]), snapshotBirthStamp: imageState[2], basicExitStatus: Number(imageState[3]),
+      exitFileTime: imageState[4], sameHeldIdentity: imageState[5] === "TRUE" };
   }
   return result;
 }
