@@ -439,6 +439,25 @@ it("census open diagnostics retain only numeric snapshot identity and never gran
   }
 });
 
+it("image query refusal retains only numeric held identity evidence and cannot claim exit or owner admission", async () => {
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).toContain("int imageError=imageRead?0:Marshal.GetLastWin32Error()");
+  expect(WINDOWS_BROWSER_PROFILE_CENSUS_SOURCE).not.toContain("Console.Error.WriteLine(path)");
+  const frame = "VERIDIA_PROFILE_PROBE_CENSUS_IMAGE=321:134000000000000001:31:FALSE:32768:TRUE:258\n";
+  expect(parseWindowsProfileProbeDiagnostic(frame)).toEqual({ censusImageFailure: {
+    pid: 321, snapshotBirthStamp: "134000000000000001", nativeErrorCode: 31, imageRead: false,
+    returnedLength: 32768, sameHeldIdentity: true, waitResult: 258,
+  } });
+  for (const invalid of [frame.replace(":TRUE:258", ":UNKNOWN:258"), frame.replace("321:", "0:"), frame.replace(":31:", ":-1:"), frame.trimEnd() + " private path\n"]) {
+    expect(parseWindowsProfileProbeDiagnostic(invalid)).toEqual({});
+  }
+  const child = childFixture();
+  const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");
+  const assertion = expect(pending).rejects.toMatchObject({ diagnostic: { reason: "NATIVE_PROBE_EXIT", nativeFailureCode: "PROFILE_OWNERSHIP_UNAVAILABLE",
+    censusImageFailure: { nativeErrorCode: 31, sameHeldIdentity: true, waitResult: 258 } } });
+  child.stderr.emit("data", Buffer.from(frame + "VERIDIA_PROFILE_PROBE_FAILURE=SPI_IMAGE_READ:PROFILE_OWNERSHIP_UNAVAILABLE\n"));
+  child.stdout.emit("data", Buffer.from("[]"));child.emit("close", 1);await assertion;
+});
+
 it("stdin errors fail closed once without retrying or admitting any owner", async () => {
   const child = childFixture();
   const pending = captureWindowsBrowserProfileOwners("E:\\fixture\\chrome.exe", "E:\\fixture\\isolated-profile");

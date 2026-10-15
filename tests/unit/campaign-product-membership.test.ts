@@ -226,18 +226,16 @@ describe.sequential("PRODUCT_RULE_CAN_JOIN_EXISTING_CAMPAIGN", () => {
     expect(await state(value)).toEqual(foreignOnly);
   });
 
-  it("已删除产品或活动拒绝加入", async () => {
-    for (const target of ["product", "campaign"] as const) {
-      const value = await fixture();
-      if (target === "product") {
-        await db.product.update({ where: { id: value.product.id }, data: { deletedAt: new Date() } });
-      } else {
-        await db.campaign.update({ where: { id: value.campaign.id }, data: { deletedAt: new Date() } });
-      }
-      const before = await state(value);
-      expect((await post(ruleBody(value))).status).toBe(400);
-      expect(await state(value)).toEqual(before);
+  it.each(["product", "campaign"] as const)("已删除 %s 拒绝加入且保持完整状态不变", async target => {
+    const value = await fixture();
+    if (target === "product") {
+      await db.product.update({ where: { id: value.product.id }, data: { deletedAt: new Date() } });
+    } else {
+      await db.campaign.update({ where: { id: value.campaign.id }, data: { deletedAt: new Date() } });
     }
+    const before = await state(value);
+    expect((await post(ruleBody(value))).status).toBe(400);
+    expect(await state(value)).toEqual(before);
   });
 
   it("重复规则返回409，新产品未被偷偷加入活动", async () => {
