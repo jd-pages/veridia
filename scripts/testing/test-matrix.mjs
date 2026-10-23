@@ -211,6 +211,7 @@ export const E2E_MANIFEST = Object.freeze({
   "tests/e2e/import-row-limit.spec.ts": entry(["IMPORT"], "DATA_RULES"),
   "tests/e2e/kabrita-excel-template.spec.ts": entry(["IMPORT", "CAMPAIGN"], "DATA_RULES"),
   "tests/e2e/kabrita-october-reward.spec.ts": entry(["IMPORT", "CAMPAIGN", "RULES", "RESULTS", "XHS", "AUTOMATION", "DATABASE"], "AUTOMATION"),
+  "tests/e2e/xhs-business-data.spec.ts": entry(["XHS", "RESULTS", "RECHECK", "CAMPAIGN", "AUTOMATION"], "RESULTS_UI"),
   "tests/e2e/unified-excel-template.spec.ts": entry(["IMPORT", "CAMPAIGN", "RULES"], "DATA_RULES"),
   "tests/e2e/local-fonts.spec.ts": entry(["UI_LAYOUT", "UPDATE"], "RESULTS_UI", true),
   "tests/e2e/localization.spec.ts": entry(["UI_LAYOUT"], "RESULTS_UI", true),

@@ -110,10 +110,12 @@ describe("分层测试门禁", () => {
       "tests/e2e/store-topic-audit.spec.ts",
       "tests/e2e/store-topic-rule-management.spec.ts",
       "tests/e2e/unified-excel-template.spec.ts",
+      "tests/e2e/xhs-business-data.spec.ts",
     ]);
     expect(groupE2eFiles(selection.e2eFiles).map((group) => group.name)).toEqual([
       "DATA_RULES",
       "AUTOMATION",
+      "RESULTS_UI",
     ]);
     expect(selection.e2eFiles).not.toContain("tests/e2e/douyin-automation.spec.ts");
     expect(selection.e2eFiles).not.toContain("tests/e2e/audit-flow.spec.ts");
@@ -311,13 +313,13 @@ describe("分层测试门禁", () => {
 
   it("受保护行为注册表完整、引用有效且 expectation 需要正式业务批准", () => {
     expect(validateProtectedBehaviorRegistry()).toMatchObject({
-      // v1.1.41 adds reward/export/date, atomic membership and the proven
-      // idle-connection/no-replay infrastructure contract.
-      behaviorCount: 48,
+      // Current-note acquisition and separate frozen-contract follow-up add
+      // two protected contracts without removing any historical protection.
+      behaviorCount: 50,
       groupCount: 17,
       triggerFiles: {
-        totalEntryCount: 185,
-        exactFileEntryCount: 161,
+        totalEntryCount: 194,
+        exactFileEntryCount: 170,
         directoryEntryCount: 24,
         patternEntryCount: 0,
         duplicateEntryCount: 0,

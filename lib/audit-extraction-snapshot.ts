@@ -134,6 +134,7 @@ export function withAuditExtractionSnapshot<T extends SnapshotResult>(result: T)
       publishedAt: snapshot?.publishedAt ?? null,
       publishedAtRaw: snapshot?.publishedAtRaw ?? null,
       publishedAtSource: snapshot?.publishedAtSource ?? null,
+      businessDataReceipt: snapshot?.pageEvidence?.businessDataReceipt ?? null,
       pageStatus: snapshot?.pageStatus ?? result.pageStatus,
       isPublic: snapshot?.isPublic ?? null,
       noteType: snapshot?.noteType ?? result.noteType,

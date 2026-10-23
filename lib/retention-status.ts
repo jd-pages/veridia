@@ -14,7 +14,7 @@ function validDate(value: unknown) {
 export function resolveReliablePublishedAt(
   note: Pick<
     ExtractedNote,
-    "contentChannel" | "noteId" | "publishedAt" | "publishedAtSource"
+    "contentChannel" | "noteId" | "publishedAt" | "publishedAtSource" | "publishedAtRaw"
   >,
   now = new Date(),
 ) {
@@ -23,6 +23,7 @@ export function resolveReliablePublishedAt(
       platformNoteId: note.noteId,
       publishedAt: note.publishedAt,
       publishedAtSource: note.publishedAtSource,
+      publishedAtRaw: note.publishedAtRaw,
       now,
     });
     return original.originalPublishedAtStatus === "CONFIRMED"

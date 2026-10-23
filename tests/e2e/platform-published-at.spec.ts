@@ -22,6 +22,11 @@ async function extractXhsFixture(
   }
   if (options.bodyTime) params.set("bodyTime", options.bodyTime);
   await page.goto(`/mock/xhs?${params.toString()}`);
+  // The local fixture URL does not identify a platform note. Bind its visible
+  // detail identity explicitly, as the Douyin fixture below already does.
+  await page.locator("main[data-xhs-note-id]").evaluate((detail, id) => {
+    detail.setAttribute("data-xhs-note-id", id);
+  }, xhsNoteId);
   return new PlaywrightXiaohongshuAdapter().extract(
     page,
     `https://www.xiaohongshu.com/explore/${xhsNoteId}`,

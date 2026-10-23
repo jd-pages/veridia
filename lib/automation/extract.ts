@@ -558,6 +558,8 @@ export async function extractAuditTaskAutomatically(
       adapter.extract(page, task.url, {
         redirectChain: uniqueUrls(redirectChain),
         responseCandidates,
+        readResponseCandidates: responseCollector.snapshot,
+        signal: lifecycle?.signal,
       }),
       lifecycle?.signal,
     );

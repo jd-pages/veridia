@@ -7,6 +7,7 @@ export type KabritaResultOutputInput = SelfReviewSource & InteractionRewardSnaps
   retentionStatus?: string;
   note: SelfReviewSource["note"] & {
     publishedAt?: unknown; publishedAtRaw?: unknown; publishedAtSource?: unknown;
+    businessDataReceipt?: unknown;
   };
 };
 
@@ -66,6 +67,17 @@ export function kabritaComplianceResult(row: KabritaResultOutputInput): string {
 
 /** Read-only projection of this result's frozen rules and extraction. No current Campaign/Note reads. */
 export function kabritaResultOutput(row: KabritaResultOutputInput) {
+  const receipt = row.note.businessDataReceipt && typeof row.note.businessDataReceipt === "object"
+    ? row.note.businessDataReceipt as Record<string, unknown> : null;
+  const blockerLabels: Record<string, string> = {
+    CURRENT_NOTE_ID_UNCONFIRMED: "当前笔记身份未确认", INTERACTION_COUNT_CONFLICT: "当前笔记互动数据来源冲突",
+    PLATFORM_INTERACTION_NOT_RETURNED: "平台未返回完整点赞、评论和收藏数据",
+    PUBLISHED_TIME_CONFLICT: "原始发布时间来源冲突", ORIGINAL_PUBLISHED_TIME_NOT_RETURNED: "平台未返回可确认的原始发布时间",
+  };
+  const acquisitionReasons = Array.isArray(receipt?.blockers)
+    ? receipt.blockers.filter((code): code is string => typeof code === "string" && Object.hasOwn(blockerLabels, code)).map((code) => blockerLabels[code]) : [];
+  const acquisitionRecovery = acquisitionReasons.length
+    ? "系统按正常会话安排有界自动补采；仍缺失时请在审核任务查看补采结果。登录失效需正常恢复登录，访问受限需确认原笔记权限。原历史快照不变。" : null;
   const complianceResult = kabritaComplianceResult(row);
   const reward = rewardFromResultSnapshot({ ...row, ruleSnapshot: row.ruleSnapshot, finalContentStatus: contentStatus(row), failureCode: row.task.failureCode });
   // An inaccessible page does not prove that the note no longer exists.
@@ -75,7 +87,7 @@ export function kabritaResultOutput(row: KabritaResultOutputInput) {
     publishedAtRaw: row.note.publishedAtRaw, publishedAtSource: row.note.publishedAtSource,
   });
   const nextReviewAt = nextDate?.toISOString().slice(0, 10) ?? (noNote ? "不适用" : complianceResult === "未审核" ? "未审核" : "发布时间待确认");
-  const nextReviewReason = nextDate ? "当次采集快照中的可信笔记发布日期，加30个北京时间自然日" : noNote ? "笔记已确认不存在或不可访问" : complianceResult === "未审核" ? "尚无审核结果" : "当次采集快照未包含可确认的绝对发布时间与可信来源，不使用当前笔记或导入日期替代";
+  const nextReviewReason = nextDate ? "当次采集快照中的可信笔记发布日期，加30个北京时间自然日" : noNote ? "笔记已确认不存在或不可访问" : complianceResult === "未审核" ? "尚无审核结果" : acquisitionReasons.length ? acquisitionReasons.join("；") : "当次采集快照未包含可确认的绝对发布时间与可信来源，不使用当前笔记或导入日期替代";
   const payoutAmount = complianceResult === "Y" && reward.mode === "CONTENT_BASE_PLUS_INTERACTION_TIERS" && reward.baseRewardAmount !== null && reward.extraRewardAmount !== null
     ? reward.baseRewardAmount + reward.extraRewardAmount : null;
   const payoutState = complianceResult.startsWith("N-") ? "不适用：内容审核不合格" : complianceResult === "未审核" ? "未审核"
@@ -84,7 +96,8 @@ export function kabritaResultOutput(row: KabritaResultOutputInput) {
     : reward.total === null ? "待确认：互动数据未完整获取"
     : reward.baseRewardAmount === null ? "待确认：缺少当次有效奖励规则快照"
     : row.retentionStatus === "SATISFIED" && nextDate ? "留存已确认：应付测算，非已付款" : "待复核：30天留存尚未确认；应付测算，非已付款";
-  return { complianceResult, interactionTotal: reward.total, payoutAmount, payoutState, nextReviewAt, nextReviewReason };
+  return { complianceResult, interactionTotal: reward.total, payoutAmount, payoutState, nextReviewAt, nextReviewReason,
+    acquisitionReasons, acquisitionRecovery };
 }
 
 export type KabritaResultOutput = ReturnType<typeof kabritaResultOutput>;

@@ -61,7 +61,7 @@ describe("公开留存与旧活动奖励兼容", () => {
     }
   });
 
-  it("derives the reliable XHS original timestamp from note id in absolute UTC time", () => {
+  it("missing XHS publication remains unknown; note ID cannot supply retention proof", () => {
     vi.setSystemTime(new Date("2026-09-15T16:19:46.000Z"));
     const result = evaluateAudit({
       ...createMockNote("passed"),
@@ -72,9 +72,9 @@ describe("公开留存与旧活动奖励兼容", () => {
       isPublic: true,
     }, context);
     expect(result).toMatchObject({
-      retentionStatus: "SATISFIED",
+      retentionStatus: "UNKNOWN",
       autoStatus: "PASSED",
-      retentionDueAt: "2026-09-15T14:31:44.000Z",
+      retentionDueAt: null,
     });
   });
 

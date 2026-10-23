@@ -1,6 +1,8 @@
 import type { Page } from "playwright";
 import type { ExtractedNote, PageStatus } from "@/lib/types";
 import { collectXhsInteractionMetrics } from "@/lib/interaction-metrics";
+import { resolveXhsBusinessEvidence } from "./xhs-business-evidence";
+import { waitForAutomaticExtractionOperation } from "./extraction-deadline";
 import {
   collectDomPageSnapshot,
   createEmptyCandidates,
@@ -15,6 +17,8 @@ import {
 export interface PlaywrightExtractionContext {
   redirectChain?: string[];
   responseCandidates?: XhsPageCandidates;
+  readResponseCandidates?: (signal?: AbortSignal) => Promise<XhsPageCandidates>;
+  signal?: AbortSignal;
 }
 
 export interface PlaywrightExtractorAdapter {
@@ -77,11 +81,12 @@ export class PlaywrightXiaohongshuAdapter
   implements PlaywrightExtractorAdapter
 {
   name = "playwright-xiaohongshu";
-  version = "1.9.0";
+  version = "1.10.0";
 
   canHandle(url: string) {
     try {
-      return new URL(url).hostname.endsWith("xiaohongshu.com");
+      const host = new URL(url).hostname;
+      return host === "xiaohongshu.com" || host.endsWith(".xiaohongshu.com");
     } catch {
       return false;
     }
@@ -93,7 +98,7 @@ export class PlaywrightXiaohongshuAdapter
     context: PlaywrightExtractionContext = {},
   ): Promise<ExtractedNote> {
     const domSnapshot = await collectDomPageSnapshot(page);
-    const interactionMetrics = await collectXhsInteractionMetrics(
+    const domInteractionMetrics = await collectXhsInteractionMetrics(
       page,
       domSnapshot.currentNoteScopeSelector,
       {
@@ -130,7 +135,54 @@ export class PlaywrightXiaohongshuAdapter
       domSnapshot,
       context.responseCandidates || createEmptyCandidates(),
     );
-    const currentNoteId = candidates.noteIdCandidates[0]?.value || null;
+    const currentNoteId = urlCandidates.noteIdCandidates[0]?.value || null;
+    const rootNoteId = await page.locator(domSnapshot.currentNoteScopeSelector || "[data-no-current-note]")
+      .evaluateAll((elements) => elements[0]?.getAttribute("data-xhs-note-id") || elements[0]?.getAttribute("data-note-id") || null)
+      .catch(() => null);
+    const requestedNoteId = noteIdCandidatesFromUrls([originalUrl])[0]?.value;
+    if ((rootNoteId && rootNoteId !== currentNoteId) ||
+        (requestedNoteId && currentNoteId && requestedNoteId !== currentNoteId)) {
+      throw new Error("CURRENT_NOTE_ID_MISMATCH：当前页面笔记身份与请求不一致，未采纳互动数据或发布时间");
+    }
+    candidates.publishedAtCandidates = candidates.publishedAtCandidates.map((candidate) =>
+      candidate.source.startsWith("DOM_MAIN_NOTE") && !candidate.contentId
+        ? { ...candidate, contentId: currentNoteId } : candidate);
+    const business = resolveXhsBusinessEvidence({
+      noteId: currentNoteId, candidates, domMetrics: domInteractionMetrics,
+      normal: domSnapshot.pageStatus === "NORMAL", collectedAt: new Date().toISOString(),
+    });
+    // A bounded second observation, not another navigation/API request. Hydration
+    // or a response already in flight may complete after the first DOM snapshot.
+    // The runner's absolute extraction deadline and cancellation remain binding.
+    if (business.receipt.blockers.length && context.readResponseCandidates && !context.signal?.aborted) {
+      const stamp = await page.evaluate(() => document.querySelector("[data-veridia-current-note-scope]")?.textContent || "");
+      await waitForAutomaticExtractionOperation(page.waitForFunction((before) =>
+        (document.querySelector("[data-veridia-current-note-scope]")?.textContent || "") !== before,
+      stamp, { timeout: 1_500 }), context.signal).catch((error) => {
+        if (context.signal?.aborted) throw error;
+      });
+      {
+        const nextDom = await collectDomPageSnapshot(page);
+        const nextResponses = await context.readResponseCandidates?.(context.signal);
+        const nextMetrics = await collectXhsInteractionMetrics(page, nextDom.currentNoteScopeSelector, {
+          extractionReady: nextDom.pageStatus === "NORMAL" && nextDom.keyElementCount > 0,
+        });
+        const nextRootNoteId = await page.locator(nextDom.currentNoteScopeSelector || "[data-no-current-note]")
+          .evaluateAll((elements) => elements[0]?.getAttribute("data-xhs-note-id") || elements[0]?.getAttribute("data-note-id") || null);
+        if (page.url() !== domSnapshot.finalUrl || nextDom.finalUrl !== domSnapshot.finalUrl ||
+            (nextRootNoteId && nextRootNoteId !== currentNoteId)) {
+          throw new Error("CURRENT_NOTE_ID_MISMATCH：补采期间笔记身份发生变化，未采纳互动数据或发布时间");
+        }
+        const supplemented = resolveXhsBusinessEvidence({
+          noteId: currentNoteId,
+          candidates: mergeCandidates(nextDom, nextResponses || context.responseCandidates || createEmptyCandidates()),
+          domMetrics: nextMetrics, normal: nextDom.pageStatus === "NORMAL",
+          collectedAt: new Date().toISOString(),
+        });
+        Object.assign(business, supplemented);
+      }
+    }
+    const interactionMetrics = business.metrics;
     const textHashtagCandidates = candidates.textHashtagCandidates.map(
       (topic) => ({
         ...topic,
@@ -206,9 +258,9 @@ export class PlaywrightXiaohongshuAdapter
       candidate.source.startsWith("DOM_MAIN_NOTE"),
     ) || null;
     const publishedAtEvidence = domSnapshot.pageStatus === "NORMAL" && currentNoteId
-      ? structuredPublishedAt
+      ? business.publication && structuredPublishedAt && business.publication.source === structuredPublishedAt.source
         ? {
-            ...structuredPublishedAt,
+            ...business.publication,
             // The current-note DOM is the authority for what the platform
             // visibly showed (for example "07-27" or "昨天 19:05").
             raw: domPublishedAt?.raw || structuredPublishedAt.raw,
@@ -216,7 +268,7 @@ export class PlaywrightXiaohongshuAdapter
               ? `${structuredPublishedAt.source}|${domPublishedAt.source}`
               : structuredPublishedAt.source,
           }
-        : domPublishedAt
+        : business.publication
       : null;
 
     return {
@@ -285,6 +337,7 @@ export class PlaywrightXiaohongshuAdapter
           resolvedImageCount: imageCount ?? null,
         },
         interactionEvidence: interactionMetrics,
+        businessDataReceipt: business.receipt,
         loginEvidence: candidates.loginEvidence,
         responseSummaries: candidates.responseSummaries,
         keyElementCount: domSnapshot.keyElementCount,

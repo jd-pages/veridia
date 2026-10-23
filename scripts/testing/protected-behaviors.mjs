@@ -16,6 +16,24 @@ const caseRef = (file, title) => Object.freeze({ file, title });
 
 export const PROTECTED_BEHAVIORS = Object.freeze([
   behavior({
+    key: "XHS_BUSINESS_DATA_IDENTITY", module: "Current-note business data acquisition",
+    invariant: "仅采信同笔记ID结构化/安全内嵌/可见DOM数据；未知不当零，编辑时间及Note ID不作发布时间，冲突安全阻断；17列UI/API/下载共享原始数据。",
+    unitTests: ["tests/unit/xhs-business-evidence.test.ts", "tests/unit/xhs-embedded-state.test.ts", "tests/unit/xhs-page-evidence.test.ts"],
+    e2eTests: ["tests/e2e/xhs-business-data.spec.ts"],
+    unitCases: [caseRef("tests/unit/xhs-business-evidence.test.ts", "NETWORK current-note counters include real zero and preserve receipt, not recommendation counts"), caseRef("tests/unit/xhs-business-evidence.test.ts", "user/comment/recommend timestamps and counters cannot inherit note identity"), caseRef("tests/unit/xhs-embedded-state.test.ts", "current serializer Map/Set/undefined do not discard matched note business data")],
+    e2eCases: [caseRef("tests/e2e/xhs-business-data.spec.ts", "Protected XHS_BUSINESS_DATA_IDENTITY：结构化/内嵌/DOM采集与17列真实下载保持一致")],
+    fixtures: ["tests/unit/xhs-business-evidence.test.ts", "tests/unit/xhs-embedded-state.test.ts"],
+    triggerFiles: ["lib/automation/adapters.ts", "lib/automation/xhs-page-evidence.ts", "lib/automation/xhs-business-evidence.ts", "lib/automation/xhs-embedded-state.ts"],
+  }),
+  behavior({
+    key: "XHS_RESULT_AUTOMATIC_FOLLOW_UP", module: "Separate bounded result supplement and due recheck",
+    invariant: "合法会话且无活动/暂停批次才原子创建一次补采或到期复核；使用原结果可证明合同，新采集新结果，不借用当前月份规则、不改历史快照、不自动重复失败或绕过Runner门禁。",
+    unitTests: ["tests/unit/result-follow-up.test.ts"], e2eTests: ["tests/e2e/xhs-business-data.spec.ts"],
+    unitCases: [caseRef("tests/unit/result-follow-up.test.ts", "Protected XHS_RESULT_AUTOMATIC_FOLLOW_UP：bounded supplement, frozen original contract and history survive live rule changes"), caseRef("tests/unit/result-follow-up.test.ts", "expired/unknown login never starts a browser, batch or platform request"), caseRef("tests/unit/result-follow-up.test.ts", "due date queues one separate recheck, never early and never repeats a failed claim")],
+    e2eCases: [caseRef("tests/e2e/xhs-business-data.spec.ts", "Protected XHS_RESULT_AUTOMATIC_FOLLOW_UP：实际补采队列使用原合同并新增快照，不自动重复失败")], fixtures: ["tests/unit/result-follow-up.test.ts"],
+    triggerFiles: ["lib/automation/result-follow-up.ts", "lib/result-follow-up-contract.ts", "lib/audit-service.ts", "app/api/results/follow-up/route.ts", "components/results/ResultFollowUpMonitor.tsx"],
+  }),
+  behavior({
     key: "STORE_MAPPING_INDEPENDENT_FROM_TOPIC_REQUIREMENT", module: "Store identity and explicit topic opt-in",
     invariant: "新增店铺身份不自动要求话题；Canonical及STORE_ALIAS保持MATCHED，管理员按品牌与渠道显式开启，关闭后NOT_REQUIRED且不影响主审核或历史结果；共用模板独立保留，不按店名字样推断。",
     unitTests: ["tests/unit/store-mapping-topic-requirement.test.ts", "tests/unit/store-accepted-topics.test.ts"],
@@ -149,7 +167,7 @@ export const PROTECTED_BEHAVIOR_GROUPS = Object.freeze({
   STORE_IDENTITY_CONTINUITY_ALL: Object.freeze(["STORE_ALIAS_IDENTITY_ONLY", "STORE_RENAME_IDENTITY_CONTINUITY"]),
   IMPORT_DELETE_AND_DUPLICATE_ALL: Object.freeze(["DELETED_RESULT_DUPLICATE_RELEASE", "BULK_DUPLICATE_CONFIRM", "IMPORT_CASCADE_DELETE"]),
   TEMPLATE_ISOLATION_ALL: Object.freeze(["DANONE_STAGE_SEGMENT_SEMANTICS", "KABRITA_TEMPLATE_ISOLATION"]),
-  KABRITA_OCTOBER_REWARD_ALL: Object.freeze(["KABRITA_OCTOBER_REWARD_DECOUPLING", "KABRITA_17_COLUMN_AUDIT_EXPORT", "KABRITA_NEXT_REVIEW_DATE"]),
+  KABRITA_OCTOBER_REWARD_ALL: Object.freeze(["KABRITA_OCTOBER_REWARD_DECOUPLING", "KABRITA_17_COLUMN_AUDIT_EXPORT", "KABRITA_NEXT_REVIEW_DATE", "XHS_BUSINESS_DATA_IDENTITY", "XHS_RESULT_AUTOMATIC_FOLLOW_UP"]),
   PRODUCT_CAMPAIGN_MEMBERSHIP_ALL: Object.freeze(["PRODUCT_RULE_CAN_JOIN_EXISTING_CAMPAIGN"]),
   DOUYIN_REGRESSION_ALL: Object.freeze(["DOUYIN_PUBLIC_IMAGE_TEXT_DETAIL", "DOUYIN_PUBLIC_IMAGE_TEXT_CONTENT_ACCURACY", "DOUYIN_VISIBLE_CONTENT_ID_SCOPE", "DOUYIN_REAL_VIDEO_DETAIL_RECOGNITION", "DOUYIN_DESKTOP_RUNTIME_PARITY", "DOUYIN_RESPONSE_COLLECTION_DEADLINE", "DOUYIN_TECHNICAL_FAILURE_FAIL_STOP"]),
   AUTOMATION_RUNNER_LIFECYCLE_ALL: Object.freeze(["PAUSE_CONTINUE_RUNNER_HANDOFF", "BROWSER_LIFECYCLE_CLEANUP_DEADLINE", "DOUYIN_TECHNICAL_FAILURE_FAIL_STOP"]),

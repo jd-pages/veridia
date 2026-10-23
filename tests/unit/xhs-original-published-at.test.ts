@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveXhsNoteIdCreationTime,
-  PUBLISHED_TIME_CONFLICT,
   resolveXhsOriginalPublishedAt,
   STRUCTURED_PUBLISHED_TIME,
   withXhsOriginalPublishedAt,
-  XHS_NOTE_ID_DERIVED_CREATION_TIME,
 } from "@/lib/xhs-original-published-at";
 
 const NOW = new Date("2026-08-22T12:00:00.000Z");
@@ -75,7 +73,7 @@ describe("小红书 Note ID 原始发布时间", () => {
     });
   });
 
-  it("结构化时间与 Note ID 明显冲突时不静默选值", () => {
+  it("Note ID 不是发布时间权威，不能否决真实结构化时间", () => {
     const result = resolveXhsOriginalPublishedAt({
       platformNoteId: REAL_EVIDENCE_ID,
       publishedAt: "2026-08-01T09:08:35.000Z",
@@ -83,15 +81,15 @@ describe("小红书 Note ID 原始发布时间", () => {
       now: NOW,
     });
     expect(result).toMatchObject({
-      originalPublishedAt: null,
-      originalPublishedAtStatus: "CONFLICT",
-      originalPublishedAtCode: PUBLISHED_TIME_CONFLICT,
+      originalPublishedAt: "2026-08-01T09:08:35.000Z",
+      originalPublishedAtStatus: "CONFIRMED",
+      originalPublishedAtCode: null,
     });
     expect(result.originalPublishedAtEvidence.structuredPublishedAt).not.toBeNull();
     expect(result.originalPublishedAtEvidence.noteIdDerivedCreationTime).not.toBeNull();
   });
 
-  it("编辑于 4小时前只保留为平台显示时间，原始时间来自 Note ID", () => {
+  it("编辑于 4小时前只保留为平台显示时间，不用 Note ID 冒充发布时间", () => {
     const row = withXhsOriginalPublishedAt({
       note: {
         contentChannel: "XIAOHONGSHU",
@@ -103,12 +101,11 @@ describe("小红书 Note ID 原始发布时间", () => {
       task: { channel: "XIAOHONGSHU" },
     }, NOW);
     expect(row.note.publishedAtRaw).toBe("编辑于 4小时前");
-    expect(row.note.originalPublishedAtSource).toBe(
-      XHS_NOTE_ID_DERIVED_CREATION_TIME,
-    );
+    expect(row.note.originalPublishedAtSource).toBeNull();
+    expect(row.note.originalPublishedAtStatus).toBe("UNCONFIRMED");
   });
 
-  it("07-29 只保留为平台显示时间，原始时间来自 Note ID", () => {
+  it("07-29 缺少年份时不推算年份或使用 Note ID 补位", () => {
     const row = withXhsOriginalPublishedAt({
       note: {
         contentChannel: "XIAOHONGSHU",
@@ -119,7 +116,7 @@ describe("小红书 Note ID 原始发布时间", () => {
       },
     }, NOW);
     expect(row.note.publishedAtRaw).toBe("07-29");
-    expect(row.note.originalPublishedAt).toBe("2026-07-29T09:08:35.000Z");
+    expect(row.note.originalPublishedAt).toBeNull();
   });
 
   it("无 Note ID 且无结构化时间时不猜测", () => {
@@ -129,7 +126,7 @@ describe("小红书 Note ID 原始发布时间", () => {
     });
   });
 
-  it("历史 Result 可在只读展示层派生且不修改输入", () => {
+  it("历史 Result 不在展示层推算缺失的时间且不修改输入", () => {
     const historical = {
       id: "historical-result",
       note: {
@@ -142,7 +139,7 @@ describe("小红书 Note ID 原始发布时间", () => {
     };
     const before = structuredClone(historical);
     const presented = withXhsOriginalPublishedAt(historical, NOW);
-    expect(presented.note.originalPublishedAt).toBe("2026-07-29T09:08:35.000Z");
+    expect(presented.note.originalPublishedAt).toBeNull();
     expect(historical).toEqual(before);
   });
 

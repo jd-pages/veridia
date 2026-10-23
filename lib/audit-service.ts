@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import packageJson from "@/package.json";
+import { createHash } from "node:crypto";
 import {
   evaluateAudit,
   topicsForPlatformAudit,
@@ -42,6 +43,7 @@ import {
   type AuditSubmissionOptions,
 } from "@/lib/audit-submission";
 import { lockValidExecutionLease } from "@/lib/automation/execution-lease";
+import { isResultFollowUpSource, readFollowUpContract } from "@/lib/result-follow-up-contract";
 
 export async function getAuditContext(
   productId: string,
@@ -234,13 +236,21 @@ export async function runAuditTask(
   const contentChannel = resolveTaskAutomationPlatform(task);
   if (!contentChannel) throw new Error("审核任务未关联有效内容平台");
 
-  const baseContext = await getAuditContext(
+  const originalResult = isResultFollowUpSource(task.source) && task.replacesResultId
+    ? await prisma.auditResult.findUnique({ where: { id: task.replacesResultId }, include: { task: true } }) : null;
+  const frozenContext = originalResult && originalResult.task.normalizedUrl === task.normalizedUrl &&
+    originalResult.task.productId === task.productId && originalResult.task.campaignId === task.campaignId
+    ? readFollowUpContract(originalResult.ruleSnapshot, task) : null;
+  if (isResultFollowUpSource(task.source) && !frozenContext) {
+    throw new AuditConfigurationError("原结果缺少可信的活动合同绑定，自动复核不会使用当前规则替代历史合同");
+  }
+  const baseContext = frozenContext || await getAuditContext(
     task.productId,
     task.campaignId,
     task.productStage,
     contentChannel,
   );
-  const storeTopicRequirement = baseContext.rulesConfigured
+  const storeTopicRequirement = frozenContext ? frozenContext.storeTopicRequirement ?? null : baseContext.rulesConfigured
     ? await resolveStoreTopicAuditRequirement({
         ...task,
         brandName: baseContext.brandName,
@@ -250,6 +260,12 @@ export async function runAuditTask(
     ...baseContext,
     storeTopicRequirement,
   };
+  if (originalResult && frozenContext) payload = { ...payload, pageEvidence: {
+    ...payload.pageEvidence,
+    resultFollowUp: { originalResultId: originalResult.id, originalExtractionRecordId: originalResult.extractionRecordId,
+      originalRuleSnapshotSha256: createHash("sha256").update(originalResult.ruleSnapshot).digest("hex"),
+      purpose: task.source, collectedAt: payload.extractedAt },
+  } };
   const auditedTopics = topicsForPlatformAudit(payload, contentChannel);
   // Use the same reliable platform timestamp for retention and persistence.
   // Never substitute an imported/registration date for missing extraction evidence.

@@ -11,6 +11,25 @@ import {
 } from "@/lib/automation/xhs-page-evidence";
 
 describe("小红书自动取证候选解析", () => {
+  it("hung JSON is bounded and disposed collector cannot ingest late payload", async () => {
+    vi.useFakeTimers();
+    try {
+      let handler: ((response: Response) => void) | undefined;
+      let finish: ((value: unknown) => void) | undefined;
+      const page = { on: vi.fn((event, callback) => { if (event === "response") handler = callback; }), off: vi.fn() } as unknown as Page;
+      const collector = createXhsResponseCollector(page);
+      handler!({ url: () => "https://www.xiaohongshu.com/api/sns/web/v2/feed", headers: () => ({ "content-type": "application/json" }), status: () => 200,
+        json: () => new Promise((resolve) => { finish = resolve; }) } as unknown as Response);
+      const result = collector.snapshot();
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect((await result).publishedAtCandidates).toEqual([]);
+      collector.dispose();
+      finish!({ note_id: "6a5cb375000000000301c541", time: 1_786_000_000 });
+      await Promise.resolve();
+      expect((await collector.snapshot()).publishedAtCandidates).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
   it("PAUSE 会中断未返回的 response JSON drain 使 extraction 可以 settle", async () => {
     let responseHandler: ((response: Response) => void) | undefined;
     const page = {

@@ -14,6 +14,13 @@ import {
 } from "@/lib/platform-published-at";
 import { detectUnavailableXhsPage } from "./page-classification";
 import { waitForAutomaticExtractionOperation } from "./extraction-deadline";
+import type { InteractionMetricCandidate, InteractionMetricKind } from "@/lib/interaction-metrics";
+import { parseXhsEmbeddedState } from "./xhs-embedded-state";
+
+export interface XhsInteractionCandidate extends InteractionMetricCandidate {
+  contentId: string;
+  source: string;
+}
 
 export interface TextCandidate {
   value: string;
@@ -49,6 +56,7 @@ export interface XhsPageCandidates {
   verifiedPlatformTopics: TopicCandidate[];
   imageCandidates: ImageCandidate[];
   publishedAtCandidates: PlatformPublishedAtEvidence[];
+  interactionCandidates: XhsInteractionCandidate[];
   hasVideo: boolean;
   loginEvidence: string[];
   responseSummaries: ResponseSummary[];
@@ -289,7 +297,11 @@ function structuredNoteId(record: Record<string, unknown>, path: string[]) {
     .find((value) => NOTE_ID_PATTERN.test(value));
   if (explicit) return explicit;
   const id = String(record.id ?? "").trim();
-  return NOTE_ID_PATTERN.test(id) && path.some((item) => /note|card|item/iu.test(item))
+  return NOTE_ID_PATTERN.test(id) && (
+    /^(?:note|note_card|noteCard)$/u.test(path.at(-1) || "") ||
+    Boolean(record.note_card || record.noteCard) ||
+    (path.includes("items") && (typeof record.desc === "string" || typeof record.title === "string"))
+  )
     ? id
     : null;
 }
@@ -312,7 +324,6 @@ function addStructuredPublishedAtCandidates(
     "createTime",
     "publish_time",
     "publishTime",
-    "timestamp",
     "time",
   ]) {
     addPublishedAtCandidate(
@@ -335,6 +346,7 @@ export function createEmptyCandidates(): XhsPageCandidates {
     verifiedPlatformTopics: [],
     imageCandidates: [],
     publishedAtCandidates: [],
+    interactionCandidates: [],
     hasVideo: false,
     loginEvidence: [],
     responseSummaries: [],
@@ -449,8 +461,17 @@ export function collectJsonCandidates(
       Boolean(record.note_card || record.noteCard)
         ? record.id
         : null);
-    const effectiveNoteId = recordNoteId || boundNoteId;
-    addStructuredPublishedAtCandidates(
+    const mappedNoteId = path.at(-2) === "noteDetailMap" && NOTE_ID_PATTERN.test(path.at(-1) || "")
+      ? path.at(-1)! : null;
+    const effectiveNoteId = recordNoteId || mappedNoteId || boundNoteId;
+    // Identity inheritance is not timestamp ownership: user/comment/media
+    // objects often carry their own create_time. Only actual note records may
+    // contribute business data; recommendation and reply branches never do.
+    const noteRecord = !isExcludedTopicPath(path) && Boolean(
+      recordNoteId || mappedNoteId ||
+      (boundNoteId && /^(?:note|note_card|noteCard)$/u.test(parentKey)),
+    );
+    if (noteRecord) addStructuredPublishedAtCandidates(
       result.publishedAtCandidates,
       record,
       effectiveNoteId,
@@ -459,7 +480,7 @@ export function collectJsonCandidates(
     const nestedNote = (record.note_card || record.noteCard) as
       | Record<string, unknown>
       | undefined;
-    if (nestedNote && typeof nestedNote === "object" && !Array.isArray(nestedNote)) {
+    if (noteRecord && nestedNote && typeof nestedNote === "object" && !Array.isArray(nestedNote)) {
       addStructuredPublishedAtCandidates(
         result.publishedAtCandidates,
         nestedNote,
@@ -469,6 +490,26 @@ export function collectJsonCandidates(
             : recordNoteId),
         source,
       );
+    }
+    if (noteRecord && effectiveNoteId) {
+      const metrics = (record.interact_info || record.interactInfo) as Record<string, unknown> | undefined;
+      const fields: Array<[InteractionMetricKind, string[]]> = [
+        ["LIKE", ["liked_count", "likedCount", "like_count", "likeCount"]],
+        ["COMMENT", ["comment_count", "commentCount"]],
+        ["FAVORITE", ["collected_count", "collectedCount", "collect_count", "collectCount", "favoriteCount"]],
+      ];
+      if (metrics && typeof metrics === "object" && !Array.isArray(metrics)) {
+        for (const [kindHint, keys] of fields) for (const key of keys) {
+          const value = metrics[key];
+          if ((typeof value !== "string" && typeof value !== "number") ||
+              !/^\d+$/u.test(String(value)) || !Number.isSafeInteger(Number(value)) ||
+              Number(value) > 2_147_483_647) continue;
+          result.interactionCandidates.push({
+            kindHint, valueText: String(value), source: `${source}:${path.join(".")}.interact_info.${key}`,
+            contentId: effectiveNoteId, evidenceStatus: Number(value) === 0 ? "CONFIRMED_ZERO" : "VALUE",
+          });
+        }
+      }
     }
     if (
       typeof record.id === "string" &&
@@ -553,6 +594,13 @@ export function mergeCandidates(...items: XhsPageCandidates[]) {
     for (const candidate of item.publishedAtCandidates) {
       addPublishedAtCandidate(merged.publishedAtCandidates, candidate);
     }
+    for (const candidate of item.interactionCandidates || []) {
+      if (!merged.interactionCandidates.some((saved) =>
+        saved.contentId === candidate.contentId && saved.source === candidate.source &&
+        saved.kindHint === candidate.kindHint && saved.valueText === candidate.valueText)) {
+        merged.interactionCandidates.push(candidate);
+      }
+    }
     merged.hasVideo ||= item.hasVideo;
     for (const evidence of item.loginEvidence) {
       if (!merged.loginEvidence.includes(evidence)) {
@@ -612,8 +660,12 @@ function responseSuccess(payload: unknown) {
 
 export function createXhsResponseCollector(page: Page) {
   let candidates = createEmptyCandidates();
+  let active = true;
+  const startedAt = Date.now();
+  const cancelReads = new Set<() => void>();
   const pending = new Set<Promise<void>>();
   const handler = (response: Response) => {
+    if (!active) return;
     const work = (async () => {
       let parsedUrl: URL;
       try {
@@ -621,14 +673,26 @@ export function createXhsResponseCollector(page: Page) {
       } catch {
         return;
       }
-      if (!parsedUrl.hostname.endsWith("xiaohongshu.com")) return;
-      if (!/\/api\/sns\/web\/v1\/(?:feed|note|search|login)/iu.test(parsedUrl.pathname)) {
+      if (parsedUrl.hostname !== "xiaohongshu.com" && !parsedUrl.hostname.endsWith(".xiaohongshu.com")) return;
+      if (!/\/api\/sns\/web\/v\d+\/(?:feed|note|search|login)(?:\/|$)/iu.test(parsedUrl.pathname)) {
         return;
       }
       const contentType = response.headers()["content-type"] || "";
       if (!contentType.includes("json")) return;
-      const payload = await response.json().catch(() => null);
-      if (!payload) return;
+      if (typeof response.request === "function") {
+        const requestStartedAt = response.request().timing().startTime;
+        if (!Number.isFinite(requestStartedAt) || requestStartedAt < startedAt) return;
+      }
+      // Hung structured bodies must not prevent a usable current-note DOM
+      // fallback. Late responses cannot mutate a disposed collector.
+      const payload = await new Promise<unknown>((resolve) => {
+        const finish = (value: unknown) => { clearTimeout(timer); cancelReads.delete(cancel); resolve(value); };
+        const cancel = () => finish(null);
+        const timer = setTimeout(cancel, 1_500);
+        cancelReads.add(cancel);
+        void response.json().then(finish, cancel);
+      });
+      if (!payload || !active) return;
       const summary: ResponseSummary = {
         path: parsedUrl.pathname,
         status: response.status(),
@@ -656,10 +720,17 @@ export function createXhsResponseCollector(page: Page) {
         );
       }
       candidates = mergeCandidates(candidates, jsonCandidates);
-    })().finally(() => pending.delete(work));
+    })().catch(() => undefined).finally(() => pending.delete(work));
     pending.add(work);
   };
   page.on("response", handler);
+  const dispose = () => {
+    active = false;
+    page.off("response", handler);
+    page.off("close", dispose);
+    for (const cancel of [...cancelReads]) cancel();
+  };
+  page.on("close", dispose);
   return {
     async snapshot(signal?: AbortSignal) {
       await waitForAutomaticExtractionOperation(
@@ -669,7 +740,7 @@ export function createXhsResponseCollector(page: Page) {
       return candidates;
     },
     dispose() {
-      page.off("response", handler);
+      dispose();
     },
   };
 }
@@ -1294,6 +1365,7 @@ export async function collectDomPageSnapshot(
     }
 
     const jsonPayloads: unknown[] = [];
+    const embeddedScripts: string[] = [];
     for (const script of [...document.scripts]) {
       const value = (script.textContent || "").trim();
       if (!value || value.length > 4_000_000) continue;
@@ -1303,18 +1375,8 @@ export async function collectDomPageSnapshot(
         } catch {
           // Ignore non-JSON scripts.
         }
-      } else if (/__INITIAL_STATE__|__NEXT_DATA__/u.test(value)) {
-        const start = value.indexOf("{");
-        const end = value.lastIndexOf("}");
-        if (start >= 0 && end > start) {
-          try {
-            jsonPayloads.push(
-              JSON.parse(value.slice(start, end + 1).replace(/\bundefined\b/g, "null")),
-            );
-          } catch {
-            // Ignore scripts that are not safely parseable JSON.
-          }
-        }
+      } else if (/^\s*(?:window\.)?__(?:INITIAL_STATE|NEXT_DATA)__\s*=/u.test(value) && embeddedScripts.length < 4) {
+        embeddedScripts.push(value);
       }
     }
 
@@ -1388,6 +1450,7 @@ export async function collectDomPageSnapshot(
       carouselTotal,
       loginEvidence,
       jsonPayloads,
+      embeddedScripts,
       publishedAtTextCandidates,
       keyElementCount: scopedElements([
         "#detail-title",
@@ -1416,7 +1479,7 @@ export async function collectDomPageSnapshot(
     };
   });
 
-  const jsonCandidates = snapshot.jsonPayloads
+  const jsonCandidates = [...snapshot.jsonPayloads, ...snapshot.embeddedScripts.map(parseXhsEmbeddedState).filter(Boolean)]
     .slice(0, 20)
     .map((item) => collectJsonCandidates(item, "PAGE_JSON"));
   const urlCandidates = createEmptyCandidates();
@@ -1439,6 +1502,7 @@ export async function collectDomPageSnapshot(
       verifiedPlatformTopics: snapshot.verifiedPlatformTopics,
       imageCandidates: snapshot.imageCandidates,
       publishedAtCandidates: domPublishedAtCandidates,
+      interactionCandidates: [],
       hasVideo: snapshot.hasVideo,
       loginEvidence: snapshot.loginEvidence,
       responseSummaries: [],

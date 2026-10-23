@@ -166,6 +166,7 @@ interface PresentationInput {
     publishedAt?: unknown;
     publishedAtRaw?: unknown;
     publishedAtSource?: unknown;
+    businessDataReceipt?: unknown;
     url?: string | null;
     title?: string | null;
     body?: string | null;

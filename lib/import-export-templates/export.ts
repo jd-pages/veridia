@@ -155,6 +155,7 @@ export interface CompactAuditResultExportSourceRow extends InteractionRewardSnap
     publishedAt: Date | null;
     publishedAtRaw?: string | null;
     publishedAtSource?: string | null;
+    businessDataReceipt?: unknown;
     title: string | null;
     body: string | null;
     topics?: Array<{ displayText: string }>;

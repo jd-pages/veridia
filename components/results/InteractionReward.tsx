@@ -16,6 +16,8 @@ export default function InteractionReward({ snapshot, reward, kabrita, detail = 
       <div>下次审核时间：{kabrita.nextReviewAt}</div>
       {detail && <>
         <div>{kabrita.nextReviewReason}</div>
+        {kabrita.acquisitionReasons?.length > 0 && <div>数据获取阻塞：{kabrita.acquisitionReasons.join("；")}</div>}
+        {kabrita.acquisitionRecovery && <div>{kabrita.acquisitionRecovery}</div>}
         <div>原始点赞：{snapshot.likeCount ?? "未取得"} · 评论：{snapshot.commentCount ?? "未取得"} · 收藏：{snapshot.favoriteCount ?? "未取得"}</div>
         <div>打款金额按当次规则快照的基础奖励加最高互动档奖励计算，不累加，不代表已完成付款。</div>
       </>}

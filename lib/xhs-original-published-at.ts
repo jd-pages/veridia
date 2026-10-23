@@ -1,17 +1,18 @@
-import { formatShanghaiDateTime } from "@/lib/platform-published-at";
+import { formatShanghaiDateTime, parseXhsPublishedAtText } from "@/lib/platform-published-at";
 
 export const XHS_NOTE_ID_DERIVED_CREATION_TIME =
   "XHS_NOTE_ID_DERIVED_CREATION_TIME" as const;
 export const STRUCTURED_PUBLISHED_TIME = "STRUCTURED_PUBLISHED_TIME" as const;
+export const VISIBLE_PUBLISHED_TIME = "VISIBLE_PUBLISHED_TIME" as const;
 export const PUBLISHED_TIME_CONFLICT = "PUBLISHED_TIME_CONFLICT" as const;
 
 const EARLIEST_XHS_TIME_MS = Date.parse("2013-01-01T00:00:00.000Z");
 const MAX_FUTURE_SKEW_MS = 24 * 60 * 60 * 1_000;
-const STRUCTURED_MATCH_TOLERANCE_MS = 5 * 60 * 1_000;
 const XHS_CHANNEL_VALUES = new Set(["XIAOHONGSHU", "XHS", "小红书"]);
 
 export type OriginalPublishedAtSource =
   | typeof STRUCTURED_PUBLISHED_TIME
+  | typeof VISIBLE_PUBLISHED_TIME
   | typeof XHS_NOTE_ID_DERIVED_CREATION_TIME;
 
 export interface OriginalPublishedAtPresentation {
@@ -63,6 +64,7 @@ export function resolveXhsOriginalPublishedAt(input: {
   platformNoteId?: unknown;
   publishedAt?: unknown;
   publishedAtSource?: unknown;
+  publishedAtRaw?: unknown;
   now?: Date;
 }): OriginalPublishedAtPresentation {
   const derived = deriveXhsNoteIdCreationTime(
@@ -81,20 +83,8 @@ export function resolveXhsOriginalPublishedAt(input: {
     differenceSeconds,
   };
 
-  if (
-    structured &&
-    derived &&
-    Math.abs(structured.getTime() - derived.getTime()) >
-      STRUCTURED_MATCH_TOLERANCE_MS
-  ) {
-    return {
-      originalPublishedAt: null,
-      originalPublishedAtStatus: "CONFLICT",
-      originalPublishedAtSource: null,
-      originalPublishedAtCode: PUBLISHED_TIME_CONFLICT,
-      originalPublishedAtEvidence: evidence,
-    };
-  }
+  // Note ID creation time remains diagnostic supporting evidence only. It is
+  // neither proof of publication nor an authority that can veto platform data.
   if (structured) {
     return {
       originalPublishedAt: structured.toISOString(),
@@ -104,11 +94,14 @@ export function resolveXhsOriginalPublishedAt(input: {
       originalPublishedAtEvidence: evidence,
     };
   }
-  if (derived) {
+  const source = typeof input.publishedAtSource === "string" ? input.publishedAtSource : "";
+  const displayed = source.startsWith("DOM_MAIN_NOTE")
+    ? parseXhsPublishedAtText(input.publishedAtRaw, source, null) : null;
+  if (displayed?.value && displayed.value === validDate(input.publishedAt)?.toISOString()) {
     return {
-      originalPublishedAt: derived.toISOString(),
+      originalPublishedAt: displayed.value,
       originalPublishedAtStatus: "CONFIRMED",
-      originalPublishedAtSource: XHS_NOTE_ID_DERIVED_CREATION_TIME,
+      originalPublishedAtSource: VISIBLE_PUBLISHED_TIME,
       originalPublishedAtCode: null,
       originalPublishedAtEvidence: evidence,
     };
@@ -126,6 +119,7 @@ export function originalPublishedAtSourceLabel(
   source: OriginalPublishedAtSource | null,
 ) {
   if (source === STRUCTURED_PUBLISHED_TIME) return "结构化发布时间";
+  if (source === VISIBLE_PUBLISHED_TIME) return "当前笔记可见发布时间";
   if (source === XHS_NOTE_ID_DERIVED_CREATION_TIME) return "Note ID 推导";
   return "未能确认";
 }
@@ -149,6 +143,7 @@ export function withXhsOriginalPublishedAt<
       platformNoteId?: unknown;
       publishedAt?: unknown;
       publishedAtSource?: unknown;
+      publishedAtRaw?: unknown;
     };
     task?: { channel?: unknown; platform?: unknown };
   },
@@ -168,6 +163,7 @@ export function withXhsOriginalPublishedAt<
         platformNoteId: result.note.platformNoteId,
         publishedAt: result.note.publishedAt,
         publishedAtSource: result.note.publishedAtSource,
+        publishedAtRaw: result.note.publishedAtRaw,
         now,
       })
     : resolveXhsOriginalPublishedAt({ now });

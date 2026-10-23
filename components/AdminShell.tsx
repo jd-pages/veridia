@@ -30,6 +30,7 @@ import type { SessionUser } from "@/lib/auth";
 import { apiFetch } from "@/lib/client";
 import VeridiaLogo from "@/components/VeridiaLogo";
 import { canAccessSystemSettings } from "@/lib/permissions";
+import ResultFollowUpMonitor from "@/components/results/ResultFollowUpMonitor";
 
 const { Sider, Header, Content } = Layout;
 
@@ -237,7 +238,7 @@ export default function AdminShell({
                 </Button>
               </Space>
             </Header>
-            <Content className="admin-content">{children}</Content>
+            <Content className="admin-content"><ResultFollowUpMonitor enabled={!previewMode && user.role !== "VIEWER"} />{children}</Content>
           </Layout>
         </Layout>
       </App>
