@@ -261,6 +261,59 @@ async function verifyPageArbiterFixtures() {
 }
 
 describe("小红书持久会话与访问节奏", () => {
+  it("首次恢复页关闭超时锁存该代失败，排队 reconcile 不得再次关闭或补报成功", async () => {
+    const context = new FakeArbiterContext();
+    const owned: FakeOwnedPages = { audit: context.open("https://xhs.test/audit") };
+    const stale = context.open("https://xhs.test/restored");
+    let closeCalls = 0;
+    let finishLateClose!: () => void;
+    stale.close = () => {
+      closeCalls += 1;
+      if (closeCalls === 1) return new Promise<void>((resolve) => {
+        finishLateClose = () => { stale.closed = true; resolve(); };
+      });
+      stale.closed = true;
+      return Promise.resolve();
+    };
+    const events: string[] = [];
+    const failures: Record<string, unknown>[] = [];
+    const arbiter = new XhsContextPageArbiter<FakeArbiterPage>({
+      context, generation: 13, getOwnedPages: () => owned,
+      isCurrentGeneration: () => true, safeUrl: (url) => url,
+      log: (event, details) => {
+        events.push(event);
+        if (event === "XHS_PAGE_INVARIANT_FAILED") failures.push(details);
+      }, onAsyncInvariantFailure: () => undefined,
+      closeOperationTimeoutMs: 20,
+    });
+    const first = arbiter.reconcile("CONTEXT_PAGE_EVENT").catch(error => error);
+    const queued = arbiter.reconcile("AUDIT_PAGE_CREATED").catch(error => error);
+    try {
+      const failure = await first;
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure.message).toContain("XHS_STALE_PAGE_CLOSE_DEADLINE");
+      expect(await queued).toBe(failure);
+      expect(closeCalls).toBe(1);
+      expect(stale.isClosed()).toBe(false);
+      finishLateClose();
+      await Promise.resolve();
+      await expect(arbiter.reconcile("AUDIT_REQUEST")).rejects.toBe(failure);
+      expect(owned.audit?.isClosed()).toBe(false);
+      expect(events).not.toContain("XHS_STALE_PAGE_CLOSED");
+      expect(events).not.toContain("XHS_PAGE_RECONCILE_COMPLETE");
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatchObject({
+        generation: 13, closeDeadlineMs: 20, closeConfirmed: false,
+        errorName: "XhsStalePageCloseDeadlineError",
+      });
+      expect(failures[0].closeElapsedMs).toBeGreaterThanOrEqual(0);
+      expect(Number.isFinite(Date.parse(failures[0].observedAt as string))).toBe(true);
+    } finally {
+      arbiter.dispose();
+      finishLateClose?.();
+    }
+  });
+
   it("records the isolated asynchronous invariant failure before closing its current generation", () => {
     const browser = source("lib/automation/browser.ts");
     const start = browser.indexOf("onAsyncInvariantFailure: async (error) => {");

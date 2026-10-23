@@ -128,6 +128,7 @@ export class XhsContextPageArbiter<P extends XhsArbiterPage = Page> {
   private pendingClassifications = 0;
   private reconcileTail: Promise<unknown> = Promise.resolve();
   private reconcileTimer?: ReturnType<typeof setTimeout>;
+  private invariantFailure?: XhsPageInvariantError;
 
   constructor(private readonly options: ArbiterOptions<P>) {
     this.closeRetryDelaysMs =
@@ -253,7 +254,20 @@ export class XhsContextPageArbiter<P extends XhsArbiterPage = Page> {
   }
 
   async reconcile(reason: XhsPageReconcileReason) {
-    const run = () => this.reconcileNow(reason);
+    const run = async () => {
+      // A failed physical-close invariant invalidates this arbiter generation.
+      // Queued reconciliation must not retry the same page or emit success
+      // while its asynchronous failure handler is still closing the context.
+      if (this.invariantFailure) throw this.invariantFailure;
+      try {
+        return await this.reconcileNow(reason);
+      } catch (error) {
+        if (error instanceof XhsPageInvariantError) {
+          this.invariantFailure ??= error;
+        }
+        throw error;
+      }
+    };
     const result = this.reconcileTail.then(run, run);
     this.reconcileTail = result.then(
       () => undefined,
@@ -310,7 +324,7 @@ export class XhsContextPageArbiter<P extends XhsArbiterPage = Page> {
   }
 
   private scheduleEventReconciliation() {
-    if (!this.active()) return;
+    if (!this.active() || this.invariantFailure) return;
     if (this.reconcileTimer) clearTimeout(this.reconcileTimer);
     this.reconcileTimer = setTimeout(() => {
       this.reconcileTimer = undefined;
@@ -403,10 +417,13 @@ export class XhsContextPageArbiter<P extends XhsArbiterPage = Page> {
 
   private async closeStalePage(page: P, reason: XhsPageReconcileReason) {
     const metadata = this.metadata.get(page);
+    const closeStartedAt = performance.now();
     this.options.log("XHS_STALE_PAGE_CLOSE_REQUESTED", {
       ...this.snapshot(page, metadata),
       generation: this.options.generation,
       reason,
+      observedAt: new Date().toISOString(),
+      closeDeadlineMs: this.closeOperationTimeoutMs,
     });
     let lastError: unknown;
     for (let attempt = 0; attempt <= this.closeRetryDelaysMs.length; attempt += 1) {
@@ -453,6 +470,11 @@ export class XhsContextPageArbiter<P extends XhsArbiterPage = Page> {
       ...this.snapshot(page, metadata),
       generation: this.options.generation,
       reason,
+      observedAt: new Date().toISOString(),
+      closeElapsedMs: performance.now() - closeStartedAt,
+      closeDeadlineMs: this.closeOperationTimeoutMs,
+      closeConfirmed: page.isClosed(),
+      errorName: lastError instanceof Error ? lastError.name : "UNKNOWN",
     });
     throw error;
   }
