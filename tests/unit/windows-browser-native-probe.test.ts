@@ -72,6 +72,44 @@ it("native console rejects extra request fields before emitting any owner JSON",
   expect(native.stderr).toContain("NATIVE_ARGV_ASSET_INVALID");
 });
 
+it("termination error5 requires a signalled held-handle exit within remaining budget; live/unknown/deadline stay rejected", () => {
+  const host = path.resolve("scripts/runtime/windows-browser-profile-probe.cs");
+  const source = readFileSync(host, "utf8");
+  expect(source).toContain("ConfirmTerminationExit(native,()=>BudgetMs-(int)Clock.ElapsedMilliseconds,process.WaitForExit)");
+  expect(source).toContain("return WaitForSingleObject(Handle,milliseconds)");
+  if (process.platform !== "win32") return;
+  const directory = path.resolve(".playwright/native-console-unit", `termination-${randomUUID()}`);
+  mkdirSync(directory, { recursive: true });
+  const harness = path.join(directory, "contract.cs"), executable = path.join(directory, "contract.exe");
+  writeFileSync(harness, `using System;using System.Diagnostics;
+class VeridiaBrowserProfileCensus {
+ public static string LastStage;public static bool IsApprovedAbi(){throw new Exception("NOT_IN_TEST_SCOPE");}
+ public static object[] ReadProfileRows(string path,Stopwatch clock){throw new Exception("NOT_IN_TEST_SCOPE");}
+ public static bool ProcessStillExists(int pid,Stopwatch clock){throw new Exception("NOT_IN_TEST_SCOPE");}
+}
+class VeridiaBrowserArgv {public static bool[] MatchProfile(string command,string path){throw new Exception("NOT_IN_TEST_SCOPE");}}
+class TerminationContract {
+ public static int Main(){int calls=0;Func<uint,uint> exited=remaining=>{if(remaining!=1980)throw new Exception("BUDGET_CHANGED");calls++;return 0;};
+  if(!VeridiaProfileProbeHost.ConfirmTerminationExit(5,()=>1980,exited)||calls!=1)return 1;
+  if(VeridiaProfileProbeHost.ConfirmTerminationExit(5,()=>1980,remaining=>258))return 2;
+  if(VeridiaProfileProbeHost.ConfirmTerminationExit(5,()=>1980,remaining=>UInt32.MaxValue))return 3;
+  if(VeridiaProfileProbeHost.ConfirmTerminationExit(6,()=>{throw new Exception("OTHER_ERROR_WAITED");},exited))return 4;
+  if(VeridiaProfileProbeHost.ConfirmTerminationExit(5,()=>0,exited)||calls!=1)return 5;
+  if(VeridiaProfileProbeHost.ConfirmTerminationExit(5,()=>-1,exited)||calls!=1)return 6;
+  try{VeridiaProfileProbeHost.ConfirmTerminationExit(5,()=>1980,remaining=>{throw new Exception("WAIT_FAILED");});return 7;}catch(Exception e){if(e.Message!="WAIT_FAILED")throw;}
+  Console.WriteLine("EXIT_CONFIRMED_LIVE_UNKNOWN_OTHER_ERROR_DEADLINE_REJECTED_NO_RETRY");return 0;
+ }
+}`, { flag: "wx" });
+  const compile = spawnSync("C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe", [
+    "/nologo", "/target:exe", "/platform:x64", "/main:TerminationContract", "/reference:System.Web.Extensions.dll",
+    `/out:${executable}`, host, harness,
+  ], { encoding: "utf8", windowsHide: true, timeout: 2000 });
+  expect(compile.error).toBeUndefined();expect(compile.status, compile.stdout + compile.stderr).toBe(0);
+  const contract = spawnSync(executable, [], { encoding: "utf8", windowsHide: true, timeout: 1000 });
+  expect(contract.error).toBeUndefined();expect(contract.status, contract.stderr).toBe(0);
+  expect(contract.stdout).toContain("EXIT_CONFIRMED_LIVE_UNKNOWN_OTHER_ERROR_DEADLINE_REJECTED_NO_RETRY");
+});
+
 it("materialized native code tampering fails closed without automatic replacement", () => {
   if (!isNativeWindowsProfileProbeSupported()) { expect(() => prepareNativeWindowsProfileProbe()).toThrow(); return; }
   const file = prepareNativeWindowsProfileProbe(), original = readFileSync(file);

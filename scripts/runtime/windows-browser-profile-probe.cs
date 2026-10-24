@@ -31,7 +31,15 @@ internal static class VeridiaProfileProbeHost {
   public string Birth(){long creation,exit,kernel,user;if(GetProcessId(Handle)!=(uint)Id||!GetProcessTimes(Handle,out creation,out exit,out kernel,out user))throw new InvalidOperationException("LIVE_PROCESS_BIRTH_MISMATCH");return unchecked((ulong)creation).ToString(CultureInfo.InvariantCulture);}
   public bool HasExited{get{uint state=WaitForSingleObject(Handle,0);if(state==0)return true;if(state==258)return false;throw new Win32Exception(Marshal.GetLastWin32Error());}}
   public void Kill(){if(!TerminateProcess(Handle,1))throw new Win32Exception(Marshal.GetLastWin32Error());}
+  public uint WaitForExit(uint milliseconds){return WaitForSingleObject(Handle,milliseconds);}
   public void Dispose(){Handle.Dispose();}
+ }
+ // TerminateProcess is asynchronous. Error5 can precede the held process's
+ // signalled exit. Observe that exact handle once, within the existing absolute
+ // budget; neither a new termination request nor an unproved/live exit passes.
+ internal static bool ConfirmTerminationExit(int nativeCode,Func<int> remaining,Func<uint,uint> wait){
+  if(nativeCode!=5)return false;int available=remaining();
+  return available>0&&wait((uint)available)==0;
  }
  static string Phase="SCRIPT_ENTERED";
  static void Stage(string value){Phase=value;Console.Error.WriteLine("VERIDIA_PROFILE_PROBE_STAGE={0}:{1}",value,Clock.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture));}
@@ -112,7 +120,7 @@ internal static class VeridiaProfileProbeHost {
     catch(Exception error){Exception detail=error;for(int depth=0;depth<4&&detail.InnerException!=null;depth++)detail=detail.InnerException;
      var win32=detail as Win32Exception;int native=win32==null?0:win32.NativeErrorCode;string exited="UNKNOWN";try{exited=process.HasExited?"TRUE":"FALSE";}catch{}
      Console.Error.WriteLine("VERIDIA_PROFILE_PROBE_TERMINATION_FAILURE={0}:{1}:{2}:{3}:{4}",process.Id,births[process.Id],native,detail.HResult,exited);Console.Error.Flush();
-     if(native==5&&exited=="TRUE")continue;throw;}
+     if(native==5&&(exited=="TRUE"||(exited=="FALSE"&&ConfirmTerminationExit(native,()=>BudgetMs-(int)Clock.ElapsedMilliseconds,process.WaitForExit))))continue;throw;}
    }
    Budget();Stage("RESULT_EMIT");string output=json.Serialize(owned);Stage("RESULT_SERIALIZED");Console.Out.WriteLine(output);Console.Out.Flush();Stage("RESULT_WRITTEN");written=true;result=0;
   }catch(Exception error){Failure(error);result=1;}
