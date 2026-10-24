@@ -167,8 +167,25 @@ test("Protected STORE_MAPPING_DOES_NOT_IMPLY_TOPIC_REQUIREMENT：UI开关、Alia
     ids.push(omittedPayload.data.id);
     expect(omittedPayload.data).toMatchObject({ enabled: true, expectedTopic: "", acceptedTopics: [], requiredTopics: [] });
 
+    // The app-wide follow-up notice is inserted above the tabs. Settle its
+    // real initial response and render before choosing a tab: otherwise the
+    // target can move between Playwright's position check and pointer dispatch.
+    const initialFollowUp = page.waitForResponse(response =>
+      new URL(response.url()).pathname === "/api/results/follow-up"
+      && response.request().method() === "POST",
+    );
     await page.goto("/campaigns");
-    await page.getByRole("tab", { name: "店铺话题规则" }).click();
+    const followUpResponse = await initialFollowUp;
+    expect(followUpResponse.ok()).toBeTruthy();
+    const followUpStatus = (await followUpResponse.json()).data.status;
+    if (followUpStatus === "LOGIN_RECOVERY_REQUIRED") {
+      await expect(page.getByRole("status")).toContainText("自动补采等待小红书会话就绪");
+    } else if (followUpStatus === "QUEUED") {
+      await expect(page.getByRole("status")).toContainText("已自动安排业务数据补采或到期复核");
+    }
+    const storeTab = page.getByRole("tab", { name: "店铺话题规则" });
+    await storeTab.click();
+    await expect(storeTab).toHaveAttribute("aria-selected", "true");
     await page.getByRole("button", { name: /新增店铺/u }).click();
     const kabritaPolicy = page.getByTestId("store-brand-policy-佳贝艾特-XIAOHONGSHU");
     const kabritaSwitch = kabritaPolicy.getByRole("switch").first();

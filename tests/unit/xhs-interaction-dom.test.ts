@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { chromium, type Browser, type Page } from "playwright";
 import { collectXhsInteractionMetrics } from "@/lib/interaction-metrics";
 
@@ -88,10 +88,28 @@ function currentNoteFixture({
 describe("小红书 current note action bar 互动取证", () => {
   let browser: Browser | undefined;
   let page: Page;
+  let observation: { test: string; startedAt: number; events: Array<{ phase: string; elapsedMs: number }> } | undefined;
+
+  beforeEach(({ task }) => { observation = { test: task.name, startedAt: performance.now(), events: [] }; });
+  afterEach(({ task }) => {
+    console.info("XHS_INTERACTION_DOM_UNIT_TIMING=" + JSON.stringify({ ...observation,
+      elapsedMs: observation ? performance.now() - observation.startedAt : null, state: task.result?.state,
+      browserVersion: browser?.version(), channel: "chrome", timeoutMs: 5000 }));
+  });
 
   beforeAll(async () => {
     browser = await chromium.launch({ headless: true, channel: "chrome" });
     page = await browser.newPage();
+    const setContent = page.setContent.bind(page);
+    page.setContent = async (html, options) => {
+      // Diagnostic only: preserve the exact call, options, timeout and fixture.
+      // Capture this test's row so a timed-out prior call cannot relabel a later test.
+      const row = observation;
+      const record = (phase: string) => row?.events.push({ phase, elapsedMs: performance.now() - row.startedAt });
+      record("SET_CONTENT_ENTER");
+      try { const result = await setContent(html, options);record("SET_CONTENT_RETURN");return result; }
+      catch (error) { record("SET_CONTENT_FAILED");throw error; }
+    };
   }, 90_000);
 
   afterAll(async () => {

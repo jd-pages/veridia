@@ -346,8 +346,17 @@ async function withWindowSession<T>(
   const context = page.context();
   let active = true;
   let session: CDPSession | undefined;
+  let closeProof: { session: CDPSession; closed: boolean; promise: Promise<void>; onClose: () => void } | undefined;
   const detach = (value: CDPSession) => boundedBrowserControlOperation(
-    observe(`${phase}_CDP_DETACH`, () => value.detach()).catch(() => undefined),
+    observe(`${phase}_CDP_DETACH`, async () => {
+      // A target/session close is authoritative even when its detach RPC ack
+      // never arrives. Bind to this exact session before requesting detach.
+      // A timeout alone must leave the observed operation pending.
+      const proof = closeProof?.session === value ? closeProof : undefined;
+      if (!proof) throw browserControlError(new Error("XHS_CDP_CLOSE_PROOF_MISSING"));
+      try { if (!proof.closed) await Promise.race([value.detach(), proof.promise]); }
+      finally { value.removeListener?.("close", proof.onClose); }
+    }).catch(() => undefined),
     XHS_CDP_DETACH_TIMEOUT_MS,
   ).catch(() => undefined);
   const assertActive = () => {
@@ -355,7 +364,16 @@ async function withWindowSession<T>(
       throw new XhsPageGenerationInvalidatedError();
     }
   };
-  const sessionPromise = observe(`${phase}_CDP_SESSION`, () => context.newCDPSession(page));
+  const sessionPromise = observe(`${phase}_CDP_SESSION`, async () => {
+    const value = await context.newCDPSession(page);
+    let resolveClose!: () => void;
+    const proof = { session: value, closed: false, promise: new Promise<void>(resolve => { resolveClose = resolve; }),
+      onClose: () => { proof.closed = true;resolveClose(); } };
+    closeProof = proof;
+    // Capture before any window command, including a close during that command.
+    value.once?.("close", proof.onClose);
+    return value;
+  });
   // If session creation returns after the deadline, consume and detach it;
   // never issue a late window mutation against an invalidated generation.
   void sessionPromise.then(value => { if (!active) return detach(value); }).catch(() => undefined);

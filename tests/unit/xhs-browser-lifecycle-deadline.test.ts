@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WindowsBrowserProfileOwnershipError } from "@/lib/automation/windows-browser-process-owner";
 import { readE2ePrismaTransactionDiagnostics } from "@/lib/testing/prisma-transaction-diagnostics";
+import { EventEmitter } from "node:events";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({
@@ -24,6 +25,53 @@ afterEach(() => {
 });
 
 describe("XHS actual browser lifecycle bounded unresolved operations", () => {
+  it("same CDP session close proves detach completion even when its RPC acknowledgement never arrives", async () => {
+    vi.useFakeTimers();vi.stubEnv("VERIDIA_E2E", "true");
+    const session = Object.assign(new EventEmitter(), { send: vi.fn(async () => ({ windowId: 7 })), detach: vi.fn(() => new Promise<void>(() => undefined)) });
+    const context = { newCDPSession: async () => session };
+    const page = { context: () => context, isClosed: () => false };
+    const state = { context, auditPage: page, lifecyclePendingOperations: new Map(), pageArbiter: { settleAndReconcile: async () => ({ active: true }) } };
+    automationGlobal.xhsBrowserManagerState = state;
+    const { keepXhsAuditPageInBackground } = await import("@/lib/automation/browser");
+    const result = keepXhsAuditPageInBackground(page as never);
+    await vi.advanceTimersByTimeAsync(1);
+    expect([...state.lifecyclePendingOperations.values()]).toEqual([expect.objectContaining({ phase: "WINDOW_SET_CDP_DETACH" })]);
+    session.emit("close", session);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(await result).toBe(true);expect(state.lifecyclePendingOperations.size).toBe(0);
+    expect(session.listenerCount("close")).toBe(0);expect(session.detach).toHaveBeenCalledTimes(1);
+  });
+
+  it("detach timeout and another session close cannot erase the captured unresolved operation", async () => {
+    vi.useFakeTimers();vi.stubEnv("VERIDIA_E2E", "true");
+    const session = Object.assign(new EventEmitter(), { send: vi.fn(async () => ({ windowId: 7 })), detach: vi.fn(() => new Promise<void>(() => undefined)) });
+    const context = { newCDPSession: async () => session }, page = { context: () => context, isClosed: () => false };
+    const state = { context, auditPage: page, lifecyclePendingOperations: new Map(), pageArbiter: { settleAndReconcile: async () => ({ active: true }) } };
+    automationGlobal.xhsBrowserManagerState = state;
+    const { keepXhsAuditPageInBackground } = await import("@/lib/automation/browser");
+    const result = keepXhsAuditPageInBackground(page as never);
+    await vi.advanceTimersByTimeAsync(501);expect(await result).toBe(true);
+    new EventEmitter().emit("close");
+    expect(state.lifecyclePendingOperations.size).toBe(1);
+    session.emit("close", session);await vi.advanceTimersByTimeAsync(1);
+    expect(state.lifecyclePendingOperations.size).toBe(0);expect(session.detach).toHaveBeenCalledTimes(1);
+  });
+
+  it("captures the session close before the window operation finishes and before detach begins", async () => {
+    vi.useFakeTimers();vi.stubEnv("VERIDIA_E2E", "true");
+    const session = Object.assign(new EventEmitter(), { send: vi.fn(async (method: string) => {
+      if (method === "Browser.setWindowBounds") session.emit("close", session);
+      return { windowId: 7 };
+    }), detach: vi.fn(() => new Promise<void>(() => undefined)) });
+    const context = { newCDPSession: async () => session }, page = { context: () => context, isClosed: () => false };
+    const state = { context, auditPage: page, lifecyclePendingOperations: new Map(), pageArbiter: { settleAndReconcile: async () => ({ active: true }) } };
+    automationGlobal.xhsBrowserManagerState = state;
+    const { keepXhsAuditPageInBackground } = await import("@/lib/automation/browser");
+    const result = keepXhsAuditPageInBackground(page as never);
+    await vi.advanceTimersByTimeAsync(501);expect(await result).toBe(true);
+    expect(state.lifecyclePendingOperations.size).toBe(0);expect(session.listenerCount("close")).toBe(0);
+  });
+
   it("adds truthful global registry/manager diagnostics only in E2E", async () => {
     vi.stubEnv("VERIDIA_E2E", "true");
     automationGlobal.xhsBrowserManagerState = {};
