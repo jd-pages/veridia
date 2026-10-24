@@ -1,4 +1,5 @@
 import { parseXhsPublishedAtText } from "@/lib/platform-published-at";
+import { deriveXhsNoteIdCreationTime } from "@/lib/xhs-original-published-at";
 
 interface ResultBoundPublishedAt {
   evidenceStatus?: "RESULT_BOUND" | "LEGACY_UNAVAILABLE";
@@ -65,6 +66,10 @@ export function resultBoundNextReviewDate(input: ResultBoundPublishedAt): Date |
   }
   const publishedAt = absolutePublishedAt(input.publishedAt);
   if (!publishedAt) return null;
+  return shanghaiPlusThirtyDays(publishedAt);
+}
+
+function shanghaiPlusThirtyDays(publishedAt: Date) {
   const parts = Object.fromEntries(
     shanghaiDateFormatter.formatToParts(publishedAt)
       .filter((part) => part.type !== "literal")
@@ -72,4 +77,46 @@ export function resultBoundNextReviewDate(input: ResultBoundPublishedAt): Date |
   );
   // Excel Date cells encode the business calendar date at UTC midnight.
   return new Date(Date.UTC(parts.year, parts.month - 1, parts.day + 30));
+}
+
+/** Presentation only. Estimated dates are never publication or retention evidence.
+ * Keep resultBoundNextReviewDate as the sole trusted-date entry for automation. */
+export function resultBoundManualReviewDate(input: ResultBoundPublishedAt & {
+  contentChannel?: unknown;
+  platformNoteId?: unknown;
+  noteUrl?: unknown;
+  originalUrl?: unknown;
+  finalUrl?: unknown;
+  capturedAt?: unknown;
+}, now = new Date()) {
+  const confirmed = resultBoundNextReviewDate(input);
+  if (confirmed) return { date: confirmed, estimated: false, noteId: null,
+    reason: "当次采集快照中的可信笔记发布日期，加30个北京时间自然日" };
+  const unavailable = { date: null, estimated: false, noteId: null,
+    reason: "缺少可信原始发布时间或当次绑定且身份一致的有效小红书笔记ID" };
+  if (input.evidenceStatus !== "RESULT_BOUND" || input.contentChannel !== "XIAOHONGSHU") return unavailable;
+  const ids = new Set<string>();
+  if (input.platformNoteId != null && input.platformNoteId !== "") {
+    if (typeof input.platformNoteId !== "string" || !/^[0-9a-f]{24}$/iu.test(input.platformNoteId.trim())) return unavailable;
+    ids.add(input.platformNoteId.trim().toLowerCase());
+  }
+  for (const value of [input.noteUrl, input.originalUrl, input.finalUrl]) {
+    if (typeof value !== "string" || !value.trim()) continue;
+    let url: URL;
+    try { url = new URL(value); } catch { continue; }
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password ||
+      !["www.xiaohongshu.com", "xiaohongshu.com"].includes(url.hostname.toLowerCase())) continue;
+    const match = url.pathname.match(/^\/(?:explore|discovery\/item)\/([^/]+)\/?$/u);
+    if (!match) continue;
+    if (!/^[0-9a-f]{24}$/iu.test(match[1])) return unavailable;
+    ids.add(match[1].toLowerCase());
+  }
+  if (ids.size !== 1) return unavailable;
+  const noteId = [...ids][0];
+  const anchor = input.capturedAt == null ? now : absolutePublishedAt(input.capturedAt);
+  if (!anchor || anchor.getTime() > now.getTime() + 24 * 60 * 60 * 1000) return unavailable;
+  const created = deriveXhsNoteIdCreationTime(noteId, anchor);
+  if (!created) return unavailable;
+  return { date: shanghaiPlusThirtyDays(created), estimated: true, noteId,
+    reason: `预计日期（笔记ID推算）：当次绑定小红书笔记ID ${noteId} 的创建时间 ${created.toISOString()} 加30个北京时间自然日；仅供人工安排复查，不是平台确认的发布时间，不证明留存或打款资格，不触发自动复核。` };
 }

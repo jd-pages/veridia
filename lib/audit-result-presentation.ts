@@ -167,12 +167,17 @@ interface PresentationInput {
     publishedAtRaw?: unknown;
     publishedAtSource?: unknown;
     businessDataReceipt?: unknown;
+    finalUrl?: string | null;
+    lastCapturedAt?: unknown;
     url?: string | null;
     title?: string | null;
     body?: string | null;
     topics?: Array<{ displayText?: string; isClickable?: boolean }>;
   };
   task: {
+    url?: string | null;
+    channel?: string | null;
+    platform?: string | null;
     notes?: string | null;
     failureCode?: string | null;
     failureMessage?: string | null;
@@ -849,7 +854,7 @@ export function buildAuditResultPresentation(
       imageExtractionStatus: input.imageExtractionStatus || "NOT_CHECKED",
       note: { ...input.note, title: input.note.title ?? null, body: input.note.body ?? null,
         topics: input.note.topics?.map((topic) => ({ displayText: topic.displayText || "" })) },
-      task: { notes: input.task.notes ?? null, failureCode: input.task.failureCode ?? null,
+      task: { ...input.task, notes: input.task.notes ?? null, failureCode: input.task.failureCode ?? null,
         failureMessage: input.task.failureMessage ?? null, pageTitle: input.task.pageTitle ?? null, pageType: input.task.pageType ?? null },
     });
   }

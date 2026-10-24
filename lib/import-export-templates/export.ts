@@ -77,6 +77,7 @@ import {
 export type ExportValueRecord = Partial<Record<StandardField, unknown>> & {
   payoutState?: string;
   nextReviewReason?: string;
+  nextReviewEstimated?: boolean;
 };
 
 export const UNIFIED_AUDIT_RESULT_SHEET_NAMES = [
@@ -156,6 +157,9 @@ export interface CompactAuditResultExportSourceRow extends InteractionRewardSnap
     publishedAtRaw?: string | null;
     publishedAtSource?: string | null;
     businessDataReceipt?: unknown;
+    contentChannel?: string | null;
+    platformNoteId?: string | null;
+    lastCapturedAt?: Date | string | null;
     title: string | null;
     body: string | null;
     topics?: Array<{ displayText: string }>;
@@ -676,6 +680,7 @@ export function auditResultToKabritaExportRecord(
     nextReviewAt: /^\d{4}-\d{2}-\d{2}$/u.test(output.nextReviewAt)
       ? new Date(`${output.nextReviewAt}T00:00:00Z`) : output.nextReviewAt,
     nextReviewReason: output.nextReviewReason,
+    nextReviewEstimated: output.nextReviewEstimated,
   };
 }
 
@@ -1145,6 +1150,13 @@ export async function buildConfiguredWorkbook(input: {
     }
   }
   const resultField = "selfReview";
+  if (selected.some((column) => column.field === "nextReviewAt")) {
+    records.forEach((record, index) => {
+      if (record.nextReviewEstimated && record.nextReviewAt instanceof Date) {
+        sheet.getRow(index + 2).getCell("nextReviewAt").numFmt = 'yyyy-mm-dd"（预计）"';
+      }
+    });
+  }
   const selfReviewColumn =
     selected.findIndex((column) => column.field === resultField) + 1;
   if (selfReviewColumn > 0 && sheet.rowCount >= 2) {
@@ -1201,7 +1213,7 @@ export function buildConfiguredCsv(input: {
         }
         return value instanceof Date
           ? field === "nextReviewAt"
-            ? value.toISOString().slice(0, 10)
+            ? `${value.toISOString().slice(0, 10)}${record.nextReviewEstimated ? "（预计：笔记ID推算，仅供人工复查）" : ""}`
           : field === "publishTime"
             ? importedDateLabel(value)
             : value.toLocaleString("zh-CN", { hour12: false })

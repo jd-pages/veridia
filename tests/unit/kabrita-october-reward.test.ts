@@ -62,6 +62,29 @@ function row(overrides: Partial<CompactAuditResultExportSourceRow> = {}): Compac
 }
 
 describe("Kabrita October reward contract", () => {
+  it("预计日期为数值日期加格式/批注，不能解锁留存或打款门禁", async () => {
+    const id = `${Math.floor(Date.parse("2026-10-01T15:30:00Z") / 1000).toString(16)}0000000000000001`;
+    const sample = row({ retentionStatus: "SATISFIED", note: { ...row().note,
+      contentChannel: "XIAOHONGSHU", platformNoteId: id, url: `https://www.xiaohongshu.com/explore/${id}`,
+      finalUrl: null, publishedAt: null, publishedAtSource: null },
+      task: { ...row().task, url: `https://www.xiaohongshu.com/explore/${id}` } });
+    const before = JSON.stringify(sample);
+    const output = kabritaResultOutput(sample);
+    expect(output).toMatchObject({ nextReviewAt: "2026-10-31", nextReviewEstimated: true,
+      payoutState: expect.stringContaining("待复核") });
+    const record = auditResultToKabritaExportRecord(sample);
+    const buffer = await buildConfiguredWorkbook({ templates: BUILTIN_IMPORT_EXPORT_TEMPLATES,
+      kind: "auditResults", templateBrand: "佳贝艾特", records: [record] });
+    const book = new ExcelJS.Workbook(); await book.xlsx.load(buffer as unknown as ExcelJS.Buffer);
+    const q = book.worksheets[0].getCell("Q2");
+    expect(book.worksheets[0].columnCount).toBe(17);
+    expect(q.value).toEqual(new Date("2026-10-31T00:00:00Z"));
+    expect(q.numFmt).toBe('yyyy-mm-dd"（预计）"');
+    expect(q.note).toContain("笔记ID推算");
+    expect(buildConfiguredCsv({ templates: BUILTIN_IMPORT_EXPORT_TEMPLATES,
+      kind: "auditResults", templateBrand: "佳贝艾特", records: [record] })).toContain("2026-10-31（预计：笔记ID推算，仅供人工复查）");
+    expect(JSON.stringify(sample)).toBe(before);
+  });
   it("Protected KABRITA_OCTOBER_REWARD_DECOUPLING：0/9/10/11/39/40/41/100只取最高档且内容失败为零", () => {
     for (const [total, amount] of [[0, 0], [9, 0], [10, 20], [11, 20], [39, 20], [40, 50], [41, 50], [100, 50]]) {
       expect(reward(total)).toMatchObject({ total, baseRewardAmount: 50, extraRewardAmount: amount });

@@ -13,7 +13,7 @@ export default function InteractionReward({ snapshot, reward, kabrita, detail = 
       <div>互动量：{kabrita.interactionTotal ?? "待确认"}</div>
       <div>打款金额：{kabrita.payoutAmount === null ? kabrita.payoutState : `${kabrita.payoutAmount} 元`}</div>
       {kabrita.payoutAmount !== null && <div>{kabrita.payoutState}</div>}
-      <div>下次审核时间：{kabrita.nextReviewAt}</div>
+      <div>下次审核时间：{kabrita.nextReviewAt}{kabrita.nextReviewEstimated && " · 预计日期（笔记ID推算）"}</div>
       {detail && <>
         <div>{kabrita.nextReviewReason}</div>
         {kabrita.acquisitionReasons?.length > 0 && <div>数据获取阻塞：{kabrita.acquisitionReasons.join("；")}</div>}
