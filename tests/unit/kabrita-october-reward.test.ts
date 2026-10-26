@@ -194,7 +194,7 @@ describe("Kabrita October reward contract", () => {
     expect((sheet.getRow(1).values as unknown[]).slice(1)).toEqual(headers);
     expect(sheet.columnCount).toBe(17);
     expect(sheet.getCell("O2")).toMatchObject({ type: ExcelJS.ValueType.Number, value: 15 });
-    expect(sheet.getCell("P2")).toMatchObject({ type: ExcelJS.ValueType.Number, value: 70, numFmt: '0"（待复核）"' });
+    expect(sheet.getCell("P2")).toMatchObject({ type: ExcelJS.ValueType.Number, value: 70, numFmt: "0" });
     expect(sheet.getCell("P2").note).toContain("30天留存尚未确认");
     expect(sheet.getCell("Q2")).toMatchObject({ type: ExcelJS.ValueType.Date, value: new Date("2026-10-31T00:00:00Z"), numFmt: "yyyy-mm-dd" });
     expect(sheet.getCell("D2").text).toBe("客户原备注");
@@ -207,6 +207,8 @@ describe("Kabrita October reward contract", () => {
     const csv = buildConfiguredCsv({ templates: BUILTIN_IMPORT_EXPORT_TEMPLATES, kind: "auditResults", templateType: "KABRITA", records: [record] });
     expect(csv.split("\r\n")[0].replace(/^\uFEFF/u, "").split(",")).toEqual(headers);
     expect(csv).toContain("2026-10-31");
+    expect(csv).toContain(",15,70,2026-10-31");
+    expect(csv).not.toContain("70（");
     const unified = new ExcelJS.Workbook();
     await unified.xlsx.load(await buildUnifiedAuditResultsWorkbook({ templates: BUILTIN_IMPORT_EXPORT_TEMPLATES,
       danoneRecords: [], kabritaRecords: [record], wyethRecords: [], nestleRecords: [] }) as ExcelJS.Buffer);

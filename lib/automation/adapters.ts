@@ -1,7 +1,7 @@
 import type { Page } from "playwright";
 import type { ExtractedNote, PageStatus } from "@/lib/types";
 import { collectXhsInteractionMetrics } from "@/lib/interaction-metrics";
-import { resolveXhsBusinessEvidence } from "./xhs-business-evidence";
+import { isSameXhsNoteNavigation, resolveXhsBusinessEvidence } from "./xhs-business-evidence";
 import { waitForAutomaticExtractionOperation } from "./extraction-deadline";
 import {
   collectDomPageSnapshot,
@@ -81,7 +81,7 @@ export class PlaywrightXiaohongshuAdapter
   implements PlaywrightExtractorAdapter
 {
   name = "playwright-xiaohongshu";
-  version = "1.10.0";
+  version = "1.10.1";
 
   canHandle(url: string) {
     try {
@@ -169,7 +169,14 @@ export class PlaywrightXiaohongshuAdapter
         });
         const nextRootNoteId = await page.locator(nextDom.currentNoteScopeSelector || "[data-no-current-note]")
           .evaluateAll((elements) => elements[0]?.getAttribute("data-xhs-note-id") || elements[0]?.getAttribute("data-note-id") || null);
-        if (page.url() !== domSnapshot.finalUrl || nextDom.finalUrl !== domSnapshot.finalUrl ||
+        const finalUrl = page.url();
+        const urlChanged = finalUrl !== domSnapshot.finalUrl || nextDom.finalUrl !== domSnapshot.finalUrl;
+        const sameNoteNavigation = urlChanged && isSameXhsNoteNavigation({
+          beforeUrl: domSnapshot.finalUrl, afterUrl: finalUrl, observedUrl: nextDom.finalUrl,
+          noteId: currentNoteId, rootNoteId: nextRootNoteId, normal: nextDom.pageStatus === "NORMAL",
+          scopeReady: Boolean(nextDom.currentNoteScopeSelector && nextDom.keyElementCount > 0),
+        });
+        if ((urlChanged && !sameNoteNavigation) ||
             (nextRootNoteId && nextRootNoteId !== currentNoteId)) {
           throw new Error("CURRENT_NOTE_ID_MISMATCH：补采期间笔记身份发生变化，未采纳互动数据或发布时间");
         }
@@ -180,6 +187,11 @@ export class PlaywrightXiaohongshuAdapter
           collectedAt: new Date().toISOString(),
         });
         Object.assign(business, supplemented);
+        if (sameNoteNavigation) Object.assign(business.receipt, { sameNoteNavigation: {
+          status: "IDENTITY_VERIFIED", noteId: currentNoteId,
+          beforeUrl: safeEvidenceUrl(domSnapshot.finalUrl), afterUrl: safeEvidenceUrl(finalUrl),
+          observedUrl: safeEvidenceUrl(nextDom.finalUrl),
+        } });
       }
     }
     const interactionMetrics = business.metrics;

@@ -1113,7 +1113,7 @@ export async function buildConfiguredWorkbook(input: {
     if (selected.some((column) => column.field === "payoutAmount")) {
       const payout = added.getCell("payoutAmount");
       if (typeof record.payoutAmount === "number") {
-        payout.numFmt = record.payoutState?.startsWith("待复核") ? '0"（待复核）"' : "0";
+        payout.numFmt = "0";
       }
       if (record.payoutState) payout.note = record.payoutState;
       if (record.nextReviewReason) added.getCell("nextReviewAt").note = record.nextReviewReason;
@@ -1208,9 +1208,6 @@ export function buildConfiguredCsv(input: {
     input.records.map((record) =>
       selected.map(({ field }) => {
         const value = record[field];
-        if (field === "payoutAmount" && typeof value === "number" && record.payoutState) {
-          return `${value}（${record.payoutState}）`;
-        }
         return value instanceof Date
           ? field === "nextReviewAt"
             ? `${value.toISOString().slice(0, 10)}${record.nextReviewEstimated ? "（预计：笔记ID推算，仅供人工复查）" : ""}`

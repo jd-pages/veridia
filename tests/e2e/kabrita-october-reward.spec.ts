@@ -183,7 +183,7 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
       expect(exported.getCell(16).value, sample.key).toBe(payout);
       if (sample.payout !== null) {
         expect(exported.getCell(16).type).toBe(ExcelJS.ValueType.Number);
-        expect(exported.getCell(16).numFmt).toContain("待复核");
+        expect(exported.getCell(16).numFmt).toBe("0");
         expect(exported.getCell(16).note).toContain("30天留存尚未确认");
       }
       const next = sample.next ?? (sample.key === "notFound" ? "不适用" : "发布时间待确认");
@@ -203,6 +203,10 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
       const view = page.getByLabel("佳贝艾特审核与打款", { exact: true });
       await expect(view).toContainText(`是否符合：${exported.getCell(13).text}`);
       await expect(view).toContainText(`打款金额：${sample.payout === null ? detail.presentation.kabrita.payoutState : `${payout} 元`}`);
+      if (sample.payout !== null) {
+        await expect(view.getByLabel("打款金额", { exact: true })).toHaveText(`打款金额：${payout} 元`);
+        await expect(view.getByLabel("复核状态", { exact: true })).toContainText("30天留存尚未确认");
+      }
       await expect(view).toContainText(`下次审核时间：${next}`);
       if (["pass10", "missing", "notFound", "noDate"].includes(sample.key)) {
         await page.screenshot({ path: testInfo.outputPath(`kabrita-${sample.key}-actual-ui.png`), fullPage: true });
@@ -218,7 +222,11 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
     await writeFile(testInfo.outputPath("Kabrita-actual-export.csv"), csvBytes);
     const csv = csvBytes.toString("utf8");
     expect(csv.split("\r\n")[0].replace(/^\uFEFF/u, "").split(",")).toEqual(exportHeaders);
-    for (const text of ["N-笔记不存在", "发布时间待确认", "50（待复核", "70（待复核", "100（待复核"]) expect(csv).toContain(text);
+    for (const text of ["N-笔记不存在", "发布时间待确认"]) expect(csv).toContain(text);
+    for (const amount of [50, 70, 100]) {
+      expect(csv).toMatch(new RegExp(`,${amount},`));
+      expect(csv).not.toContain(`${amount}（`);
+    }
     await writeFile(testInfo.outputPath("row-reconciliation.json"), JSON.stringify(reconciliation, null, 2));
     const before = results.map(({ id, ruleSnapshot, likeCount, commentCount, favoriteCount, interactionTotal, extractionRecord }) =>
       ({ id, ruleSnapshot, likeCount, commentCount, favoriteCount, interactionTotal, rawData: extractionRecord!.rawData }));

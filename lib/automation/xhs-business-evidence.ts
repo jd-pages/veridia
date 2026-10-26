@@ -12,6 +12,25 @@ const kinds: InteractionMetricKind[] = ["LIKE", "COMMENT", "FAVORITE"];
 const priority = (source: string) => source.startsWith("NETWORK_JSON") ? 0
   : source.startsWith("PAGE_JSON") ? 1 : 2;
 
+/** Canonical routing is equivalent only for a ready, scoped, same-note page.
+ * Login/error/list/profile routes and other origins never prove this identity. */
+export function isSameXhsNoteNavigation(input: {
+  beforeUrl: string; afterUrl: string; observedUrl: string;
+  noteId: string | null; rootNoteId: string | null; normal: boolean; scopeReady: boolean;
+}) {
+  if (!input.normal || !input.scopeReady || !input.noteId || !/^[a-f0-9]{24}$/iu.test(input.noteId) ||
+      (input.rootNoteId && input.rootNoteId.toLowerCase() !== input.noteId.toLowerCase())) return false;
+  try {
+    const urls = [input.beforeUrl, input.afterUrl, input.observedUrl].map(value => new URL(value));
+    return urls.every(url => url.protocol === "https:" && !url.username && !url.password && !url.port &&
+      url.origin === urls[0].origin &&
+      (url.hostname === "xiaohongshu.com" || url.hostname.endsWith(".xiaohongshu.com")) &&
+      ["target_note_id", "note_id", "noteId"].every(key =>
+        url.searchParams.getAll(key).every(value => value.toLowerCase() === input.noteId!.toLowerCase())) &&
+      url.pathname.match(/^\/(?:explore|discovery\/item)\/([a-f0-9]{24})\/?$/iu)?.[1]?.toLowerCase() === input.noteId!.toLowerCase());
+  } catch { return false; }
+}
+
 /** Select only identity-bound current-note fields; never manufacture zero or a year. */
 export function resolveXhsBusinessEvidence(input: {
   noteId: string | null;

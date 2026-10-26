@@ -139,12 +139,16 @@ test("approved real October receipts: unchanged legacy contracts, content and do
       const task=await db.auditTask.findUniqueOrThrow({where:{id:(await db.auditResult.findUniqueOrThrow({where:{id:record.newIsolatedResultId}})).auditTaskId}});
       const row=Array.from({length:5},(_,i)=>candidateSheet.getRow(i+2)).find(row=>row.getCell(11).value===task.url)!;
       expect(row.getCell(13).value).toBe("Y");expect(row.getCell(15).value).toBe(expectedTotals[index]??"待确认");expect(row.getCell(16).value).toBe(expectedPayouts[index]??"待确认：互动数据未完整获取");
+      if (expectedPayouts[index] !== null) {
+        expect(row.getCell(16).numFmt).toBe("0");
+        expect(row.getCell(16).note).toContain("30天留存尚未确认");
+      }
       expect(row.getCell(17).value).toEqual(new Date(record.nextReviewAt+"T00:00:00Z"));
     }
     const candidateCsv=await page.request.get(`/api/results/export?format=csv&ids=${newIds.join(",")}`);
     expect(candidateCsv.ok()).toBeTruthy();const candidateCsvText=await candidateCsv.text();
     await writeFile(info.outputPath("CANDIDATE_ONLY-real-five-row.csv"),candidateCsvText);
-    for(const row of reconciliation)expect(candidateCsvText).toContain(`,${row.total??"待确认"},${row.payout===null?row.payoutState:`${row.payout}（${row.payoutState}）`},${row.nextReviewAt}`);
+    for(const row of reconciliation)expect(candidateCsvText).toContain(`,${row.total??"待确认"},${row.payout===null?row.payoutState:row.payout},${row.nextReviewAt}`);
     await page.reload();const finalUi=page.locator(`.ant-table-row[data-row-key="${newIds[4]}"]`);
     await expect(finalUi).toContainText("互动量：42");await expect(finalUi).toContainText("打款金额：100 元");await expect(finalUi).toContainText("非已付款");
     for(const [index,record] of reconciliation.entries()){

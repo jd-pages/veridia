@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { collectJsonCandidates, createEmptyCandidates, mergeCandidates } from "@/lib/automation/xhs-page-evidence";
-import { resolveXhsBusinessEvidence } from "@/lib/automation/xhs-business-evidence";
+import { isSameXhsNoteNavigation, resolveXhsBusinessEvidence } from "@/lib/automation/xhs-business-evidence";
 import { resolveInteractionMetrics } from "@/lib/interaction-metrics";
 
 const id = "6a7d71e60000000035014e8f", other = "6a7d71e60000000035014e80";
@@ -14,6 +14,30 @@ const resolve = (candidates = createEmptyCandidates()) => resolveXhsBusinessEvid
 });
 
 describe("XHS current-note business evidence", () => {
+  const navigation = {
+    beforeUrl: `https://www.xiaohongshu.com/discovery/item/${id}?share=1`,
+    afterUrl: `https://www.xiaohongshu.com/explore/${id}?source=share`,
+    observedUrl: `https://www.xiaohongshu.com/explore/${id}`,
+    noteId: id, rootNoteId: id, normal: true, scopeReady: true,
+  };
+  it("same-note discovery-to-explore navigation preserves strict scoped identity", () => {
+    expect(isSameXhsNoteNavigation(navigation)).toBe(true);
+    expect(isSameXhsNoteNavigation({ ...navigation, rootNoteId: null, observedUrl: navigation.beforeUrl })).toBe(true);
+  });
+  it.each([
+    { afterUrl: `https://www.xiaohongshu.com/explore/${other}` },
+    { observedUrl: `https://www.xiaohongshu.com/explore/${other}` },
+    { afterUrl: `https://attacker.example/explore/${id}` },
+    { afterUrl: `https://xiaohongshu.com/explore/${id}` },
+    { afterUrl: `https://www.xiaohongshu.com/user/profile/${id}` },
+    { afterUrl: `https://www.xiaohongshu.com/website-login/error?note_id=${id}` },
+    { afterUrl: "https://www.xiaohongshu.com/explore" },
+    { afterUrl: `https://www.xiaohongshu.com/explore/${id}?note_id=${other}` },
+    { beforeUrl: `https://www.xiaohongshu.com:8443/explore/${id}`, afterUrl: `https://www.xiaohongshu.com:8443/explore/${id}`, observedUrl: `https://www.xiaohongshu.com:8443/explore/${id}` },
+    { rootNoteId: other }, { noteId: null }, { scopeReady: false }, { normal: false },
+  ])("canonical navigation rejects unproved identity or state %j", (change) => {
+    expect(isSameXhsNoteNavigation({ ...navigation, ...change })).toBe(false);
+  });
   it("NETWORK current-note counters include real zero and preserve receipt, not recommendation counts", () => {
     const result = resolve(mergeCandidates(collectJsonCandidates(payload(other), "NETWORK_JSON"), collectJsonCandidates(payload(), "NETWORK_JSON")));
     expect(result.metrics).toMatchObject({ status: "SUCCESS", likeCount: 9, commentCount: 0, favoriteCount: 4, totalCount: 13 });

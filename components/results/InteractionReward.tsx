@@ -11,8 +11,8 @@ export default function InteractionReward({ snapshot, reward, kabrita, detail = 
     return <div aria-label="佳贝艾特审核与打款" style={{ fontSize: 12, lineHeight: 1.6 }}>
       <div>是否符合：{kabrita.complianceResult}</div>
       <div>互动量：{kabrita.interactionTotal ?? "待确认"}</div>
-      <div>打款金额：{kabrita.payoutAmount === null ? kabrita.payoutState : `${kabrita.payoutAmount} 元`}</div>
-      {kabrita.payoutAmount !== null && <div>{kabrita.payoutState}</div>}
+      <div aria-label="打款金额">打款金额：{kabrita.payoutAmount === null ? kabrita.payoutState : `${kabrita.payoutAmount} 元`}</div>
+      {kabrita.payoutAmount !== null && <div aria-label="复核状态">复核状态：{kabrita.payoutState}</div>}
       <div>下次审核时间：{kabrita.nextReviewAt}{kabrita.nextReviewEstimated && " · 预计日期（笔记ID推算）"}</div>
       {detail && <>
         <div>{kabrita.nextReviewReason}</div>

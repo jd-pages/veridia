@@ -133,7 +133,9 @@ test("Protected XHS_BUSINESS_DATA_IDENTITY：结构化/内嵌/DOM采集与17列�
   const rows: Array<{ id: string; total: number; payout: number }> = [];
   try {
     for (const [index, total] of [0,9,10,13,39,40,52].entries()) {
-      const id = randomUUID().replaceAll("-", "").slice(0,24), url = `https://www.xiaohongshu.com/explore/${id}`;
+      const id = randomUUID().replaceAll("-", "").slice(0,24);
+      const canonical = index === 3;
+      const url = `https://www.xiaohongshu.com/${canonical ? "discovery/item" : "explore"}/${id}`;
       const task = await db.auditTask.create({ data: { productId: product.id, campaignId: campaign.id, url, normalizedUrl: url, channel: "XIAOHONGSHU" } });
       const state = { note: { noteDetailMap: { [id]: { note: { noteId: id, time: 1_790_856_000_000,
         interactInfo: { likedCount: String(total), commentCount: "0", collectedCount: "0" } } } } } };
@@ -141,13 +143,21 @@ test("Protected XHS_BUSINESS_DATA_IDENTITY：结构化/内嵌/DOM采集与17列�
       const html = `<meta charset="utf-8"><main id="noteContainer" data-xhs-note-id="${id}"><h1 id="detail-title">隔离采集</h1><div id="detail-desc">真实DOM采集链路验证正文${topics.map((value)=>`<a href="https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(value)}">${value}</a>`).join(" ")}</div><time data-testid="note-publish-time">发布于 2026-10-01</time><video></video><div data-testid="note-action-bar" class="interactions engage-bar"><span class="like-wrapper"><span class="count">${total}</span></span><span class="collect-wrapper"><span class="count">0</span></span><span class="chat-wrapper"><span class="count">0</span></span></div></main>${embedded}`;
       await extractionPage.route(url, (route) => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }));
       await extractionPage.goto(url);
+      if (canonical) await extractionPage.locator('[data-testid="note-action-bar"]').evaluate(element => element.remove());
       const extracted = await new PlaywrightXiaohongshuAdapter().extract(extractionPage, url, {
-        responseCandidates: index % 3 === 0 ? collectJsonCandidates(state, "NETWORK_JSON") : undefined,
+        responseCandidates: index % 3 === 0 && !canonical ? collectJsonCandidates(state, "NETWORK_JSON") : undefined,
+        readResponseCandidates: canonical ? async () => {
+          await extractionPage.evaluate(next => history.replaceState({}, "", next), `/explore/${id}?source=share`);
+          return collectJsonCandidates(state, "NETWORK_JSON");
+        } : undefined,
       });
       expect(extracted.interactionExtractionStatus).toBe("SUCCESS");
       expect(extracted.likeCount! + extracted.commentCount! + extracted.favoriteCount!).toBe(total);
       expect(extracted.publishedAt).toBeTruthy();
       expect(extracted.pageEvidence?.businessDataReceipt).toMatchObject({ noteId: id, blockers: [] });
+      if (canonical) expect(extracted.pageEvidence?.businessDataReceipt).toMatchObject({
+        sameNoteNavigation: { status: "IDENTITY_VERIFIED", noteId: id },
+      });
       await info.attach(`extractor-${index}`, { body: Buffer.from(JSON.stringify(extracted,null,2)), contentType:"application/json" });
       expect(extracted.topics.map((value)=>value.displayText)).toEqual(expect.arrayContaining(topics));
       const audited = await page.request.post(`/api/tasks/${task.id}/audit`, { data: { extraction: extracted } });
@@ -168,6 +178,14 @@ test("Protected XHS_BUSINESS_DATA_IDENTITY：结构化/内嵌/DOM采集与17列�
     await expect(new PlaywrightXiaohongshuAdapter().extract(extractionPage, extractionPage.url(), {
       readResponseCandidates: async () => {
         await extractionPage.locator("#noteContainer").evaluate(element => element.setAttribute("data-xhs-note-id", "ffffffffffffffffffffffff"));
+        return createEmptyCandidates();
+      },
+    })).rejects.toThrow("CURRENT_NOTE_ID_MISMATCH");
+    const sameNoteUrl = extractionPage.url();
+    await extractionPage.locator("#noteContainer").evaluate((element, id) => element.setAttribute("data-xhs-note-id", id), new URL(sameNoteUrl).pathname.split("/").at(-1)!);
+    await expect(new PlaywrightXiaohongshuAdapter().extract(extractionPage, sameNoteUrl, {
+      readResponseCandidates: async () => {
+        await extractionPage.evaluate(() => history.replaceState({}, "", "/explore/ffffffffffffffffffffffff"));
         return createEmptyCandidates();
       },
     })).rejects.toThrow("CURRENT_NOTE_ID_MISMATCH");

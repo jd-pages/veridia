@@ -151,7 +151,7 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
   payoutAmount: {
     displayName: "打款金额",
     type: "integer",
-    description: "当次有效活动规则快照的基础奖励+最高互动档奖励总额；应付测算，非已付款。30天留存未确认时标注待复核，互动数据缺失时待确认",
+    description: "当次有效活动规则快照的基础奖励+最高互动档奖励总额，已核算时只显示金额数值；应付测算，非已付款。留存复核状态另见软件状态及Excel批注，互动数据缺失时待确认",
   },
   nextReviewAt: {
     displayName: "下次审核时间",
