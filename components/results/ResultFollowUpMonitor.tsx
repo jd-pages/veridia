@@ -15,7 +15,7 @@ export default function ResultFollowUpMonitor({ enabled }: { enabled: boolean })
       try {
         const result = await apiFetch<{ status: string }>("/api/results/follow-up", { method: "POST" });
         if (active) setNotice(result.status === "QUEUED"
-          ? "已自动安排业务数据补采或到期复核，可在审核任务中查看、暂停或取消。"
+          ? "已自动安排业务数据补采，可在审核任务中查看、暂停或取消。复核日期仅供人工安排，不自动创建留存复核任务。"
           : result.status === "LOGIN_RECOVERY_REQUIRED"
             ? "自动补采等待小红书会话就绪：请到审核任务恢复正常登录并检测会话；验证恢复后自动继续，不绕过登录或安全验证。"
             : null);

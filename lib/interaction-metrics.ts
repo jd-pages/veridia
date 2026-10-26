@@ -290,7 +290,7 @@ export async function collectXhsInteractionMetrics(
           semanticKind: attributeKind || classKind || iconKind,
           exactIdentityKind:
             element.classList.contains("like-wrapper") &&
-            iconHref.split("#").at(-1)?.toLowerCase() === "like"
+            ["like", "like_b"].includes(iconHref.split("#").at(-1)?.toLowerCase() || "")
               ? ("LIKE" as const)
               : element.classList.contains("collect-wrapper") &&
                   iconHref.split("#").at(-1)?.toLowerCase() === "collect"

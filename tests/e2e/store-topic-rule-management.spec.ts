@@ -181,7 +181,7 @@ test("Protected STORE_MAPPING_DOES_NOT_IMPLY_TOPIC_REQUIREMENT：UI开关、Alia
     if (followUpStatus === "LOGIN_RECOVERY_REQUIRED") {
       await expect(page.getByRole("status")).toContainText("自动补采等待小红书会话就绪");
     } else if (followUpStatus === "QUEUED") {
-      await expect(page.getByRole("status")).toContainText("已自动安排业务数据补采或到期复核");
+      await expect(page.getByRole("status")).toContainText("已自动安排业务数据补采");
     }
     const storeTab = page.getByRole("tab", { name: "店铺话题规则" });
     await storeTab.click();

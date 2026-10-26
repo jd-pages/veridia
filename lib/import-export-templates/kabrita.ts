@@ -146,7 +146,7 @@ export const KABRITA_FIELD_DEFINITIONS: Record<
   interactionTotal: {
     displayName: "互动量",
     type: "integer",
-    description: "结果绑定的点赞、评论和收藏合计，技术不可读时留空",
+    description: "结果绑定的点赞、评论和收藏合计；正常页面数据缺失显示待确认，不将未知补为0",
   },
   payoutAmount: {
     displayName: "打款金额",

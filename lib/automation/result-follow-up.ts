@@ -43,8 +43,9 @@ export async function enqueueDueResultFollowUp(userId: string, now = new Date())
         publishedAt: bound.note.publishedAt, publishedAtRaw: bound.note.publishedAtRaw,
         publishedAtSource: bound.note.publishedAtSource });
       const missing = row.interactionTotal === null || date === null;
-      const source = missing && !isResultFollowUpSource(row.task.source) ? "RESULT_DATA_SUPPLEMENT"
-        : date && row.retentionDueAt && row.retentionDueAt.getTime() <= now.getTime() && row.retentionStatus === "PENDING" ? "RESULT_RETENTION_RECHECK" : null;
+      // Review dates are for manual scheduling only. A due date, including a
+      // trusted one, never creates an automatic retention re-audit.
+      const source = missing && !isResultFollowUpSource(row.task.source) ? "RESULT_DATA_SUPPLEMENT" : null;
       if (!source) continue;
       const claimId = `result-follow-up:${row.id}:${source}`;
       if (await tx.operationLog.findUnique({ where: { id: claimId }, select: { id: true } }) ||
@@ -52,12 +53,12 @@ export async function enqueueDueResultFollowUp(userId: string, now = new Date())
       // A stable unique log ID is the durable claim. Concurrent scanners cannot
       // commit a second batch, even on restart or after a failed extraction.
       await tx.operationLog.create({ data: { id: claimId, userId, action: source,
-        entityType: "AUDIT_RESULT", entityId: row.id, summary: "自动补采/到期复核，历史采集及规则快照保持不变",
+        entityType: "AUDIT_RESULT", entityId: row.id, summary: "自动补采，历史采集及规则快照保持不变",
         metadata: JSON.stringify({ originalResultId: row.id, source,
           contractSha256: createHash("sha256").update(row.ruleSnapshot).digest("hex"), claimedAt: now.toISOString() }) } });
       const task = row.task;
       const batch = await createAutomaticBatchInTransaction(tx, {
-        name: source === "RESULT_DATA_SUPPLEMENT" ? "业务数据自动补采" : "到期留存自动复核", source, createdBy: userId,
+        name: "业务数据自动补采", source, createdBy: userId,
         productId: task.productId, campaignId: task.campaignId,
         tasks: [{ ...task, url: task.url, source, replacesResultId: row.id,
           expectedStoreTopics: parseStoredStringArray(task.expectedStoreTopics),

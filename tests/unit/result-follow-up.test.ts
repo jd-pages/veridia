@@ -74,7 +74,7 @@ describe("separate automatic result follow-up / immutable contract", () => {
     expect(JSON.parse(claim.metadata!)).toMatchObject({ originalResultId: original.id, source: "RESULT_DATA_SUPPLEMENT", contractSha256: expect.stringMatching(/^[0-9a-f]{64}$/u) });
     await db.auditBatch.update({ where: { id: enqueued.batchId! }, data: { status: "COMPLETED", currentTaskId: null } });
   });
-  it("due date queues one separate recheck, never early and never repeats a failed claim", async () => {
+  it("a trusted manual review date never schedules a retention task, even after it is due", async () => {
     await db.campaign.update({ where: { id: fixture.campaign.id }, data: { rewardMode: "CONTENT_BASE_PLUS_INTERACTION_TIERS", baseRewardAmount: 50, retentionDays: 30 } });
     const task = await fixture.task();
     const publishedAt = new Date(Date.now() - 10 * 86_400_000).toISOString();
@@ -85,15 +85,27 @@ describe("separate automatic result follow-up / immutable contract", () => {
     // Display Q as a Beijing calendar date, but never shorten the original
     // contract's precise retention deadline or infer completed payment.
     const dueAt=new Date(result.retentionDueAt!);
+    const countsBefore = { tasks: await db.auditTask.count(), batches: await db.auditBatch.count() };
     expect(await enqueueDueResultFollowUp("follow-up-admin",new Date(dueAt.getTime()-1))).toMatchObject({status:"NO_ELIGIBLE_RECORD"});
-    const next = await enqueueDueResultFollowUp("follow-up-admin", dueAt);
-    expect(next).toMatchObject({ status: "QUEUED", source:"RESULT_RETENTION_RECHECK", originalResultId:result.id });
-    const recheck = await db.auditTask.findFirstOrThrow({where:{batchId:next.batchId!}});
-    expect(recheck.replacesResultId).toBe(result.id);
-    await db.auditBatch.update({where:{id:next.batchId!},data:{status:"COMPLETED_WITH_ERRORS"}});
-    await db.auditTask.update({where:{id:recheck.id},data:{status:"READ_FAILED"}});
+    expect(await enqueueDueResultFollowUp("follow-up-admin", dueAt)).toMatchObject({ status: "NO_ELIGIBLE_RECORD" });
     expect(await enqueueDueResultFollowUp("follow-up-admin",new Date(Date.now()+32*86_400_000))).toMatchObject({status:"NO_ELIGIBLE_RECORD"});
+    expect({ tasks: await db.auditTask.count(), batches: await db.auditBatch.count() }).toEqual(countsBefore);
     expect((await db.auditResult.findUniqueOrThrow({where:{id:result.id}})).ruleSnapshot).toBe(result.ruleSnapshot);
+  });
+
+  it("an exact legacy contract with zero retention days still permits missing-data supplementation", async () => {
+    const task = await fixture.task();
+    await db.campaign.update({ where: { id: fixture.campaign.id }, data: {
+      rewardMode: "LEGACY", baseRewardAmount: 0, retentionDays: 0, interactionRewardTiers: { deleteMany: {} },
+    } });
+    const original = await runAuditTask(task.id, auditIngestExtraction(task, {
+      publishedAt: null, likeCount: null, commentCount: null, favoriteCount: null, interactionExtractionStatus: "UNAVAILABLE",
+    }), { source: "MANUAL" });
+    expect(readFollowUpContract(original.ruleSnapshot, task)).toMatchObject({ rewardMode: "LEGACY", retentionDays: 0 });
+    const queued = await enqueueDueResultFollowUp("follow-up-admin");
+    expect(queued).toMatchObject({ status: "QUEUED", originalResultId: original.id, source: "RESULT_DATA_SUPPLEMENT" });
+    expect((await db.auditResult.findUniqueOrThrow({ where: { id: original.id } })).ruleSnapshot).toBe(original.ruleSnapshot);
+    await db.auditBatch.update({ where: { id: queued.batchId! }, data: { status: "COMPLETED_WITH_ERRORS", currentTaskId: null } });
   });
   it("trusted September legacy contract can supplement missing fields without adopting October reward tiers", async () => {
     const task = await fixture.task();

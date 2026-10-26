@@ -121,6 +121,29 @@ describe("小红书 current note action bar 互动取证", () => {
       extractionReady: true,
     });
 
+  it.each([
+    { like: "", favorite: "", comment: "评论", total: 0 },
+    { like: "1", favorite: "", comment: "评论", total: 1 },
+    { like: "3", favorite: "3", comment: "评论", total: 6 },
+  ])("current-note like_b controls preserve verified zero: $like/$favorite/$comment", async ({ like, favorite, comment, total }) => {
+    // Platform shape observed in the approved October extraction receipts.
+    const html = currentNoteFixture({ like, favorite, comment, commentSummary: null })
+      .replaceAll('href="#like"', 'href="#like_b"');
+    // Comment/recommendation likes stay excluded even with the same icon.
+    await page.setContent(html);
+    const result = await collectReadyCurrentNote();
+    expect(result).toMatchObject({ totalCount: total, status: "SUCCESS" });
+    expect(result.candidates).toContainEqual(expect.objectContaining({
+      kindHint: "COMMENT", evidenceStatus: "CONFIRMED_ZERO", valueText: "评论",
+    }));
+  });
+
+  it("an unknown like icon cannot confirm empty counters as zero", async () => {
+    await page.setContent(currentNoteFixture({ like: "", favorite: "", comment: "评论", commentSummary: null })
+      .replaceAll('href="#like"', 'href="#like_unknown"'));
+    expect(await collectReadyCurrentNote()).toMatchObject({ totalCount: null, status: "UNAVAILABLE" });
+  });
+
   it("按真实 class 与 SVG 签名读取 7361/1243/3052 并排除评论、推荐互动", async () => {
     await page.setContent(currentNoteFixture());
     const result = await collectReadyCurrentNote();

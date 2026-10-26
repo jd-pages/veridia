@@ -1,5 +1,6 @@
 import {
   resolveInteractionMetrics,
+  parseInteractionCount,
   type InteractionMetrics,
   type InteractionMetricCandidate,
   type InteractionMetricKind,
@@ -68,6 +69,15 @@ export function resolveXhsBusinessEvidence(input: {
       version: 1, noteId, collectedAt: input.collectedAt,
       interaction: { status: metrics.status, sources: selected.map((candidate) => ({
         kind: candidate.kindHint, source: candidate.source, value: candidate.valueText, contentId: noteId,
+        evidenceStatus: candidate.evidenceStatus,
+        resolvedValue: candidate.evidenceStatus === "CONFIRMED_ZERO" ? 0 : parseInteractionCount(candidate.valueText),
+        controlClass: candidate.controlClass, iconHref: candidate.iconHref,
+        countNodePresent: candidate.countNodePresent,
+      })), domSources: domMetrics.candidates.slice(0, 20).map(candidate => ({
+        kind: candidate.kindHint, source: candidate.source, value: candidate.valueText,
+        contentId: noteId, evidenceStatus: candidate.evidenceStatus,
+        controlClass: candidate.controlClass, iconHref: candidate.iconHref,
+        countNodePresent: candidate.countNodePresent, countNodeText: candidate.countNodeText,
       })) },
       publication: { status: timeConflict ? "CONFLICT" : publication?.value ? "CONFIRMED" : "UNCONFIRMED",
         selected: publication, candidates: boundTimes.slice(0, 20) },

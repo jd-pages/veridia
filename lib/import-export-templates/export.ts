@@ -674,7 +674,7 @@ export function auditResultToKabritaExportRecord(
     ...rewardExport(row),
     ...completeAuditExport(row),
     customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
-    interactionTotal: output.interactionTotal,
+    interactionTotal: output.interactionTotal ?? (row.pageStatus === "NORMAL" ? "待确认" : null),
     payoutAmount: output.payoutAmount ?? output.payoutState,
     payoutState: output.payoutState,
     nextReviewAt: /^\d{4}-\d{2}-\d{2}$/u.test(output.nextReviewAt)

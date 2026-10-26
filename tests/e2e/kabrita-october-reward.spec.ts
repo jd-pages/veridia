@@ -178,7 +178,7 @@ test("Protected KABRITA_OCTOBER_REWARD_DECOUPLING / KABRITA_17_COLUMN_AUDIT_EXPO
       const conclusion = sample.key === "notFound" ? "N-笔记不存在" : negative ? expect.stringMatching(/^N-/u) : "Y";
       expect(exported.getCell(13).text, sample.key).toEqual(conclusion);
       if (sample.key === "fail45") expect(exported.getCell(13).text).toContain(requiredTopic);
-      expect(exported.getCell(15).value, sample.key).toBe(sample.total);
+      expect(exported.getCell(15).value, sample.key).toBe(["missing", "unconfirmed"].includes(sample.key) ? "待确认" : sample.total);
       const payout = sample.payout ?? (["missing", "unconfirmed"].includes(sample.key) ? "待确认：互动数据未完整获取" : "不适用：内容审核不合格");
       expect(exported.getCell(16).value, sample.key).toBe(payout);
       if (sample.payout !== null) {

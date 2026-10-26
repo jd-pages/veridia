@@ -11,7 +11,9 @@ const contractSchema = z.object({
   contentChannel: z.literal("XIAOHONGSHU"), ruleMonth: z.string().regex(/^\d{4}-\d{2}$/u),
   brandName: z.string().min(1), rulesConfigured: z.literal(true), ruleVersion: integer,
   rewardMode: z.enum(["CONTENT_BASE_PLUS_INTERACTION_TIERS", "LEGACY"]),
-  baseRewardAmount: integer, retentionDays: integer.positive(),
+  // Missing-data acquisition does not require an active retention policy.
+  // Preserve zero exactly; it must not acquire a new 30-day/reward contract.
+  baseRewardAmount: integer, retentionDays: integer,
   interactionRewardTiers: z.array(z.object({ threshold: integer.positive(), amount: integer })),
   bodyRequired: z.boolean(), minBodyLength: integer, minImageCount: integer,
   publicRequired: z.boolean(), clickableTopicRequired: z.boolean(),

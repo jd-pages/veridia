@@ -26,10 +26,10 @@ export const PROTECTED_BEHAVIORS = Object.freeze([
     triggerFiles: ["lib/automation/adapters.ts", "lib/automation/xhs-page-evidence.ts", "lib/automation/xhs-business-evidence.ts", "lib/automation/xhs-embedded-state.ts"],
   }),
   behavior({
-    key: "XHS_RESULT_AUTOMATIC_FOLLOW_UP", module: "Separate bounded result supplement and due recheck",
-    invariant: "合法会话且无活动/暂停批次才原子创建一次补采或到期复核；使用原结果可证明合同，新采集新结果，不借用当前月份规则、不改历史快照、不自动重复失败或绕过Runner门禁。",
+    key: "XHS_RESULT_AUTOMATIC_FOLLOW_UP", module: "Bounded missing-data supplement and manual-only review dates",
+    invariant: "合法会话且无活动/暂停批次才原子创建一次缺失数据补采；完整原合同留存天数为零时仍可补采，新采集新结果，不借用当前月份规则、不改历史快照、不自动重复失败或绕过Runner门禁；真实或预计复查日期仅供人工安排，到期也不自动创建留存任务。",
     unitTests: ["tests/unit/result-follow-up.test.ts"], e2eTests: ["tests/e2e/xhs-business-data.spec.ts"],
-    unitCases: [caseRef("tests/unit/result-follow-up.test.ts", "Protected XHS_RESULT_AUTOMATIC_FOLLOW_UP：bounded supplement, frozen original contract and history survive live rule changes"), caseRef("tests/unit/result-follow-up.test.ts", "expired/unknown login never starts a browser, batch or platform request"), caseRef("tests/unit/result-follow-up.test.ts", "due date queues one separate recheck, never early and never repeats a failed claim")],
+    unitCases: [caseRef("tests/unit/result-follow-up.test.ts", "Protected XHS_RESULT_AUTOMATIC_FOLLOW_UP：bounded supplement, frozen original contract and history survive live rule changes"), caseRef("tests/unit/result-follow-up.test.ts", "expired/unknown login never starts a browser, batch or platform request"), caseRef("tests/unit/result-follow-up.test.ts", "a trusted manual review date never schedules a retention task, even after it is due"), caseRef("tests/unit/result-follow-up.test.ts", "an exact legacy contract with zero retention days still permits missing-data supplementation")],
     e2eCases: [caseRef("tests/e2e/xhs-business-data.spec.ts", "Protected XHS_RESULT_AUTOMATIC_FOLLOW_UP：实际补采队列使用原合同并新增快照，不自动重复失败")], fixtures: ["tests/unit/result-follow-up.test.ts"],
     triggerFiles: ["lib/automation/result-follow-up.ts", "lib/result-follow-up-contract.ts", "lib/audit-service.ts", "app/api/results/follow-up/route.ts", "components/results/ResultFollowUpMonitor.tsx"],
   }),

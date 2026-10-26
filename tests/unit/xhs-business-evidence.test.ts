@@ -38,9 +38,15 @@ describe("XHS current-note business evidence", () => {
   });
   it("structured data has priority over abbreviated DOM counters without substituting a different note", () => {
     const result = resolveXhsBusinessEvidence({ noteId: id, candidates: collectJsonCandidates(payload(), "NETWORK_JSON"),
-      domMetrics: resolveInteractionMetrics([{ kindHint: "LIKE", valueText: "1万", source: "DOM_CURRENT_NOTE_ACTION_BAR" }]),
+      domMetrics: resolveInteractionMetrics([{ kindHint: "LIKE", valueText: "1万", source: "DOM_CURRENT_NOTE_ACTION_BAR",
+        controlClass: "like-wrapper like-active", iconHref: "#like_b", countNodePresent: true, countNodeText: "1万" }]),
       normal: true, collectedAt: now });
     expect(result.metrics.totalCount).toBe(13);
+    expect(result.receipt.interaction.domSources).toEqual([expect.objectContaining({
+      kind: "LIKE", value: "1万", contentId: id, controlClass: "like-wrapper like-active",
+      iconHref: "#like_b", countNodePresent: true, countNodeText: "1万",
+    })]);
+    expect(result.receipt.interaction.sources.every(source => source.source?.startsWith("NETWORK_JSON") === true)).toBe(true);
   });
   it.each([undefined, null, "", "待确认", "12+", -1, 2_147_483_648])("unknown/invalid count %s is never manufactured as zero", (value) => {
     const data = payload();

@@ -18,6 +18,13 @@ function contentStatus(row: SelfReviewSource) {
   return row.manualReviews[0]?.result || row.presentation?.conclusion.status || row.autoStatus;
 }
 
+function frozenRewardFlags(snapshot: string | null | undefined) {
+  try {
+    const value = JSON.parse(snapshot || "{}");
+    return { explicitLegacy: value?.rewardMode === "LEGACY", noBasicInteractionGate: value?.basicRewardRequired === false };
+  } catch { return { explicitLegacy: false, noBasicInteractionGate: false }; }
+}
+
 /** Explicit persisted page outcomes only. Technical failures never prove deletion. */
 function terminalCompliance(row: SelfReviewSource): string | null {
   if (row.pageStatus === "NOTE_NOT_FOUND" || row.autoStatus === "NOTE_NOT_FOUND") return "N-笔记不存在";
@@ -36,7 +43,8 @@ export function kabritaComplianceResult(row: KabritaResultOutputInput): string {
   const terminal = terminalCompliance(row);
   if (terminal) return terminal;
   if (row.presentation?.consistency.status === "RESULT_CONSISTENCY_VIOLATION") return "待复核：结果一致性异常";
-  if (rewardModeFromRuleSnapshot(row.ruleSnapshot) === "CONTENT_BASE_PLUS_INTERACTION_TIERS") {
+  if (rewardModeFromRuleSnapshot(row.ruleSnapshot) === "CONTENT_BASE_PLUS_INTERACTION_TIERS" ||
+      frozenRewardFlags(row.ruleSnapshot).noBasicInteractionGate) {
     const status = contentStatus(row);
     if (status === "PASSED") return "Y";
     if (status === "FAILED") return detailedSelfReview(row);
@@ -103,7 +111,9 @@ export function kabritaResultOutput(row: KabritaResultOutputInput) {
     ? reward.baseRewardAmount + reward.extraRewardAmount : null;
   const payoutState = complianceResult.startsWith("N-") ? "不适用：内容审核不合格" : complianceResult === "未审核" ? "未审核"
     : complianceResult !== "Y" ? "待确认：内容审核待复核"
-    : reward.mode !== "CONTENT_BASE_PLUS_INTERACTION_TIERS" ? "待确认：缺少当次有效奖励规则快照"
+    : reward.mode !== "CONTENT_BASE_PLUS_INTERACTION_TIERS" ? frozenRewardFlags(row.ruleSnapshot).explicitLegacy
+      ? "待确认：当次绑定旧版奖励合同，未启用基础加阶梯奖励；需确认适用合同后生成新的核算版本"
+      : "待确认：缺少当次有效奖励规则快照"
     : reward.total === null ? "待确认：互动数据未完整获取"
     : reward.baseRewardAmount === null ? "待确认：缺少当次有效奖励规则快照"
     : row.retentionStatus === "SATISFIED" && nextDate ? "留存已确认：应付测算，非已付款" : "待复核：30天留存尚未确认；应付测算，非已付款";

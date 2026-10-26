@@ -61,6 +61,28 @@ function row(overrides: Partial<CompactAuditResultExportSourceRow> = {}): Compac
   };
 }
 
+describe("explicit frozen basic-reward requirement", () => {
+  it.each([null, 0, 9])("legacy without a basic interaction gate preserves content compliance at %s", (total) => {
+    const ruleSnapshot = JSON.stringify({ ...context, rewardMode: "LEGACY", basicRewardRequired: false,
+      baseRewardAmount: 0, interactionRewardTiers: [], retentionDays: 0 });
+    const sample = row({ ruleSnapshot, likeCount: total, commentCount: total === null ? null : 0,
+      favoriteCount: total === null ? null : 0, interactionTotal: total });
+    const before = JSON.stringify(sample);
+    expect(kabritaResultOutput(sample)).toMatchObject({ complianceResult: "Y", interactionTotal: total,
+      payoutAmount: null, payoutState: expect.stringContaining("旧版奖励合同") });
+    expect(auditResultToKabritaExportRecord(sample).complianceResult).toBe("Y");
+    expect(auditResultToKabritaExportRecord(sample).interactionTotal).toBe(total ?? "待确认");
+    expect(JSON.stringify(sample)).toBe(before);
+  });
+
+  it("explicit legacy basic interaction requirements and failed content remain enforced", () => {
+    const ruleSnapshot = JSON.stringify({ ...context, rewardMode: "LEGACY", basicRewardRequired: true });
+    expect(kabritaResultOutput(row({ ruleSnapshot, likeCount: 9, commentCount: 0, favoriteCount: 0, interactionTotal: 9 })).complianceResult).toBe("N-互动量＜10");
+    const noBasicGate = JSON.stringify({ ...context, rewardMode: "LEGACY", basicRewardRequired: false });
+    expect(kabritaResultOutput(row({ ruleSnapshot: noBasicGate, autoStatus: "FAILED", failureReasons: '["缺少必带话题"]' })).complianceResult).not.toBe("Y");
+  });
+});
+
 describe("Kabrita October reward contract", () => {
   it("预计日期为数值日期加格式/批注，不能解锁留存或打款门禁", async () => {
     const id = `${Math.floor(Date.parse("2026-10-01T15:30:00Z") / 1000).toString(16)}0000000000000001`;
