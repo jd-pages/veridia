@@ -24,7 +24,7 @@ import {
 import {
   NESTLE_BRAND_NAME,
   WYETH_BRAND_NAME,
-  WYETH_NESTLE_FIELDS,
+  WYETH_NESTLE_EXPORT_FIELDS,
 } from "@/lib/import-export-templates/wyeth-nestle";
 import {
   type ImportTemplateType,
@@ -368,7 +368,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
               title: "惠氏/雀巢审核结果",
               records: wyethNestleRecords,
               templateType: "WYETH_NESTLE" as const,
-              fields: WYETH_NESTLE_FIELDS,
+              fields: WYETH_NESTLE_EXPORT_FIELDS,
             }] : []),
           ],
         })
@@ -380,7 +380,7 @@ export const GET = withApiErrorBoundary(async function GET(request: Request) {
           ...(useWyethNestleTemplate
             ? {
                 templateType: "WYETH_NESTLE" as const,
-                fields: WYETH_NESTLE_FIELDS,
+                fields: WYETH_NESTLE_EXPORT_FIELDS,
               }
             : {}),
         });

@@ -411,6 +411,10 @@ test("审核结果决策工作台整合列、筛选、批量操作和详情抽�
       expect(headers, worksheet.name).toEqual(kabritaResultExportHeaders);
       expect(worksheet.columnCount).toBe(17);
       expect(headers).not.toContain("活动月份");
+    } else if (worksheet.name === "惠氏审核结果" || worksheet.name === "雀巢审核结果") {
+      expect(worksheet.columnCount).toBe(19);
+      expect(headers.slice(10)).toEqual(["内部自审", "备注", "互动量", "互动量≥10", "品牌初审", "品牌复审", "复审时间", "奖励发放状态", "发放金额(元)"]);
+      expect(headers).not.toContain("活动月份");
     } else {
       expect(headers.at(-1), worksheet.name).toBe("活动月份");
     }

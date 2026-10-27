@@ -5,9 +5,12 @@ import { compactSelfReview, detailedSelfReview } from "@/lib/result-self-review"
 export { detailedSelfReview } from "@/lib/result-self-review";
 import {
   interactionRewardPresentation,
+  rewardFromResultSnapshot,
+  calculateInteractionTotal,
   type InteractionRewardSnapshot,
 } from "@/lib/interaction-reward";
 import type { AuditResultPresentation } from "@/lib/audit-result-presentation";
+import { resultBoundManualReviewDate } from "@/lib/result-next-review-date";
 import {
   businessFailureReasonLabel,
   businessSourceLabel,
@@ -67,9 +70,11 @@ import {
 } from "@/lib/import-template-type";
 import {
   WYETH_NESTLE_FIELDS,
+  WYETH_NESTLE_EXPORT_FIELDS,
   WYETH_NESTLE_FIELD_DEFINITIONS,
   buildWyethNestleProductOptions,
   wyethNestleDisplayName,
+  wyethNestleExportDisplayName,
   NESTLE_BRAND_NAME,
   WYETH_BRAND_NAME,
 } from "./wyeth-nestle";
@@ -144,11 +149,12 @@ export interface CompactAuditResultExportSourceRow extends InteractionRewardSnap
     commercePlatform?: string | null;
     productStage: string | null;
     product: {
+      id?: string;
       name: string;
       seriesName?: string | null;
       brandName?: string | null;
     };
-    campaign?: { name: string; month?: string | null };
+    campaign?: { id?: string; name: string; month?: string | null };
   };
   note: {
     url: string;
@@ -253,6 +259,10 @@ function columns(
   templateType?: ImportTemplateType,
   fieldsOverride?: readonly StandardField[],
 ) {
+  if (kind === "auditResults" && (["WYETH", "NESTLE", "WYETH_NESTLE"].includes(templateType || "") ||
+      templateBrand === WYETH_BRAND_NAME || templateBrand === NESTLE_BRAND_NAME)) {
+    return WYETH_NESTLE_EXPORT_FIELDS.map(field => ({ field, displayName: wyethNestleExportDisplayName(field) }));
+  }
   if (kind === "auditResults" &&
     (templateBrand === KABRITA_BRAND_NAME || templateType === "KABRITA")) {
     return KABRITA_EXPORT_FIELDS.map((field) => ({
@@ -337,6 +347,8 @@ const REWARD_COLUMNS = [
 ] satisfies Array<{ field: StandardField; displayName: string }>;
 
 function appendRewardColumns(selected: Array<{ field: StandardField; displayName: string }>, records: ExportValueRecord[]) {
+  // A locked business layout never acquires technical reward columns.
+  if (selected.some(column => column.field === "rewardPaymentStatus")) return;
   if (records.some((record) => Boolean(record.interactionRewardStatus))) {
     for (const column of REWARD_COLUMNS) {
       if (!selected.some((existing) => existing.field === column.field)) selected.push(column);
@@ -503,6 +515,47 @@ function wyethNestleSelfReview(row: CompactAuditResultExportSourceRow) {
     presentation.reviewReasons.length > 0 &&
     presentation.reviewReasons.every((reason) => reason === "互动奖励待确认");
   return interactionOnlyReview ? "Y" : detailedSelfReview(row);
+}
+
+/** Never infer or activate a missing contract from the brand name or current campaign. */
+function wyethNestleBusinessOutput(row: CompactAuditResultExportSourceRow): ExportValueRecord {
+  const selfReview = wyethNestleSelfReview(row);
+  const reward = rewardFromResultSnapshot({ ...row, finalContentStatus: selfReview === "Y" ? "PASSED" : "NEEDS_REVIEW",
+    ruleSnapshot: row.ruleSnapshot, failureCode: row.task.failureCode });
+  const counts = calculateInteractionTotal({ ...row, interactionExtractionStatus: "SUCCESS" });
+  const total = counts.readable && counts.interactionTotal === reward.total ? reward.total : null;
+  let confirmedContract = false;
+  try {
+    const config = JSON.parse(row.ruleSnapshot || "{}");
+    confirmedContract = row.evidenceStatus === "RESULT_BOUND" &&
+      row.presentation?.consistency.status === "CONSISTENT" &&
+      config.rewardMode === "CONTENT_BASE_PLUS_INTERACTION_TIERS" &&
+      config.brandName === row.task.product.brandName && config.baseRewardAmount === 40 &&
+      (!row.task.product.id || config.productId === row.task.product.id) &&
+      (!row.task.campaign?.id || config.campaignId === row.task.campaign.id) &&
+      config.contentChannel === (row.note.contentChannel ?? row.task.channel ?? row.task.platform) &&
+      Array.isArray(config.interactionRewardTiers) && config.interactionRewardTiers.length === 1 &&
+      config.interactionRewardTiers[0].threshold === 10 && config.interactionRewardTiers[0].amount === 10;
+  } catch { /* Unknown historical contract remains unknown. */ }
+  const payout = confirmedContract && selfReview === "Y" && total !== null && reward.baseRewardAmount !== null && reward.extraRewardAmount !== null
+    ? reward.baseRewardAmount + reward.extraRewardAmount : null;
+  const noNote = ["NOTE_NOT_FOUND", "DELETED"].includes(row.pageStatus) || row.autoStatus === "NOTE_NOT_FOUND";
+  const manual = noNote ? null : resultBoundManualReviewDate({
+    evidenceStatus: row.evidenceStatus, publishedAt: row.note.publishedAt,
+    publishedAtRaw: row.note.publishedAtRaw, publishedAtSource: row.note.publishedAtSource,
+    contentChannel: row.note.contentChannel ?? row.task.channel ?? row.task.platform,
+    platformNoteId: row.note.platformNoteId, noteUrl: row.note.url, originalUrl: row.task.url,
+    finalUrl: row.note.finalUrl, capturedAt: row.note.lastCapturedAt,
+  }, new Date(), 15);
+  return { selfReview, interactionTotal: total,
+    interactionAtLeastTen: total === null ? "" : total >= 10 ? "Y" : "N",
+    remark: "", brandInitialReview: "", brandFinalReview: "", rewardPaymentStatus: "",
+    payoutAmount: payout,
+    payoutState: payout !== null ? "当次有效合同应付测算，非已付款；不改变留存与发放门禁" : "内容、互动或当次奖励合同未确认，不生成发放金额",
+    nextReviewAt: manual?.date ?? (noNote ? "不适用" : "发布时间待确认"),
+    nextReviewEstimated: manual?.estimated ?? false,
+    nextReviewReason: manual?.reason ?? "缺少可信原始发布时间或身份一致的有效笔记ID，不创建复审任务",
+  };
 }
 
 /**
@@ -768,6 +821,7 @@ export function auditResultToWyethNestleExportRecord(
     customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
     selfReview: wyethNestleSelfReview(row),
     ...completeAuditExport(row),
+    ...wyethNestleBusinessOutput(row),
   };
 }
 
@@ -803,11 +857,12 @@ export function auditTaskToUnreviewedWyethNestleExportRecord(
     publishTime: hasRawValue(raw, "publishTime") ? raw.publishTime ?? "" : "",
     customerServiceComment: preservedRawValue(raw, "customerServiceComment", ""),
     selfReview: "未审核",
-    interactionAtLeastTen: "未审核",
     activityMonth: hasRawValue(raw, "activityMonth")
       ? raw.activityMonth ?? ""
       : resolvedActivityMonthValue(undefined, task.campaign?.month),
     ...unreviewedAuditExport(),
+    remark: "", brandInitialReview: "", brandFinalReview: "", rewardPaymentStatus: "",
+    payoutAmount: null, nextReviewAt: "未审核", interactionAtLeastTen: "",
   };
 }
 
@@ -1128,6 +1183,18 @@ export async function buildConfiguredWorkbook(input: {
   };
   header.alignment = { vertical: "middle", wrapText: true };
   header.height = 30;
+  if (["WYETH", "NESTLE", "WYETH_NESTLE"].includes(templateType || "")) {
+    header.height = 52;
+    selected.forEach(({ field }, index) => {
+      const col = sheet.getColumn(index + 1);
+      col.width = field === "noteUrl" ? 48 : field === "customerServiceComment" ? 30
+        : ["shopName", "productName", "orderNumber"].includes(field) ? 26 : 18;
+      const cell = header.getCell(index + 1);
+      const purple = index >= 14;
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: purple ? "FF56328F" : [10, 13].includes(index) ? "FFB9D5FA" : "FFFFFF00" } };
+      cell.font = { bold: true, color: { argb: purple ? "FFFFFFFF" : "FF000000" } };
+    });
+  }
   sheet.eachRow((row, rowNumber) => {
     if (rowNumber > 1) {
       row.alignment = { vertical: "top", wrapText: true };
@@ -1562,13 +1629,13 @@ export function buildUnifiedAuditResultsWorkbook(input: {
         sheetName: UNIFIED_AUDIT_RESULT_SHEET_NAMES[2],
         records: input.wyethRecords,
         templateType: "WYETH",
-        fields: appendAuditFields(WYETH_NESTLE_FIELDS),
+        fields: WYETH_NESTLE_EXPORT_FIELDS,
       },
       {
         sheetName: UNIFIED_AUDIT_RESULT_SHEET_NAMES[3],
         records: input.nestleRecords,
         templateType: "NESTLE",
-        fields: appendAuditFields(WYETH_NESTLE_FIELDS),
+        fields: WYETH_NESTLE_EXPORT_FIELDS,
       },
     ],
   });

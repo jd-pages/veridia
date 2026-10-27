@@ -32,6 +32,25 @@ export const WYETH_NESTLE_REQUIRED_FIELDS = WYETH_NESTLE_FIELDS.slice(
   9,
 ) as readonly StandardField[];
 
+/** Business output is independent of the unchanged 13-column input template. */
+export const WYETH_NESTLE_EXPORT_FIELDS = [
+  "registrant", "wechatNickname", "commercePlatform", "shopName", "productName",
+  "orderNumber", "contentChannel", "noteUrl", "publishTime", "customerServiceComment",
+  "selfReview", "remark", "interactionTotal", "interactionAtLeastTen", "brandInitialReview",
+  "brandFinalReview", "nextReviewAt", "rewardPaymentStatus", "payoutAmount",
+] as const satisfies readonly StandardField[];
+
+export function wyethNestleExportDisplayName(field: StandardField) {
+  const names: Partial<Record<StandardField, string>> = {
+    customerServiceComment: "客服修改留言\n格式：日期-已留言/已修改",
+    selfReview: "内部自审", remark: "备注", interactionTotal: "互动量",
+    interactionAtLeastTen: "互动量≥10", brandInitialReview: "品牌初审",
+    brandFinalReview: "品牌复审", nextReviewAt: "复审时间",
+    rewardPaymentStatus: "奖励发放状态", payoutAmount: "发放金额(元)",
+  };
+  return names[field] || wyethNestleDisplayName(field);
+}
+
 export const WYETH_NESTLE_FIELD_DEFINITIONS: Record<
   (typeof WYETH_NESTLE_FIELDS)[number],
   ImportExportTemplates["fieldDefinitions"][string]

@@ -44,7 +44,7 @@ function absolutePublishedAt(value: unknown): Date | null {
 }
 
 /** A result-bound business date; it neither reads current state nor schedules a task. */
-export function resultBoundNextReviewDate(input: ResultBoundPublishedAt): Date | null {
+export function resultBoundNextReviewDate(input: ResultBoundPublishedAt, days: 15 | 30 = 30): Date | null {
   if (input.evidenceStatus !== "RESULT_BOUND") return null;
   const source = typeof input.publishedAtSource === "string"
     ? input.publishedAtSource.trim() : "";
@@ -66,17 +66,17 @@ export function resultBoundNextReviewDate(input: ResultBoundPublishedAt): Date |
   }
   const publishedAt = absolutePublishedAt(input.publishedAt);
   if (!publishedAt) return null;
-  return shanghaiPlusThirtyDays(publishedAt);
+  return shanghaiPlusDays(publishedAt, days);
 }
 
-function shanghaiPlusThirtyDays(publishedAt: Date) {
+function shanghaiPlusDays(publishedAt: Date, days: 15 | 30) {
   const parts = Object.fromEntries(
     shanghaiDateFormatter.formatToParts(publishedAt)
       .filter((part) => part.type !== "literal")
       .map((part) => [part.type, Number(part.value)]),
   );
   // Excel Date cells encode the business calendar date at UTC midnight.
-  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day + 30));
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days));
 }
 
 /** Presentation only. Estimated dates are never publication or retention evidence.
@@ -88,10 +88,10 @@ export function resultBoundManualReviewDate(input: ResultBoundPublishedAt & {
   originalUrl?: unknown;
   finalUrl?: unknown;
   capturedAt?: unknown;
-}, now = new Date()) {
-  const confirmed = resultBoundNextReviewDate(input);
+}, now = new Date(), days: 15 | 30 = 30) {
+  const confirmed = resultBoundNextReviewDate(input, days);
   if (confirmed) return { date: confirmed, estimated: false, noteId: null,
-    reason: "当次采集快照中的可信笔记发布日期，加30个北京时间自然日" };
+    reason: `当次采集快照中的可信笔记发布日期，加${days}个北京时间自然日` };
   const unavailable = { date: null, estimated: false, noteId: null,
     reason: "缺少可信原始发布时间或当次绑定且身份一致的有效小红书笔记ID" };
   if (input.evidenceStatus !== "RESULT_BOUND" || input.contentChannel !== "XIAOHONGSHU") return unavailable;
@@ -117,6 +117,6 @@ export function resultBoundManualReviewDate(input: ResultBoundPublishedAt & {
   if (!anchor || anchor.getTime() > now.getTime() + 24 * 60 * 60 * 1000) return unavailable;
   const created = deriveXhsNoteIdCreationTime(noteId, anchor);
   if (!created) return unavailable;
-  return { date: shanghaiPlusThirtyDays(created), estimated: true, noteId,
-    reason: `预计日期（笔记ID推算）：当次绑定小红书笔记ID ${noteId} 的创建时间 ${created.toISOString()} 加30个北京时间自然日；仅供人工安排复查，不是平台确认的发布时间，不证明留存或打款资格，不触发自动复核。` };
+  return { date: shanghaiPlusDays(created, days), estimated: true, noteId,
+    reason: `预计日期（笔记ID推算）：当次绑定小红书笔记ID ${noteId} 的创建时间 ${created.toISOString()} 加${days}个北京时间自然日；仅供人工安排复查，不是平台确认的发布时间，不证明留存或打款资格，不触发自动复核。` };
 }

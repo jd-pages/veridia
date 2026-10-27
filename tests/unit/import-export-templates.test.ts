@@ -38,7 +38,7 @@ import {
   KABRITA_EXPORT_FIELDS,
   KABRITA_IMPORT_FIELDS,
 } from "@/lib/import-export-templates/kabrita";
-import { WYETH_NESTLE_FIELDS } from "@/lib/import-export-templates/wyeth-nestle";
+import { WYETH_NESTLE_FIELDS, WYETH_NESTLE_EXPORT_FIELDS, wyethNestleExportDisplayName } from "@/lib/import-export-templates/wyeth-nestle";
 import { buildAuditResultPresentation } from "@/lib/audit-result-presentation";
 import {
   NESTLE_SHEET_NAME,
@@ -445,7 +445,7 @@ describe("统一 Excel 工作簿", () => {
     expect(workbook.worksheets.map((sheet) => sheet.rowCount)).toEqual([2, 1, 2, 2]);
     expect((workbook.worksheets[1].getRow(1).values as unknown[]).slice(1))
       .toEqual(kabritaExportHeaders);
-    for (const sheet of workbook.worksheets.filter((sheet) => sheet.name !== "佳贝艾特审核结果")) {
+    for (const sheet of workbook.worksheets.filter((sheet) => sheet.name === "达能审核结果")) {
       const headers = (sheet.getRow(1).values as unknown[]).slice(1);
       expect(headers).toEqual(expect.arrayContaining([
         "作品类型", "审核结论", "公开状态", "话题审核", "图片 / 视频审核",
@@ -461,8 +461,13 @@ describe("统一 Excel 工作簿", () => {
       .toBe("WN-001");
     expect(workbook.worksheets[3].getCell(2, nestleHeaders.indexOf("订单编号（必填）") + 1).text)
       .toBe("N-001");
-    for (const sheet of workbook.worksheets.filter((sheet) => sheet.name !== "佳贝艾特审核结果")) {
+    for (const sheet of workbook.worksheets.filter((sheet) => sheet.name === "达能审核结果")) {
       expect(sheet.getRow(1).getCell(sheet.columnCount).text).toBe("活动月份");
+    }
+    for (const name of ["惠氏审核结果", "雀巢审核结果"]) {
+      const sheet = workbook.getWorksheet(name)!;
+      expect(sheet.columnCount).toBe(19);
+      expect((sheet.getRow(1).values as unknown[]).slice(1)).toEqual(WYETH_NESTLE_EXPORT_FIELDS.map(wyethNestleExportDisplayName));
     }
   });
 
@@ -827,8 +832,8 @@ describe("统一 Excel 工作簿", () => {
       likeCount: 3,
       commentCount: 3,
       favoriteCount: 0,
-      interactionTotal: 6,
-      interactionAtLeastTen: "N",
+      interactionTotal: null,
+      interactionAtLeastTen: "",
     });
     const interactionOnlyPresentation = buildAuditResultPresentation({
       autoStatus: "PASSED",
@@ -872,15 +877,15 @@ describe("统一 Excel 工作簿", () => {
       likeCount: 0,
       commentCount: 3,
       favoriteCount: 0,
-      interactionTotal: 3,
-      interactionAtLeastTen: "N",
+      interactionTotal: null,
+      interactionAtLeastTen: "",
     });
     expect(auditTaskToUnreviewedWyethNestleExportRecord({
       ...base.task,
       originalInput: base.task.url,
     })).toMatchObject({
       selfReview: "未审核",
-      interactionAtLeastTen: "未审核",
+      interactionAtLeastTen: "",
       interactionTotal: null,
     });
   });
@@ -928,17 +933,17 @@ describe("统一 Excel 工作簿", () => {
       likeCount: 0,
       commentCount: 3,
       favoriteCount: 0,
-      interactionTotal: 3,
-      interactionAtLeastTen: "N",
+      interactionTotal: null,
+      interactionAtLeastTen: "",
     });
     expect(auditResultToWyethNestleExportRecord({
       ...readable,
       commentCount: 10,
-    })).toMatchObject({ interactionTotal: 10, interactionAtLeastTen: "Y" });
+    })).toMatchObject({ interactionTotal: null, interactionAtLeastTen: "" });
     expect(auditResultToWyethNestleExportRecord({
       ...readable,
       commentCount: 12,
-    })).toMatchObject({ interactionTotal: 12, interactionAtLeastTen: "Y" });
+    })).toMatchObject({ interactionTotal: null, interactionAtLeastTen: "" });
     expect(auditResultToWyethNestleExportRecord({
       ...readable,
       likeCount: null,
@@ -948,8 +953,8 @@ describe("统一 Excel 工作簿", () => {
       likeCount: 0,
       commentCount: 0,
       favoriteCount: 0,
-      interactionTotal: 0,
-      interactionAtLeastTen: "N",
+      interactionTotal: null,
+      interactionAtLeastTen: "",
     });
     for (const pageStatus of ["READ_FAILED", "LOGIN_EXPIRED", "SECURITY_VERIFICATION", "NOTE_NOT_FOUND"]) {
       expect(auditResultToWyethNestleExportRecord({
@@ -1068,7 +1073,7 @@ describe("统一 Excel 工作簿", () => {
     const sheet = workbook.getWorksheet("惠氏审核结果")!;
     const headers = (sheet.getRow(1).values as unknown[]).slice(1);
     const cell = (header: string) => sheet.getCell(2, headers.indexOf(header) + 1);
-    expect(cell("图片 / 视频审核").text).toBe("视频作品，不参与图片数量审核");
+    expect(headers).not.toContain("图片 / 视频审核");
     expect(cell("互动量").value).toBe(11);
     expect(cell("互动量≥10").text).toBe("Y");
     expect(headers.filter((header) => header === "互动量≥10")).toHaveLength(1);

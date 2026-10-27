@@ -5,6 +5,9 @@ import { E2E_ORIGIN } from "./e2e-origin";
 import { ensureStoreTopicRuleSeeds } from "../../lib/store-topic-rule-service";
 import { resolveProductReference } from "../../lib/product-matching";
 import { buildImportedTaskNotes } from "../../lib/import-task-metadata";
+import { auditIngestExtraction, createAuditIngestFixture } from "../helpers/audit-ingest-fixture";
+import { writeFile } from "node:fs/promises";
+import { Readable } from "node:stream";
 import {
   NESTLE_SHEET_NAME,
   WYETH_NESTLE_LEGACY_SHEET_NAME,
@@ -13,6 +16,104 @@ import {
 } from "../../lib/import-template-type";
 
 test.describe.configure({ mode: "serial" });
+
+test("惠氏雀巢19列真实导出：40加10合同、15天人工复审与原始身份不变", async ({ page }, info) => {
+  test.setTimeout(180_000);
+  if (!process.env.E2E_DATABASE_URL) throw Error("ISOLATED_DATABASE_REQUIRED");
+  expect((await page.request.post("/api/auth/login", { data: { username: "admin", password: "Admin123!" } })).ok()).toBeTruthy();
+  const fixtures: Awaited<ReturnType<typeof createAuditIngestFixture>>[] = [];
+  const records: Array<{ id: string; brand: string; key: string; total: number | null; amount: number | null; expectedDate: string | null; estimated: boolean; order: string; notes: string }> = [];
+  const headers = ["登记人（必填）", "微信昵称（必填）", "下单平台（必填）", "店铺名称（必填）", "产品系列（必填）", "订单编号（必填）", "内容渠道（必填）", "链接（必填）纯链接", "发帖时间（必填）", "客服修改留言\n格式：日期-已留言/已修改", "内部自审", "备注", "互动量", "互动量≥10", "品牌初审", "品牌复审", "复审时间", "奖励发放状态", "发放金额(元)"];
+  try {
+    for (const brand of ["惠氏", "雀巢"] as const) {
+      const f = await createAuditIngestFixture(prisma); fixtures.push(f);
+      await prisma.product.update({ where: { id: f.product.id }, data: { brandName: brand } });
+      await prisma.topicRule.updateMany({ where: { campaignId: f.campaign.id, productId: f.product.id }, data: { brandName: brand } });
+      await prisma.campaign.update({ where: { id: f.campaign.id }, data: {
+        rewardMode: "CONTENT_BASE_PLUS_INTERACTION_TIERS", basicRewardRequired: false, baseRewardAmount: 40, retentionDays: 15,
+        interactionRewardTiers: { create: [{ threshold: 10, amount: 10 }] },
+      } });
+      const globals = await prisma.topicRule.findMany({ where: { brandName: brand, scope: "GLOBAL", status: "ACTIVE", contentChannel: { in: ["XIAOHONGSHU", "ALL"] }, ruleType: { not: "FORBIDDEN" } } });
+      const samples = [
+        ...[0, 9, 10, 11, 20].map(total => ({ key: String(total), total, amount: total >= 10 ? 50 : 40, estimated: false })),
+        { key: "failed", total: 20, amount: null, estimated: false },
+        { key: "unknown", total: null, amount: null, estimated: false },
+        { key: "estimated", total: 10, amount: 50, estimated: true },
+        { key: "legacy", total: 10, amount: null, estimated: false },
+        { key: "no-date", total: 10, amount: 50, estimated: false },
+      ];
+      for (const sample of samples) {
+        if (sample.key === "legacy") await prisma.campaign.update({ where: { id: f.campaign.id }, data: { rewardMode: "LEGACY", baseRewardAmount: 0 } });
+        else await prisma.campaign.update({ where: { id: f.campaign.id }, data: { rewardMode: "CONTENT_BASE_PLUS_INTERACTION_TIERS", baseRewardAmount: 40 } });
+        const noteId = sample.estimated ? Math.floor(Date.parse("2026-09-25T16:30:00Z") / 1000).toString(16) + (brand === "惠氏" ? "0000000000000001" : "0000000000000002") : null;
+        const url = noteId ? `https://www.xiaohongshu.com/explore/${noteId}` : `https://www.xiaohongshu.com/explore/business-${f.product.id}-${sample.key}`;
+        const order = `00001234567890123456-${brand}-${sample.key}`;
+        const notes = buildImportedTaskNotes({ templateMetadata: { templateType: brand === "惠氏" ? "WYETH" : "NESTLE", rawValues: {
+          registrant: `登记-${sample.key}`, wechatNickname: "原微信", commercePlatform: "京东", shopName: "原始店铺",
+          productName: "原始产品", orderNumber: order, contentChannel: "小红书", noteUrl: `原分享链接-${sample.key}`,
+          publishTime: "2026/09/25", customerServiceComment: "2026-10-01-已留言/已修改", activityMonth: "9月",
+          selfReview: "用户填Y不得信任", interactionAtLeastTen: "用户填N不得信任",
+        }, rawHyperlinks: { noteUrl: url } } });
+        const task = await f.task({ url, normalizedUrl: url, notes, orderNumber: order, platform: "XIAOHONGSHU", channel: "XIAOHONGSHU" });
+        const payload = auditIngestExtraction(task, {
+          likeCount: sample.total, commentCount: sample.total === null ? null : 0, favoriteCount: sample.total === null ? null : 0,
+          interactionExtractionStatus: sample.total === null ? "UNAVAILABLE" : "SUCCESS",
+          publishedAt: sample.estimated || sample.key === "no-date" ? null : "2026-09-25T16:30:00Z",
+          publishedAtRaw: sample.estimated || sample.key === "no-date" ? null : "2026-09-26",
+          publishedAtSource: sample.estimated || sample.key === "no-date" ? null : "NETWORK_JSON:note.publish_time",
+        });
+        const topics = [...payload.topics, ...globals.map(r => ({ ...payload.topics[0], displayText: r.topic }))];
+        payload.topics = sample.key === "failed" ? [] : topics; payload.verifiedPlatformTopics = payload.topics;
+        const response = await page.request.post(`/api/tasks/${task.id}/audit`, { data: { extraction: payload } });
+        expect(response.ok(), await response.text()).toBeTruthy(); const result = (await response.json()).data;
+        const detail = await page.request.get(`/api/results/${result.id}`);expect(detail.ok()).toBeTruthy();
+        const d = (await detail.json()).data;expect(d.presentation.topic).toBeTruthy();expect(d.presentation.media).toBeTruthy();
+        records.push({ id: result.id, brand, key: sample.key, total: sample.total, amount: sample.amount,
+          expectedDate: sample.key === "no-date" ? null : "2026-10-11", estimated: sample.estimated, order, notes });
+      }
+    }
+    const ids = records.map(r => r.id).join(",");
+    const before = await prisma.auditResult.findMany({ where: { id: { in: records.map(r => r.id) } }, orderBy: { id: "asc" } });
+    const tasksBefore = await prisma.auditTask.findMany({ where: { id: { in: before.map(r => r.auditTaskId) } }, select: { id: true, notes: true, orderNumber: true }, orderBy: { id: "asc" } });
+    const automaticBefore = await prisma.auditTask.count({ where: { source: "RETENTION_RECHECK" } });
+    // Current configuration must never rewrite frozen reward amounts.
+    for (const f of fixtures) await prisma.campaign.update({ where: { id: f.campaign.id }, data: { baseRewardAmount: 999 } });
+    const response = await page.request.get(`/api/results/export?format=xlsx&ids=${ids}`);expect(response.ok()).toBeTruthy();
+    const bytes = await response.body();await writeFile(info.outputPath("惠氏雀巢19列实际导出.xlsx"), bytes);
+    const wb = new ExcelJS.Workbook();await wb.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+    for (const brand of ["惠氏", "雀巢"]) {
+      const sheet = wb.getWorksheet(`${brand}审核结果`)!;expect(sheet.columnCount).toBe(19);expect((sheet.getRow(1).values as unknown[]).slice(1)).toEqual(headers);
+      const selected = records.filter(r => r.brand === brand);expect(sheet.rowCount).toBe(selected.length + 1);
+      expect(selected.map((r, i) => sheet.getCell(i + 2, 6).value)).toEqual(selected.map(r => r.order));
+      for (const r of selected) {
+        const row = Array.from({ length: selected.length }, (_, i) => sheet.getRow(i + 2)).find(row => row.getCell(6).value === r.order)!;expect(row).toBeTruthy();
+        expect(row.getCell(10).text).toBe("2026-10-01-已留言/已修改");expect(row.getCell(8).value).toMatchObject({ text: `原分享链接-${r.key}`, hyperlink: expect.stringContaining("xiaohongshu.com/explore/") });
+        expect(row.getCell(11).text).toBe(r.key === "failed" ? "N-缺少话题；缺少必带话题：#inne多维锌" : "Y");expect(row.getCell(13).value).toBe(r.total);expect(row.getCell(14).text).toBe(r.total === null ? "" : r.total >= 10 ? "Y" : "N");
+        expect([1,2,3,4,5,7,9,10].map(n=>row.getCell(n).text)).toEqual([`登记-${r.key}`, "原微信", "京东", "原始店铺", "原始产品", "小红书", "2026/09/25", "2026-10-01-已留言/已修改"]);
+        for (const n of [12, 15, 16, 18]) expect(row.getCell(n).value).toBeNull();
+        expect(row.getCell(19).value).toBe(r.amount);if (r.amount !== null)expect(row.getCell(19).type).toBe(ExcelJS.ValueType.Number);
+        if (r.expectedDate) {expect(row.getCell(17).type).toBe(ExcelJS.ValueType.Date);expect(row.getCell(17).value).toEqual(new Date(r.expectedDate+"T00:00:00Z"));expect(row.getCell(17).numFmt).toBe(r.estimated ? 'yyyy-mm-dd"（预计）"' : "yyyy-mm-dd");}
+        else expect(row.getCell(17).text).toBe("发布时间待确认");
+        if (r.estimated)expect(row.getCell(17).note).toContain("笔记ID推算");
+      }
+      const single = await page.request.get(`/api/results/export?format=csv&ids=${selected.map(r=>r.id).join(",")}`);expect(single.ok()).toBeTruthy();const csv=await single.text();await writeFile(info.outputPath(`${brand}19列.csv`),csv);
+      expect(csv).toContain("发放金额(元)");expect(csv).not.toContain("作品类型");expect(csv).not.toContain("品牌初审结果");
+      const csvBook = new ExcelJS.Workbook();const csvSheet = await csvBook.csv.read(Readable.from([csv]));
+      expect(csvSheet.columnCount).toBe(19);
+      for(const r of selected){
+        const csvRow = Array.from({length:selected.length},(_,i)=>csvSheet.getRow(i+2)).find(row=>row.getCell(6).text===r.order)!;
+        expect(csvRow).toBeTruthy();expect(csvRow.getCell(13).text).toBe(r.total===null?"":String(r.total));
+        expect(csvRow.getCell(14).text).toBe(r.total===null?"":r.total>=10?"Y":"N");expect(csvRow.getCell(19).text).toBe(r.amount===null?"":String(r.amount));
+        for(const n of [12,15,16,18])expect(csvRow.getCell(n).text).toBe("");
+      }
+    }
+    expect(wb.getWorksheet("佳贝艾特审核结果")!.columnCount).toBe(17);
+    expect(await prisma.auditResult.findMany({ where: { id: { in: records.map(r => r.id) } }, orderBy: { id: "asc" } })).toEqual(before);
+    expect(await prisma.auditTask.findMany({ where: { id: { in: before.map(r => r.auditTaskId) } }, select: { id: true, notes: true, orderNumber: true }, orderBy: { id: "asc" } })).toEqual(tasksBefore);
+    expect(await prisma.auditTask.count({ where: { source: "RETENTION_RECHECK" } })).toBe(automaticBefore);
+    await info.attach("19列业务逐行核对", { body: Buffer.from(JSON.stringify({ records, originalResultsUnchanged: true, importedNotesUnchanged: true, automaticReviewTasksCreated: 0, productionDatabaseAccess: "NONE" })), contentType: "application/json" });
+  } finally { for (const f of fixtures.reverse()) await f.cleanup(); }
+});
 
 const AUDIT_RESULT_SHEET_NAMES = [
   "达能审核结果",
@@ -433,7 +534,7 @@ test("统一模板下载、惠氏/雀巢四行解析、Sheet 错误与跨 Sheet 
       const headers = (sheet.getRow(1).values as unknown[]).slice(1);
       expect(sheet.getCell(2, headers.indexOf("内部自审") + 1).text).toContain(selfReview);
       expect(sheet.getCell(2, headers.indexOf("互动量≥10") + 1).text).toBe(interaction);
-      expect(headers.at(-1)).toBe("活动月份");
+      expect(sheet.columnCount).toBe(19);
     }
 
     wyethSheet.addRow([
@@ -1039,24 +1140,19 @@ test("统一 Workbook 八行审核加一行未审核后按 ImportRecord 导出�
     expect(kabritaRawMetadata[1].notes).toContain('"activityMonth":""');
     expect(headerCell("佳贝艾特审核结果", 2, "是否符合").text).toBe("Y");
     expect(headerCell("佳贝艾特审核结果", 3, "是否符合").text).toBe("N-互动量＜10");
-    expect(headerCell("惠氏审核结果", 2, "活动月份").text).toBe("9月");
-    expect(headerCell("惠氏审核结果", 3, "活动月份").text).toBe("");
+    expect(exported.getWorksheet("惠氏审核结果")!.columnCount).toBe(19);
+    expect(exported.getWorksheet("惠氏审核结果")!.columnCount).toBe(19);
     expect(headerCell("惠氏审核结果", 2, "内部自审").text).toBe("Y");
     expect(headerCell("惠氏审核结果", 2, "互动量≥10").text).toBe("N");
     expect(headerCell("惠氏审核结果", 4, "内部自审").text).toBe("未审核");
-    expect(headerCell("惠氏审核结果", 4, "互动量≥10").text).toBe("未审核");
-    expect(headerCell("惠氏审核结果", 4, "活动月份").text).toBe("9月");
+    expect(headerCell("惠氏审核结果", 4, "互动量≥10").text).toBe("");
+    expect(exported.getWorksheet("惠氏审核结果")!.columnCount).toBe(19);
     expect(headerCell("雀巢审核结果", 2, "内部自审").text).toBe("Y");
     expect(headerCell("雀巢审核结果", 2, "互动量≥10").text).toBe("Y");
-    expect(headerCell("雀巢审核结果", 3, "互动量≥10").text).toBe("N");
-    expect(headerCell("惠氏审核结果", 2, "作品类型").text).toBe("视频");
-    expect(headerCell("惠氏审核结果", 2, "图片 / 视频审核").text)
-      .toBe("视频作品，不参与图片数量审核");
+    expect(headerCell("雀巢审核结果", 3, "互动量≥10").text).toBe("");
+    expect((exported.getWorksheet("惠氏审核结果")!.getRow(1).values as unknown[])).not.toContain("作品类型");
     expect(headerCell("惠氏审核结果", 2, "互动量").value).toBe(9);
-    expect(headerCell("雀巢审核结果", 3, "点赞数").value).toBe(0);
-    expect(headerCell("雀巢审核结果", 3, "评论数").value).toBe(0);
-    expect(headerCell("雀巢审核结果", 3, "收藏数").value).toBe(0);
-    expect(headerCell("雀巢审核结果", 3, "互动量").value).toBe(0);
+    expect(headerCell("雀巢审核结果", 3, "互动量").value).toBeNull();
     expect(exported.worksheets.flatMap((sheet) =>
       Array.from({ length: sheet.rowCount - 1 }, (_, index) =>
         sheet.getRow(index + 2).values,
@@ -1072,7 +1168,7 @@ test("统一 Workbook 八行审核加一行未审核后按 ImportRecord 导出�
       favoriteCount: null,
       interactionTotal: null,
     });
-    for (const sheet of exported.worksheets.filter((sheet) => sheet.name !== "佳贝艾特审核结果")) {
+    for (const sheet of exported.worksheets.filter((sheet) => sheet.name === "达能审核结果")) {
       const headers = (sheet.getRow(1).values as unknown[]).slice(1);
       expect(headers.filter((header) => header === "互动量≥10")).toHaveLength(1);
       expect(headers.at(-1)).toBe("活动月份");

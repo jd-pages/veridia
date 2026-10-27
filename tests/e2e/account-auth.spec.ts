@@ -255,6 +255,10 @@ test("紧凑激活页可现场设置密码并保持登录", async ({ page }) => 
         expect(headers, sheet.name).toEqual(kabritaAuditExportHeaders);
         expect(sheet.columnCount).toBe(17);
         expect(headers).not.toContain("活动月份");
+      } else if (sheet.name === "惠氏审核结果" || sheet.name === "雀巢审核结果") {
+        expect(sheet.columnCount).toBe(19);
+        expect(headers.slice(10)).toEqual(["内部自审", "备注", "互动量", "互动量≥10", "品牌初审", "品牌复审", "复审时间", "奖励发放状态", "发放金额(元)"]);
+        expect(headers).not.toContain("活动月份");
       } else {
         expect(headers.at(-1), sheet.name).toBe("活动月份");
       }
