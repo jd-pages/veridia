@@ -479,6 +479,42 @@ describe("CI machine evidence retention", () => {
     expect(diagnostic.receiptModifiedMs).toBeLessThan(diagnostic.declaredFinishedMs);
     expect(result.index.files.some(file => file.path === "formal-next-prepare.json")).toBe(false);
   });
+  it("replays Cloud 40458823836: submillisecond file mtime and declared finish share the same millisecond", () => {
+    const root = sourceRoot(); completeSources(root);
+    const receiptPath = path.join(root, ".playwright/typegen-lifecycle/fixture-owned-prepare/receipt.json");
+    const finishedMs = Date.parse(prepareReceiptFixture(root).finishedAt);
+    // Original artifact: 1793082381492.959 versus Date.parse(...493Z).
+    const cloudGap = 1793082381492.959 - 1793082381493;
+    const timestamp = (finishedMs + cloudGap) / 1000;
+    fs.utimesSync(receiptPath, timestamp, timestamp);
+    const observedMs = fs.statSync(receiptPath).mtimeMs;
+    expect(observedMs).toBeLessThan(finishedMs);
+    expect(Math.round(observedMs)).toBe(finishedMs);
+    const result = exportEvidence(root);
+    expect(result.status).toBe("PASSED");
+    expect(result.index.issues).toEqual([]);
+    const retained = JSON.parse(fs.readFileSync(path.join(result.outputDirectory, "formal-next-prepare.json"), "utf8"));
+    expect(retained.source.modifiedMs).toBe(observedMs);
+    expect(retained.evidence.status).toBe("PASSED");
+  });
+  it("rejects mtime outside the common millisecond window without changing identity or hash checks", () => {
+    for (const edge of ["before-finish", "after-verification"] as const) for (const gapMs of [0.501, 1]) {
+      const root = sourceRoot(); completeSources(root);
+      const receiptPath = path.join(root, ".playwright/typegen-lifecycle/fixture-owned-prepare/receipt.json");
+      const bound = edge === "before-finish" ? Date.parse(prepareReceiptFixture(root).finishedAt)
+        : fs.statSync(path.join(root, ".playwright/verification-full.json")).mtimeMs;
+      const timestamp = (bound + (edge === "before-finish" ? -gapMs : gapMs)) / 1000;
+      fs.utimesSync(receiptPath, timestamp, timestamp);
+      const observedMs = fs.statSync(receiptPath).mtimeMs;
+      expect(edge === "before-finish" ? Math.round(observedMs) < bound : Math.round(observedMs) > bound).toBe(true);
+      const result = exportEvidence(root);
+      expect(result.status).toBe("NOT_RUN");
+      expect(result.index.issues).toContain("FORMAL_PREPARE_UNIQUE_RECEIPT_UNAVAILABLE_OR_UNBOUND");
+      const diagnostic = JSON.parse(fs.readFileSync(path.join(result.outputDirectory, "formal-next-prepare-binding-failure.json"), "utf8")).evidence;
+      expect(diagnostic).toMatchObject({ acceptanceCredential: false, stage: "RECEIPT_MTIME_WINDOW",
+        receiptModifiedMs: observedMs, failureCode: "PREPARE_RECEIPT_MTIME_UNBOUND", mismatchedFields: [], rawReceiptSha256MatchesObserved: true });
+    }
+  });
   it("never retains raw malformed receipt text, exception message or path in binding diagnostics", () => {
     const root = sourceRoot(); completeSources(root);
     const receiptPath = path.join(root, ".playwright/typegen-lifecycle/fixture-owned-prepare/receipt.json");

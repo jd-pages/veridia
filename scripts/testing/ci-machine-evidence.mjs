@@ -460,6 +460,8 @@ export function exportCiMachineEvidence({ root = process.cwd(), mode, context: i
   if (verification.gates.productionBuild === "PASSED") {
     const bindingDiagnostic = { stage: "INVOCATION", mismatchedFields: [], receiptModifiedMs: null,
       declaredFinishedMs: null, verificationModifiedMs: number(upperBound),
+      comparisonPrecision: "MILLISECONDS", comparedReceiptModifiedMs: null,
+      comparedDeclaredFinishedMs: null, comparedVerificationModifiedMs: null,
       rawReceiptSha256Available: hash(original?.value?.formalNextPreparation?.receiptSha256, 64) !== null,
       rawReceiptSha256MatchesObserved: null,
       observedReceiptSha256: null, measuredReceiptSha256: null };
@@ -490,7 +492,15 @@ export function exportCiMachineEvidence({ root = process.cwd(), mode, context: i
       bindingDiagnostic.stage = "RECEIPT_BYTES_BINDING";
       if (measured.receiptSha256 !== receipt.source.sha256) throw new Error("PREPARE_RECEIPT_BYTES_UNBOUND");
       bindingDiagnostic.stage = "RECEIPT_MTIME_WINDOW";
-      if (!inside(receipt.source.modifiedMs, Date.parse(measured.finishedAt), upperBound)) throw new Error("PREPARE_RECEIPT_MTIME_UNBOUND");
+      // finishedAt is a millisecond Date/ISO measurement, while stat.mtimeMs
+      // retains NTFS submilliseconds. Compare at the declared clock precision;
+      // do not invent an epsilon or move either window boundary. Preserve the
+      // raw stat value above, and keep all receipt identity/hash checks intact.
+      bindingDiagnostic.comparedReceiptModifiedMs = Math.round(receipt.source.modifiedMs);
+      bindingDiagnostic.comparedDeclaredFinishedMs = Date.parse(measured.finishedAt);
+      bindingDiagnostic.comparedVerificationModifiedMs = Math.round(upperBound);
+      if (!inside(bindingDiagnostic.comparedReceiptModifiedMs, bindingDiagnostic.comparedDeclaredFinishedMs,
+        bindingDiagnostic.comparedVerificationModifiedMs)) throw new Error("PREPARE_RECEIPT_MTIME_UNBOUND");
       // Retain only the validated whitelist, never arbitrary receipt fields.
       save("formal-next-prepare.json", projectVerificationEvidence({ formalNextPreparation: measured }, secrets).formalNextPreparation, receipt.source);
     } catch (error) {
