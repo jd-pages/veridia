@@ -346,16 +346,16 @@ async function withWindowSession<T>(
   const context = page.context();
   let active = true;
   let session: CDPSession | undefined;
-  let closeProof: { session: CDPSession; closed: boolean; promise: Promise<void>; onClose: () => void } | undefined;
+  let closeProof: { session: CDPSession; closed: boolean; promise: Promise<void>; dispose: () => void } | undefined;
   const detach = (value: CDPSession) => boundedBrowserControlOperation(
     observe(`${phase}_CDP_DETACH`, async () => {
-      // A target/session close is authoritative even when its detach RPC ack
-      // never arrives. Bind to this exact session before requesting detach.
+      // This session or its captured target/context closing proves that the
+      // session is gone even when the detach RPC acknowledgement never arrives.
       // A timeout alone must leave the observed operation pending.
       const proof = closeProof?.session === value ? closeProof : undefined;
       if (!proof) throw browserControlError(new Error("XHS_CDP_CLOSE_PROOF_MISSING"));
       try { if (!proof.closed) await Promise.race([value.detach(), proof.promise]); }
-      finally { value.removeListener?.("close", proof.onClose); }
+      finally { proof.dispose(); }
     }).catch(() => undefined),
     XHS_CDP_DETACH_TIMEOUT_MS,
   ).catch(() => undefined);
@@ -367,11 +367,20 @@ async function withWindowSession<T>(
   const sessionPromise = observe(`${phase}_CDP_SESSION`, async () => {
     const value = await context.newCDPSession(page);
     let resolveClose!: () => void;
+    const onClose = () => { proof.closed = true; proof.dispose(); resolveClose(); };
     const proof = { session: value, closed: false, promise: new Promise<void>(resolve => { resolveClose = resolve; }),
-      onClose: () => { proof.closed = true;resolveClose(); } };
+      dispose: () => {
+        value.removeListener?.("close", onClose);
+        page.removeListener?.("close", onClose);
+        context.removeListener?.("close", onClose);
+      } };
     closeProof = proof;
-    // Capture before any window command, including a close during that command.
-    value.once?.("close", proof.onClose);
+    // Playwright can dispose a parent without forwarding a CDPSession close.
+    // Keep exact object bindings; a newer context or a timeout is not proof.
+    value.once?.("close", onClose);
+    page.once?.("close", onClose);
+    context.once?.("close", onClose);
+    if (page.isClosed()) onClose();
     return value;
   });
   // If session creation returns after the deadline, consume and detach it;

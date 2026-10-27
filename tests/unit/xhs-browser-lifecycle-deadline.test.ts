@@ -25,6 +25,58 @@ afterEach(() => {
 });
 
 describe("XHS actual browser lifecycle bounded unresolved operations", () => {
+  it.each(["page", "context"] as const)("captured %s close settles only its own pending CDP detach", async (target) => {
+    vi.useFakeTimers(); vi.stubEnv("VERIDIA_E2E", "true");
+    const session = Object.assign(new EventEmitter(), {
+      send: vi.fn(async () => ({ windowId: 7 })),
+      detach: vi.fn(() => new Promise<void>(() => undefined)),
+    });
+    const context = Object.assign(new EventEmitter(), { newCDPSession: async () => session });
+    const page = Object.assign(new EventEmitter(), { context: () => context, isClosed: () => false });
+    const state = { context, auditPage: page, lifecyclePendingOperations: new Map(),
+      pageArbiter: { settleAndReconcile: async () => ({ active: true }) } };
+    automationGlobal.xhsBrowserManagerState = state;
+    const { keepXhsAuditPageInBackground } = await import("@/lib/automation/browser");
+    const result = keepXhsAuditPageInBackground(page as never);
+    await vi.advanceTimersByTimeAsync(501);
+    expect(await result).toBe(true);
+    expect(state.lifecyclePendingOperations.size).toBe(1);
+    ({ page, context })[target].emit("close");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(state.lifecyclePendingOperations.size).toBe(0);
+    for (const emitter of [page, context, session]) expect(emitter.listenerCount("close")).toBe(0);
+    expect(session.detach).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays CI operation 333: generation 14 and unrelated close cannot clear generation 5 detach", async () => {
+    vi.useFakeTimers(); vi.stubEnv("VERIDIA_E2E", "true");
+    const session = Object.assign(new EventEmitter(), {
+      send: vi.fn(async () => ({ windowId: 7 })),
+      detach: vi.fn(() => new Promise<void>(() => undefined)),
+    });
+    const context = Object.assign(new EventEmitter(), { newCDPSession: async () => session });
+    const page = Object.assign(new EventEmitter(), { context: () => context, isClosed: () => false });
+    const state = { context, auditPage: page, lifecycleGeneration: 5, lifecycleOperationSequence: 328,
+      lifecyclePendingOperations: new Map(), pageArbiter: { settleAndReconcile: async () => ({ active: true }) } };
+    automationGlobal.xhsBrowserManagerState = state;
+    const { keepXhsAuditPageInBackground } = await import("@/lib/automation/browser");
+    const result = keepXhsAuditPageInBackground(page as never);
+    await vi.advanceTimersByTimeAsync(501); expect(await result).toBe(true);
+    const expected = { phase: "WINDOW_SET_CDP_DETACH", operationId: 333, lifecycleGeneration: 5, ownerGeneration: null };
+    expect([...state.lifecyclePendingOperations.values()]).toEqual([expect.objectContaining(expected)]);
+    const newerContext = Object.assign(new EventEmitter(), { newCDPSession: async () => session });
+    state.lifecycleGeneration = 14; state.context = newerContext;
+    newerContext.emit("close");
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect([...state.lifecyclePendingOperations.values()]).toEqual([expect.objectContaining(expected)]);
+    context.emit("close");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(state.lifecyclePendingOperations.size).toBe(0);
+    expect(state.context).toBe(newerContext);
+    expect(session.detach).toHaveBeenCalledTimes(1);
+    for (const emitter of [page, context, session]) expect(emitter.listenerCount("close")).toBe(0);
+  });
+
   it("same CDP session close proves detach completion even when its RPC acknowledgement never arrives", async () => {
     vi.useFakeTimers();vi.stubEnv("VERIDIA_E2E", "true");
     const session = Object.assign(new EventEmitter(), { send: vi.fn(async () => ({ windowId: 7 })), detach: vi.fn(() => new Promise<void>(() => undefined)) });

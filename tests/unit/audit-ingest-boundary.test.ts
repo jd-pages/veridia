@@ -145,13 +145,20 @@ describe("审核提交边界：真实 Prisma 与 API", () => {
     await unchanged(task, previous);
   });
 
-  it.each(["PENDING", "READ_FAILED", "FAILED", "NEEDS_REVIEW", "LOGIN_EXPIRED"])("无结果且独立的 %s 任务接受明确 MANUAL / EXTENSION 来源", async (status) => {
-    for (const source of ["MANUAL", "EXTENSION"] as const) {
+  // Each source is a complete independent real-DB audit, with its own unchanged
+  // 5000ms test budget rather than sharing that budget with a second audit.
+  it.each(["PENDING", "READ_FAILED", "FAILED", "NEEDS_REVIEW", "LOGIN_EXPIRED"].flatMap(status =>
+    (["MANUAL", "EXTENSION"] as const).map(source => [status, source] as const),
+  ))("无结果且独立的 %s 任务接受明确 %s 来源", async (status, source) => {
+    const started = performance.now();
+    try {
       const task = await fixture.task({ status });
       const result = await runAuditTask(task.id, auditIngestExtraction(task), { source });
       expect(result.autoStatus).toBe("PASSED");
       expect(await db.auditResult.count({ where: { auditTaskId: task.id } })).toBe(1);
       expect(await db.auditTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "COMPLETED" });
+    } finally {
+      console.info("AUDIT_INGEST_CASE_TIMING=" + JSON.stringify({ status, source, elapsedMs: performance.now() - started }));
     }
   });
 
